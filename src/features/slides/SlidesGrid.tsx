@@ -3,7 +3,7 @@
 import { memo } from "react";
 import type { Id } from "@/../convex/_generated/dataModel";
 import type { Song } from "@/types";
-import { formatSlideLabel } from "@/lib/lyrics";
+import { formatSlideLabel, stripBracketsForDisplay } from "@/lib/lyrics";
 import { getLabelColor } from "@/types";
 import { cn } from "@/lib/utils";
 import { AutoFitText } from "@/components/ui/AutoFitText";
@@ -97,7 +97,7 @@ const SlideCard = memo(function SlideCard({
       {/* Slide preview - black background like main output */}
       <div className="flex flex-1 items-center justify-center overflow-hidden bg-black p-2">
         <AutoFitText
-          text={slide.text}
+          text={stripBracketsForDisplay(slide.text)}
           className="text-sm leading-relaxed text-white"
           minScale={0.5}
         />

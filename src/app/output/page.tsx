@@ -7,6 +7,7 @@ import type { Id } from "@/../convex/_generated/dataModel";
 import { api } from "@/../convex/_generated/api";
 import { cn } from "@/lib/utils";
 import { AutoFitText } from "@/components/ui/AutoFitText";
+import { stripBracketsForDisplay } from "@/lib/lyrics";
 
 type ActiveSlideMessage = {
   type: "active-slide";
@@ -98,7 +99,7 @@ export default function OutputPage() {
         // Active slide - clean output for projection with auto-fit
         <div className="h-full w-full p-8">
           <AutoFitText
-            text={activeSlide.text}
+            text={stripBracketsForDisplay(activeSlide.text)}
             className={cn(
               "leading-relaxed text-white",
               fontBold && "font-bold",

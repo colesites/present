@@ -3,6 +3,7 @@
 import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { AutoFitText } from "@/components/ui/AutoFitText";
+import { stripBracketsForDisplay } from "@/lib/lyrics";
 
 interface SlideGroup {
   label: string;
@@ -43,7 +44,7 @@ export const OutputPreview = memo(function OutputPreview({
       <div className="mx-3 h-36 overflow-hidden rounded-lg bg-black p-2">
         {text ? (
           <AutoFitText
-            text={text}
+            text={stripBracketsForDisplay(text)}
             className={cn(
               "leading-relaxed text-white",
               fontBold && "font-bold",
