@@ -16,8 +16,6 @@ interface SlideGroup {
 
 interface OutputPreviewProps {
   text: string | null;
-  fontFamily: string;
-  fontSize: number;
   fontBold: boolean;
   fontItalic: boolean;
   fontUnderline: boolean;
@@ -26,16 +24,11 @@ interface OutputPreviewProps {
 
 export const OutputPreview = memo(function OutputPreview({
   text,
-  fontFamily,
-  fontSize,
   fontBold,
   fontItalic,
   fontUnderline,
   groups = [],
 }: OutputPreviewProps) {
-  // Scale font size for preview (preview is smaller than output)
-  const previewFontSize = Math.max(10, fontSize * 0.18);
-
   return (
     <div className="flex h-full flex-col">
       {/* Main Output label with status indicator */}
@@ -54,15 +47,11 @@ export const OutputPreview = memo(function OutputPreview({
             <AutoFitText
               text={stripBracketsForDisplay(text)}
               className={cn(
-                "leading-relaxed text-white",
+                "pointer-events-none select-none text-sm leading-relaxed text-white",
                 fontBold && "font-bold",
                 fontItalic && "italic",
                 fontUnderline && "underline"
               )}
-              style={{
-                fontFamily,
-                fontSize: `${previewFontSize}px`,
-              }}
               minScale={0.4}
             />
           ) : (

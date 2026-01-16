@@ -7,6 +7,13 @@ import { stripBracketsForDisplay } from "@/lib/lyrics";
 import { getLabelColor } from "@/types";
 import { cn } from "@/lib/utils";
 import { AutoFitText } from "@/components/ui/AutoFitText";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { Pencil } from "lucide-react";
 
 // Fixed slide box height
 const SLIDE_HEIGHT = 160;
@@ -29,6 +36,7 @@ interface SlidesGridProps {
   activeSlideId: string | null;
   selectedIndex: number | null;
   onSelectSlide: (songId: Id<"songs">, index: number, text: string) => void;
+  onEditSlide?: (songId: Id<"songs">, index: number) => void;
 }
 
 export const SlidesGrid = memo(function SlidesGrid({
@@ -36,6 +44,7 @@ export const SlidesGrid = memo(function SlidesGrid({
   activeSlideId,
   selectedIndex,
   onSelectSlide,
+  onEditSlide,
 }: SlidesGridProps) {
   if (slides.length === 0) {
     return (
@@ -60,11 +69,13 @@ export const SlidesGrid = memo(function SlidesGrid({
         return (
           <SlideCard
             key={slideId}
+            songId={song._id}
             slide={slide}
             index={index}
             isActive={isActive}
             isSelected={isSelected}
             onClick={() => onSelectSlide(song._id, index, slide.text)}
+            onEdit={onEditSlide ? () => onEditSlide(song._id, index) : undefined}
           />
         );
       })}
@@ -73,6 +84,7 @@ export const SlidesGrid = memo(function SlidesGrid({
 });
 
 interface SlideCardProps {
+  songId: Id<"songs">;
   slide: {
     text: string;
     label?: string;
@@ -82,6 +94,7 @@ interface SlideCardProps {
   isActive: boolean;
   isSelected: boolean;
   onClick: () => void;
+  onEdit?: () => void;
 }
 
 const SlideCard = memo(function SlideCard({
@@ -90,41 +103,54 @@ const SlideCard = memo(function SlideCard({
   isActive,
   isSelected,
   onClick,
+  onEdit,
 }: SlideCardProps) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{ height: SLIDE_HEIGHT }}
-      className={cn(
-        "group relative flex w-full flex-col overflow-hidden rounded-lg border text-left transition",
-        isActive
-          ? "border-primary ring-2 ring-primary"
-          : isSelected
-            ? "border-primary/50"
-            : "border-border hover:border-primary/50"
-      )}
-    >
-      {/* Slide preview - black background like main output */}
-      <div className="flex flex-1 items-center justify-center overflow-hidden bg-black p-2">
-        <AutoFitText
-          text={stripBracketsForDisplay(slide.text)}
-          className="text-sm leading-relaxed text-white"
-          minScale={0.5}
-        />
-      </div>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <button
+          type="button"
+          onClick={onClick}
+          style={{ height: SLIDE_HEIGHT }}
+          className={cn(
+            "group relative flex w-full flex-col overflow-hidden rounded-lg border text-left transition",
+            isActive
+              ? "border-primary ring-2 ring-primary"
+              : isSelected
+                ? "border-primary/50"
+                : "border-border hover:border-primary/50"
+          )}
+        >
+          {/* Slide preview - black background like main output */}
+          <div className="flex flex-1 items-center justify-center overflow-hidden bg-black p-2">
+            <AutoFitText
+              text={stripBracketsForDisplay(slide.text)}
+              className="pointer-events-none select-none text-sm leading-relaxed text-white"
+              minScale={0.5}
+            />
+          </div>
 
-      {/* Label bar: number left, label center, modifier right */}
-      <div
-        className={cn(
-          "flex shrink-0 items-center justify-between px-3 py-1.5 text-xs font-medium",
-          getLabelColor(slide.label)
+          {/* Label bar: number left, label center, modifier right */}
+          <div
+            className={cn(
+              "flex shrink-0 items-center justify-between px-3 py-1.5 text-xs font-medium",
+              getLabelColor(slide.label)
+            )}
+          >
+            <span>{index + 1}</span>
+            <span>{slide.label || ""}</span>
+            <span>{slide.modifier || ""}</span>
+          </div>
+        </button>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-48">
+        {onEdit && (
+          <ContextMenuItem onClick={onEdit} className="gap-2">
+            <Pencil className="h-4 w-4" />
+            Edit in Editor
+          </ContextMenuItem>
         )}
-      >
-        <span>{index + 1}</span>
-        <span>{slide.label || ""}</span>
-        <span>{slide.modifier || ""}</span>
-      </div>
-    </button>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 });

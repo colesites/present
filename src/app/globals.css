@@ -137,3 +137,32 @@
   scrollbar-width: thin;
   scrollbar-color: var(--primary) transparent;
 }
+
+/* Caret blink animation for editor scroll-to */
+@keyframes caret-blink-animation {
+  0%, 100% {
+    caret-color: hsl(238 80% 65%);
+  }
+  50% {
+    caret-color: transparent;
+  }
+}
+
+/* Border glow animation */
+@keyframes border-glow-animation {
+  0%, 100% {
+    border-color: hsl(238 80% 65%);
+    box-shadow: 0 0 8px hsl(238 80% 65% / 0.5);
+  }
+  50% {
+    border-color: hsl(238 60% 54%);
+    box-shadow: 0 0 16px hsl(238 80% 65% / 0.8);
+  }
+}
+
+.editor-blink {
+  caret-color: hsl(238 80% 65%);
+  animation: 
+    caret-blink-animation 0.5s ease-in-out 3,
+    border-glow-animation 0.5s ease-in-out 3;
+}

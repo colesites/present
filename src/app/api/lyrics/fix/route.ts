@@ -43,8 +43,18 @@ function extractCleanLyrics(content: string, fallback: string): string {
     }
   }
 
-  // Final cleanup
-  result = result.trim();
+  // Final cleanup - ensure proper whitespace regardless of what AI returned
+  result = result
+    .split("\n")
+    .map((line) => {
+      // Remove trailing whitespace from each line
+      let cleaned = line.trimEnd();
+      // Collapse multiple spaces to single space
+      cleaned = cleaned.replace(/  +/g, " ");
+      return cleaned;
+    })
+    .join("\n")
+    .trim(); // Remove leading/trailing empty lines
 
   // If we still have JSON-looking content, something went wrong - use fallback
   if (result.startsWith("{") && result.includes("cleanedLyrics")) {

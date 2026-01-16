@@ -84,6 +84,9 @@ export default function Home() {
     songId: Id<"songs">;
     index: number;
   } | null>(null);
+  const [editScrollToSlide, setEditScrollToSlide] = useState<number | null>(
+    null
+  );
 
   // Computed: slides for grid
   const slidesForGrid = useMemo(() => {
@@ -128,6 +131,18 @@ export default function Home() {
       await selectSlide(`${songId}:${index}`, text);
     },
     [selectSlide]
+  );
+
+  const handleEditSlide = useCallback(
+    (songId: Id<"songs">, slideIndex: number) => {
+      // Switch to edit mode and select the song
+      setSelectedSongId(songId);
+      setViewMode("edit");
+      // Store the slide index to scroll to after switching to edit mode
+      setSelected({ songId, index: slideIndex });
+      setEditScrollToSlide(slideIndex);
+    },
+    [setSelectedSongId]
   );
 
   const handleSelectServiceItem = useCallback(
@@ -290,6 +305,7 @@ export default function Home() {
                       activeSlideId={activeSlideId}
                       selectedIndex={selected?.index ?? null}
                       onSelectSlide={handleSelectSlide}
+                      onEditSlide={handleEditSlide}
                     />
                   ) : selectedSong ? (
                     <LyricsEditor
@@ -299,9 +315,11 @@ export default function Home() {
                       fontBold={fontBold}
                       fontItalic={fontItalic}
                       fontUnderline={fontUnderline}
+                      scrollToSlideIndex={editScrollToSlide}
                       onSave={handleSaveSong}
                       onFixLyrics={fixLyrics}
                       onFontStyleChange={updateFontStyle}
+                      onScrollComplete={() => setEditScrollToSlide(null)}
                     />
                   ) : (
                     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -377,8 +395,6 @@ export default function Home() {
           <div className="h-full border-l border-border bg-card">
             <OutputPreview
               text={activeSlideText}
-              fontFamily={fontFamily}
-              fontSize={fontSize}
               fontBold={fontBold}
               fontItalic={fontItalic}
               fontUnderline={fontUnderline}
