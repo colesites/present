@@ -3,6 +3,8 @@
 import { memo, useState, useCallback, useRef, useEffect } from "react";
 import type { Song } from "@/types";
 import { FontToolbar } from "./FontToolbar";
+import { toast } from "sonner";
+import { useDebouncedCallback } from "use-debounce";
 
 interface LyricsEditorProps {
   song: Song;
@@ -41,19 +43,35 @@ export const LyricsEditor = memo(function LyricsEditor({
   const [editLyrics, setEditLyrics] = useState(song.lyrics);
   const [isSaving, setIsSaving] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Reset state when song changes
   useState(() => {
     setEditTitle(song.title);
     setEditLyrics(song.lyrics);
-    setError(null);
-    setMessage(null);
   });
 
   const [isBlinking, setIsBlinking] = useState(false);
+
+  // Debounced auto-save (silent, no toast)
+  const debouncedAutoSave = useDebouncedCallback(
+    async (title: string, lyrics: string) => {
+      if (!title.trim()) return;
+      try {
+        await onSave(title.trim(), lyrics);
+      } catch {
+        // Silent fail for auto-save
+      }
+    },
+    1000 // 1 second debounce
+  );
+
+  // Trigger auto-save when title or lyrics change
+  useEffect(() => {
+    if (editTitle.trim() && (editTitle !== song.title || editLyrics !== song.lyrics)) {
+      debouncedAutoSave(editTitle, editLyrics);
+    }
+  }, [editTitle, editLyrics, song.title, song.lyrics, debouncedAutoSave]);
 
   // Scroll to slide position when scrollToSlideIndex changes
   useEffect(() => {
@@ -128,36 +146,35 @@ export const LyricsEditor = memo(function LyricsEditor({
     const scrollTop = Math.max(0, lineNumber * lineHeight - 100);
     textarea.scrollTop = scrollTop;
 
-    // Briefly select the text to show highlight, then move cursor to end
-    textarea.setSelectionRange(startPos, endPos);
+    // Place cursor at end of the slide (no selection, so typing works immediately)
+    textarea.setSelectionRange(endPos, endPos);
 
-    // Trigger blink effect
+    // Trigger blink effect (border glow + caret blink)
     setIsBlinking(true);
 
-    // After 800ms, deselect and place cursor at end
-    setTimeout(() => {
-      textarea.setSelectionRange(endPos, endPos);
-    }, 800);
+    // Stop blinking after animation completes (0.6s * 5 = 3s), then notify parent
+    const blinkTimeout = setTimeout(() => {
+      setIsBlinking(false);
+      onScrollComplete?.();
+    }, 3000);
 
-    // Stop blinking after animation completes
-    setTimeout(() => setIsBlinking(false), 1500);
-
-    onScrollComplete?.();
+    // Cleanup timeout if effect re-runs or component unmounts
+    return () => {
+      clearTimeout(blinkTimeout);
+    };
   }, [scrollToSlideIndex, song.lyrics, onScrollComplete]);
 
   const handleSave = useCallback(async () => {
     if (!editTitle.trim()) {
-      setError("Title is required");
+      toast.error("Title is required");
       return;
     }
     setIsSaving(true);
-    setError(null);
     try {
       await onSave(editTitle.trim(), editLyrics);
-      setMessage("Saved successfully");
-      setTimeout(() => setMessage(null), 2000);
+      toast.success("Saved successfully");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      toast.error(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setIsSaving(false);
     }
@@ -166,14 +183,12 @@ export const LyricsEditor = memo(function LyricsEditor({
   const handleFix = useCallback(async () => {
     if (!editLyrics.trim()) return;
     setIsFixing(true);
-    setError(null);
     try {
       const fixed = await onFixLyrics(editLyrics);
       setEditLyrics(fixed);
-      setMessage("Lyrics cleaned up");
-      setTimeout(() => setMessage(null), 2000);
+      toast.success("Lyrics cleaned up");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fix lyrics");
+      toast.error(err instanceof Error ? err.message : "Failed to fix lyrics");
     } finally {
       setIsFixing(false);
     }
@@ -221,10 +236,6 @@ export const LyricsEditor = memo(function LyricsEditor({
         onItalicToggle={() => onFontStyleChange({ fontItalic: !fontItalic })}
         onUnderlineToggle={() => onFontStyleChange({ fontUnderline: !fontUnderline })}
       />
-
-      {/* Error/success messages */}
-      {error && <p className="text-xs text-destructive">{error}</p>}
-      {message && <p className="text-xs text-green-400">{message}</p>}
 
       {/* Lyrics textarea */}
       <textarea

@@ -5,7 +5,7 @@ export type SlideRef = {
   index: number;
 };
 
-export type ViewMode = "show" | "edit";
+export type ViewMode = "show" | "edit" | "stage";
 export type BottomTab = "shows" | "media" | "scripture";
 
 export type RenameTarget = {

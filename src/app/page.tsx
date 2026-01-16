@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, useCallback, useEffect, useMemo, useState } from "react";
 import type { Id } from "@/../convex/_generated/dataModel";
 
 // Hooks
@@ -298,34 +298,51 @@ export default function Home() {
             {/* Main slides/editor area */}
             <ResizablePanel defaultSize={75} minSize={30}>
               <main className="flex h-full flex-col overflow-hidden bg-background">
-                <div className="flex-1 overflow-auto p-4">
-                  {viewMode === "show" ? (
-                    <SlidesGrid
-                      slides={slidesForGrid}
-                      activeSlideId={activeSlideId}
-                      selectedIndex={selected?.index ?? null}
-                      onSelectSlide={handleSelectSlide}
-                      onEditSlide={handleEditSlide}
-                    />
-                  ) : selectedSong ? (
-                    <LyricsEditor
-                      song={selectedSong}
-                      fontFamily={fontFamily}
-                      fontSize={fontSize}
-                      fontBold={fontBold}
-                      fontItalic={fontItalic}
-                      fontUnderline={fontUnderline}
-                      scrollToSlideIndex={editScrollToSlide}
-                      onSave={handleSaveSong}
-                      onFixLyrics={fixLyrics}
-                      onFontStyleChange={updateFontStyle}
-                      onScrollComplete={() => setEditScrollToSlide(null)}
-                    />
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                      Select a song to edit
+                <div className="relative flex-1 overflow-hidden">
+                  {/* Show mode - SlidesGrid */}
+                  <Activity mode={viewMode === "show" ? "visible" : "hidden"}>
+                    <div className="absolute inset-0 overflow-auto p-4">
+                      <SlidesGrid
+                        slides={slidesForGrid}
+                        activeSlideId={activeSlideId}
+                        selectedIndex={selected?.index ?? null}
+                        onSelectSlide={handleSelectSlide}
+                        onEditSlide={handleEditSlide}
+                      />
                     </div>
-                  )}
+                  </Activity>
+
+                  {/* Edit mode - LyricsEditor */}
+                  <Activity mode={viewMode === "edit" ? "visible" : "hidden"}>
+                    <div className="absolute inset-0 overflow-auto p-4">
+                      {selectedSong ? (
+                        <LyricsEditor
+                          song={selectedSong}
+                          fontFamily={fontFamily}
+                          fontSize={fontSize}
+                          fontBold={fontBold}
+                          fontItalic={fontItalic}
+                          fontUnderline={fontUnderline}
+                          scrollToSlideIndex={editScrollToSlide}
+                          onSave={handleSaveSong}
+                          onFixLyrics={fixLyrics}
+                          onFontStyleChange={updateFontStyle}
+                          onScrollComplete={() => setEditScrollToSlide(null)}
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          Select a song to edit
+                        </div>
+                      )}
+                    </div>
+                  </Activity>
+
+                  {/* Stage mode - placeholder */}
+                  <Activity mode={viewMode === "stage" ? "visible" : "hidden"}>
+                    <div className="absolute inset-0 flex items-center justify-center overflow-auto p-4 text-sm text-muted-foreground">
+                      Stage display settings coming soon
+                    </div>
+                  </Activity>
                 </div>
               </main>
             </ResizablePanel>
@@ -353,35 +370,44 @@ export default function Home() {
                     )
                   )}
                 </div>
-                <div className="min-h-0 flex-1 overflow-hidden">
-                  {bottomTab === "shows" && (
-                    <ShowsPanel
-                      songs={filteredSongs}
-                      categories={categories}
-                      selectedSongId={selectedSongId}
-                      selectedCategoryId={selectedCategoryId}
-                      isInsideService={isInsideService}
-                      selectedServiceId={selectedServiceId}
-                      onSelectSong={setSelectedSongId}
-                      onSelectCategory={setSelectedCategoryId}
-                      onCreateSong={createNewSong}
-                      onRenameSong={handleRenameSong}
-                      onDeleteSong={deleteSong}
-                      onAddToService={handleAddToService}
-                      onCreateCategory={createNewCategory}
-                      onFixLyrics={fixLyrics}
-                    />
-                  )}
-                  {bottomTab === "media" && (
-                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                <div className="relative min-h-0 flex-1 overflow-hidden">
+                  {/* Shows tab */}
+                  <Activity mode={bottomTab === "shows" ? "visible" : "hidden"}>
+                    <div className="absolute inset-0 overflow-auto">
+                      <ShowsPanel
+                        songs={filteredSongs}
+                        categories={categories}
+                        selectedSongId={selectedSongId}
+                        selectedCategoryId={selectedCategoryId}
+                        isInsideService={isInsideService}
+                        selectedServiceId={selectedServiceId}
+                        onSelectSong={setSelectedSongId}
+                        onSelectCategory={setSelectedCategoryId}
+                        onCreateSong={createNewSong}
+                        onRenameSong={handleRenameSong}
+                        onDeleteSong={deleteSong}
+                        onAddToService={handleAddToService}
+                        onCreateCategory={createNewCategory}
+                        onFixLyrics={fixLyrics}
+                      />
+                    </div>
+                  </Activity>
+
+                  {/* Media tab */}
+                  <Activity mode={bottomTab === "media" ? "visible" : "hidden"}>
+                    <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
                       Media library coming soon
                     </div>
-                  )}
-                  {bottomTab === "scripture" && (
-                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  </Activity>
+
+                  {/* Scripture tab */}
+                  <Activity
+                    mode={bottomTab === "scripture" ? "visible" : "hidden"}
+                  >
+                    <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
                       Scripture search coming soon
                     </div>
-                  )}
+                  </Activity>
                 </div>
               </div>
             </ResizablePanel>
