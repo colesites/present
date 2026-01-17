@@ -12,6 +12,7 @@ import {
   useCategories,
   useMediaFolders,
 } from "@/hooks";
+import { blobUrlToDataUrl } from "@/hooks/useMediaFolders";
 
 // Types
 import type { ViewMode, BottomTab } from "@/types";
@@ -97,9 +98,28 @@ export default function Home() {
   const [showTextInOutput, setShowTextInOutput] = useState(true);
   const [showMediaInOutput, setShowMediaInOutput] = useState(true);
 
-  // UI state
-  const [viewMode, setViewMode] = useState<ViewMode>("show");
-  const [bottomTab, setBottomTab] = useState<BottomTab>("shows");
+  // Load persisted UI state from localStorage
+  const getPersistedState = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = localStorage.getItem("present-ui-state");
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // UI state with persistence
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const persisted =
+      typeof window !== "undefined" ? getPersistedState() : null;
+    return persisted?.viewMode ?? "show";
+  });
+  const [bottomTab, setBottomTab] = useState<BottomTab>(() => {
+    const persisted =
+      typeof window !== "undefined" ? getPersistedState() : null;
+    return persisted?.bottomTab ?? "shows";
+  });
   const [selected, setSelected] = useState<{
     songId: Id<"songs">;
     index: number;
@@ -107,6 +127,16 @@ export default function Home() {
   const [editScrollToSlide, setEditScrollToSlide] = useState<number | null>(
     null
   );
+
+  // Persist only view state (song/category selection is handled by useSongs)
+  useEffect(() => {
+    const state = { viewMode, bottomTab };
+    try {
+      localStorage.setItem("present-ui-state", JSON.stringify(state));
+    } catch (e) {
+      console.error("Failed to persist UI state:", e);
+    }
+  }, [viewMode, bottomTab]);
 
   // Computed: slides for grid
   const slidesForGrid = useMemo(() => {
@@ -231,23 +261,35 @@ export default function Home() {
   }, []);
 
   // Broadcast media changes to output window
+  // Convert blob URL to data URL for cross-window communication
   useEffect(() => {
     const channel = new BroadcastChannel("present-output");
-    channel.postMessage({
-      type: "media-update",
-      mediaItem: activeMediaItem
-        ? {
-            id: activeMediaItem.id,
-            name: activeMediaItem.name,
-            type: activeMediaItem.type,
-            url: activeMediaItem.url,
-          }
-        : null,
-      showText: showTextInOutput,
-      showMedia: showMediaInOutput,
-      videoSettings,
-      mediaFilterCSS,
-    });
+
+    async function sendMediaUpdate() {
+      let mediaData = null;
+
+      if (activeMediaItem) {
+        // Convert blob URL to data URL so it works in another window
+        const dataUrl = await blobUrlToDataUrl(activeMediaItem.url);
+        mediaData = {
+          id: activeMediaItem.id,
+          name: activeMediaItem.name,
+          type: activeMediaItem.type,
+          url: dataUrl,
+        };
+      }
+
+      channel.postMessage({
+        type: "media-update",
+        mediaItem: mediaData,
+        showText: showTextInOutput,
+        showMedia: showMediaInOutput,
+        videoSettings,
+        mediaFilterCSS,
+      });
+    }
+
+    sendMediaUpdate();
     return () => channel.close();
   }, [
     activeMediaItem,

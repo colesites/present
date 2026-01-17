@@ -1,20 +1,50 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMemo, useState, useEffect } from "react";
+import { useMutation } from "convex/react";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
 import type { Song } from "@/types";
+import { useCachedConvexQuery } from "./useConvexCache";
 
 export type ServiceItemType = "song" | "media" | "scripture";
+
+const SERVICE_STATE_KEY = "present-service-state";
+
+// Load service state from localStorage
+function loadServiceState() {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(SERVICE_STATE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Save service state to localStorage
+function saveServiceState(state: {
+  selectedServiceId: string | null;
+  isInsideService: boolean;
+  serviceItemIndex: number | null;
+}) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(SERVICE_STATE_KEY, JSON.stringify(state));
+  } catch (e) {
+    console.error("Failed to save service state:", e);
+  }
+}
 
 export function useServices(
   orgId: Id<"organizations"> | null,
   songs: Song[]
 ) {
-  const services = useQuery(
+  // Use cached query for offline support
+  const services = useCachedConvexQuery(
     api.services.listByOrg,
-    orgId ? { orgId } : "skip"
+    orgId ? { orgId } : "skip",
+    "services"
   );
   const createService = useMutation(api.services.create);
   const renameService = useMutation(api.services.rename);
@@ -22,9 +52,40 @@ export function useServices(
   const addItemToService = useMutation(api.services.addItem);
   const removeItemFromService = useMutation(api.services.removeItem);
 
-  const [selectedServiceId, setSelectedServiceId] = useState<Id<"services"> | null>(null);
-  const [isInsideService, setIsInsideService] = useState(false);
-  const [serviceItemIndex, setServiceItemIndex] = useState<number | null>(null);
+  // Load initial state from localStorage
+  const [selectedServiceId, setSelectedServiceId] = useState<Id<"services"> | null>(() => {
+    const stored = loadServiceState();
+    return stored?.selectedServiceId as Id<"services"> | null ?? null;
+  });
+  const [isInsideService, setIsInsideService] = useState(() => {
+    const stored = loadServiceState();
+    return stored?.isInsideService ?? false;
+  });
+  const [serviceItemIndex, setServiceItemIndex] = useState<number | null>(() => {
+    const stored = loadServiceState();
+    return stored?.serviceItemIndex ?? null;
+  });
+  
+  // Persist state changes
+  useEffect(() => {
+    saveServiceState({
+      selectedServiceId: selectedServiceId as string | null,
+      isInsideService,
+      serviceItemIndex,
+    });
+  }, [selectedServiceId, isInsideService, serviceItemIndex]);
+  
+  // Validate restored service still exists
+  useEffect(() => {
+    if (services && selectedServiceId) {
+      const exists = services.some((s) => s._id === selectedServiceId);
+      if (!exists) {
+        setSelectedServiceId(null);
+        setIsInsideService(false);
+        setServiceItemIndex(null);
+      }
+    }
+  }, [services, selectedServiceId]);
 
   const selectedService = useMemo(() => {
     if (!selectedServiceId || !services) return null;

@@ -127,6 +127,47 @@ export function filtersToCSS(filters: MediaFilters): string {
   return parts.length > 0 ? parts.join(" ") : "none";
 }
 
+// LocalStorage key for filters
+const FILTERS_STORAGE_KEY = "present-media-filters";
+
+// Load filters from localStorage
+function loadFiltersFromStorage(): Record<string, MediaFilters> {
+  if (typeof window === "undefined") return {};
+  try {
+    const stored = localStorage.getItem(FILTERS_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : {};
+  } catch {
+    return {};
+  }
+}
+
+// Save filters to localStorage
+function saveFiltersToStorage(filters: Record<string, MediaFilters>) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
+  } catch (e) {
+    console.error("Failed to save filters:", e);
+  }
+}
+
+// Convert blob URL to data URL for cross-window communication
+export async function blobUrlToDataUrl(blobUrl: string): Promise<string> {
+  try {
+    const response = await fetch(blobUrl);
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) {
+    console.error("Failed to convert blob to data URL:", e);
+    return blobUrl; // Fallback to original
+  }
+}
+
 export function useMediaFolders() {
   const [folders, setFolders] = useState<MediaFolder[]>([]);
   // Store ALL media from all folders
@@ -344,8 +385,15 @@ export function useMediaFolders() {
     volume: 1,
   });
 
-  // Per-item media filters - stored by item ID
-  const [itemFilters, setItemFilters] = useState<Record<string, MediaFilters>>({});
+  // Per-item media filters - stored by item ID, persisted to localStorage
+  const [itemFilters, setItemFilters] = useState<Record<string, MediaFilters>>(() => 
+    loadFiltersFromStorage()
+  );
+
+  // Save filters to localStorage whenever they change
+  useEffect(() => {
+    saveFiltersToStorage(itemFilters);
+  }, [itemFilters]);
 
   // Get current item's filters (or defaults if none set)
   const mediaFilters = useMemo(() => {

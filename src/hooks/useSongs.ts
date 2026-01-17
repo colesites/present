@@ -1,22 +1,111 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMemo, useState, useEffect } from "react";
+import { useMutation } from "convex/react";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
 import { parseLyricsToSlides } from "@/lib/lyrics";
+import { useCachedConvexQuery } from "./useConvexCache";
+import type { Song } from "@/types";
+
+const SONGS_CACHE_KEY = "present-songs-cache";
+const SONGS_STATE_KEY = "present-songs-state";
+
+// Load songs from localStorage for immediate display
+function loadCachedSongs(): Song[] | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(SONGS_CACHE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Save songs to localStorage
+function saveSongsCache(songs: Song[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify(songs));
+  } catch (e) {
+    console.error("Failed to cache songs:", e);
+  }
+}
+
+// Load song selection state
+function loadSongsState() {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(SONGS_STATE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Save song selection state
+function saveSongsState(state: { selectedSongId: string | null; selectedCategoryId: string | null }) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(SONGS_STATE_KEY, JSON.stringify(state));
+  } catch (e) {
+    console.error("Failed to save songs state:", e);
+  }
+}
 
 export function useSongs(orgId: Id<"organizations"> | null) {
-  const songs = useQuery(
+  // Use cached query for offline support
+  const convexSongs = useCachedConvexQuery(
     api.songs.listByOrg,
-    orgId ? { orgId } : "skip"
+    orgId ? { orgId } : "skip",
+    "songs"
   );
+  
+  // Local cache for immediate display on reload
+  const [localSongs, setLocalSongs] = useState<Song[] | null>(() => loadCachedSongs());
+  
+  // Use convex data when available, fallback to local cache
+  const songs: Song[] | null = (convexSongs as Song[] | undefined) ?? localSongs;
+  
+  // Update local cache when convex data loads
+  useEffect(() => {
+    if (convexSongs && convexSongs.length > 0) {
+      setLocalSongs(convexSongs as Song[]);
+      saveSongsCache(convexSongs as Song[]);
+    }
+  }, [convexSongs]);
+  
   const createSong = useMutation(api.songs.create);
   const updateSong = useMutation(api.songs.update);
   const removeSong = useMutation(api.songs.remove);
 
-  const [selectedSongId, setSelectedSongId] = useState<Id<"songs"> | null>(null);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<Id<"categories"> | null>(null);
+  // Load initial selection from localStorage
+  const [selectedSongId, setSelectedSongId] = useState<Id<"songs"> | null>(() => {
+    const state = loadSongsState();
+    return state?.selectedSongId as Id<"songs"> | null ?? null;
+  });
+  const [selectedCategoryId, setSelectedCategoryId] = useState<Id<"categories"> | null>(() => {
+    const state = loadSongsState();
+    return state?.selectedCategoryId as Id<"categories"> | null ?? null;
+  });
+  
+  // Persist selection state
+  useEffect(() => {
+    saveSongsState({
+      selectedSongId: selectedSongId as string | null,
+      selectedCategoryId: selectedCategoryId as string | null,
+    });
+  }, [selectedSongId, selectedCategoryId]);
+  
+  // Validate selection still exists
+  useEffect(() => {
+    if (songs && selectedSongId) {
+      const exists = songs.some((s) => s._id === selectedSongId);
+      if (!exists) {
+        setSelectedSongId(null);
+      }
+    }
+  }, [songs, selectedSongId]);
 
   const selectedSong = useMemo(() => {
     if (!selectedSongId || !songs) return null;
