@@ -28,7 +28,8 @@ export const setActiveSlide = mutation({
     if (existing) {
       await ctx.db.patch(existing._id, {
         activeSlideId: args.activeSlideId ?? existing.activeSlideId,
-        activeBackgroundId: args.activeBackgroundId ?? existing.activeBackgroundId,
+        activeBackgroundId:
+          args.activeBackgroundId ?? existing.activeBackgroundId,
         isBlackedOut: args.isBlackedOut ?? existing.isBlackedOut,
         updatedAt: now,
       });
@@ -71,7 +72,8 @@ export const setFontStyle = mutation({
     if (args.fontSize !== undefined) updates.fontSize = args.fontSize;
     if (args.fontBold !== undefined) updates.fontBold = args.fontBold;
     if (args.fontItalic !== undefined) updates.fontItalic = args.fontItalic;
-    if (args.fontUnderline !== undefined) updates.fontUnderline = args.fontUnderline;
+    if (args.fontUnderline !== undefined)
+      updates.fontUnderline = args.fontUnderline;
 
     if (existing) {
       await ctx.db.patch(existing._id, updates);

@@ -44,7 +44,10 @@ function loadSongsState() {
 }
 
 // Save song selection state
-function saveSongsState(state: { selectedSongId: string | null; selectedCategoryId: string | null }) {
+function saveSongsState(state: {
+  selectedSongId: string | null;
+  selectedCategoryId: string | null;
+}) {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(SONGS_STATE_KEY, JSON.stringify(state));
@@ -58,15 +61,26 @@ export function useSongs(orgId: Id<"organizations"> | null) {
   const convexSongs = useCachedConvexQuery(
     api.songs.listByOrg,
     orgId ? { orgId } : "skip",
-    "songs"
+    "songs",
   );
-  
-  // Local cache for immediate display on reload
-  const [localSongs, setLocalSongs] = useState<Song[] | null>(() => loadCachedSongs());
-  
+
+  // Local cache for immediate display on reload (null on server, loaded after hydration)
+  const [localSongs, setLocalSongs] = useState<Song[] | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+
   // Use convex data when available, fallback to local cache
-  const songs: Song[] | null = (convexSongs as Song[] | undefined) ?? localSongs;
-  
+  const songs: Song[] | null =
+    (convexSongs as Song[] | undefined) ?? localSongs;
+
+  // Load cached songs after hydration
+  useEffect(() => {
+    const cached = loadCachedSongs();
+    if (cached) {
+      setLocalSongs(cached);
+    }
+    setIsHydrated(true);
+  }, []);
+
   // Update local cache when convex data loads
   useEffect(() => {
     if (convexSongs && convexSongs.length > 0) {
@@ -74,29 +88,40 @@ export function useSongs(orgId: Id<"organizations"> | null) {
       saveSongsCache(convexSongs as Song[]);
     }
   }, [convexSongs]);
-  
+
   const createSong = useMutation(api.songs.create);
   const updateSong = useMutation(api.songs.update);
   const removeSong = useMutation(api.songs.remove);
 
-  // Load initial selection from localStorage
-  const [selectedSongId, setSelectedSongId] = useState<Id<"songs"> | null>(() => {
-    const state = loadSongsState();
-    return state?.selectedSongId as Id<"songs"> | null ?? null;
-  });
-  const [selectedCategoryId, setSelectedCategoryId] = useState<Id<"categories"> | null>(() => {
-    const state = loadSongsState();
-    return state?.selectedCategoryId as Id<"categories"> | null ?? null;
-  });
-  
-  // Persist selection state
+  // Initialize with defaults (matches server render)
+  const [selectedSongId, setSelectedSongId] = useState<Id<"songs"> | null>(
+    null,
+  );
+  const [selectedCategoryId, setSelectedCategoryId] =
+    useState<Id<"categories"> | null>(null);
+
+  // Restore selection from localStorage after hydration
   useEffect(() => {
+    const state = loadSongsState();
+    if (state) {
+      if (state.selectedSongId) {
+        setSelectedSongId(state.selectedSongId as Id<"songs">);
+      }
+      if (state.selectedCategoryId) {
+        setSelectedCategoryId(state.selectedCategoryId as Id<"categories">);
+      }
+    }
+  }, []);
+
+  // Persist selection state (only after hydration)
+  useEffect(() => {
+    if (!isHydrated) return;
     saveSongsState({
       selectedSongId: selectedSongId as string | null,
       selectedCategoryId: selectedCategoryId as string | null,
     });
-  }, [selectedSongId, selectedCategoryId]);
-  
+  }, [isHydrated, selectedSongId, selectedCategoryId]);
+
   // Validate selection still exists
   useEffect(() => {
     if (songs && selectedSongId) {
@@ -121,7 +146,7 @@ export function useSongs(orgId: Id<"organizations"> | null) {
   const createNewSong = async (
     title: string,
     lyrics: string,
-    categoryId?: Id<"categories">
+    categoryId?: Id<"categories">,
   ) => {
     if (!orgId || !title.trim()) return null;
     const slides = parseLyricsToSlides(lyrics);
@@ -138,7 +163,7 @@ export function useSongs(orgId: Id<"organizations"> | null) {
   const updateExistingSong = async (
     songId: Id<"songs">,
     title: string,
-    lyrics: string
+    lyrics: string,
   ) => {
     const slides = parseLyricsToSlides(lyrics);
     await updateSong({ songId, title, lyrics, slides });

@@ -52,12 +52,12 @@ export default defineSchema({
         type: v.union(
           v.literal("song"),
           v.literal("media"),
-          v.literal("scripture")
+          v.literal("scripture"),
         ),
         refId: v.string(),
         label: v.optional(v.string()),
         addedAt: v.number(),
-      })
+      }),
     ),
     createdAt: v.number(),
   }).index("by_org", ["orgId"]),

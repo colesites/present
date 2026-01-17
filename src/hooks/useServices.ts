@@ -36,15 +36,12 @@ function saveServiceState(state: {
   }
 }
 
-export function useServices(
-  orgId: Id<"organizations"> | null,
-  songs: Song[]
-) {
+export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
   // Use cached query for offline support
   const services = useCachedConvexQuery(
     api.services.listByOrg,
     orgId ? { orgId } : "skip",
-    "services"
+    "services",
   );
   const createService = useMutation(api.services.create);
   const renameService = useMutation(api.services.rename);
@@ -52,29 +49,40 @@ export function useServices(
   const addItemToService = useMutation(api.services.addItem);
   const removeItemFromService = useMutation(api.services.removeItem);
 
-  // Load initial state from localStorage
-  const [selectedServiceId, setSelectedServiceId] = useState<Id<"services"> | null>(() => {
-    const stored = loadServiceState();
-    return stored?.selectedServiceId as Id<"services"> | null ?? null;
-  });
-  const [isInsideService, setIsInsideService] = useState(() => {
-    const stored = loadServiceState();
-    return stored?.isInsideService ?? false;
-  });
-  const [serviceItemIndex, setServiceItemIndex] = useState<number | null>(() => {
-    const stored = loadServiceState();
-    return stored?.serviceItemIndex ?? null;
-  });
-  
-  // Persist state changes
+  // Initialize with defaults (matches server render)
+  const [selectedServiceId, setSelectedServiceId] =
+    useState<Id<"services"> | null>(null);
+  const [isInsideService, setIsInsideService] = useState(false);
+  const [serviceItemIndex, setServiceItemIndex] = useState<number | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Restore persisted state after hydration
   useEffect(() => {
+    const stored = loadServiceState();
+    if (stored) {
+      if (stored.selectedServiceId) {
+        setSelectedServiceId(stored.selectedServiceId as Id<"services">);
+      }
+      if (stored.isInsideService) {
+        setIsInsideService(stored.isInsideService);
+      }
+      if (stored.serviceItemIndex !== null) {
+        setServiceItemIndex(stored.serviceItemIndex);
+      }
+    }
+    setIsHydrated(true);
+  }, []);
+
+  // Persist state changes (only after hydration to avoid overwriting with defaults)
+  useEffect(() => {
+    if (!isHydrated) return;
     saveServiceState({
       selectedServiceId: selectedServiceId as string | null,
       isInsideService,
       serviceItemIndex,
     });
-  }, [selectedServiceId, isInsideService, serviceItemIndex]);
-  
+  }, [isHydrated, selectedServiceId, isInsideService, serviceItemIndex]);
+
   // Validate restored service still exists
   useEffect(() => {
     if (services && selectedServiceId) {
@@ -110,7 +118,10 @@ export function useServices(
     return id;
   };
 
-  const renameExistingService = async (serviceId: Id<"services">, name: string) => {
+  const renameExistingService = async (
+    serviceId: Id<"services">,
+    name: string,
+  ) => {
     await renameService({ serviceId, name });
   };
 
@@ -122,15 +133,30 @@ export function useServices(
     }
   };
 
-  const addSongToService = async (serviceId: Id<"services">, songId: Id<"songs">) => {
+  const addSongToService = async (
+    serviceId: Id<"services">,
+    songId: Id<"songs">,
+  ) => {
     await addItemToService({ serviceId, type: "song", refId: songId });
   };
 
-  const addMediaToService = async (serviceId: Id<"services">, mediaId: string, mediaName: string) => {
-    await addItemToService({ serviceId, type: "media", refId: mediaId, label: mediaName });
+  const addMediaToService = async (
+    serviceId: Id<"services">,
+    mediaId: string,
+    mediaName: string,
+  ) => {
+    await addItemToService({
+      serviceId,
+      type: "media",
+      refId: mediaId,
+      label: mediaName,
+    });
   };
 
-  const removeFromService = async (serviceId: Id<"services">, index: number) => {
+  const removeFromService = async (
+    serviceId: Id<"services">,
+    index: number,
+  ) => {
     await removeItemFromService({ serviceId, itemIndex: index });
   };
 

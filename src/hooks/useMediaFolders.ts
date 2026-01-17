@@ -67,7 +67,7 @@ async function openDB(): Promise<IDBDatabase> {
 async function saveHandle(
   id: string,
   name: string,
-  handle: FileSystemDirectoryHandle
+  handle: FileSystemDirectoryHandle,
 ): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -104,7 +104,15 @@ async function removeHandle(id: string): Promise<void> {
 }
 
 // Supported file extensions
-const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"];
+const IMAGE_EXTENSIONS = [
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".bmp",
+];
 const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v"];
 
 function getMediaType(fileName: string): "image" | "video" | null {
@@ -117,17 +125,20 @@ function getMediaType(fileName: string): "image" | "video" | null {
 // Convert filters to CSS filter string
 export function filtersToCSS(filters: MediaFilters): string {
   const parts: string[] = [];
-  if (filters.brightness !== 100) parts.push(`brightness(${filters.brightness}%)`);
+  if (filters.brightness !== 100)
+    parts.push(`brightness(${filters.brightness}%)`);
   if (filters.contrast !== 100) parts.push(`contrast(${filters.contrast}%)`);
-  if (filters.saturation !== 100) parts.push(`saturate(${filters.saturation}%)`);
+  if (filters.saturation !== 100)
+    parts.push(`saturate(${filters.saturation}%)`);
   if (filters.blur > 0) parts.push(`blur(${filters.blur}px)`);
   if (filters.grayscale > 0) parts.push(`grayscale(${filters.grayscale}%)`);
   if (filters.sepia > 0) parts.push(`sepia(${filters.sepia}%)`);
-  if (filters.hueRotate !== 0) parts.push(`hue-rotate(${filters.hueRotate}deg)`);
+  if (filters.hueRotate !== 0)
+    parts.push(`hue-rotate(${filters.hueRotate}deg)`);
   return parts.length > 0 ? parts.join(" ") : "none";
 }
 
-// LocalStorage key for filters
+// LocalStorage keys
 const FILTERS_STORAGE_KEY = "present-media-filters";
 
 // Load filters from localStorage
@@ -219,7 +230,9 @@ export function useMediaFolders() {
       for (const folder of folders) {
         try {
           // Request permission if needed
-          const permission = await folder.handle.queryPermission({ mode: "read" });
+          const permission = await folder.handle.queryPermission({
+            mode: "read",
+          });
           if (permission !== "granted") {
             const newPermission = await folder.handle.requestPermission({
               mode: "read",
@@ -267,31 +280,34 @@ export function useMediaFolders() {
   }, [allMediaItems, selectedFolderId]);
 
   // Load media from a single folder
-  const loadMediaFromFolder = useCallback(async (folder: MediaFolder): Promise<MediaItem[]> => {
-    const items: MediaItem[] = [];
-    try {
-      for await (const entry of folder.handle.values()) {
-        if (entry.kind === "file") {
-          const mediaType = getMediaType(entry.name);
-          if (mediaType) {
-            const file = await entry.getFile();
-            const url = URL.createObjectURL(file);
-            items.push({
-              id: `${folder.id}-${entry.name}`,
-              name: entry.name,
-              type: mediaType,
-              url,
-              file,
-              folderId: folder.id,
-            });
+  const loadMediaFromFolder = useCallback(
+    async (folder: MediaFolder): Promise<MediaItem[]> => {
+      const items: MediaItem[] = [];
+      try {
+        for await (const entry of folder.handle.values()) {
+          if (entry.kind === "file") {
+            const mediaType = getMediaType(entry.name);
+            if (mediaType) {
+              const file = await entry.getFile();
+              const url = URL.createObjectURL(file);
+              items.push({
+                id: `${folder.id}-${entry.name}`,
+                name: entry.name,
+                type: mediaType,
+                url,
+                file,
+                folderId: folder.id,
+              });
+            }
           }
         }
+      } catch (error) {
+        console.error(`Failed to load media from ${folder.name}:`, error);
       }
-    } catch (error) {
-      console.error(`Failed to load media from ${folder.name}:`, error);
-    }
-    return items;
-  }, []);
+      return items;
+    },
+    [],
+  );
 
   // Add a new folder
   const addFolder = useCallback(async () => {
@@ -318,13 +334,15 @@ export function useMediaFolders() {
       await saveHandle(id, name, handle);
 
       const newFolder: MediaFolder = { id, name, handle };
-      
+
       // Load media from the new folder immediately
       const newMedia = await loadMediaFromFolder(newFolder);
-      
+
       // Update state with new folder and its media
       setFolders((prev) => [...prev, newFolder]);
-      setAllMediaItems((prev) => [...prev, ...newMedia].sort((a, b) => a.name.localeCompare(b.name)));
+      setAllMediaItems((prev) =>
+        [...prev, ...newMedia].sort((a, b) => a.name.localeCompare(b.name)),
+      );
       setSelectedFolderId(id); // Auto-select the new folder
 
       return newFolder;
@@ -336,7 +354,9 @@ export function useMediaFolders() {
       }
       // User denied permission in the browser dialog
       if (err.name === "NotAllowedError" || err.name === "SecurityError") {
-        throw new Error("Permission denied. Please allow access to add folders.");
+        throw new Error(
+          "Permission denied. Please allow access to add folders.",
+        );
       }
       // Other errors
       console.error("Add folder error:", err.name, err.message);
@@ -345,25 +365,28 @@ export function useMediaFolders() {
   }, [folders, loadMediaFromFolder]);
 
   // Remove a folder
-  const removeFolder = useCallback(async (folderId: string) => {
-    await removeHandle(folderId);
+  const removeFolder = useCallback(
+    async (folderId: string) => {
+      await removeHandle(folderId);
 
-    // Revoke URLs for items from this folder
-    setAllMediaItems((prev) => {
-      const toRemove = prev.filter((item) => item.folderId === folderId);
-      for (const item of toRemove) {
-        URL.revokeObjectURL(item.url);
+      // Revoke URLs for items from this folder
+      setAllMediaItems((prev) => {
+        const toRemove = prev.filter((item) => item.folderId === folderId);
+        for (const item of toRemove) {
+          URL.revokeObjectURL(item.url);
+        }
+        return prev.filter((item) => item.folderId !== folderId);
+      });
+
+      setFolders((prev) => prev.filter((f) => f.id !== folderId));
+
+      // If removed folder was selected, clear selection
+      if (selectedFolderId === folderId) {
+        setSelectedFolderId(null);
       }
-      return prev.filter((item) => item.folderId !== folderId);
-    });
-
-    setFolders((prev) => prev.filter((f) => f.id !== folderId));
-    
-    // If removed folder was selected, clear selection
-    if (selectedFolderId === folderId) {
-      setSelectedFolderId(null);
-    }
-  }, [selectedFolderId]);
+    },
+    [selectedFolderId],
+  );
 
   // Refresh media from all folders
   const refreshMedia = useCallback(async () => {
@@ -372,12 +395,20 @@ export function useMediaFolders() {
   }, []);
 
   // Filter by type (uses filtered mediaItems, not allMediaItems)
-  const images = useMemo(() => mediaItems.filter((item) => item.type === "image"), [mediaItems]);
-  const videos = useMemo(() => mediaItems.filter((item) => item.type === "video"), [mediaItems]);
+  const images = useMemo(
+    () => mediaItems.filter((item) => item.type === "image"),
+    [mediaItems],
+  );
+  const videos = useMemo(
+    () => mediaItems.filter((item) => item.type === "video"),
+    [mediaItems],
+  );
 
   // Select a media item for output
-  const [activeMediaItem, setActiveMediaItem] = useState<MediaItem | null>(null);
-  
+  const [activeMediaItem, setActiveMediaItem] = useState<MediaItem | null>(
+    null,
+  );
+
   // Video settings (global for now)
   const [videoSettings, setVideoSettings] = useState<VideoSettings>({
     loop: true,
@@ -386,8 +417,8 @@ export function useMediaFolders() {
   });
 
   // Per-item media filters - stored by item ID, persisted to localStorage
-  const [itemFilters, setItemFilters] = useState<Record<string, MediaFilters>>(() => 
-    loadFiltersFromStorage()
+  const [itemFilters, setItemFilters] = useState<Record<string, MediaFilters>>(
+    () => loadFiltersFromStorage(),
   );
 
   // Save filters to localStorage whenever they change
@@ -405,17 +436,26 @@ export function useMediaFolders() {
     setActiveMediaItem(item);
   }, []);
 
-  const updateVideoSettings = useCallback((settings: Partial<VideoSettings>) => {
-    setVideoSettings((prev) => ({ ...prev, ...settings }));
-  }, []);
+  const updateVideoSettings = useCallback(
+    (settings: Partial<VideoSettings>) => {
+      setVideoSettings((prev) => ({ ...prev, ...settings }));
+    },
+    [],
+  );
 
-  const updateMediaFilters = useCallback((filters: Partial<MediaFilters>) => {
-    if (!activeMediaItem) return;
-    setItemFilters((prev) => ({
-      ...prev,
-      [activeMediaItem.id]: { ...(prev[activeMediaItem.id] ?? DEFAULT_FILTERS), ...filters },
-    }));
-  }, [activeMediaItem]);
+  const updateMediaFilters = useCallback(
+    (filters: Partial<MediaFilters>) => {
+      if (!activeMediaItem) return;
+      setItemFilters((prev) => ({
+        ...prev,
+        [activeMediaItem.id]: {
+          ...(prev[activeMediaItem.id] ?? DEFAULT_FILTERS),
+          ...filters,
+        },
+      }));
+    },
+    [activeMediaItem],
+  );
 
   const resetMediaFilters = useCallback(() => {
     if (!activeMediaItem) return;
@@ -426,7 +466,10 @@ export function useMediaFolders() {
   }, [activeMediaItem]);
 
   // Get CSS filter string for current item's filters
-  const mediaFilterCSS = useMemo(() => filtersToCSS(mediaFilters), [mediaFilters]);
+  const mediaFilterCSS = useMemo(
+    () => filtersToCSS(mediaFilters),
+    [mediaFilters],
+  );
 
   return {
     folders,

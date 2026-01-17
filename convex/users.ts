@@ -10,7 +10,9 @@ export const getCurrent = query({
     }
     return await ctx.db
       .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
       .unique();
   },
 });
@@ -25,7 +27,9 @@ export const getCurrentWithOrg = query({
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
       .unique();
     if (!user) {
       return null;
@@ -49,7 +53,9 @@ export const createForCurrent = mutation({
 
     const existing = await ctx.db
       .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
       .unique();
     if (existing) {
       return existing._id;
@@ -78,7 +84,9 @@ export const ensureCurrent = mutation({
 
     const existing = await ctx.db
       .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
       .unique();
     if (existing) {
       return { userId: existing._id, orgId: existing.orgId };

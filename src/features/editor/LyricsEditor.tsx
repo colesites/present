@@ -63,12 +63,15 @@ export const LyricsEditor = memo(function LyricsEditor({
         // Silent fail for auto-save
       }
     },
-    1000 // 1 second debounce
+    1000, // 1 second debounce
   );
 
   // Trigger auto-save when title or lyrics change
   useEffect(() => {
-    if (editTitle.trim() && (editTitle !== song.title || editLyrics !== song.lyrics)) {
+    if (
+      editTitle.trim() &&
+      (editTitle !== song.title || editLyrics !== song.lyrics)
+    ) {
       debouncedAutoSave(editTitle, editLyrics);
     }
   }, [editTitle, editLyrics, song.title, song.lyrics, debouncedAutoSave]);
@@ -107,7 +110,10 @@ export const LyricsEditor = memo(function LyricsEditor({
           }
         } else if (inBlock && (line.length === 0 || isLabel)) {
           // End of block
-          blocks.push({ start: blockStart, end: currentStart > 0 ? currentStart - 1 : 0 });
+          blocks.push({
+            start: blockStart,
+            end: currentStart > 0 ? currentStart - 1 : 0,
+          });
           inBlock = false;
           if (isLabel) {
             // Label starts a new potential block context
@@ -234,7 +240,9 @@ export const LyricsEditor = memo(function LyricsEditor({
         onFontSizeChange={(s) => onFontStyleChange({ fontSize: s })}
         onBoldToggle={() => onFontStyleChange({ fontBold: !fontBold })}
         onItalicToggle={() => onFontStyleChange({ fontItalic: !fontItalic })}
-        onUnderlineToggle={() => onFontStyleChange({ fontUnderline: !fontUnderline })}
+        onUnderlineToggle={() =>
+          onFontStyleChange({ fontUnderline: !fontUnderline })
+        }
       />
 
       {/* Lyrics textarea */}

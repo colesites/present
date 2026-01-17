@@ -75,7 +75,9 @@ export const SlidesGrid = memo(function SlidesGrid({
             isActive={isActive}
             isSelected={isSelected}
             onClick={() => onSelectSlide(song._id, index, slide.text)}
-            onEdit={onEditSlide ? () => onEditSlide(song._id, index) : undefined}
+            onEdit={
+              onEditSlide ? () => onEditSlide(song._id, index) : undefined
+            }
           />
         );
       })}
@@ -118,7 +120,7 @@ const SlideCard = memo(function SlideCard({
               ? "border-primary ring-2 ring-primary"
               : isSelected
                 ? "border-primary/50"
-                : "border-border hover:border-primary/50"
+                : "border-border hover:border-primary/50",
           )}
         >
           {/* Slide preview - black background like main output */}
@@ -134,7 +136,7 @@ const SlideCard = memo(function SlideCard({
           <div
             className={cn(
               "flex shrink-0 items-center justify-between px-3 py-1.5 text-xs font-medium",
-              getLabelColor(slide.label)
+              getLabelColor(slide.label),
             )}
           >
             <span>{index + 1}</span>

@@ -1,8 +1,22 @@
 "use client";
 
 import { memo, useState, Activity } from "react";
-import { FolderPlus, Trash2, RefreshCw, Image, Video, Folder, Check, Monitor, Plus } from "lucide-react";
-import type { MediaState, MediaItem, MediaFolder } from "@/hooks/useMediaFolders";
+import {
+  FolderPlus,
+  Trash2,
+  RefreshCw,
+  Image,
+  Video,
+  Folder,
+  Check,
+  Monitor,
+  Plus,
+} from "lucide-react";
+import type {
+  MediaState,
+  MediaItem,
+  MediaFolder,
+} from "@/hooks/useMediaFolders";
 import type { Id } from "@/../convex/_generated/dataModel";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -49,7 +63,7 @@ const MediaItemCard = memo(function MediaItemCard({
             "group relative aspect-video overflow-hidden rounded-lg border bg-black transition",
             isActive
               ? "border-primary ring-2 ring-primary"
-              : "border-border hover:border-primary"
+              : "border-border hover:border-primary",
           )}
         >
           {item.type === "image" ? (
@@ -84,7 +98,9 @@ const MediaItemCard = memo(function MediaItemCard({
           {isActive && (
             <div className="absolute left-1 top-1 flex items-center gap-1 rounded bg-primary px-1.5 py-0.5">
               <Monitor className="h-3 w-3 text-primary-foreground" />
-              <span className="text-[10px] font-medium text-primary-foreground">LIVE</span>
+              <span className="text-[10px] font-medium text-primary-foreground">
+                LIVE
+              </span>
             </div>
           )}
           {/* Selection check */}
@@ -142,11 +158,17 @@ export const MediaPanel = memo(function MediaPanel({
   const folderFilteredItems = selectedFolderId
     ? allMediaItems.filter((item) => item.folderId === selectedFolderId)
     : allMediaItems;
-  const imageCount = folderFilteredItems.filter((item) => item.type === "image").length;
-  const videoCount = folderFilteredItems.filter((item) => item.type === "video").length;
+  const imageCount = folderFilteredItems.filter(
+    (item) => item.type === "image",
+  ).length;
+  const videoCount = folderFilteredItems.filter(
+    (item) => item.type === "video",
+  ).length;
 
   const [filter, setFilter] = useState<MediaFilter>("all");
-  const [folderToRemove, setFolderToRemove] = useState<MediaFolder | null>(null);
+  const [folderToRemove, setFolderToRemove] = useState<MediaFolder | null>(
+    null,
+  );
 
   const handleAddToService = async (item: MediaItem) => {
     if (!selectedServiceId) {
@@ -168,7 +190,9 @@ export const MediaPanel = memo(function MediaPanel({
         toast.success(`Added folder: ${folder.name}`);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to add folder");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to add folder",
+      );
     }
   };
 
@@ -194,7 +218,8 @@ export const MediaPanel = memo(function MediaPanel({
   };
 
   // Check if File System Access API is supported
-  const isSupported = typeof window !== "undefined" && "showDirectoryPicker" in window;
+  const isSupported =
+    typeof window !== "undefined" && "showDirectoryPicker" in window;
 
   if (!isSupported) {
     return (
@@ -217,7 +242,9 @@ export const MediaPanel = memo(function MediaPanel({
         {/* Folders sidebar */}
         <div className="flex w-48 shrink-0 flex-col border-r border-border">
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="text-xs font-medium text-muted-foreground">Folders</span>
+            <span className="text-xs font-medium text-muted-foreground">
+              Folders
+            </span>
             <div className="flex gap-1">
               <button
                 type="button"
@@ -226,7 +253,9 @@ export const MediaPanel = memo(function MediaPanel({
                 className="rounded p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:opacity-50"
                 title="Refresh"
               >
-                <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+                <RefreshCw
+                  className={cn("h-3.5 w-3.5", isLoading && "animate-spin")}
+                />
               </button>
               <button
                 type="button"
@@ -259,12 +288,14 @@ export const MediaPanel = memo(function MediaPanel({
                     "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
                     selectedFolderId === null
                       ? "bg-primary text-primary-foreground"
-                      : "text-foreground hover:bg-secondary"
+                      : "text-foreground hover:bg-secondary",
                   )}
                 >
                   <Folder className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">All folders</span>
-                  <span className="ml-auto text-[10px] opacity-70">{allMediaItems.length}</span>
+                  <span className="ml-auto text-[10px] opacity-70">
+                    {allMediaItems.length}
+                  </span>
                 </button>
 
                 {folders.map((folder) => (
@@ -274,7 +305,7 @@ export const MediaPanel = memo(function MediaPanel({
                       "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
                       selectedFolderId === folder.id
                         ? "bg-primary text-primary-foreground"
-                        : "text-foreground hover:bg-secondary"
+                        : "text-foreground hover:bg-secondary",
                     )}
                   >
                     <button
@@ -311,11 +342,13 @@ export const MediaPanel = memo(function MediaPanel({
                 "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
                 filter === "all"
                   ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
               All
-              <span className="text-[10px] opacity-70">({folderFilteredItems.length})</span>
+              <span className="text-[10px] opacity-70">
+                ({folderFilteredItems.length})
+              </span>
             </button>
             <button
               type="button"
@@ -324,7 +357,7 @@ export const MediaPanel = memo(function MediaPanel({
                 "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
                 filter === "images"
                   ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
               <Image className="h-3 w-3" />
@@ -338,7 +371,7 @@ export const MediaPanel = memo(function MediaPanel({
                 "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
                 filter === "videos"
                   ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
               <Video className="h-3 w-3" />
@@ -366,7 +399,9 @@ export const MediaPanel = memo(function MediaPanel({
                     <div className="grid grid-cols-4 gap-2">
                       {/* Render ALL items, use CSS hidden for folder filtering */}
                       {allMediaItems.map((item) => {
-                        const matchesFolder = !selectedFolderId || item.folderId === selectedFolderId;
+                        const matchesFolder =
+                          !selectedFolderId ||
+                          item.folderId === selectedFolderId;
                         return (
                           <div
                             key={item.id}
@@ -401,7 +436,9 @@ export const MediaPanel = memo(function MediaPanel({
                       {allMediaItems
                         .filter((item) => item.type === "image")
                         .map((item) => {
-                          const matchesFolder = !selectedFolderId || item.folderId === selectedFolderId;
+                          const matchesFolder =
+                            !selectedFolderId ||
+                            item.folderId === selectedFolderId;
                           return (
                             <div
                               key={item.id}
@@ -436,7 +473,9 @@ export const MediaPanel = memo(function MediaPanel({
                       {allMediaItems
                         .filter((item) => item.type === "video")
                         .map((item) => {
-                          const matchesFolder = !selectedFolderId || item.folderId === selectedFolderId;
+                          const matchesFolder =
+                            !selectedFolderId ||
+                            item.folderId === selectedFolderId;
                           return (
                             <div
                               key={item.id}
@@ -469,13 +508,16 @@ export const MediaPanel = memo(function MediaPanel({
       </div>
 
       {/* Remove folder confirmation dialog */}
-      <AlertDialog open={!!folderToRemove} onOpenChange={() => setFolderToRemove(null)}>
+      <AlertDialog
+        open={!!folderToRemove}
+        onOpenChange={() => setFolderToRemove(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove folder?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove &quot;{folderToRemove?.name}&quot; from your media library.
-              The files on your computer will not be deleted.
+              This will remove &quot;{folderToRemove?.name}&quot; from your
+              media library. The files on your computer will not be deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

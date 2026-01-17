@@ -35,11 +35,13 @@ export function QueryProvider({ children }: QueryProviderProps) {
             networkMode: "offlineFirst",
           },
         },
-      })
+      }),
   );
 
   // Create persister only on client
-  const [persister, setPersister] = useState<ReturnType<typeof createSyncStoragePersister> | null>(null);
+  const [persister, setPersister] = useState<ReturnType<
+    typeof createSyncStoragePersister
+  > | null>(null);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -47,7 +49,7 @@ export function QueryProvider({ children }: QueryProviderProps) {
         createSyncStoragePersister({
           storage: window.localStorage,
           key: "present-query-cache",
-        })
+        }),
       );
     }
   }, []);
@@ -55,9 +57,7 @@ export function QueryProvider({ children }: QueryProviderProps) {
   // Always provide QueryClient, use PersistQueryClientProvider only when persister is ready
   if (!isClient || !persister) {
     return (
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
   }
 

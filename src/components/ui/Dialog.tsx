@@ -16,7 +16,7 @@ export function Dialog({ title, children, onClose }: DialogProps) {
         onClose();
       }
     },
-    [onClose]
+    [onClose],
   );
 
   useEffect(() => {

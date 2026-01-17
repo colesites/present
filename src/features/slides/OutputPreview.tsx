@@ -47,6 +47,8 @@ interface OutputPreviewProps {
   mediaFilters: MediaFilters;
   onMediaFiltersChange: (filters: Partial<MediaFilters>) => void;
   onResetFilters: () => void;
+  isVideoPlaying: boolean;
+  videoCurrentTime: number;
 }
 
 // Filter slider component - compact version
@@ -108,6 +110,8 @@ export const OutputPreview = memo(function OutputPreview({
   mediaFilters,
   onMediaFiltersChange,
   onResetFilters,
+  isVideoPlaying,
+  videoCurrentTime,
 }: OutputPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -116,23 +120,36 @@ export const OutputPreview = memo(function OutputPreview({
   const hasActiveFilters =
     JSON.stringify(mediaFilters) !== JSON.stringify(DEFAULT_FILTERS);
 
-  // Apply video settings to video element
+  // Apply video settings to video element (always keep muted for preview)
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.loop = videoSettings.loop;
-      videoRef.current.muted = videoSettings.muted;
-      videoRef.current.volume = videoSettings.volume;
+      // Don't set muted from videoSettings - preview is always muted
     }
   }, [videoSettings]);
 
-  // Auto-play video when active
+  // Sync video playback with Show view
   useEffect(() => {
     if (videoRef.current && activeMediaItem?.type === "video") {
-      videoRef.current.play().catch(() => {
-        // Autoplay might be blocked by browser, ignore
-      });
+      if (isVideoPlaying) {
+        videoRef.current.play().catch(() => {
+          // Autoplay might be blocked
+        });
+      } else {
+        videoRef.current.pause();
+      }
     }
-  }, [activeMediaItem]);
+  }, [isVideoPlaying, activeMediaItem]);
+
+  // Sync video position with Show view
+  useEffect(() => {
+    if (videoRef.current && activeMediaItem?.type === "video") {
+      // Only seek if the difference is significant (more than 0.5 seconds)
+      if (Math.abs(videoRef.current.currentTime - videoCurrentTime) > 0.5) {
+        videoRef.current.currentTime = videoCurrentTime;
+      }
+    }
+  }, [videoCurrentTime, activeMediaItem]);
 
   const filterStyle = filtersToCSS(mediaFilters);
 
@@ -172,9 +189,8 @@ export const OutputPreview = memo(function OutputPreview({
                 src={activeMediaItem.url}
                 className="absolute inset-0 h-full w-full object-cover"
                 style={{ filter: filterStyle }}
-                autoPlay
                 loop={videoSettings.loop}
-                muted={videoSettings.muted}
+                muted // Always muted - this is just a preview
                 playsInline
               />
             ))}

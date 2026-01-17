@@ -25,7 +25,7 @@ export function parseLyricsToSlides(raw: string): SlideDraft[] {
 
     for (const line of buffer) {
       const trimmedLine = line.trim();
-      
+
       // Check if entire line is just a modifier like [x3]
       const bracketMatch = trimmedLine.match(sectionLabelRegex);
       if (bracketMatch && modifierPattern.test(bracketMatch[1])) {
@@ -68,13 +68,13 @@ export function parseLyricsToSlides(raw: string): SlideDraft[] {
     const bracketMatch = trimmed.match(sectionLabelRegex);
     if (bracketMatch) {
       const content = bracketMatch[1];
-      
+
       // Is it a modifier? (x3, 2x, etc.)
       if (modifierPattern.test(content)) {
         buffer.push(line); // Add to buffer, flush() will handle it
         continue;
       }
-      
+
       // It's a section label
       flush();
       currentLabel = content.charAt(0).toUpperCase() + content.slice(1);
@@ -93,7 +93,7 @@ export function parseLyricsToSlides(raw: string): SlideDraft[] {
 export function formatSlideLabel(
   index: number,
   label?: string,
-  modifier?: string
+  modifier?: string,
 ): string {
   const parts = [(index + 1).toString()];
   if (label) parts.push(label);
@@ -107,13 +107,15 @@ export function formatSlideLabel(
  * They only appear in Edit mode and in the slide footer/label.
  */
 export function stripBracketsForDisplay(text: string): string {
-  return text
-    // Remove standalone bracket lines like [Verse] or [x3]
-    .replace(/^\[.+\]$/gm, "")
-    // Remove inline brackets like "I am blessed [x3]" → "I am blessed"
-    .replace(/\s*\[.+?\]/g, "")
-    // Clean up multiple empty lines that might result
-    .replace(/\n{3,}/g, "\n\n")
-    // Trim whitespace
-    .trim();
+  return (
+    text
+      // Remove standalone bracket lines like [Verse] or [x3]
+      .replace(/^\[.+\]$/gm, "")
+      // Remove inline brackets like "I am blessed [x3]" → "I am blessed"
+      .replace(/\s*\[.+?\]/g, "")
+      // Clean up multiple empty lines that might result
+      .replace(/\n{3,}/g, "\n\n")
+      // Trim whitespace
+      .trim()
+  );
 }

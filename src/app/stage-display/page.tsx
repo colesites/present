@@ -33,7 +33,9 @@ export default function StageDisplayPage() {
   return (
     <div className="grid min-h-screen grid-cols-[2fr_1fr] gap-6 bg-black px-12 py-10 text-white">
       <section className="rounded-3xl border border-white/10 bg-white/5 p-10">
-        <p className="text-sm uppercase tracking-[0.3em] text-zinc-400">Current</p>
+        <p className="text-sm uppercase tracking-[0.3em] text-zinc-400">
+          Current
+        </p>
         <div className="mt-6 space-y-4">
           {isSignedIn && currentSlide?.current ? (
             <>

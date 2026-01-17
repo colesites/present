@@ -70,7 +70,7 @@ export const update = mutation({
           modifier: v.optional(v.string()),
           backgroundId: v.optional(v.string()),
         }),
-      )
+      ),
     ),
   },
   handler: async (ctx, args) => {

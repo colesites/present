@@ -10,10 +10,10 @@ interface FileSystemHandle {
   readonly name: string;
   isSameEntry(other: FileSystemHandle): Promise<boolean>;
   queryPermission(
-    descriptor?: FileSystemHandlePermissionDescriptor
+    descriptor?: FileSystemHandlePermissionDescriptor,
   ): Promise<PermissionState>;
   requestPermission(
-    descriptor?: FileSystemHandlePermissionDescriptor
+    descriptor?: FileSystemHandlePermissionDescriptor,
   ): Promise<PermissionState>;
 }
 
@@ -21,7 +21,7 @@ interface FileSystemFileHandle extends FileSystemHandle {
   readonly kind: "file";
   getFile(): Promise<File>;
   createWritable(
-    options?: FileSystemCreateWritableOptions
+    options?: FileSystemCreateWritableOptions,
   ): Promise<FileSystemWritableFileStream>;
 }
 
@@ -29,16 +29,18 @@ interface FileSystemDirectoryHandle extends FileSystemHandle {
   readonly kind: "directory";
   getDirectoryHandle(
     name: string,
-    options?: FileSystemGetDirectoryOptions
+    options?: FileSystemGetDirectoryOptions,
   ): Promise<FileSystemDirectoryHandle>;
   getFileHandle(
     name: string,
-    options?: FileSystemGetFileOptions
+    options?: FileSystemGetFileOptions,
   ): Promise<FileSystemFileHandle>;
   removeEntry(name: string, options?: FileSystemRemoveOptions): Promise<void>;
   resolve(possibleDescendant: FileSystemHandle): Promise<string[] | null>;
   keys(): AsyncIterableIterator<string>;
-  values(): AsyncIterableIterator<FileSystemFileHandle | FileSystemDirectoryHandle>;
+  values(): AsyncIterableIterator<
+    FileSystemFileHandle | FileSystemDirectoryHandle
+  >;
   entries(): AsyncIterableIterator<
     [string, FileSystemFileHandle | FileSystemDirectoryHandle]
   >;
@@ -109,12 +111,12 @@ interface FilePickerAcceptType {
 
 interface Window {
   showOpenFilePicker(
-    options?: OpenFilePickerOptions
+    options?: OpenFilePickerOptions,
   ): Promise<FileSystemFileHandle[]>;
   showSaveFilePicker(
-    options?: SaveFilePickerOptions
+    options?: SaveFilePickerOptions,
   ): Promise<FileSystemFileHandle>;
   showDirectoryPicker(
-    options?: DirectoryPickerOptions
+    options?: DirectoryPickerOptions,
   ): Promise<FileSystemDirectoryHandle>;
 }

@@ -70,7 +70,7 @@ export async function POST(request: Request) {
   if (!body?.lyrics?.trim()) {
     return NextResponse.json(
       { cleanedLyrics: "", notes: "No lyrics provided." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
         cleanedLyrics: body.lyrics,
         notes: "AI_GATEWAY_API_KEY is not set in .env.local",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
@@ -160,7 +160,7 @@ export async function POST(request: Request) {
           temperature: 0.2,
           max_tokens: 16000, // Large limit to ensure full lyrics are returned
         }),
-      }
+      },
     );
 
     if (!response.ok) {
@@ -171,7 +171,7 @@ export async function POST(request: Request) {
           cleanedLyrics: body.lyrics,
           notes: `AI Gateway error (${response.status}): ${errorText.slice(0, 200)}`,
         },
-        { status: 502 }
+        { status: 502 },
       );
     }
 
@@ -197,7 +197,7 @@ export async function POST(request: Request) {
           cleanedLyrics: body.lyrics,
           notes: "AI Gateway returned no content.",
         },
-        { status: 502 }
+        { status: 502 },
       );
     }
 
@@ -217,7 +217,7 @@ export async function POST(request: Request) {
       finishReason === "content_filter"
     ) {
       console.warn(
-        "AI content filter was triggered - returning original lyrics"
+        "AI content filter was triggered - returning original lyrics",
       );
       // Return original lyrics since the AI couldn't complete properly
       return NextResponse.json({
@@ -245,7 +245,7 @@ export async function POST(request: Request) {
         cleanedLyrics: body.lyrics,
         notes: `Request failed: ${message}`,
       },
-      { status: 502 }
+      { status: 502 },
     );
   }
 }

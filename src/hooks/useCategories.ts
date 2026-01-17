@@ -11,7 +11,7 @@ export function useCategories(orgId: Id<"organizations"> | null) {
   const categories = useCachedConvexQuery(
     api.categories.listByOrg,
     orgId ? { orgId } : "skip",
-    "categories"
+    "categories",
   );
   const ensureDefaultCategories = useMutation(api.categories.ensureDefaults);
   const createCategory = useMutation(api.categories.create);
@@ -31,7 +31,10 @@ export function useCategories(orgId: Id<"organizations"> | null) {
     return id;
   };
 
-  const renameExistingCategory = async (categoryId: Id<"categories">, name: string) => {
+  const renameExistingCategory = async (
+    categoryId: Id<"categories">,
+    name: string,
+  ) => {
     await renameCategory({ categoryId, name });
   };
 

@@ -32,6 +32,8 @@ type MediaMessage = {
     volume: number;
   };
   mediaFilterCSS: string;
+  isVideoPlaying: boolean;
+  videoCurrentTime: number;
 };
 
 type OutputMessage = ActiveSlideMessage | MediaMessage;
@@ -43,11 +45,16 @@ export default function OutputPage() {
     api.playback.getByOrg,
     current?.org ? { orgId: current.org._id } : "skip",
   );
-  const songs = useQuery(api.songs.listByOrg, current?.org ? { orgId: current.org._id } : "skip");
+  const songs = useQuery(
+    api.songs.listByOrg,
+    current?.org ? { orgId: current.org._id } : "skip",
+  );
   const [overrideSlideId, setOverrideSlideId] = useState<string | null>(null);
-  const [overrideSlideText, setOverrideSlideText] = useState<string | null>(null);
+  const [overrideSlideText, setOverrideSlideText] = useState<string | null>(
+    null,
+  );
   const [isFullscreen, setIsFullscreen] = useState(false);
-  
+
   // Media state
   const [mediaItem, setMediaItem] = useState<MediaMessage["mediaItem"]>(null);
   const [showText, setShowText] = useState(true);
@@ -58,6 +65,8 @@ export default function OutputPage() {
     volume: 1,
   });
   const [mediaFilterCSS, setMediaFilterCSS] = useState("none");
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -72,6 +81,8 @@ export default function OutputPage() {
         setShowMedia(event.data.showMedia);
         setVideoSettings(event.data.videoSettings);
         setMediaFilterCSS(event.data.mediaFilterCSS ?? "none");
+        setIsVideoPlaying(event.data.isVideoPlaying ?? false);
+        setVideoCurrentTime(event.data.videoCurrentTime ?? 0);
       }
     };
     channel.addEventListener("message", handler);
@@ -81,23 +92,37 @@ export default function OutputPage() {
     };
   }, []);
 
-  // Apply video settings
+  // Apply video settings (always keep muted - audio comes from Show view)
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.loop = videoSettings.loop;
-      videoRef.current.muted = videoSettings.muted;
-      videoRef.current.volume = videoSettings.volume;
+      // Don't set muted from videoSettings - output is always muted
+      // Audio comes from the Show view on the presenter's machine
     }
   }, [videoSettings]);
 
-  // Auto-play video when media changes
+  // Sync video playback with Show view
   useEffect(() => {
     if (videoRef.current && mediaItem?.type === "video") {
-      videoRef.current.play().catch(() => {
-        // Autoplay might be blocked
-      });
+      if (isVideoPlaying) {
+        videoRef.current.play().catch(() => {
+          // Autoplay might be blocked
+        });
+      } else {
+        videoRef.current.pause();
+      }
     }
-  }, [mediaItem]);
+  }, [isVideoPlaying, mediaItem]);
+
+  // Sync video position with Show view
+  useEffect(() => {
+    if (videoRef.current && mediaItem?.type === "video") {
+      // Only seek if the difference is significant (more than 0.5 seconds)
+      if (Math.abs(videoRef.current.currentTime - videoCurrentTime) > 0.5) {
+        videoRef.current.currentTime = videoCurrentTime;
+      }
+    }
+  }, [videoCurrentTime, mediaItem]);
 
   // Listen for fullscreen changes
   useEffect(() => {
@@ -149,15 +174,16 @@ export default function OutputPage() {
   const hasContent = activeSlide || mediaItem;
 
   return (
-    <div 
+    <div
       className="relative flex h-screen w-screen cursor-none select-none items-center justify-center bg-black text-white"
       onDoubleClick={toggleFullscreen}
     >
       {hasContent ? (
         <>
           {/* Media layer (background) with filters */}
-          {showMedia && mediaItem && (
-            mediaItem.type === "image" ? (
+          {showMedia &&
+            mediaItem &&
+            (mediaItem.type === "image" ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={mediaItem.url}
@@ -171,13 +197,11 @@ export default function OutputPage() {
                 src={mediaItem.url}
                 className="absolute inset-0 h-full w-full object-cover"
                 style={{ filter: mediaFilterCSS }}
-                autoPlay
                 loop={videoSettings.loop}
-                muted={videoSettings.muted}
+                muted // Audio comes from Show view, not output window
                 playsInline
               />
-            )
-          )}
+            ))}
 
           {/* Text layer (foreground) */}
           {showText && activeSlide && (
@@ -190,7 +214,7 @@ export default function OutputPage() {
                   fontItalic && "italic",
                   fontUnderline && "underline",
                   // Add text shadow for better readability over media
-                  mediaItem && "drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]"
+                  mediaItem && "drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]",
                 )}
                 style={{ fontFamily, fontSize: `${fontSize}px` }}
                 minScale={0.3}
@@ -201,12 +225,15 @@ export default function OutputPage() {
       ) : (
         // No slide - show instructions (only visible when not projecting)
         <div className="text-center">
-          <h1 className="text-4xl font-semibold text-zinc-300">Ready to project</h1>
+          <h1 className="text-4xl font-semibold text-zinc-300">
+            Ready to project
+          </h1>
           <p className="mt-4 text-zinc-500">
             Select a slide from the controller to display here.
           </p>
           <p className="mt-2 text-sm text-zinc-600">
-            Press <kbd className="rounded bg-zinc-800 px-2 py-1">F</kbd> or double-click for fullscreen
+            Press <kbd className="rounded bg-zinc-800 px-2 py-1">F</kbd> or
+            double-click for fullscreen
           </p>
           {!isFullscreen && (
             <button

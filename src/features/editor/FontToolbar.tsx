@@ -83,7 +83,7 @@ export const FontToolbar = memo(function FontToolbar({
           "flex h-7 w-7 items-center justify-center rounded text-sm font-bold transition",
           fontBold
             ? "bg-primary text-primary-foreground"
-            : "bg-secondary text-foreground hover:bg-secondary/80"
+            : "bg-secondary text-foreground hover:bg-secondary/80",
         )}
         title="Bold"
       >
@@ -98,7 +98,7 @@ export const FontToolbar = memo(function FontToolbar({
           "flex h-7 w-7 items-center justify-center rounded text-sm italic transition",
           fontItalic
             ? "bg-primary text-primary-foreground"
-            : "bg-secondary text-foreground hover:bg-secondary/80"
+            : "bg-secondary text-foreground hover:bg-secondary/80",
         )}
         title="Italic"
       >
@@ -113,7 +113,7 @@ export const FontToolbar = memo(function FontToolbar({
           "flex h-7 w-7 items-center justify-center rounded text-sm underline transition",
           fontUnderline
             ? "bg-primary text-primary-foreground"
-            : "bg-secondary text-foreground hover:bg-secondary/80"
+            : "bg-secondary text-foreground hover:bg-secondary/80",
         )}
         title="Underline"
       >

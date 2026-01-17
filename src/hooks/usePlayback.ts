@@ -4,7 +4,7 @@ import { useCallback, useRef, useState, useEffect } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
-import { useCachedConvexQuery, useIsOnline } from "./useConvexCache";
+import { useCachedConvexQuery } from "./useConvexCache";
 
 const PLAYBACK_STORAGE_KEY = "present-playback-local";
 
@@ -30,39 +30,48 @@ function saveLocalPlayback(state: { activeSlideId: string | null }) {
 }
 
 export function usePlayback(orgId: Id<"organizations"> | null) {
-  const isOnline = useIsOnline();
-  
   // Use cached query for offline support
   const playback = useCachedConvexQuery(
     api.playback.getByOrg,
     orgId ? { orgId } : "skip",
-    "playback"
+    "playback",
   );
   const setActiveSlide = useMutation(api.playback.setActiveSlide);
   const setFontStyle = useMutation(api.playback.setFontStyle);
   const broadcastRef = useRef<BroadcastChannel | null>(null);
-  
-  // Local state for offline/instant updates
-  const [localActiveSlideId, setLocalActiveSlideId] = useState<string | null>(() => {
-    const local = loadLocalPlayback();
-    return local?.activeSlideId ?? null;
-  });
+
+  // Local state for offline/instant updates (null on server, loaded after hydration)
+  const [localActiveSlideId, setLocalActiveSlideId] = useState<string | null>(
+    null,
+  );
+  const [isHydrated, setIsHydrated] = useState(false);
 
   // Track if we've made local changes that haven't synced yet
   const hasLocalChanges = useRef(false);
-  
+
+  // Load persisted state after hydration
+  useEffect(() => {
+    const local = loadLocalPlayback();
+    if (local?.activeSlideId) {
+      setLocalActiveSlideId(local.activeSlideId);
+    }
+    setIsHydrated(true);
+  }, []);
+
   // Only sync server state to local if we haven't made local changes
   // This prevents the "slide through" effect when coming online
   useEffect(() => {
+    // Wait for hydration
+    if (!isHydrated) return;
     // If we have local changes, don't overwrite with server state
     if (hasLocalChanges.current) return;
-    
+
     // Only update if server has a value and we don't have a local value
     if (playback?.activeSlideId && !localActiveSlideId) {
       setLocalActiveSlideId(playback.activeSlideId);
       saveLocalPlayback({ activeSlideId: playback.activeSlideId });
     }
-  }, [playback?.activeSlideId, localActiveSlideId]);
+  }, [isHydrated, playback?.activeSlideId, localActiveSlideId]);
 
   // Lazy init broadcast channel
   const getBroadcast = useCallback(() => {
@@ -78,7 +87,7 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
 
       // Mark that we have local changes (prevents server overwrite)
       hasLocalChanges.current = true;
-      
+
       // Update local state immediately
       setLocalActiveSlideId(slideId);
       saveLocalPlayback({ activeSlideId: slideId });
@@ -99,7 +108,7 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
         console.log("Failed to sync slide to server (offline?):", e);
       }
     },
-    [orgId, setActiveSlide, getBroadcast]
+    [orgId, setActiveSlide, getBroadcast],
   );
 
   const updateFontStyle = useCallback(
@@ -117,7 +126,7 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
         console.log("Failed to sync font style to server (offline?):", e);
       }
     },
-    [orgId, setFontStyle]
+    [orgId, setFontStyle],
   );
 
   // Use local state, fallback to server state

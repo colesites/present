@@ -39,7 +39,11 @@ export const create = mutation({
 export const addItem = mutation({
   args: {
     serviceId: v.id("services"),
-    type: v.union(v.literal("song"), v.literal("media"), v.literal("scripture")),
+    type: v.union(
+      v.literal("song"),
+      v.literal("media"),
+      v.literal("scripture"),
+    ),
     refId: v.string(),
     label: v.optional(v.string()),
   },

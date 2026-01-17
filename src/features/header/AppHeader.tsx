@@ -39,7 +39,7 @@ export const AppHeader = memo(function AppHeader({
             "flex items-center gap-2 rounded-md px-4 py-1.5 text-xs font-medium transition",
             viewMode === "show"
               ? "bg-primary/20 text-primary"
-              : "text-muted-foreground hover:text-foreground"
+              : "text-muted-foreground hover:text-foreground",
           )}
         >
           <GridIcon />
@@ -54,7 +54,7 @@ export const AppHeader = memo(function AppHeader({
             "flex items-center gap-2 rounded-md px-4 py-1.5 text-xs font-medium transition",
             viewMode === "edit"
               ? "bg-primary/20 text-primary"
-              : "text-muted-foreground hover:text-foreground"
+              : "text-muted-foreground hover:text-foreground",
           )}
         >
           <EditIcon />

@@ -1,6 +1,13 @@
 "use client";
 
-import { Activity, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Activity,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Id } from "@/../convex/_generated/dataModel";
 
 // Hooks
@@ -85,6 +92,7 @@ export default function Home() {
   const mediaState = useMediaFolders();
   const {
     activeMediaItem,
+    allMediaItems,
     selectMediaForOutput,
     videoSettings,
     updateVideoSettings,
@@ -98,28 +106,32 @@ export default function Home() {
   const [showTextInOutput, setShowTextInOutput] = useState(true);
   const [showMediaInOutput, setShowMediaInOutput] = useState(true);
 
-  // Load persisted UI state from localStorage
-  const getPersistedState = useCallback(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const stored = localStorage.getItem("present-ui-state");
-      return stored ? JSON.parse(stored) : null;
-    } catch {
-      return null;
-    }
-  }, []);
+  // Video playback state - controlled from Show view, synced to output
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
 
-  // UI state with persistence
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    const persisted =
-      typeof window !== "undefined" ? getPersistedState() : null;
-    return persisted?.viewMode ?? "show";
-  });
-  const [bottomTab, setBottomTab] = useState<BottomTab>(() => {
-    const persisted =
-      typeof window !== "undefined" ? getPersistedState() : null;
-    return persisted?.bottomTab ?? "shows";
-  });
+  // Reset video playing state when media changes
+  const prevMediaIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const currentId = activeMediaItem?.id;
+    if (currentId !== prevMediaIdRef.current) {
+      setIsVideoPlaying(false);
+      setVideoCurrentTime(0);
+      prevMediaIdRef.current = currentId;
+    }
+  }, [activeMediaItem?.id]);
+
+  // Handle video seek in Show view
+  const handleVideoSeeked = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      setVideoCurrentTime(e.currentTarget.currentTime);
+    },
+    []
+  );
+
+  // UI state (defaults match server render)
+  const [viewMode, setViewMode] = useState<ViewMode>("show");
+  const [bottomTab, setBottomTab] = useState<BottomTab>("shows");
   const [selected, setSelected] = useState<{
     songId: Id<"songs">;
     index: number;
@@ -127,16 +139,33 @@ export default function Home() {
   const [editScrollToSlide, setEditScrollToSlide] = useState<number | null>(
     null
   );
+  const [isHydrated, setIsHydrated] = useState(false);
 
-  // Persist only view state (song/category selection is handled by useSongs)
+  // Restore persisted UI state after hydration
   useEffect(() => {
+    try {
+      const stored = localStorage.getItem("present-ui-state");
+      if (stored) {
+        const state = JSON.parse(stored);
+        if (state.viewMode) setViewMode(state.viewMode);
+        if (state.bottomTab) setBottomTab(state.bottomTab);
+      }
+    } catch (e) {
+      console.error("Failed to load UI state:", e);
+    }
+    setIsHydrated(true);
+  }, []);
+
+  // Persist view state (only after hydration to avoid overwriting with defaults)
+  useEffect(() => {
+    if (!isHydrated) return;
     const state = { viewMode, bottomTab };
     try {
       localStorage.setItem("present-ui-state", JSON.stringify(state));
     } catch (e) {
       console.error("Failed to persist UI state:", e);
     }
-  }, [viewMode, bottomTab]);
+  }, [isHydrated, viewMode, bottomTab]);
 
   // Computed: slides for grid
   const slidesForGrid = useMemo(() => {
@@ -198,12 +227,52 @@ export default function Home() {
   const handleSelectServiceItem = useCallback(
     (index: number) => {
       const item = serviceItems[index];
-      if (item?.song) {
-        setServiceItemIndex(index);
+      if (!item) return;
+
+      setServiceItemIndex(index);
+
+      if (item.type === "song" && item.song) {
         setSelectedSongId(item.song._id);
+        // Clear media selection when switching to a song
+        selectMediaForOutput(null);
+      } else if (item.type === "media") {
+        // Find the media item in allMediaItems by matching the refId
+        const mediaItem = allMediaItems.find((m) => m.id === item.refId);
+        if (mediaItem) {
+          selectMediaForOutput(mediaItem);
+        }
+        // Clear song selection and text output when switching to media
+        setSelectedSongId(null);
+        // Clear the text output immediately
+        selectSlide("", "");
       }
     },
-    [serviceItems, setServiceItemIndex, setSelectedSongId]
+    [
+      serviceItems,
+      setServiceItemIndex,
+      setSelectedSongId,
+      selectMediaForOutput,
+      allMediaItems,
+      selectSlide,
+    ]
+  );
+
+  // Double-click on service item to output immediately (same as single click for media)
+  const handleDoubleClickServiceItem = useCallback(
+    (index: number) => {
+      const item = serviceItems[index];
+      if (!item) return;
+
+      if (item.type === "media") {
+        const mediaItem = allMediaItems.find((m) => m.id === item.refId);
+        if (mediaItem) {
+          selectMediaForOutput(mediaItem);
+          // Clear the text output immediately
+          selectSlide("", "");
+        }
+      }
+    },
+    [serviceItems, allMediaItems, selectMediaForOutput, selectSlide]
   );
 
   const handleRemoveFromService = useCallback(
@@ -264,6 +333,7 @@ export default function Home() {
   // Convert blob URL to data URL for cross-window communication
   useEffect(() => {
     const channel = new BroadcastChannel("present-output");
+    let isCancelled = false;
 
     async function sendMediaUpdate() {
       let mediaData = null;
@@ -279,24 +349,34 @@ export default function Home() {
         };
       }
 
-      channel.postMessage({
-        type: "media-update",
-        mediaItem: mediaData,
-        showText: showTextInOutput,
-        showMedia: showMediaInOutput,
-        videoSettings,
-        mediaFilterCSS,
-      });
+      // Only post if the effect hasn't been cleaned up
+      if (!isCancelled) {
+        channel.postMessage({
+          type: "media-update",
+          mediaItem: mediaData,
+          showText: showTextInOutput,
+          showMedia: showMediaInOutput,
+          videoSettings,
+          mediaFilterCSS,
+          isVideoPlaying,
+          videoCurrentTime,
+        });
+      }
     }
 
     sendMediaUpdate();
-    return () => channel.close();
+    return () => {
+      isCancelled = true;
+      channel.close();
+    };
   }, [
     activeMediaItem,
     showTextInOutput,
     showMediaInOutput,
     videoSettings,
     mediaFilterCSS,
+    isVideoPlaying,
+    videoCurrentTime,
   ]);
 
   // Keyboard shortcuts
@@ -375,6 +455,7 @@ export default function Home() {
               onEnterService={enterService}
               onExitService={exitService}
               onSelectServiceItem={handleSelectServiceItem}
+              onDoubleClickServiceItem={handleDoubleClickServiceItem}
               onRemoveFromService={handleRemoveFromService}
               onCreateService={createNewService}
               onRenameService={renameExistingService}
@@ -396,16 +477,47 @@ export default function Home() {
             <ResizablePanel defaultSize={75} minSize={30}>
               <main className="flex h-full flex-col overflow-hidden bg-background">
                 <div className="relative flex-1 overflow-hidden">
-                  {/* Show mode - SlidesGrid */}
+                  {/* Show mode - SlidesGrid or Media */}
                   <Activity mode={viewMode === "show" ? "visible" : "hidden"}>
                     <div className="absolute inset-0 overflow-auto p-4">
-                      <SlidesGrid
-                        slides={slidesForGrid}
-                        activeSlideId={activeSlideId}
-                        selectedIndex={selected?.index ?? null}
-                        onSelectSlide={handleSelectSlide}
-                        onEditSlide={handleEditSlide}
-                      />
+                      {/* Show media if selected and no song, otherwise show slides */}
+                      {activeMediaItem && !selectedSongId ? (
+                        <div className="flex h-full flex-col items-center justify-center gap-4">
+                          <div className="relative w-full max-w-4xl aspect-video rounded-lg overflow-hidden bg-black shadow-xl">
+                            {activeMediaItem.type === "image" ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={activeMediaItem.url}
+                                alt={activeMediaItem.name}
+                                className="h-full w-full object-contain"
+                              />
+                            ) : (
+                              <video
+                                src={activeMediaItem.url}
+                                className="h-full w-full object-contain"
+                                controls
+                                loop={videoSettings.loop}
+                                muted={videoSettings.muted}
+                                onPlay={() => setIsVideoPlaying(true)}
+                                onPause={() => setIsVideoPlaying(false)}
+                                onEnded={() => setIsVideoPlaying(false)}
+                                onSeeked={handleVideoSeeked}
+                              />
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            {activeMediaItem.name}
+                          </p>
+                        </div>
+                      ) : (
+                        <SlidesGrid
+                          slides={slidesForGrid}
+                          activeSlideId={activeSlideId}
+                          selectedIndex={selected?.index ?? null}
+                          onSelectSlide={handleSelectSlide}
+                          onEditSlide={handleEditSlide}
+                        />
+                      )}
                     </div>
                   </Activity>
 
@@ -539,6 +651,8 @@ export default function Home() {
               mediaFilters={mediaFilters}
               onMediaFiltersChange={updateMediaFilters}
               onResetFilters={resetMediaFilters}
+              isVideoPlaying={isVideoPlaying}
+              videoCurrentTime={videoCurrentTime}
             />
           </div>
         </ResizablePanel>

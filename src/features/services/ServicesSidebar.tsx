@@ -25,6 +25,7 @@ interface ServicesSidebarProps {
   onEnterService: (id: Id<"services">) => void;
   onExitService: () => void;
   onSelectServiceItem: (index: number) => void;
+  onDoubleClickServiceItem?: (index: number) => void;
   onRemoveFromService: (index: number) => void;
   onCreateService: (name: string) => Promise<unknown>;
   onRenameService: (id: Id<"services">, name: string) => Promise<void>;
@@ -41,6 +42,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
   onEnterService,
   onExitService,
   onSelectServiceItem,
+  onDoubleClickServiceItem,
   onRemoveFromService,
   onCreateService,
   onRenameService,
@@ -48,8 +50,14 @@ export const ServicesSidebar = memo(function ServicesSidebar({
 }: ServicesSidebarProps) {
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [newName, setNewName] = useState("");
-  const [renameTarget, setRenameTarget] = useState<{ id: Id<"services">; name: string } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: Id<"services">; name: string } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{
+    id: Id<"services">;
+    name: string;
+  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: Id<"services">;
+    name: string;
+  } | null>(null);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -74,7 +82,9 @@ export const ServicesSidebar = memo(function ServicesSidebar({
     <aside className="flex h-full flex-col">
       <div className="border-b border-border px-3 py-2 flex items-center justify-between">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          {isInsideService && selectedService ? selectedService.name : "Services"}
+          {isInsideService && selectedService
+            ? selectedService.name
+            : "Services"}
         </p>
         {isInsideService && (
           <button
@@ -93,6 +103,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
             items={serviceItems}
             selectedIndex={serviceItemIndex}
             onSelect={onSelectServiceItem}
+            onDoubleClick={onDoubleClickServiceItem}
             onRemove={onRemoveFromService}
           />
         ) : (
@@ -156,7 +167,9 @@ export const ServicesSidebar = memo(function ServicesSidebar({
           <div className="space-y-3">
             <input
               value={renameTarget.name}
-              onChange={(e) => setRenameTarget({ ...renameTarget, name: e.target.value })}
+              onChange={(e) =>
+                setRenameTarget({ ...renameTarget, name: e.target.value })
+              }
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
               autoFocus
               onKeyDown={(e) => e.key === "Enter" && handleRename()}
@@ -234,7 +247,7 @@ const ServiceList = memo(function ServiceList({
             "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
             selectedId === service._id
               ? "bg-primary/20 text-primary"
-              : "text-foreground hover:bg-secondary"
+              : "text-foreground hover:bg-secondary",
           )}
         >
           <button
@@ -274,11 +287,13 @@ const ServiceItemsList = memo(function ServiceItemsList({
   items,
   selectedIndex,
   onSelect,
+  onDoubleClick,
   onRemove,
 }: {
   items: ServiceItem[];
   selectedIndex: number | null;
   onSelect: (index: number) => void;
+  onDoubleClick?: (index: number) => void;
   onRemove: (index: number) => void;
 }) {
   if (items.length === 0) {
@@ -295,7 +310,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
         // Determine display name and icon based on type
         let displayName = item.refId;
         let icon = <MusicIcon />;
-        
+
         if (item.type === "song") {
           displayName = item.song?.title ?? item.refId;
           icon = <MusicIcon />;
@@ -316,12 +331,13 @@ const ServiceItemsList = memo(function ServiceItemsList({
               "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
               selectedIndex === item.index
                 ? "bg-primary/20 text-primary"
-                : "text-foreground hover:bg-secondary"
+                : "text-foreground hover:bg-secondary",
             )}
           >
             <button
               type="button"
               onClick={() => onSelect(item.index)}
+              onDoubleClick={() => onDoubleClick?.(item.index)}
               className="flex flex-1 items-center gap-2 text-left"
             >
               <span className="text-[10px] text-muted-foreground w-4">

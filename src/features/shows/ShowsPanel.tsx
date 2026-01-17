@@ -15,7 +15,11 @@ interface ShowsPanelProps {
   selectedServiceId: Id<"services"> | null;
   onSelectSong: (id: Id<"songs">) => void;
   onSelectCategory: (id: Id<"categories"> | null) => void;
-  onCreateSong: (title: string, lyrics: string, categoryId?: Id<"categories">) => Promise<unknown>;
+  onCreateSong: (
+    title: string,
+    lyrics: string,
+    categoryId?: Id<"categories">,
+  ) => Promise<unknown>;
   onRenameSong: (id: Id<"songs">, title: string) => Promise<void>;
   onDeleteSong: (id: Id<"songs">) => Promise<void>;
   onAddToService: (songId: Id<"songs">) => void;
@@ -41,8 +45,14 @@ export const ShowsPanel = memo(function ShowsPanel({
 }: ShowsPanelProps) {
   const [showNewSongDialog, setShowNewSongDialog] = useState(false);
   const [showNewCategoryDialog, setShowNewCategoryDialog] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<{ id: Id<"songs">; title: string } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: Id<"songs">; title: string } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{
+    id: Id<"songs">;
+    title: string;
+  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: Id<"songs">;
+    title: string;
+  } | null>(null);
 
   // Filter songs by category
   const filteredSongs = selectedCategoryId
@@ -61,7 +71,7 @@ export const ShowsPanel = memo(function ShowsPanel({
             "px-2 py-1 rounded text-[10px] transition",
             !selectedCategoryId
               ? "bg-primary/20 text-primary"
-              : "text-muted-foreground hover:text-foreground"
+              : "text-muted-foreground hover:text-foreground",
           )}
         >
           All
@@ -75,7 +85,7 @@ export const ShowsPanel = memo(function ShowsPanel({
               "px-2 py-1 rounded text-[10px] transition",
               selectedCategoryId === cat._id
                 ? "bg-primary/20 text-primary"
-                : "text-muted-foreground hover:text-foreground"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             {cat.name}
@@ -100,8 +110,12 @@ export const ShowsPanel = memo(function ShowsPanel({
               isSelected={selectedSongId === song._id}
               showAddToService={isInsideService && !!selectedServiceId}
               onSelect={() => onSelectSong(song._id)}
-              onRename={() => setRenameTarget({ id: song._id, title: song.title })}
-              onDelete={() => setDeleteTarget({ id: song._id, title: song.title })}
+              onRename={() =>
+                setRenameTarget({ id: song._id, title: song.title })
+              }
+              onDelete={() =>
+                setDeleteTarget({ id: song._id, title: song.title })
+              }
               onAddToService={() => onAddToService(song._id)}
             />
           ))}
@@ -177,15 +191,11 @@ const SongCard = memo(function SongCard({
         "group rounded-lg border px-3 py-2 text-left text-xs transition",
         isSelected
           ? "border-primary bg-primary/10 text-primary"
-          : "border-border text-foreground hover:border-primary/50"
+          : "border-border text-foreground hover:border-primary/50",
       )}
     >
       <div className="flex items-start justify-between">
-        <button
-          type="button"
-          onClick={onSelect}
-          className="flex-1 text-left"
-        >
+        <button type="button" onClick={onSelect} className="flex-1 text-left">
           <div className="font-medium">{song.title}</div>
           <div className="mt-1 text-muted-foreground">
             {song.slides.length} slides
@@ -254,7 +264,11 @@ function NewSongDialog({
   categoryId,
 }: {
   onClose: () => void;
-  onCreate: (title: string, lyrics: string, categoryId?: Id<"categories">) => Promise<unknown>;
+  onCreate: (
+    title: string,
+    lyrics: string,
+    categoryId?: Id<"categories">,
+  ) => Promise<unknown>;
   onFixLyrics: (lyrics: string) => Promise<string>;
   categoryId: Id<"categories"> | null;
 }) {
