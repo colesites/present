@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "convex/react";
 import type { Id } from "@/../convex/_generated/dataModel";
@@ -16,6 +16,26 @@ type ActiveSlideMessage = {
   slideText?: string;
 };
 
+type MediaMessage = {
+  type: "media-update";
+  mediaItem: {
+    id: string;
+    name: string;
+    type: "image" | "video";
+    url: string; // Will receive blob URL or data URL
+  } | null;
+  showText: boolean;
+  showMedia: boolean;
+  videoSettings: {
+    loop: boolean;
+    muted: boolean;
+    volume: number;
+  };
+  mediaFilterCSS: string;
+};
+
+type OutputMessage = ActiveSlideMessage | MediaMessage;
+
 export default function OutputPage() {
   const { isSignedIn } = useAuth();
   const current = useQuery(api.users.getCurrentWithOrg);
@@ -27,13 +47,31 @@ export default function OutputPage() {
   const [overrideSlideId, setOverrideSlideId] = useState<string | null>(null);
   const [overrideSlideText, setOverrideSlideText] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  
+  // Media state
+  const [mediaItem, setMediaItem] = useState<MediaMessage["mediaItem"]>(null);
+  const [showText, setShowText] = useState(true);
+  const [showMedia, setShowMedia] = useState(true);
+  const [videoSettings, setVideoSettings] = useState({
+    loop: true,
+    muted: false,
+    volume: 1,
+  });
+  const [mediaFilterCSS, setMediaFilterCSS] = useState("none");
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     const channel = new BroadcastChannel("present-output");
-    const handler = (event: MessageEvent<ActiveSlideMessage>) => {
+    const handler = (event: MessageEvent<OutputMessage>) => {
       if (event.data?.type === "active-slide") {
         setOverrideSlideId(event.data.slideId);
         setOverrideSlideText(event.data.slideText ?? null);
+      } else if (event.data?.type === "media-update") {
+        setMediaItem(event.data.mediaItem);
+        setShowText(event.data.showText);
+        setShowMedia(event.data.showMedia);
+        setVideoSettings(event.data.videoSettings);
+        setMediaFilterCSS(event.data.mediaFilterCSS ?? "none");
       }
     };
     channel.addEventListener("message", handler);
@@ -42,6 +80,24 @@ export default function OutputPage() {
       channel.close();
     };
   }, []);
+
+  // Apply video settings
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.loop = videoSettings.loop;
+      videoRef.current.muted = videoSettings.muted;
+      videoRef.current.volume = videoSettings.volume;
+    }
+  }, [videoSettings]);
+
+  // Auto-play video when media changes
+  useEffect(() => {
+    if (videoRef.current && mediaItem?.type === "video") {
+      videoRef.current.play().catch(() => {
+        // Autoplay might be blocked
+      });
+    }
+  }, [mediaItem]);
 
   // Listen for fullscreen changes
   useEffect(() => {
@@ -90,26 +146,58 @@ export default function OutputPage() {
   const fontItalic = playback?.fontItalic ?? false;
   const fontUnderline = playback?.fontUnderline ?? false;
 
+  const hasContent = activeSlide || mediaItem;
+
   return (
     <div 
-      className="flex h-screen w-screen items-center justify-center bg-black text-white cursor-none select-none"
+      className="relative flex h-screen w-screen cursor-none select-none items-center justify-center bg-black text-white"
       onDoubleClick={toggleFullscreen}
     >
-      {activeSlide ? (
-        // Active slide - clean output for projection with auto-fit
-        <div className="h-full w-full p-8">
-          <AutoFitText
-            text={stripBracketsForDisplay(activeSlide.text)}
-            className={cn(
-              "leading-relaxed text-white",
-              fontBold && "font-bold",
-              fontItalic && "italic",
-              fontUnderline && "underline"
-            )}
-            style={{ fontFamily, fontSize: `${fontSize}px` }}
-            minScale={0.3}
-          />
-        </div>
+      {hasContent ? (
+        <>
+          {/* Media layer (background) with filters */}
+          {showMedia && mediaItem && (
+            mediaItem.type === "image" ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={mediaItem.url}
+                alt={mediaItem.name}
+                className="absolute inset-0 h-full w-full object-cover"
+                style={{ filter: mediaFilterCSS }}
+              />
+            ) : (
+              <video
+                ref={videoRef}
+                src={mediaItem.url}
+                className="absolute inset-0 h-full w-full object-cover"
+                style={{ filter: mediaFilterCSS }}
+                autoPlay
+                loop={videoSettings.loop}
+                muted={videoSettings.muted}
+                playsInline
+              />
+            )
+          )}
+
+          {/* Text layer (foreground) */}
+          {showText && activeSlide && (
+            <div className="relative h-full w-full p-8">
+              <AutoFitText
+                text={stripBracketsForDisplay(activeSlide.text)}
+                className={cn(
+                  "leading-relaxed text-white",
+                  fontBold && "font-bold",
+                  fontItalic && "italic",
+                  fontUnderline && "underline",
+                  // Add text shadow for better readability over media
+                  mediaItem && "drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]"
+                )}
+                style={{ fontFamily, fontSize: `${fontSize}px` }}
+                minScale={0.3}
+              />
+            </div>
+          )}
+        </>
       ) : (
         // No slide - show instructions (only visible when not projecting)
         <div className="text-center">

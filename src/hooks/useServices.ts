@@ -6,6 +6,8 @@ import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
 import type { Song } from "@/types";
 
+export type ServiceItemType = "song" | "media" | "scripture";
+
 export function useServices(
   orgId: Id<"organizations"> | null,
   songs: Song[]
@@ -63,6 +65,10 @@ export function useServices(
     await addItemToService({ serviceId, type: "song", refId: songId });
   };
 
+  const addMediaToService = async (serviceId: Id<"services">, mediaId: string, mediaName: string) => {
+    await addItemToService({ serviceId, type: "media", refId: mediaId, label: mediaName });
+  };
+
   const removeFromService = async (serviceId: Id<"services">, index: number) => {
     await removeItemFromService({ serviceId, itemIndex: index });
   };
@@ -91,6 +97,7 @@ export function useServices(
     renameExistingService,
     deleteService,
     addSongToService,
+    addMediaToService,
     removeFromService,
     enterService,
     exitService,

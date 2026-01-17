@@ -10,6 +10,7 @@ import {
   useSongs,
   useServices,
   useCategories,
+  useMediaFolders,
 } from "@/hooks";
 
 // Types
@@ -28,6 +29,7 @@ import { ServicesSidebar } from "@/features/services";
 import { SlidesGrid, OutputPreview } from "@/features/slides";
 import { LyricsEditor } from "@/features/editor";
 import { ShowsPanel } from "@/features/shows";
+import { MediaPanel } from "@/features/media";
 
 export default function Home() {
   // Organization & auth
@@ -70,12 +72,30 @@ export default function Home() {
     renameExistingService,
     deleteService,
     addSongToService,
+    addMediaToService,
     removeFromService,
     enterService,
     exitService,
   } = useServices(orgId, songs);
 
   const { categories, createNewCategory } = useCategories(orgId);
+
+  // Media state - lifted up for pre-rendering with Activity
+  const mediaState = useMediaFolders();
+  const {
+    activeMediaItem,
+    selectMediaForOutput,
+    videoSettings,
+    updateVideoSettings,
+    mediaFilters,
+    updateMediaFilters,
+    resetMediaFilters,
+    mediaFilterCSS,
+  } = mediaState;
+
+  // Output visibility toggles
+  const [showTextInOutput, setShowTextInOutput] = useState(true);
+  const [showMediaInOutput, setShowMediaInOutput] = useState(true);
 
   // UI state
   const [viewMode, setViewMode] = useState<ViewMode>("show");
@@ -172,6 +192,14 @@ export default function Home() {
     [selectedServiceId, addSongToService]
   );
 
+  const handleAddMediaToService = useCallback(
+    async (mediaId: string, mediaName: string) => {
+      if (!selectedServiceId) return;
+      await addMediaToService(selectedServiceId, mediaId, mediaName);
+    },
+    [selectedServiceId, addMediaToService]
+  );
+
   const handleSaveSong = useCallback(
     async (title: string, lyrics: string) => {
       if (!selectedSongId) return;
@@ -201,6 +229,33 @@ export default function Home() {
     }
     return data.cleanedLyrics ?? lyrics;
   }, []);
+
+  // Broadcast media changes to output window
+  useEffect(() => {
+    const channel = new BroadcastChannel("present-output");
+    channel.postMessage({
+      type: "media-update",
+      mediaItem: activeMediaItem
+        ? {
+            id: activeMediaItem.id,
+            name: activeMediaItem.name,
+            type: activeMediaItem.type,
+            url: activeMediaItem.url,
+          }
+        : null,
+      showText: showTextInOutput,
+      showMedia: showMediaInOutput,
+      videoSettings,
+      mediaFilterCSS,
+    });
+    return () => channel.close();
+  }, [
+    activeMediaItem,
+    showTextInOutput,
+    showMediaInOutput,
+    videoSettings,
+    mediaFilterCSS,
+  ]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -395,8 +450,14 @@ export default function Home() {
 
                   {/* Media tab */}
                   <Activity mode={bottomTab === "media" ? "visible" : "hidden"}>
-                    <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-                      Media library coming soon
+                    <div className="absolute inset-0 overflow-hidden">
+                      <MediaPanel
+                        mediaState={mediaState}
+                        onSelectForOutput={selectMediaForOutput}
+                        isInsideService={isInsideService}
+                        selectedServiceId={selectedServiceId}
+                        onAddToService={handleAddMediaToService}
+                      />
                     </div>
                   </Activity>
 
@@ -425,6 +486,17 @@ export default function Home() {
               fontItalic={fontItalic}
               fontUnderline={fontUnderline}
               groups={slideGroups}
+              activeMediaItem={activeMediaItem}
+              videoSettings={videoSettings}
+              onVideoSettingsChange={updateVideoSettings}
+              showText={showTextInOutput}
+              showMedia={showMediaInOutput}
+              onToggleText={() => setShowTextInOutput(!showTextInOutput)}
+              onToggleMedia={() => setShowMediaInOutput(!showMediaInOutput)}
+              onClearMedia={() => selectMediaForOutput(null)}
+              mediaFilters={mediaFilters}
+              onMediaFiltersChange={updateMediaFilters}
+              onResetFilters={resetMediaFilters}
             />
           </div>
         </ResizablePanel>

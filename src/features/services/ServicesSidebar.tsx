@@ -284,45 +284,63 @@ const ServiceItemsList = memo(function ServiceItemsList({
   if (items.length === 0) {
     return (
       <p className="text-[10px] text-muted-foreground px-2">
-        No items. Add songs from Shows tab.
+        No items. Add songs or media from below.
       </p>
     );
   }
 
   return (
     <div className="space-y-1">
-      {items.map((item) => (
-        <div
-          key={`${item.refId}-${item.index}`}
-          className={cn(
-            "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
-            selectedIndex === item.index
-              ? "bg-primary/20 text-primary"
-              : "text-foreground hover:bg-secondary"
-          )}
-        >
-          <button
-            type="button"
-            onClick={() => onSelect(item.index)}
-            className="flex flex-1 items-center gap-2 text-left"
+      {items.map((item) => {
+        // Determine display name and icon based on type
+        let displayName = item.refId;
+        let icon = <MusicIcon />;
+        
+        if (item.type === "song") {
+          displayName = item.song?.title ?? item.refId;
+          icon = <MusicIcon />;
+        } else if (item.type === "media") {
+          displayName = item.label ?? item.refId;
+          // Check if it's a video or image based on extension or label
+          const isVideo = /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(displayName);
+          icon = isVideo ? <VideoIcon /> : <ImageIcon />;
+        } else if (item.type === "scripture") {
+          displayName = item.label ?? "Scripture";
+          icon = <BookIcon />;
+        }
+
+        return (
+          <div
+            key={`${item.refId}-${item.index}`}
+            className={cn(
+              "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
+              selectedIndex === item.index
+                ? "bg-primary/20 text-primary"
+                : "text-foreground hover:bg-secondary"
+            )}
           >
-            <span className="text-[10px] text-muted-foreground w-4">
-              {item.index + 1}
-            </span>
-            <span className="flex-1 truncate">
-              {item.song?.title ?? item.refId}
-            </span>
-          </button>
-          <button
-            type="button"
-            aria-label="Remove from service"
-            onClick={() => onRemove(item.index)}
-            className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
-          >
-            <CloseIcon />
-          </button>
-        </div>
-      ))}
+            <button
+              type="button"
+              onClick={() => onSelect(item.index)}
+              className="flex flex-1 items-center gap-2 text-left"
+            >
+              <span className="text-[10px] text-muted-foreground w-4">
+                {item.index + 1}
+              </span>
+              <span className="shrink-0 text-muted-foreground">{icon}</span>
+              <span className="flex-1 truncate">{displayName}</span>
+            </button>
+            <button
+              type="button"
+              aria-label="Remove from service"
+              onClick={() => onRemove(item.index)}
+              className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 });
@@ -388,6 +406,76 @@ function CloseIcon() {
       viewBox="0 0 24 24"
     >
       <path d="M18 6L6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+function MusicIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
+    </svg>
+  );
+}
+
+function VideoIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <path d="M23 7l-7 5 7 5V7z" />
+      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+    </svg>
+  );
+}
+
+function ImageIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="M21 15l-5-5L5 21" />
+    </svg>
+  );
+}
+
+function BookIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
     </svg>
   );
 }
