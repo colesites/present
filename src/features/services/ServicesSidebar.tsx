@@ -30,6 +30,8 @@ interface ServicesSidebarProps {
   onCreateService: (name: string) => Promise<unknown>;
   onRenameService: (id: Id<"services">, name: string) => Promise<void>;
   onDeleteService: (id: Id<"services">) => Promise<void>;
+  onReorderServiceItems?: (fromIndex: number, toIndex: number) => Promise<void>;
+  onReorderServices?: (fromIndex: number, toIndex: number) => Promise<void>;
 }
 
 export const ServicesSidebar = memo(function ServicesSidebar({
@@ -47,6 +49,8 @@ export const ServicesSidebar = memo(function ServicesSidebar({
   onCreateService,
   onRenameService,
   onDeleteService,
+  onReorderServiceItems,
+  onReorderServices,
 }: ServicesSidebarProps) {
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [newName, setNewName] = useState("");
@@ -105,6 +109,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
             onSelect={onSelectServiceItem}
             onDoubleClick={onDoubleClickServiceItem}
             onRemove={onRemoveFromService}
+            onReorder={onReorderServiceItems}
           />
         ) : (
           <ServiceList
@@ -113,6 +118,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
             onEnter={onEnterService}
             onRename={(id, name) => setRenameTarget({ id, name })}
             onDelete={(id, name) => setDeleteTarget({ id, name })}
+            onReorder={onReorderServices}
           />
         )}
       </div>
@@ -231,25 +237,77 @@ const ServiceList = memo(function ServiceList({
   onEnter,
   onRename,
   onDelete,
+  onReorder,
 }: {
   services: Service[];
   selectedId: Id<"services"> | null;
   onEnter: (id: Id<"services">) => void;
   onRename: (id: Id<"services">, name: string) => void;
   onDelete: (id: Id<"services">, name: string) => void;
+  onReorder?: (fromIndex: number, toIndex: number) => Promise<void>;
 }) {
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(index));
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (draggedIndex !== null && index !== draggedIndex) {
+      setDropTargetIndex(index);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDropTargetIndex(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, toIndex: number) => {
+    e.preventDefault();
+    const fromIndex = draggedIndex;
+    setDraggedIndex(null);
+    setDropTargetIndex(null);
+    if (fromIndex !== null && fromIndex !== toIndex && onReorder) {
+      await onReorder(fromIndex, toIndex);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+    setDropTargetIndex(null);
+  };
+
   return (
     <div className="space-y-1">
-      {services.map((service) => (
+      {services.map((service, index) => (
         <div
           key={service._id}
+          draggable={!!onReorder}
+          onDragStart={(e) => handleDragStart(e, index)}
+          onDragOver={(e) => handleDragOver(e, index)}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, index)}
+          onDragEnd={handleDragEnd}
           className={cn(
             "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
             selectedId === service._id
               ? "bg-primary/20 text-primary"
               : "text-foreground hover:bg-secondary",
+            draggedIndex === index && "opacity-50",
+            dropTargetIndex === index && "ring-2 ring-primary ring-inset",
+            onReorder && "cursor-grab active:cursor-grabbing"
           )}
         >
+          {onReorder && (
+            <span className="text-muted-foreground/50 shrink-0">
+              <GripIcon />
+            </span>
+          )}
           <button
             type="button"
             onClick={() => onEnter(service._id)}
@@ -289,13 +347,51 @@ const ServiceItemsList = memo(function ServiceItemsList({
   onSelect,
   onDoubleClick,
   onRemove,
+  onReorder,
 }: {
   items: ServiceItem[];
   selectedIndex: number | null;
   onSelect: (index: number) => void;
   onDoubleClick?: (index: number) => void;
   onRemove: (index: number) => void;
+  onReorder?: (fromIndex: number, toIndex: number) => Promise<void>;
 }) {
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(index));
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (draggedIndex !== null && index !== draggedIndex) {
+      setDropTargetIndex(index);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDropTargetIndex(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, toIndex: number) => {
+    e.preventDefault();
+    const fromIndex = draggedIndex;
+    setDraggedIndex(null);
+    setDropTargetIndex(null);
+    if (fromIndex !== null && fromIndex !== toIndex && onReorder) {
+      await onReorder(fromIndex, toIndex);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+    setDropTargetIndex(null);
+  };
+
   if (items.length === 0) {
     return (
       <p className="text-[10px] text-muted-foreground px-2">
@@ -327,13 +423,28 @@ const ServiceItemsList = memo(function ServiceItemsList({
         return (
           <div
             key={`${item.refId}-${item.index}`}
+            draggable={!!onReorder}
+            onDragStart={(e) => handleDragStart(e, item.index)}
+            onDragOver={(e) => handleDragOver(e, item.index)}
+            onDragLeave={handleDragLeave}
+            onDrop={(e) => handleDrop(e, item.index)}
+            onDragEnd={handleDragEnd}
             className={cn(
               "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
               selectedIndex === item.index
                 ? "bg-primary/20 text-primary"
                 : "text-foreground hover:bg-secondary",
+              draggedIndex === item.index && "opacity-50",
+              dropTargetIndex === item.index &&
+                "ring-2 ring-primary ring-inset",
+              onReorder && "cursor-grab active:cursor-grabbing"
             )}
           >
+            {onReorder && (
+              <span className="text-muted-foreground/50 shrink-0">
+                <GripIcon />
+              </span>
+            )}
             <button
               type="button"
               onClick={() => onSelect(item.index)}
@@ -362,6 +473,27 @@ const ServiceItemsList = memo(function ServiceItemsList({
 });
 
 // Icons
+function GripIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <circle cx="9" cy="6" r="1.5" fill="currentColor" />
+      <circle cx="15" cy="6" r="1.5" fill="currentColor" />
+      <circle cx="9" cy="12" r="1.5" fill="currentColor" />
+      <circle cx="15" cy="12" r="1.5" fill="currentColor" />
+      <circle cx="9" cy="18" r="1.5" fill="currentColor" />
+      <circle cx="15" cy="18" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 function FolderIcon() {
   return (
     <svg

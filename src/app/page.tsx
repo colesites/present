@@ -82,6 +82,8 @@ export default function Home() {
     addSongToService,
     addMediaToService,
     removeFromService,
+    reorderServiceItems,
+    reorderServices,
     enterService,
     exitService,
   } = useServices(orgId, songs);
@@ -546,6 +548,13 @@ export default function Home() {
               onCreateService={createNewService}
               onRenameService={renameExistingService}
               onDeleteService={deleteService}
+              onReorderServiceItems={
+                selectedServiceId
+                  ? (from, to) =>
+                      reorderServiceItems(selectedServiceId, from, to)
+                  : undefined
+              }
+              onReorderServices={reorderServices}
             />
           </div>
         </ResizablePanel>
@@ -574,13 +583,16 @@ export default function Home() {
                             type="button"
                             onClick={handleOutputPreviewMedia}
                             className={`relative w-full max-w-4xl aspect-video rounded-lg overflow-hidden bg-black shadow-xl ${
-                              previewMediaItem && activeMediaItem?.id === previewMediaItem.id
+                              previewMediaItem &&
+                              activeMediaItem?.id === previewMediaItem.id
                                 ? "ring-2 ring-green-500" // Active/outputting
                                 : previewMediaItem
                                   ? "ring-2 ring-yellow-500 cursor-pointer" // Preview only
                                   : ""
                             }`}
-                            disabled={activeMediaItem?.id === previewMediaItem?.id}
+                            disabled={
+                              activeMediaItem?.id === previewMediaItem?.id
+                            }
                           >
                             {showViewMedia.type === "image" ? (
                               // eslint-disable-next-line @next/next/no-img-element
@@ -604,20 +616,26 @@ export default function Home() {
                               />
                             )}
                             {/* Preview indicator - only show when NOT yet outputting */}
-                            {previewMediaItem && activeMediaItem?.id !== previewMediaItem.id && (
-                              <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
-                                <span className="text-white font-medium text-lg">
-                                  Click to Output
-                                </span>
-                              </div>
-                            )}
+                            {previewMediaItem &&
+                              activeMediaItem?.id !== previewMediaItem.id && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
+                                  <span className="text-white font-medium text-lg">
+                                    Click to Output
+                                  </span>
+                                </div>
+                              )}
                           </button>
                           <p className="text-sm text-muted-foreground">
                             {showViewMedia.name}
-                            {previewMediaItem && activeMediaItem?.id === previewMediaItem.id ? (
-                              <span className="ml-2 text-green-500">(Now Outputting)</span>
+                            {previewMediaItem &&
+                            activeMediaItem?.id === previewMediaItem.id ? (
+                              <span className="ml-2 text-green-500">
+                                (Now Outputting)
+                              </span>
                             ) : previewMediaItem ? (
-                              <span className="ml-2 text-yellow-500">(Preview - click to output)</span>
+                              <span className="ml-2 text-yellow-500">
+                                (Preview - click to output)
+                              </span>
                             ) : null}
                           </p>
                         </div>
@@ -664,8 +682,8 @@ export default function Home() {
                       Stage display settings coming soon
                     </div>
                   </Activity>
-        </div>
-      </main>
+                </div>
+              </main>
             </ResizablePanel>
 
             <ResizableHandle withHandle />

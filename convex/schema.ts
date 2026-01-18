@@ -35,7 +35,7 @@ export default defineSchema({
         label: v.optional(v.string()),
         modifier: v.optional(v.string()), // e.g. "x3", "2x"
         backgroundId: v.optional(v.string()),
-      }),
+      })
     ),
     createdAt: v.number(),
     updatedAt: v.optional(v.number()),
@@ -47,20 +47,23 @@ export default defineSchema({
     orgId: v.id("organizations"),
     name: v.string(),
     date: v.optional(v.string()),
+    order: v.optional(v.number()),
     items: v.array(
       v.object({
         type: v.union(
           v.literal("song"),
           v.literal("media"),
-          v.literal("scripture"),
+          v.literal("scripture")
         ),
         refId: v.string(),
         label: v.optional(v.string()),
         addedAt: v.number(),
-      }),
+      })
     ),
     createdAt: v.number(),
-  }).index("by_org", ["orgId"]),
+  })
+    .index("by_org", ["orgId"])
+    .index("by_org_order", ["orgId", "order"]),
   // Keep playlists for backward compat
   playlists: defineTable({
     orgId: v.id("organizations"),

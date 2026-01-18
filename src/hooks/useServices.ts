@@ -46,6 +46,8 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
   const removeService = useMutation(api.services.remove);
   const addItemToService = useMutation(api.services.addItem);
   const removeItemFromService = useMutation(api.services.removeItem);
+  const reorderItemsMutation = useMutation(api.services.reorderItems);
+  const reorderServicesMutation = useMutation(api.services.reorderServices);
 
   // Initialize with defaults (matches server render)
   const [selectedServiceId, setSelectedServiceId] =
@@ -118,7 +120,7 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
 
   const renameExistingService = async (
     serviceId: Id<"services">,
-    name: string,
+    name: string
   ) => {
     await renameService({ serviceId, name });
   };
@@ -133,7 +135,7 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
 
   const addSongToService = async (
     serviceId: Id<"services">,
-    songId: Id<"songs">,
+    songId: Id<"songs">
   ) => {
     await addItemToService({ serviceId, type: "song", refId: songId });
   };
@@ -141,7 +143,7 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
   const addMediaToService = async (
     serviceId: Id<"services">,
     mediaId: string,
-    mediaName: string,
+    mediaName: string
   ) => {
     await addItemToService({
       serviceId,
@@ -153,7 +155,7 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
 
   const removeFromService = async (
     serviceId: Id<"services">,
-    index: number,
+    index: number
   ) => {
     await removeItemFromService({ serviceId, itemIndex: index });
   };
@@ -167,6 +169,20 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
   const exitService = () => {
     setIsInsideService(false);
     setServiceItemIndex(null);
+  };
+
+  const reorderServiceItems = async (
+    serviceId: Id<"services">,
+    fromIndex: number,
+    toIndex: number
+  ) => {
+    if (fromIndex === toIndex) return;
+    await reorderItemsMutation({ serviceId, fromIndex, toIndex });
+  };
+
+  const reorderServices = async (fromIndex: number, toIndex: number) => {
+    if (!orgId || fromIndex === toIndex) return;
+    await reorderServicesMutation({ orgId, fromIndex, toIndex });
   };
 
   return {
@@ -184,6 +200,8 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
     addSongToService,
     addMediaToService,
     removeFromService,
+    reorderServiceItems,
+    reorderServices,
     enterService,
     exitService,
   };
