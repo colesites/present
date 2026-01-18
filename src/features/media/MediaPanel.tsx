@@ -23,6 +23,7 @@ import {
   Check,
   ArrowUp,
   ArrowDown,
+  AlertTriangle,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -189,6 +190,8 @@ export const MediaPanel = memo(
       removeFolder,
       refreshMedia,
       activeMediaItem,
+      reconnectFolder,
+      reconnectAllFolders,
     } = mediaState;
 
     const [filter, setFilter] = useState<MediaFilter>("all");
@@ -198,6 +201,11 @@ export const MediaPanel = memo(
     const [searchQuery, setSearchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+
+    const hasBrokenFolders = useMemo(
+      () => folders.some((f) => f.needsPermission),
+      [folders]
+    );
 
     const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -344,6 +352,16 @@ export const MediaPanel = memo(
                       className={cn("h-3.5 w-3.5", isLoading && "animate-spin")}
                     />
                   </button>
+                  {hasBrokenFolders && (
+                    <button
+                      type="button"
+                      onClick={reconnectAllFolders}
+                      className="rounded p-1 text-yellow-500 transition hover:bg-yellow-500/10 hover:text-yellow-600"
+                      title="Reconnect all folders"
+                    >
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleAddFolder}
@@ -370,7 +388,12 @@ export const MediaPanel = memo(
                     {/* All folders option */}
                     <button
                       type="button"
-                      onClick={() => setSelectedFolderId(null)}
+                      onClick={() => {
+                        setSelectedFolderId(null);
+                        if (hasBrokenFolders) {
+                          reconnectAllFolders();
+                        }
+                      }}
                       className={cn(
                         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
                         selectedFolderId === null
@@ -382,6 +405,9 @@ export const MediaPanel = memo(
                       <span className="min-w-0 flex-1 truncate">
                         All folders
                       </span>
+                      {hasBrokenFolders && (
+                        <AlertTriangle className="h-3 w-3 shrink-0 text-yellow-500" />
+                      )}
                       <span className="shrink-0 text-[10px] opacity-70">
                         {allMediaItems.length}
                       </span>
@@ -407,14 +433,29 @@ export const MediaPanel = memo(
                             {folder.name}
                           </span>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setFolderToRemove(folder)}
-                          className="shrink-0 rounded p-0.5 opacity-0 transition hover:bg-destructive/20 group-hover:opacity-100"
-                          title="Remove folder"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {folder.needsPermission && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                reconnectFolder(folder.id);
+                              }}
+                              className="shrink-0 rounded p-0.5 text-yellow-500 hover:bg-yellow-500/10"
+                              title="Grant Permission (Browser Restarted)"
+                            >
+                              <AlertTriangle className="h-3 w-3" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setFolderToRemove(folder)}
+                            className="shrink-0 rounded p-0.5 opacity-0 transition hover:bg-destructive/20 group-hover:opacity-100"
+                            title="Remove folder"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>

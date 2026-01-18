@@ -16,6 +16,7 @@ export type MediaFolder = {
   id: string;
   name: string;
   handle: FileSystemDirectoryHandle;
+  needsPermission?: boolean;
 };
 
 export type VideoSettings = {
@@ -67,7 +68,7 @@ async function openDB(): Promise<IDBDatabase> {
 async function saveHandle(
   id: string,
   name: string,
-  handle: FileSystemDirectoryHandle,
+  handle: FileSystemDirectoryHandle
 ): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -104,9 +105,11 @@ async function removeHandle(id: string): Promise<void> {
 }
 
 // Find a folder by name in IndexedDB
-async function findHandleByName(
-  name: string
-): Promise<{ id: string; name: string; handle: FileSystemDirectoryHandle } | null> {
+async function findHandleByName(name: string): Promise<{
+  id: string;
+  name: string;
+  handle: FileSystemDirectoryHandle;
+} | null> {
   const handles = await loadHandles();
   return handles.find((h) => h.name === name) ?? null;
 }
@@ -235,6 +238,9 @@ export function useMediaFolders() {
           const permission = await handle.queryPermission({ mode: "read" });
           if (permission === "granted") {
             validFolders.push({ id, name, handle });
+          } else if (permission === "prompt") {
+            // Keep it but mark as needing permission
+            validFolders.push({ id, name, handle, needsPermission: true });
           }
         }
 
@@ -316,6 +322,53 @@ export function useMediaFolders() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folders]); // Only reload when folders change, NOT selectedFolderId
 
+  // Reconnect a folder (request permission)
+  const reconnectFolder = useCallback(
+    async (folderId: string) => {
+      const folder = folders.find((f) => f.id === folderId);
+      if (!folder) return;
+
+      try {
+        const permission = await folder.handle.requestPermission({
+          mode: "read",
+        });
+        if (permission === "granted") {
+          setFolders((prev) =>
+            prev.map((f) =>
+              f.id === folderId ? { ...f, needsPermission: false } : f
+            )
+          );
+        }
+      } catch (error) {
+        console.error("Failed to request permission:", error);
+      }
+    },
+    [folders]
+  );
+
+  // Reconnect ALL folders that need permission
+  const reconnectAllFolders = useCallback(async () => {
+    const brokenFolders = folders.filter((f) => f.needsPermission);
+    if (brokenFolders.length === 0) return;
+
+    for (const folder of brokenFolders) {
+      try {
+        const permission = await folder.handle.requestPermission({
+          mode: "read",
+        });
+        if (permission === "granted") {
+          setFolders((prev) =>
+            prev.map((f) =>
+              f.id === folder.id ? { ...f, needsPermission: false } : f
+            )
+          );
+        }
+      } catch (error) {
+        console.error(`Failed to reconnect folder ${folder.name}:`, error);
+      }
+    }
+  }, [folders]);
+
   // Filter media items by selected folder (client-side, no reload)
   const mediaItems = useMemo(() => {
     if (!selectedFolderId) return allMediaItems;
@@ -345,7 +398,10 @@ export function useMediaFolders() {
         setFolders((prev) => {
           const inState = prev.find((f) => f.id === existingInDB.id);
           if (!inState) {
-            return [...prev, { id: existingInDB.id, name, handle: existingInDB.handle }];
+            return [
+              ...prev,
+              { id: existingInDB.id, name, handle: existingInDB.handle },
+            ];
           }
           return prev;
         });
@@ -380,7 +436,7 @@ export function useMediaFolders() {
       // User denied permission in the browser dialog
       if (err.name === "NotAllowedError" || err.name === "SecurityError") {
         throw new Error(
-          "Permission denied. Please allow access to add folders.",
+          "Permission denied. Please allow access to add folders."
         );
       }
       // Other errors
@@ -410,7 +466,7 @@ export function useMediaFolders() {
         setSelectedFolderId(null);
       }
     },
-    [selectedFolderId],
+    [selectedFolderId]
   );
 
   // Refresh media from all folders
@@ -422,16 +478,16 @@ export function useMediaFolders() {
   // Filter by type (uses filtered mediaItems, not allMediaItems)
   const images = useMemo(
     () => mediaItems.filter((item) => item.type === "image"),
-    [mediaItems],
+    [mediaItems]
   );
   const videos = useMemo(
     () => mediaItems.filter((item) => item.type === "video"),
-    [mediaItems],
+    [mediaItems]
   );
 
   // Select a media item for output
   const [activeMediaItem, setActiveMediaItem] = useState<MediaItem | null>(
-    null,
+    null
   );
 
   // Video settings (global for now)
@@ -443,7 +499,7 @@ export function useMediaFolders() {
 
   // Per-item media filters - stored by item ID, persisted to localStorage
   const [itemFilters, setItemFilters] = useState<Record<string, MediaFilters>>(
-    () => loadFiltersFromStorage(),
+    () => loadFiltersFromStorage()
   );
 
   // Save filters to localStorage whenever they change
@@ -465,7 +521,7 @@ export function useMediaFolders() {
     (settings: Partial<VideoSettings>) => {
       setVideoSettings((prev) => ({ ...prev, ...settings }));
     },
-    [],
+    []
   );
 
   const updateMediaFilters = useCallback(
@@ -479,7 +535,7 @@ export function useMediaFolders() {
         },
       }));
     },
-    [activeMediaItem],
+    [activeMediaItem]
   );
 
   const resetMediaFilters = useCallback(() => {
@@ -493,7 +549,7 @@ export function useMediaFolders() {
   // Get CSS filter string for current item's filters
   const mediaFilterCSS = useMemo(
     () => filtersToCSS(mediaFilters),
-    [mediaFilters],
+    [mediaFilters]
   );
 
   return {
@@ -508,6 +564,8 @@ export function useMediaFolders() {
     addFolder,
     removeFolder,
     refreshMedia,
+    reconnectFolder,
+    reconnectAllFolders,
     activeMediaItem,
     selectMediaForOutput,
     videoSettings,
