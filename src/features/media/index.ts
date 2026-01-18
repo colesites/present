@@ -1,1 +1,1 @@
-export { MediaPanel } from "./MediaPanel";
+export { MediaPanel, type MediaPanelRef } from "./MediaPanel";

@@ -30,14 +30,15 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui";
+import { Kbd } from "@/components/ui/kbd";
 
 // Features
 import { AppHeader } from "@/features/header";
 import { ServicesSidebar } from "@/features/services";
 import { SlidesGrid, OutputPreview } from "@/features/slides";
 import { LyricsEditor } from "@/features/editor";
-import { ShowsPanel } from "@/features/shows";
-import { MediaPanel } from "@/features/media";
+import { ShowsPanel, type ShowsPanelRef } from "@/features/shows";
+import { MediaPanel, type MediaPanelRef } from "@/features/media";
 
 export default function Home() {
   // Organization & auth
@@ -129,6 +130,40 @@ export default function Home() {
   const showVideoRef = useRef<HTMLVideoElement>(null);
   // Ref to prevent feedback loop between state and video events
   const isProgrammaticPlayRef = useRef(false);
+
+  // Panel Refs for shortcuts
+  const showsPanelRef = useRef<ShowsPanelRef>(null);
+  const mediaPanelRef = useRef<MediaPanelRef>(null);
+
+  // Global Keyboard Shortcuts
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Cmd+K: Shows
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setBottomTab("shows");
+        requestAnimationFrame(() => {
+          showsPanelRef.current?.focusSearch();
+        });
+      }
+      // Cmd+M: Media
+      if ((e.metaKey || e.ctrlKey) && e.key === "m") {
+        e.preventDefault();
+        setBottomTab("media");
+        requestAnimationFrame(() => {
+          mediaPanelRef.current?.focusSearch();
+        });
+      }
+      // Cmd+B: Scripture (Bible)
+      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+        e.preventDefault();
+        setBottomTab("scripture");
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
 
   // Reset video state and handle auto-play when OUTPUT media changes
   const prevMediaIdRef = useRef<string | undefined>(undefined);
@@ -708,6 +743,9 @@ export default function Home() {
                         }`}
                       >
                         {tab}
+                        <Kbd className="ml-2">
+                          ⌘{tab === "shows" ? "K" : tab === "media" ? "M" : "B"}
+                        </Kbd>
                       </button>
                     )
                   )}
@@ -717,6 +755,7 @@ export default function Home() {
                   <Activity mode={bottomTab === "shows" ? "visible" : "hidden"}>
                     <div className="absolute inset-0 overflow-auto">
                       <ShowsPanel
+                        ref={showsPanelRef}
                         songs={filteredSongs}
                         categories={categories}
                         selectedSongId={selectedSongId}
@@ -741,6 +780,7 @@ export default function Home() {
                   <Activity mode={bottomTab === "media" ? "visible" : "hidden"}>
                     <div className="absolute inset-0 overflow-hidden">
                       <MediaPanel
+                        ref={mediaPanelRef}
                         mediaState={mediaState}
                         onSelectForOutput={handleMediaPanelSelect}
                         isInsideService={isInsideService}

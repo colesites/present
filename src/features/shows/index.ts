@@ -1,1 +1,1 @@
-export { ShowsPanel } from "./ShowsPanel";
+export { ShowsPanel, type ShowsPanelRef } from "./ShowsPanel";

@@ -1,12 +1,26 @@
 "use client";
 
-import { memo, useState } from "react";
+import {
+  memo,
+  useState,
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useMemo,
+} from "react";
 import type { Id } from "@/../convex/_generated/dataModel";
 import type { Song, Category } from "@/types";
 import { Dialog } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { Search } from "lucide-react";
+import { Search, ArrowUpDown, Check, ArrowUp, ArrowDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 
 interface ShowsPanelProps {
   songs: Song[];
@@ -31,163 +45,251 @@ interface ShowsPanelProps {
   onSearchChange: (query: string) => void;
 }
 
-export const ShowsPanel = memo(function ShowsPanel({
-  songs,
-  categories,
-  selectedSongId,
-  selectedCategoryId,
-  isInsideService,
-  selectedServiceId,
-  onSelectSong,
-  onSelectCategory,
-  onCreateSong,
-  onRenameSong,
-  onDeleteSong,
-  onAddToService,
-  onCreateCategory,
-  onFixLyrics,
-  searchQuery,
-  onSearchChange,
-}: ShowsPanelProps) {
-  const [showNewSongDialog, setShowNewSongDialog] = useState(false);
-  const [showNewCategoryDialog, setShowNewCategoryDialog] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<{
-    id: Id<"songs">;
-    title: string;
-  } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{
-    id: Id<"songs">;
-    title: string;
-  } | null>(null);
+export interface ShowsPanelRef {
+  focusSearch: () => void;
+}
 
-  // Filter songs by category
-  const filteredSongs = selectedCategoryId
-    ? songs.filter((s) => s.categoryId === selectedCategoryId)
-    : songs;
+export const ShowsPanel = memo(
+  forwardRef<ShowsPanelRef, ShowsPanelProps>(function ShowsPanel(
+    {
+      songs,
+      categories,
+      selectedSongId,
+      selectedCategoryId,
+      isInsideService,
+      selectedServiceId,
+      onSelectSong,
+      onSelectCategory,
+      onCreateSong,
+      onRenameSong,
+      onDeleteSong,
+      onAddToService,
+      onCreateCategory,
+      onFixLyrics,
+      searchQuery,
+      onSearchChange,
+    }: ShowsPanelProps,
+    ref
+  ) {
+    const [showNewSongDialog, setShowNewSongDialog] = useState(false);
+    const [showNewCategoryDialog, setShowNewCategoryDialog] = useState(false);
+    const [renameTarget, setRenameTarget] = useState<{
+      id: Id<"songs">;
+      title: string;
+    } | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<{
+      id: Id<"songs">;
+      title: string;
+    } | null>(null);
 
-  return (
-    <div className="flex h-full flex-col">
-      {/* Category bar and Search */}
-      <div className="flex items-center justify-between border-b border-border px-2 py-1 gap-4">
-        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-          <p className="text-[10px] text-muted-foreground mr-2">Categories:</p>
-          <button
-            type="button"
-            onClick={() => onSelectCategory(null)}
-            className={cn(
-              "px-2 py-1 rounded text-[10px] transition",
-              !selectedCategoryId
-                ? "bg-primary/20 text-primary"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            All
-          </button>
-          {categories.map((cat) => (
+    const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
+    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    useImperativeHandle(ref, () => ({
+      focusSearch: () => searchInputRef.current?.focus(),
+    }));
+
+    // Filter songs by category
+    const filteredSongs = useMemo(() => {
+      let result = selectedCategoryId
+        ? songs.filter((s) => s.categoryId === selectedCategoryId)
+        : songs;
+
+      // Sorting
+      result = [...result].sort((a, b) => {
+        if (sortBy === "name") {
+          return sortOrder === "asc"
+            ? a.title.localeCompare(b.title)
+            : b.title.localeCompare(a.title);
+        } else {
+          // Recent
+          return sortOrder === "asc"
+            ? a._creationTime - b._creationTime
+            : b._creationTime - a._creationTime;
+        }
+      });
+
+      return result;
+    }, [songs, selectedCategoryId, sortBy, sortOrder]);
+
+    return (
+      <div className="flex h-full flex-col">
+        {/* Category bar and Search */}
+        <div className="flex items-center justify-between border-b border-border px-2 py-1 gap-2">
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1">
+            <p className="text-[10px] text-muted-foreground mr-2 shrink-0">
+              Categories:
+            </p>
             <button
-              key={cat._id}
               type="button"
-              onClick={() => onSelectCategory(cat._id)}
+              onClick={() => onSelectCategory(null)}
               className={cn(
                 "px-2 py-1 rounded text-[10px] transition",
-                selectedCategoryId === cat._id
+                !selectedCategoryId
                   ? "bg-primary/20 text-primary"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
-              {cat.name}
+              All
             </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setShowNewCategoryDialog(true)}
-            className="px-2 py-1 text-[10px] text-muted-foreground hover:text-primary"
-          >
-            +
-          </button>
+            {categories.map((cat) => (
+              <button
+                key={cat._id}
+                type="button"
+                onClick={() => onSelectCategory(cat._id)}
+                className={cn(
+                  "px-2 py-1 rounded text-[10px] transition",
+                  selectedCategoryId === cat._id
+                    ? "bg-primary/20 text-primary"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {cat.name}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setShowNewCategoryDialog(true)}
+              className="px-2 py-1 text-[10px] text-muted-foreground hover:text-primary"
+            >
+              +
+            </button>
+          </div>
+
+          {/* Search and Sort */}
+          <div className="flex items-center gap-1 shrink-0">
+            <div className="relative w-32 xl:w-40">
+              <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder={
+                  selectedCategoryId
+                    ? `Search ${categories.find((c) => c._id === selectedCategoryId)?.name}...`
+                    : "Search..."
+                }
+                className="h-7 w-full pl-7 text-[10px]"
+              />
+            </div>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="h-7 w-7 flex items-center justify-center rounded-md border border-input hover:bg-secondary text-muted-foreground">
+                  <ArrowUpDown className="h-3 w-3" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuItem onClick={() => setSortBy("recent")}>
+                  <Check
+                    className={cn(
+                      "mr-2 h-3 w-3",
+                      sortBy === "recent" ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  Recent
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortBy("name")}>
+                  <Check
+                    className={cn(
+                      "mr-2 h-3 w-3",
+                      sortBy === "name" ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  Name
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setSortOrder("asc")}>
+                  <ArrowUp
+                    className={cn(
+                      "mr-2 h-3 w-3",
+                      sortOrder === "asc" ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  Ascending
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortOrder("desc")}>
+                  <ArrowDown
+                    className={cn(
+                      "mr-2 h-3 w-3",
+                      sortOrder === "desc" ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  Descending
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
-        {/* Search Bar - Opposite the categories */}
-        <div className="relative w-40 shrink-0">
-          <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={
-              selectedCategoryId
-                ? `Search all ${categories.find((c) => c._id === selectedCategoryId)?.name ?? "category"}...`
-                : "Search all shows..."
-            }
-            className="h-7 w-full pl-7 text-[10px]"
+        {/* Songs grid */}
+        <div className="flex-1 overflow-auto p-2">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
+            {filteredSongs.map((song) => (
+              <SongCard
+                key={song._id}
+                song={song}
+                isSelected={selectedSongId === song._id}
+                showAddToService={isInsideService && !!selectedServiceId}
+                onSelect={() => onSelectSong(song._id)}
+                onRename={() =>
+                  setRenameTarget({ id: song._id, title: song.title })
+                }
+                onDelete={() =>
+                  setDeleteTarget({ id: song._id, title: song.title })
+                }
+                onAddToService={() => onAddToService(song._id)}
+              />
+            ))}
+            <NewSongButton onClick={() => setShowNewSongDialog(true)} />
+          </div>
+        </div>
+
+        {/* Dialogs */}
+        {showNewSongDialog && (
+          <NewSongDialog
+            onClose={() => setShowNewSongDialog(false)}
+            onCreate={onCreateSong}
+            onFixLyrics={onFixLyrics}
+            categoryId={selectedCategoryId}
+            categories={categories}
           />
-        </div>
+        )}
+
+        {showNewCategoryDialog && (
+          <NewCategoryDialog
+            onClose={() => setShowNewCategoryDialog(false)}
+            onCreate={onCreateCategory}
+          />
+        )}
+
+        {renameTarget && (
+          <RenameSongDialog
+            title={renameTarget.title}
+            onClose={() => setRenameTarget(null)}
+            onSave={(newTitle) => {
+              onRenameSong(renameTarget.id, newTitle);
+              setRenameTarget(null);
+            }}
+          />
+        )}
+
+        {deleteTarget && (
+          <DeleteSongDialog
+            title={deleteTarget.title}
+            onClose={() => setDeleteTarget(null)}
+            onDelete={() => {
+              onDeleteSong(deleteTarget.id);
+              setDeleteTarget(null);
+            }}
+          />
+        )}
       </div>
-
-      {/* Songs grid */}
-      <div className="flex-1 overflow-auto p-2">
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
-          {filteredSongs.map((song) => (
-            <SongCard
-              key={song._id}
-              song={song}
-              isSelected={selectedSongId === song._id}
-              showAddToService={isInsideService && !!selectedServiceId}
-              onSelect={() => onSelectSong(song._id)}
-              onRename={() =>
-                setRenameTarget({ id: song._id, title: song.title })
-              }
-              onDelete={() =>
-                setDeleteTarget({ id: song._id, title: song.title })
-              }
-              onAddToService={() => onAddToService(song._id)}
-            />
-          ))}
-          <NewSongButton onClick={() => setShowNewSongDialog(true)} />
-        </div>
-      </div>
-
-      {/* Dialogs */}
-      {showNewSongDialog && (
-        <NewSongDialog
-          onClose={() => setShowNewSongDialog(false)}
-          onCreate={onCreateSong}
-          onFixLyrics={onFixLyrics}
-          categoryId={selectedCategoryId}
-          categories={categories}
-        />
-      )}
-
-      {showNewCategoryDialog && (
-        <NewCategoryDialog
-          onClose={() => setShowNewCategoryDialog(false)}
-          onCreate={onCreateCategory}
-        />
-      )}
-
-      {renameTarget && (
-        <RenameSongDialog
-          title={renameTarget.title}
-          onClose={() => setRenameTarget(null)}
-          onSave={(newTitle) => {
-            onRenameSong(renameTarget.id, newTitle);
-            setRenameTarget(null);
-          }}
-        />
-      )}
-
-      {deleteTarget && (
-        <DeleteSongDialog
-          title={deleteTarget.title}
-          onClose={() => setDeleteTarget(null)}
-          onDelete={() => {
-            onDeleteSong(deleteTarget.id);
-            setDeleteTarget(null);
-          }}
-        />
-      )}
-    </div>
-  );
-});
+    );
+  })
+);
 
 // Sub-components
 interface SongCardProps {
