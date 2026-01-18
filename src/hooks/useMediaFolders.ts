@@ -103,6 +103,33 @@ async function removeHandle(id: string): Promise<void> {
   });
 }
 
+// Find a folder by name in IndexedDB
+async function findHandleByName(
+  name: string
+): Promise<{ id: string; name: string; handle: FileSystemDirectoryHandle } | null> {
+  const handles = await loadHandles();
+  return handles.find((h) => h.name === name) ?? null;
+}
+
+// Clean up duplicate folders in IndexedDB (keep only the first one by name)
+async function cleanupDuplicateHandles(): Promise<void> {
+  const handles = await loadHandles();
+  const seenNames = new Set<string>();
+  const toDelete: string[] = [];
+
+  for (const handle of handles) {
+    if (seenNames.has(handle.name)) {
+      toDelete.push(handle.id);
+    } else {
+      seenNames.add(handle.name);
+    }
+  }
+
+  for (const id of toDelete) {
+    await removeHandle(id);
+  }
+}
+
 // Supported file extensions
 const IMAGE_EXTENSIONS = [
   ".jpg",
@@ -188,12 +215,22 @@ export function useMediaFolders() {
 
   // Load saved folder handles on mount
   useEffect(() => {
+    let isMounted = true;
+
     async function loadSavedFolders() {
       try {
+        // First, clean up any duplicate folders in IndexedDB
+        await cleanupDuplicateHandles();
+
         const saved = await loadHandles();
         const validFolders: MediaFolder[] = [];
+        const seenNames = new Set<string>();
 
         for (const { id, name, handle } of saved) {
+          // Skip duplicates by name (shouldn't happen after cleanup, but just in case)
+          if (seenNames.has(name)) continue;
+          seenNames.add(name);
+
           // Verify we still have permission
           const permission = await handle.queryPermission({ mode: "read" });
           if (permission === "granted") {
@@ -201,13 +238,19 @@ export function useMediaFolders() {
           }
         }
 
-        setFolders(validFolders);
+        if (isMounted) {
+          setFolders(validFolders);
+        }
       } catch (error) {
         console.error("Failed to load saved folders:", error);
       }
     }
 
     loadSavedFolders();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Load ALL media from ALL folders when folders change (NOT when selectedFolderId changes)
@@ -279,36 +322,6 @@ export function useMediaFolders() {
     return allMediaItems.filter((item) => item.folderId === selectedFolderId);
   }, [allMediaItems, selectedFolderId]);
 
-  // Load media from a single folder
-  const loadMediaFromFolder = useCallback(
-    async (folder: MediaFolder): Promise<MediaItem[]> => {
-      const items: MediaItem[] = [];
-      try {
-        for await (const entry of folder.handle.values()) {
-          if (entry.kind === "file") {
-            const mediaType = getMediaType(entry.name);
-            if (mediaType) {
-              const file = await entry.getFile();
-              const url = URL.createObjectURL(file);
-              items.push({
-                id: `${folder.id}-${entry.name}`,
-                name: entry.name,
-                type: mediaType,
-                url,
-                file,
-                folderId: folder.id,
-              });
-            }
-          }
-        }
-      } catch (error) {
-        console.error(`Failed to load media from ${folder.name}:`, error);
-      }
-      return items;
-    },
-    [],
-  );
-
   // Add a new folder
   const addFolder = useCallback(async () => {
     try {
@@ -321,28 +334,40 @@ export function useMediaFolders() {
         mode: "read",
       });
 
-      const id = `folder-${Date.now()}`;
       const name = handle.name;
 
-      // Check if folder already exists
-      const existing = folders.find((f) => f.name === name);
-      if (existing) {
-        throw new Error(`Folder "${name}" is already added`);
+      // Check if folder already exists in IndexedDB (source of truth)
+      const existingInDB = await findHandleByName(name);
+      if (existingInDB) {
+        // Folder already exists - just select it
+        setSelectedFolderId(existingInDB.id);
+        // Make sure it's in state too
+        setFolders((prev) => {
+          const inState = prev.find((f) => f.id === existingInDB.id);
+          if (!inState) {
+            return [...prev, { id: existingInDB.id, name, handle: existingInDB.handle }];
+          }
+          return prev;
+        });
+        return { id: existingInDB.id, name, handle: existingInDB.handle };
       }
+
+      // Also check current state (in case IndexedDB check missed it)
+      const existingInState = folders.find((f) => f.name === name);
+      if (existingInState) {
+        setSelectedFolderId(existingInState.id);
+        return existingInState;
+      }
+
+      const id = `folder-${Date.now()}`;
 
       // Save to IndexedDB for persistence
       await saveHandle(id, name, handle);
 
       const newFolder: MediaFolder = { id, name, handle };
 
-      // Load media from the new folder immediately
-      const newMedia = await loadMediaFromFolder(newFolder);
-
-      // Update state with new folder and its media
+      // Update state with new folder - the useEffect will load media
       setFolders((prev) => [...prev, newFolder]);
-      setAllMediaItems((prev) =>
-        [...prev, ...newMedia].sort((a, b) => a.name.localeCompare(b.name)),
-      );
       setSelectedFolderId(id); // Auto-select the new folder
 
       return newFolder;
@@ -362,7 +387,7 @@ export function useMediaFolders() {
       console.error("Add folder error:", err.name, err.message);
       throw error;
     }
-  }, [folders, loadMediaFromFolder]);
+  }, [folders]);
 
   // Remove a folder
   const removeFolder = useCallback(

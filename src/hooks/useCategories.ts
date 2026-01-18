@@ -1,17 +1,15 @@
 "use client";
 
 import { useEffect } from "react";
-import { useMutation } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
-import { useCachedConvexQuery } from "./useConvexCache";
 
 export function useCategories(orgId: Id<"organizations"> | null) {
-  // Use cached query for offline support
-  const categories = useCachedConvexQuery(
+  // Use plain Convex query - no caching to avoid data conflicts
+  const categories = useQuery(
     api.categories.listByOrg,
     orgId ? { orgId } : "skip",
-    "categories",
   );
   const ensureDefaultCategories = useMutation(api.categories.ensureDefaults);
   const createCategory = useMutation(api.categories.create);

@@ -1,11 +1,10 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { useMutation } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
 import type { Song } from "@/types";
-import { useCachedConvexQuery } from "./useConvexCache";
 
 export type ServiceItemType = "song" | "media" | "scripture";
 
@@ -37,11 +36,10 @@ function saveServiceState(state: {
 }
 
 export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
-  // Use cached query for offline support
-  const services = useCachedConvexQuery(
+  // Use plain Convex query - no caching to avoid data conflicts
+  const services = useQuery(
     api.services.listByOrg,
     orgId ? { orgId } : "skip",
-    "services",
   );
   const createService = useMutation(api.services.create);
   const renameService = useMutation(api.services.rename);

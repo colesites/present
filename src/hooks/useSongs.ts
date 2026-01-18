@@ -1,36 +1,13 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { useMutation } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
 import { parseLyricsToSlides } from "@/lib/lyrics";
-import { useCachedConvexQuery } from "./useConvexCache";
 import type { Song } from "@/types";
 
-const SONGS_CACHE_KEY = "present-songs-cache";
 const SONGS_STATE_KEY = "present-songs-state";
-
-// Load songs from localStorage for immediate display
-function loadCachedSongs(): Song[] | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const stored = localStorage.getItem(SONGS_CACHE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
-
-// Save songs to localStorage
-function saveSongsCache(songs: Song[]) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify(songs));
-  } catch (e) {
-    console.error("Failed to cache songs:", e);
-  }
-}
 
 // Load song selection state
 function loadSongsState() {
@@ -57,37 +34,25 @@ function saveSongsState(state: {
 }
 
 export function useSongs(orgId: Id<"organizations"> | null) {
-  // Use cached query for offline support
-  const convexSongs = useCachedConvexQuery(
+  // Use plain Convex query - no caching to avoid data conflicts
+  const songs = useQuery(
     api.songs.listByOrg,
     orgId ? { orgId } : "skip",
-    "songs",
-  );
+  ) as Song[] | undefined;
 
-  // Local cache for immediate display on reload (null on server, loaded after hydration)
-  const [localSongs, setLocalSongs] = useState<Song[] | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
 
-  // Use convex data when available, fallback to local cache
-  const songs: Song[] | null =
-    (convexSongs as Song[] | undefined) ?? localSongs;
-
-  // Load cached songs after hydration
+  // Mark hydrated after mount and clean up old caches
   useEffect(() => {
-    const cached = loadCachedSongs();
-    if (cached) {
-      setLocalSongs(cached);
+    // Remove all old caches that could cause conflicts
+    try {
+      localStorage.removeItem("present-songs-cache");
+      localStorage.removeItem("present-query-cache");
+    } catch {
+      // Ignore
     }
     setIsHydrated(true);
   }, []);
-
-  // Update local cache when convex data loads
-  useEffect(() => {
-    if (convexSongs && convexSongs.length > 0) {
-      setLocalSongs(convexSongs as Song[]);
-      saveSongsCache(convexSongs as Song[]);
-    }
-  }, [convexSongs]);
 
   const createSong = useMutation(api.songs.create);
   const updateSong = useMutation(api.songs.update);

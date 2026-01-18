@@ -1,10 +1,9 @@
 "use client";
 
 import { useCallback, useRef, useState, useEffect } from "react";
-import { useMutation } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
-import { useCachedConvexQuery } from "./useConvexCache";
 
 const PLAYBACK_STORAGE_KEY = "present-playback-local";
 
@@ -30,11 +29,10 @@ function saveLocalPlayback(state: { activeSlideId: string | null }) {
 }
 
 export function usePlayback(orgId: Id<"organizations"> | null) {
-  // Use cached query for offline support
-  const playback = useCachedConvexQuery(
+  // Use plain Convex query - no caching to avoid data conflicts
+  const playback = useQuery(
     api.playback.getByOrg,
     orgId ? { orgId } : "skip",
-    "playback",
   );
   const setActiveSlide = useMutation(api.playback.setActiveSlide);
   const setFontStyle = useMutation(api.playback.setFontStyle);

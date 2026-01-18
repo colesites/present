@@ -8,6 +8,7 @@ import { api } from "@/../convex/_generated/api";
 import { cn } from "@/lib/utils";
 import { AutoFitText } from "@/components/ui/AutoFitText";
 import { stripBracketsForDisplay } from "@/lib/lyrics";
+import { X } from "lucide-react";
 
 type ActiveSlideMessage = {
   type: "active-slide";
@@ -54,6 +55,8 @@ export default function OutputPage() {
     null,
   );
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showControls, setShowControls] = useState(false);
+  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Media state
   const [mediaItem, setMediaItem] = useState<MediaMessage["mediaItem"]>(null);
@@ -139,17 +142,45 @@ export default function OutputPage() {
     }
   }, []);
 
-  // Press F or F11 to toggle fullscreen
+  // Press F or F11 to toggle fullscreen, Escape to close
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "f" || e.key === "F" || e.key === "F11") {
         e.preventDefault();
         toggleFullscreen();
+      } else if (e.key === "Escape" && !document.fullscreenElement) {
+        // Close window if Escape pressed and not in fullscreen
+        window.close();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [toggleFullscreen]);
+
+  // Show controls on mouse move, hide after 2 seconds of inactivity
+  const handleMouseMove = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    controlsTimeoutRef.current = setTimeout(() => {
+      setShowControls(false);
+    }, 2000);
+  }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Close the output window
+  const handleClose = useCallback(() => {
+    window.close();
+  }, []);
 
   const activeSlideId = overrideSlideId ?? playback?.activeSlideId ?? null;
   const activeSlide = useMemo(() => {
@@ -175,9 +206,28 @@ export default function OutputPage() {
 
   return (
     <div
-      className="relative flex h-screen w-screen cursor-none select-none items-center justify-center bg-black text-white"
+      className={cn(
+        "relative flex h-screen w-screen select-none items-center justify-center bg-black text-white",
+        showControls ? "cursor-default" : "cursor-none"
+      )}
       onDoubleClick={toggleFullscreen}
+      onMouseMove={handleMouseMove}
     >
+      {/* Close button - appears on mouse move */}
+      <button
+        type="button"
+        onClick={handleClose}
+        className={cn(
+          "absolute right-4 top-4 z-50 rounded-full bg-black/60 p-2 text-white/80 backdrop-blur-sm transition-all hover:bg-red-600 hover:text-white",
+          showControls
+            ? "opacity-100 translate-y-0"
+            : "opacity-0 -translate-y-2 pointer-events-none"
+        )}
+        title="Close output window (Esc)"
+      >
+        <X className="h-5 w-5" />
+      </button>
+
       {hasContent ? (
         <>
           {/* Media layer (background) with filters */}

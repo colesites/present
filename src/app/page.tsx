@@ -106,20 +106,81 @@ export default function Home() {
   const [showTextInOutput, setShowTextInOutput] = useState(true);
   const [showMediaInOutput, setShowMediaInOutput] = useState(true);
 
+  // Preview media - shown in Show view but NOT output (for service items only)
+  // activeMediaItem = what's actually output to the projector (backgrounds from media panel)
+  const [previewMediaItem, setPreviewMediaItem] = useState<typeof activeMediaItem>(null);
+
+  // The media shown in Show view: ONLY previewMediaItem (service items)
+  // Media panel items (activeMediaItem) are backgrounds and don't show in Show view
+  const showViewMedia = previewMediaItem;
+
   // Video playback state - controlled from Show view, synced to output
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  // Flag to auto-play after media changes
+  const [shouldAutoPlay, setShouldAutoPlay] = useState(false);
 
-  // Reset video playing state when media changes
+  // Ref for Show view video element
+  const showVideoRef = useRef<HTMLVideoElement>(null);
+  // Ref to prevent feedback loop between state and video events
+  const isProgrammaticPlayRef = useRef(false);
+
+  // Reset video state and handle auto-play when OUTPUT media changes
   const prevMediaIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const currentId = activeMediaItem?.id;
     if (currentId !== prevMediaIdRef.current) {
-      setIsVideoPlaying(false);
+      // Reset time when switching media
       setVideoCurrentTime(0);
+      
+      // Check if we should auto-play
+      if (shouldAutoPlay && activeMediaItem?.type === "video") {
+        setIsVideoPlaying(true);
+        setShouldAutoPlay(false);
+      } else if (prevMediaIdRef.current !== undefined) {
+        // Only reset playing state if switching, not on first load
+        setIsVideoPlaying(false);
+      }
+      
       prevMediaIdRef.current = currentId;
     }
-  }, [activeMediaItem?.id]);
+  }, [activeMediaItem?.id, activeMediaItem?.type, shouldAutoPlay]);
+
+  // Sync Show view video playback with isVideoPlaying state
+  useEffect(() => {
+    if (showVideoRef.current && showViewMedia?.type === "video") {
+      isProgrammaticPlayRef.current = true;
+      if (isVideoPlaying) {
+        showVideoRef.current.play().catch(() => {
+          // Autoplay might be blocked
+          isProgrammaticPlayRef.current = false;
+        });
+      } else {
+        showVideoRef.current.pause();
+      }
+      // Reset flag after a short delay to allow event to fire
+      setTimeout(() => {
+        isProgrammaticPlayRef.current = false;
+      }, 100);
+    }
+  }, [isVideoPlaying, showViewMedia?.type]);
+
+  // Handle video play/pause from user clicking video controls
+  const handleVideoPlay = useCallback(() => {
+    if (!isProgrammaticPlayRef.current) {
+      setIsVideoPlaying(true);
+    }
+  }, []);
+
+  const handleVideoPause = useCallback(() => {
+    if (!isProgrammaticPlayRef.current) {
+      setIsVideoPlaying(false);
+    }
+  }, []);
+
+  const handleVideoEnded = useCallback(() => {
+    setIsVideoPlaying(false);
+  }, []);
 
   // Handle video seek in Show view
   const handleVideoSeeked = useCallback(
@@ -233,31 +294,23 @@ export default function Home() {
 
       if (item.type === "song" && item.song) {
         setSelectedSongId(item.song._id);
-        // Clear media selection when switching to a song
-        selectMediaForOutput(null);
+        // Clear media preview when switching to a song
+        setPreviewMediaItem(null);
       } else if (item.type === "media") {
         // Find the media item in allMediaItems by matching the refId
         const mediaItem = allMediaItems.find((m) => m.id === item.refId);
         if (mediaItem) {
-          selectMediaForOutput(mediaItem);
+          // Only set preview - don't output until clicked in Show view or double-clicked
+          setPreviewMediaItem(mediaItem);
         }
-        // Clear song selection and text output when switching to media
+        // Clear song selection when switching to media
         setSelectedSongId(null);
-        // Clear the text output immediately
-        selectSlide("", "");
       }
     },
-    [
-      serviceItems,
-      setServiceItemIndex,
-      setSelectedSongId,
-      selectMediaForOutput,
-      allMediaItems,
-      selectSlide,
-    ]
+    [serviceItems, setServiceItemIndex, setSelectedSongId, allMediaItems]
   );
 
-  // Double-click on service item to output immediately (same as single click for media)
+  // Double-click on service item to output immediately
   const handleDoubleClickServiceItem = useCallback(
     (index: number) => {
       const item = serviceItems[index];
@@ -266,13 +319,46 @@ export default function Home() {
       if (item.type === "media") {
         const mediaItem = allMediaItems.find((m) => m.id === item.refId);
         if (mediaItem) {
+          // Auto-play if video (set flag before changing media)
+          if (mediaItem.type === "video") {
+            setShouldAutoPlay(true);
+          }
+          // Set preview to show in Show view AND output it
+          setPreviewMediaItem(mediaItem);
           selectMediaForOutput(mediaItem);
-          // Clear the text output immediately
+          // Clear the text output
           selectSlide("", "");
         }
       }
     },
     [serviceItems, allMediaItems, selectMediaForOutput, selectSlide]
+  );
+
+  // Click in Show view to output media (for service items previewing)
+  const handleOutputPreviewMedia = useCallback(() => {
+    if (previewMediaItem) {
+      // Auto-play if video (set flag before changing media)
+      if (previewMediaItem.type === "video") {
+        setShouldAutoPlay(true);
+      }
+      selectMediaForOutput(previewMediaItem);
+      // DON'T clear previewMediaItem - keep it visible in Show view for control
+      // Clear the text output
+      selectSlide("", "");
+    }
+  }, [previewMediaItem, selectMediaForOutput, selectSlide]);
+
+  // Media panel selection - outputs immediately (for backgrounds)
+  const handleMediaPanelSelect = useCallback(
+    (item: typeof activeMediaItem) => {
+      setPreviewMediaItem(null); // Clear any preview
+      // Auto-play if video (set flag before changing media)
+      if (item?.type === "video") {
+        setShouldAutoPlay(true);
+      }
+      selectMediaForOutput(item);
+    },
+    [selectMediaForOutput]
   );
 
   const handleRemoveFromService = useCallback(
@@ -481,32 +567,58 @@ export default function Home() {
                   <Activity mode={viewMode === "show" ? "visible" : "hidden"}>
                     <div className="absolute inset-0 overflow-auto p-4">
                       {/* Show media if selected and no song, otherwise show slides */}
-                      {activeMediaItem && !selectedSongId ? (
+                      {showViewMedia && !selectedSongId ? (
                         <div className="flex h-full flex-col items-center justify-center gap-4">
-                          <div className="relative w-full max-w-4xl aspect-video rounded-lg overflow-hidden bg-black shadow-xl">
-                            {activeMediaItem.type === "image" ? (
+                          {/* Click to output - shows indicator based on output state */}
+                          <button
+                            type="button"
+                            onClick={handleOutputPreviewMedia}
+                            className={`relative w-full max-w-4xl aspect-video rounded-lg overflow-hidden bg-black shadow-xl ${
+                              previewMediaItem && activeMediaItem?.id === previewMediaItem.id
+                                ? "ring-2 ring-green-500" // Active/outputting
+                                : previewMediaItem
+                                  ? "ring-2 ring-yellow-500 cursor-pointer" // Preview only
+                                  : ""
+                            }`}
+                            disabled={activeMediaItem?.id === previewMediaItem?.id}
+                          >
+                            {showViewMedia.type === "image" ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
-                                src={activeMediaItem.url}
-                                alt={activeMediaItem.name}
+                                src={showViewMedia.url}
+                                alt={showViewMedia.name}
                                 className="h-full w-full object-contain"
                               />
                             ) : (
                               <video
-                                src={activeMediaItem.url}
+                                ref={showVideoRef}
+                                src={showViewMedia.url}
                                 className="h-full w-full object-contain"
                                 controls
                                 loop={videoSettings.loop}
                                 muted={videoSettings.muted}
-                                onPlay={() => setIsVideoPlaying(true)}
-                                onPause={() => setIsVideoPlaying(false)}
-                                onEnded={() => setIsVideoPlaying(false)}
+                                onPlay={handleVideoPlay}
+                                onPause={handleVideoPause}
+                                onEnded={handleVideoEnded}
                                 onSeeked={handleVideoSeeked}
                               />
                             )}
-                          </div>
+                            {/* Preview indicator - only show when NOT yet outputting */}
+                            {previewMediaItem && activeMediaItem?.id !== previewMediaItem.id && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
+                                <span className="text-white font-medium text-lg">
+                                  Click to Output
+                                </span>
+                              </div>
+                            )}
+                          </button>
                           <p className="text-sm text-muted-foreground">
-                            {activeMediaItem.name}
+                            {showViewMedia.name}
+                            {previewMediaItem && activeMediaItem?.id === previewMediaItem.id ? (
+                              <span className="ml-2 text-green-500">(Now Outputting)</span>
+                            ) : previewMediaItem ? (
+                              <span className="ml-2 text-yellow-500">(Preview - click to output)</span>
+                            ) : null}
                           </p>
                         </div>
                       ) : (
@@ -552,8 +664,8 @@ export default function Home() {
                       Stage display settings coming soon
                     </div>
                   </Activity>
-                </div>
-              </main>
+        </div>
+      </main>
             </ResizablePanel>
 
             <ResizableHandle withHandle />
@@ -607,7 +719,7 @@ export default function Home() {
                     <div className="absolute inset-0 overflow-hidden">
                       <MediaPanel
                         mediaState={mediaState}
-                        onSelectForOutput={selectMediaForOutput}
+                        onSelectForOutput={handleMediaPanelSelect}
                         isInsideService={isInsideService}
                         selectedServiceId={selectedServiceId}
                         onAddToService={handleAddMediaToService}

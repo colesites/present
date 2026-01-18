@@ -422,9 +422,9 @@ export const OutputPreview = memo(function OutputPreview({
         </p>
         <div className="space-y-1">
           {groups.length > 0 ? (
-            groups.map((group) => (
+            groups.map((group, index) => (
               <div
-                key={group.label}
+                key={`${group.label}-${index}`}
                 className="flex items-center justify-between py-1 text-sm"
               >
                 <span className="text-foreground">{group.label}</span>

@@ -36,6 +36,11 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
 
 type MediaFilter = "all" | "images" | "videos";
 
@@ -238,101 +243,112 @@ export const MediaPanel = memo(function MediaPanel({
 
   return (
     <>
-      <div className="flex h-full">
-        {/* Folders sidebar */}
-        <div className="flex w-48 shrink-0 flex-col border-r border-border">
-          <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              Folders
-            </span>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={handleRefresh}
-                disabled={isLoading || folders.length === 0}
-                className="rounded p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:opacity-50"
-                title="Refresh"
-              >
-                <RefreshCw
-                  className={cn("h-3.5 w-3.5", isLoading && "animate-spin")}
-                />
-              </button>
-              <button
-                type="button"
-                onClick={handleAddFolder}
-                className="rounded p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
-                title="Add folder"
-              >
-                <FolderPlus className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-auto p-2">
-            {folders.length === 0 ? (
-              <button
-                type="button"
-                onClick={handleAddFolder}
-                className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-dashed border-border p-4 text-muted-foreground transition hover:border-primary hover:text-foreground"
-              >
-                <FolderPlus className="h-8 w-8" />
-                <span className="text-xs">Add folder</span>
-              </button>
-            ) : (
-              <div className="space-y-1">
-                {/* All folders option */}
+      <ResizablePanelGroup
+        direction="horizontal"
+        className="h-full"
+        autoSaveId="present-media-panel-layout"
+      >
+        {/* Folders sidebar - resizable */}
+        <ResizablePanel defaultSize={20} minSize={12} maxSize={40}>
+          <div className="flex h-full flex-col border-r border-border">
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                Folders
+              </span>
+              <div className="flex gap-1">
                 <button
                   type="button"
-                  onClick={() => setSelectedFolderId(null)}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
-                    selectedFolderId === null
-                      ? "bg-primary text-primary-foreground"
-                      : "text-foreground hover:bg-secondary",
-                  )}
+                  onClick={handleRefresh}
+                  disabled={isLoading || folders.length === 0}
+                  className="rounded p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                  title="Refresh"
                 >
-                  <Folder className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">All folders</span>
-                  <span className="ml-auto text-[10px] opacity-70">
-                    {allMediaItems.length}
-                  </span>
+                  <RefreshCw
+                    className={cn("h-3.5 w-3.5", isLoading && "animate-spin")}
+                  />
                 </button>
+                <button
+                  type="button"
+                  onClick={handleAddFolder}
+                  className="rounded p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+                  title="Add folder"
+                >
+                  <FolderPlus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
 
-                {folders.map((folder) => (
-                  <div
-                    key={folder.id}
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-2">
+              {folders.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={handleAddFolder}
+                  className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-dashed border-border p-4 text-muted-foreground transition hover:border-primary hover:text-foreground"
+                >
+                  <FolderPlus className="h-8 w-8" />
+                  <span className="text-xs">Add folder</span>
+                </button>
+              ) : (
+                <div className="space-y-1">
+                  {/* All folders option */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFolderId(null)}
                     className={cn(
-                      "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
-                      selectedFolderId === folder.id
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
+                      selectedFolderId === null
                         ? "bg-primary text-primary-foreground"
                         : "text-foreground hover:bg-secondary",
                     )}
                   >
-                    <button
-                      type="button"
-                      onClick={() => setSelectedFolderId(folder.id)}
-                      className="flex flex-1 items-center gap-2 text-left"
+                    <Folder className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">All folders</span>
+                    <span className="shrink-0 text-[10px] opacity-70">
+                      {allMediaItems.length}
+                    </span>
+                  </button>
+
+                  {folders.map((folder) => (
+                    <div
+                      key={folder.id}
+                      className={cn(
+                        "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
+                        selectedFolderId === folder.id
+                          ? "bg-primary text-primary-foreground"
+                          : "text-foreground hover:bg-secondary",
+                      )}
                     >
-                      <Folder className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{folder.name}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFolderToRemove(folder)}
-                      className="rounded p-0.5 opacity-0 transition hover:bg-destructive/20 group-hover:opacity-100"
-                      title="Remove folder"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFolderId(folder.id)}
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      >
+                        <Folder className="h-3.5 w-3.5 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {folder.name}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFolderToRemove(folder)}
+                        className="shrink-0 rounded p-0.5 opacity-0 transition hover:bg-destructive/20 group-hover:opacity-100"
+                        title="Remove folder"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </ResizablePanel>
+
+        <ResizableHandle />
 
         {/* Media grid */}
-        <div className="flex flex-1 flex-col">
+        <ResizablePanel defaultSize={80}>
+          <div className="flex h-full flex-col">
           {/* Filter tabs */}
           <div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
             <button
@@ -504,8 +520,9 @@ export const MediaPanel = memo(function MediaPanel({
               </>
             )}
           </div>
-        </div>
-      </div>
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
 
       {/* Remove folder confirmation dialog */}
       <AlertDialog
