@@ -17,6 +17,11 @@ import {
 import { useSongs } from "@/features/songs/hooks";
 import { useServices } from "@/features/services/hooks";
 import { useMediaFolders } from "@/features/media/hooks";
+import { useScripture } from "@/features/scripture/hooks/useScripture";
+import { parseReference } from "@/features/scripture/lib/parser";
+import { generateBibleSlides } from "@/features/scripture/lib/slides";
+import { db } from "@/features/scripture/lib/db";
+import { useLiveQuery } from "dexie-react-hooks";
 
 // Lib
 import {
@@ -36,6 +41,7 @@ import {
 import { AppHeader } from "@/features/header";
 import { type ShowsPanelRef } from "@/features/shows";
 import { type MediaPanelRef } from "@/features/media";
+import { type ScripturePanelRef } from "@/features/scripture";
 import { PresentCenterArea } from "@/features/present/PresentCenterArea";
 import { PresentServicesSidebar } from "@/features/present/PresentServicesSidebar";
 import { PresentOutputSidebar } from "@/features/present/PresentOutputSidebar";
@@ -112,43 +118,20 @@ export default function Home() {
   const [showMediaInOutput, setShowMediaInOutput] = useState(true);
   const [shouldAutoPlay, setShouldAutoPlay] = useState(false);
 
-  const {
-    previewMediaItem,
-    showViewMedia,
-    onSelectServiceItem: handleSelectServiceItem,
-    onDoubleClickServiceItem: handleDoubleClickServiceItem,
-    onOutputPreviewMedia: handleOutputPreviewMedia,
-    onMediaPanelSelect: handleMediaPanelSelect,
-  } = usePresentMediaFlow({
-    serviceItems,
-    allMediaItems,
-    activeMediaItem,
-    setServiceItemIndex,
-    setSelectedSongId,
-    selectMediaForOutput,
-    selectSlide,
-    setShouldAutoPlay,
-  });
+  // Scripture Logic for Service Items
+  const { lookupRef } = useScripture();
+  const availableBooks = useLiveQuery(() => db.books.toArray()) ?? [];
 
-  const {
-    showVideoRef,
-    isVideoPlaying,
-    videoCurrentTime,
-    handleVideoPlay,
-    handleVideoPause,
-    handleVideoEnded,
-    handleVideoSeeked,
-  } = useShowVideoSync({
-    showViewMedia,
-    activeMediaItem,
-    videoSettings,
-    shouldAutoPlay,
-    onAutoPlayConsumed: () => setShouldAutoPlay(false),
-  });
+  /* handleSelectScripture moved below handleScriptureOutput */
+
+  /* usePresentMediaFlow moved below handleSelectScripture */
+
+  /* useShowVideoSync moved below usePresentMediaFlow */
 
   // Panel Refs for shortcuts
   const showsPanelRef = useRef<ShowsPanelRef>(null);
   const mediaPanelRef = useRef<MediaPanelRef>(null);
+  const scripturePanelRef = useRef<ScripturePanelRef>(null);
 
   // UI state (defaults match server render)
   const { viewMode, setViewMode, bottomTab, setBottomTab } =
@@ -161,6 +144,7 @@ export default function Home() {
     setBottomTab,
     showsPanelRef,
     mediaPanelRef,
+    scripturePanelRef,
   });
 
   const [selected, setSelected] = useState<{
@@ -278,6 +262,69 @@ export default function Home() {
     },
     [handleSelectSlide, setSelectedSongId],
   );
+
+  const handleSelectScripture = useCallback(
+    async (refString: string) => {
+      if (availableBooks.length === 0) return;
+
+      const parsed = parseReference(refString, availableBooks);
+      if (!parsed.book || parsed.errors.length > 0) {
+        console.warn(
+          "Failed to parse scripture ref from service:",
+          refString,
+          parsed.errors,
+        );
+        return;
+      }
+
+      const verses = await lookupRef(parsed);
+
+      if (verses.length > 0) {
+        const slides = generateBibleSlides(verses, {
+          verseNumberMode: "inline",
+          maxLines: 40,
+          maxCharsPerLine: 100,
+        });
+        handleScriptureOutput(slides);
+      }
+    },
+    [availableBooks, lookupRef, handleScriptureOutput],
+  );
+
+  const {
+    previewMediaItem,
+    showViewMedia,
+    onSelectServiceItem: handleSelectServiceItem,
+    onDoubleClickServiceItem: handleDoubleClickServiceItem,
+    onOutputPreviewMedia: handleOutputPreviewMedia,
+    onMediaPanelSelect: handleMediaPanelSelect,
+  } = usePresentMediaFlow({
+    serviceItems,
+    allMediaItems,
+    activeMediaItem,
+    setServiceItemIndex,
+    setSelectedSongId,
+    selectMediaForOutput,
+    selectSlide,
+    setShouldAutoPlay,
+    onSelectScripture: handleSelectScripture,
+  });
+
+  const {
+    showVideoRef,
+    isVideoPlaying,
+    videoCurrentTime,
+    handleVideoPlay,
+    handleVideoPause,
+    handleVideoEnded,
+    handleVideoSeeked,
+  } = useShowVideoSync({
+    showViewMedia,
+    activeMediaItem,
+    videoSettings,
+    shouldAutoPlay,
+    onAutoPlayConsumed: () => setShouldAutoPlay(false),
+  });
 
   const fixLyrics = useCallback(async (lyrics: string): Promise<string> => {
     const res = await fetch("/api/lyrics/fix", {
@@ -436,6 +483,7 @@ export default function Home() {
             onVideoSeeked={handleVideoSeeked}
             showsPanelRef={showsPanelRef}
             mediaPanelRef={mediaPanelRef}
+            scripturePanelRef={scripturePanelRef}
             showsPanelProps={{
               songs: filteredSongs,
               categories,

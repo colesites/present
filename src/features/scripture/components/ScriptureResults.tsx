@@ -65,8 +65,9 @@ export function ScriptureResults({
     const last = verses[verses.length - 1];
     const ref = `${first.bookName} ${first.chapter}:${first.verse}${verses.length > 1 ? `-${last.verse}` : ""}`;
     const combinedText = verses.map((v) => v.text).join(" ");
-    onAddToService(ref, combinedText);
-  };
+    // Use ref as label for the service item as per user request
+    onAddToService(ref, ref);
+  };;
 
   const handleSendRangeToOutput = () => {
     const slides = generateBibleSlides(verses, config);
@@ -104,7 +105,7 @@ export function ScriptureResults({
                 onClick={handleAddRangeToService}
               >
                 <Plus className="h-3 w-3" />
-                Add Range
+                Add to Service
               </Button>
             )}
           </div>

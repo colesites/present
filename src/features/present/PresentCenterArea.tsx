@@ -10,7 +10,7 @@ import { SlidesGrid } from "@/features/slides";
 import { LyricsEditor } from "@/features/editor";
 import { ShowsPanel, type ShowsPanelRef } from "@/features/shows";
 import { MediaPanel, type MediaPanelRef } from "@/features/media";
-import { ScripturePanel } from "@/features/scripture";
+import { ScripturePanel, type ScripturePanelRef } from "@/features/scripture";
 import { Kbd } from "@/components/ui/kbd";
 import {
   ResizablePanel,
@@ -69,6 +69,7 @@ type Props = {
   // bottom panels
   showsPanelRef: React.RefObject<ShowsPanelRef | null>;
   mediaPanelRef: React.RefObject<MediaPanelRef | null>;
+  scripturePanelRef: React.RefObject<ScripturePanelRef | null>;
   showsPanelProps: ShowsProps;
   mediaPanelProps: MediaProps;
 
@@ -99,6 +100,7 @@ export function PresentCenterArea({
   onVideoSeeked,
   showsPanelRef,
   mediaPanelRef,
+  scripturePanelRef,
   showsPanelProps,
   mediaPanelProps,
   onSendScripture,
@@ -198,7 +200,11 @@ export function PresentCenterArea({
             </Activity>
 
             <Activity mode={bottomTab === "scripture" ? "visible" : "hidden"}>
-              <ScripturePanel onSendToOutput={onSendScripture} orgId={orgId} />
+              <ScripturePanel
+                ref={scripturePanelRef}
+                onSendToOutput={onSendScripture}
+                orgId={orgId}
+              />
             </Activity>
           </div>
         </div>

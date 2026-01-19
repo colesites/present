@@ -9,9 +9,9 @@ export interface Suggestion {
 }
 
 export async function getSuggestions(
-  input: string, 
+  input: string,
   availableBooks: BibleBookRecord[],
-  availableVersions: BibleVersion[]
+  availableVersions: BibleVersion[],
 ): Promise<Suggestion[]> {
   const trimInput = input.trimStart();
   if (!trimInput) {
@@ -22,21 +22,22 @@ export async function getSuggestions(
 
   // Split by space to see where we are
   const parts = trimInput.split(/\s+/);
-  
+
   // 1. Book matching (first part or first two parts if it's "1 John", etc.)
   let bookStr = parts[0];
   let remaining = parts.slice(1);
-  
+
   if (/^[1-3]$/.test(parts[0]) && parts[1]) {
     bookStr = `${parts[0]} ${parts[1]}`;
     remaining = parts.slice(2);
   }
 
   const bookSearch = bookStr.toLowerCase();
-  const matchedBooks = availableBooks.filter(b => 
-    b.name.toLowerCase().startsWith(bookSearch) || 
-    b.id.toLowerCase().startsWith(bookSearch) ||
-    b.abbreviation?.toLowerCase().startsWith(bookSearch)
+  const matchedBooks = availableBooks.filter(
+    (b) =>
+      b.name.toLowerCase().startsWith(bookSearch) ||
+      b.id.toLowerCase().startsWith(bookSearch) ||
+      b.abbreviation?.toLowerCase().startsWith(bookSearch),
   );
 
   // If we are still typing the book
@@ -69,19 +70,61 @@ export async function getSuggestions(
   const book = matchedBooks[0]; // Take the best match
   if (!book) return [];
 
-  // 2. Chapter/Verse matching
+  // 2. Version suggestions (Priority if we have moved past the reference)
+  // If we have a reference part, and then another part (version), OR if we have a reference part and a trailing space
+  if (remaining.length >= 2 || (remaining.length >= 1 && input.endsWith(" "))) {
+    let versionSearch = "";
+    let prefix = "";
+
+    if (remaining.length >= 2) {
+      // Typed "Gen 6:2 am" -> remaining is ["6:2", "am"]
+      versionSearch = remaining[remaining.length - 1].toLowerCase();
+      const lastSpaceIndex = input.lastIndexOf(" ");
+      prefix = input.substring(0, lastSpaceIndex + 1);
+    } else {
+      // Typed "Gen 6:2 " -> remaining is ["6:2"]
+      versionSearch = "";
+      prefix = input;
+    }
+
+    const matches = availableVersions.filter((v) =>
+      v.code.toLowerCase().startsWith(versionSearch),
+    );
+
+    if (matches.length > 0) {
+      return matches.map((v) => ({
+        text: `${prefix}${v.code}`,
+        type: "version" as SuggestionType,
+        description: v.name,
+      }));
+    }
+  }
+
+  // 3. Chapter/Verse matching (Only if we are arguably still typing the reference)
   const refPart = remaining[0] || "";
   if (refPart.includes(":")) {
     const [chapterStr, verseStr] = refPart.split(":");
     const chapter = parseInt(chapterStr, 10);
-    
+
     // Verse suggestions
     if (verseStr !== undefined) {
-      // For now, we don't know the exact verse count without querying DB or having it in data
-      // We can suggest 1-5 as a starting point or just numbers
+      // If user typed a range hyphen, stop suggesting verses (let them finish the range)
+      if (verseStr.includes("-")) {
+        return [];
+      }
+
+      // If user typed a verse number, prioritize it and following verses
+      // e.g. "2" -> 2, 3, 4, 5, 6
+      // "23" -> 23, 24, 25...
+      let startVerse = 1;
+      const parsedV = parseInt(verseStr, 10);
+      if (!isNaN(parsedV) && parsedV > 0) {
+        startVerse = parsedV;
+      }
+
       return Array.from({ length: 5 }, (_, i) => ({
-        text: `${book.name} ${chapter}:${i + 1}`,
-        type: "verse" as SuggestionType
+        text: `${book.name} ${chapter}:${startVerse + i}`,
+        type: "verse" as SuggestionType,
       }));
     }
   } else if (refPart) {
@@ -90,7 +133,10 @@ export async function getSuggestions(
     if (!isNaN(chapterSearch)) {
       return Array.from({ length: 5 }, (_, i) => {
         const c = i + 1; // Simplistic
-        return { text: `${book.name} ${chapterSearch}${i ? i : ""}`, type: "chapter" as SuggestionType };
+        return {
+          text: `${book.name} ${chapterSearch}${i ? i : ""}`,
+          type: "chapter" as SuggestionType,
+        };
       }).slice(0, 5);
     }
   } else if (input.endsWith(" ")) {
@@ -98,11 +144,7 @@ export async function getSuggestions(
     return [{ text: `${book.name} 1`, type: "chapter" as SuggestionType }];
   }
 
-  // 3. Version suggestions (if there's a space after reference)
-  if (remaining.length >= 1 && input.endsWith(" ")) {
-    return availableVersions.map(v => ({ text: v.code, type: "version" as SuggestionType, description: v.name }));
-  }
-
+  // Version logic moved up
   return [];
 }
 

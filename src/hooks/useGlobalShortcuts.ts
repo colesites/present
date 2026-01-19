@@ -3,18 +3,21 @@ import { useEffect } from "react";
 import type { BottomTab } from "@/types";
 import type { ShowsPanelRef } from "@/features/shows";
 import type { MediaPanelRef } from "@/features/media";
+import type { ScripturePanelRef } from "@/features/scripture";
 import type { RefObject } from "react";
 
 type Params = {
   setBottomTab: (tab: BottomTab) => void;
   showsPanelRef: RefObject<ShowsPanelRef | null>;
   mediaPanelRef: RefObject<MediaPanelRef | null>;
+  scripturePanelRef: RefObject<ScripturePanelRef | null>;
 };
 
 export function useGlobalShortcuts({
   setBottomTab,
   showsPanelRef,
   mediaPanelRef,
+  scripturePanelRef,
 }: Params) {
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -45,10 +48,13 @@ export function useGlobalShortcuts({
       if (e.key.toLowerCase() === "b") {
         e.preventDefault();
         setBottomTab("scripture");
+        requestAnimationFrame(() => {
+          scripturePanelRef.current?.focusSearch();
+        });
       }
     };
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [setBottomTab, showsPanelRef, mediaPanelRef]);
+  }, [setBottomTab, showsPanelRef, mediaPanelRef, scripturePanelRef]);
 }

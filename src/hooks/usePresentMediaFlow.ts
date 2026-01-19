@@ -9,23 +9,24 @@ type ServiceItemLike =
   | { type: "media"; refId: string }
   | { type: string; [key: string]: unknown };
 
-export function usePresentMediaFlow<TMedia extends { id: string; type: string }>(
-  params: {
-    serviceItems: ServiceItemLike[];
-    allMediaItems: TMedia[];
-    activeMediaItem: TMedia | null;
+export function usePresentMediaFlow<
+  TMedia extends { id: string; type: string },
+>(params: {
+  serviceItems: ServiceItemLike[];
+  allMediaItems: TMedia[];
+  activeMediaItem: TMedia | null;
 
-    setServiceItemIndex: (index: number) => void;
-    setSelectedSongId: (id: Id<"songs"> | null) => void;
+  setServiceItemIndex: (index: number) => void;
+  setSelectedSongId: (id: Id<"songs"> | null) => void;
 
-    // ✅ NOW uses your real MediaItem type (TMedia), so no mismatch
-    selectMediaForOutput: (item: TMedia | null) => void;
+  // ✅ NOW uses your real MediaItem type (TMedia), so no mismatch
+  selectMediaForOutput: (item: TMedia | null) => void;
 
-    selectSlide: (slideId: string, text: string) => Promise<void> | void;
+  selectSlide: (slideId: string, text: string) => Promise<void> | void;
+  onSelectScripture?: (refId: string) => void;
 
-    setShouldAutoPlay: (v: boolean) => void;
-  }
-) {
+  setShouldAutoPlay: (v: boolean) => void;
+}) {
   const {
     serviceItems,
     allMediaItems,
@@ -65,8 +66,17 @@ export function usePresentMediaFlow<TMedia extends { id: string; type: string }>
         setPreviewMediaItem(mediaItem);
         setSelectedSongId(null);
       }
+
+      if (item.type === "scripture") {
+        const refId = (item as any).refId as string | undefined;
+        if (refId && params.onSelectScripture) {
+          params.onSelectScripture(refId);
+          setPreviewMediaItem(null);
+          setSelectedSongId(null);
+        }
+      }
     },
-    [serviceItems, setServiceItemIndex, setSelectedSongId, allMediaItems]
+    [serviceItems, setServiceItemIndex, setSelectedSongId, allMediaItems],
   );
 
   const onDoubleClickServiceItem = useCallback(
@@ -93,7 +103,7 @@ export function usePresentMediaFlow<TMedia extends { id: string; type: string }>
       setShouldAutoPlay,
       selectMediaForOutput,
       selectSlide,
-    ]
+    ],
   );
 
   const onOutputPreviewMedia = useCallback(() => {
@@ -113,7 +123,7 @@ export function usePresentMediaFlow<TMedia extends { id: string; type: string }>
 
       selectMediaForOutput(item);
     },
-    [setShouldAutoPlay, selectMediaForOutput]
+    [setShouldAutoPlay, selectMediaForOutput],
   );
 
   const isPreviewOutputting =

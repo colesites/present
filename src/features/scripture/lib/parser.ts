@@ -9,7 +9,10 @@ export interface ParsedReference {
   errors: string[];
 }
 
-export function parseReference(input: string, availableBooks: BibleBookRecord[]): ParsedReference {
+export function parseReference(
+  input: string,
+  availableBooks: BibleBookRecord[],
+): ParsedReference {
   const result: ParsedReference = {
     book: null,
     chapter: null,
@@ -22,9 +25,15 @@ export function parseReference(input: string, availableBooks: BibleBookRecord[])
   const trimInput = input.trim();
   if (!trimInput) return result;
 
-  // Regex to match: [Book] [Chapter]:[Verse]-[Verse] [Version] 
-  // Allow numbers in book names like "1 John"
-  const regex = /^([1-3]?\s*[A-Za-z\s]+)\s+(\d+)(?::(\d+)(?:-(\d+))?)?(?:\s+([A-Za-z0-9]+))?$/i;
+  // Regex to match: [Book] [Chapter]:[Verse]-[Verse] [Version]
+  // Improved to handle optional spaces and simpler grouping
+  // Group 1: Book (allow "1 John", "Song of Songs")
+  // Group 2: Chapter
+  // Group 3: Verse Start (Optional)
+  // Group 4: Verse End (Optional range)
+  // Group 5: Version (Optional)
+  const regex =
+    /^([1-3]?\s*[A-Za-z]+(?:[A-Za-z\s]*))\s+(\d+)(?::\s*(\d+)(?:\s*-\s*(\d+))?)?(?:\s+([A-Za-z0-9]+))?$/i;
   const match = trimInput.match(regex);
 
   if (!match) {
@@ -40,7 +49,7 @@ export function parseReference(input: string, availableBooks: BibleBookRecord[])
     (b) =>
       b.name.toLowerCase() === bookSearch ||
       b.id.toLowerCase() === bookSearch ||
-      b.abbreviation?.toLowerCase() === bookSearch
+      b.abbreviation?.toLowerCase() === bookSearch,
   );
 
   if (!book) {
@@ -52,7 +61,9 @@ export function parseReference(input: string, availableBooks: BibleBookRecord[])
   // 2. Resolve Chapter
   const chapter = parseInt(chapterRaw, 10);
   if (book && (chapter < 1 || chapter > book.chapters)) {
-    result.errors.push(`Invalid chapter: ${chapter}. ${book.name} has ${book.chapters} chapters.`);
+    result.errors.push(
+      `Invalid chapter: ${chapter}. ${book.name} has ${book.chapters} chapters.`,
+    );
   }
   result.chapter = chapter;
 
