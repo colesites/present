@@ -2,7 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useScripture } from "../hooks/useScripture";
-import { generateBibleSlides, type SlideConfig } from "../lib/slides";
+import {
+  generateBibleSlides,
+  type SlideConfig,
+  type ScriptureSlide,
+} from "../lib/slides";
 import { type ParsedReference } from "../lib/parser";
 import { Button } from "@/components/ui/button";
 import { Monitor, Plus, Settings2 } from "lucide-react";
@@ -10,7 +14,7 @@ import { type BibleVerse } from "../lib/db";
 
 interface ScriptureResultsProps {
   parsedRef: ParsedReference;
-  onSendToOutput: (slides: string[]) => void;
+  onSendToOutput: (slides: ScriptureSlide[]) => void;
   onAddToService?: (ref: string, text: string) => void;
 }
 
@@ -19,7 +23,7 @@ export function ScriptureResults({
   onSendToOutput,
   onAddToService,
 }: ScriptureResultsProps) {
-  const { lookupRef } = useScripture();
+  const { lookupRef, versions } = useScripture();
   const [verses, setVerses] = useState<BibleVerse[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -47,8 +51,15 @@ export function ScriptureResults({
     fetchVerses();
   }, [parsedRef, lookupRef]);
 
+  const getVersionName = (versionId: string) => {
+    return versions.find((v) => v.id === versionId)?.code ?? "";
+  };
+
   const handleSendVerse = (v: BibleVerse) => {
-    const slides = generateBibleSlides([v], config);
+    const slides = generateBibleSlides([v], {
+      ...config,
+      versionName: getVersionName(v.version),
+    });
     onSendToOutput(slides);
   };
 
@@ -67,10 +78,14 @@ export function ScriptureResults({
     const combinedText = verses.map((v) => v.text).join(" ");
     // Use ref as label for the service item as per user request
     onAddToService(ref, ref);
-  };;
+  };
 
   const handleSendRangeToOutput = () => {
-    const slides = generateBibleSlides(verses, config);
+    if (verses.length === 0) return;
+    const slides = generateBibleSlides(verses, {
+      ...config,
+      versionName: getVersionName(verses[0].version),
+    });
     onSendToOutput(slides);
   };
 

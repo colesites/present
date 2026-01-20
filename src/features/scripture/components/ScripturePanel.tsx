@@ -25,10 +25,10 @@ import { cn } from "@/lib/utils";
 import { Id } from "@/../convex/_generated/dataModel";
 import { useServices } from "@/features/services/hooks";
 import { useScripture } from "../hooks/useScripture";
-import { generateBibleSlides } from "../lib/slides";
+import { generateBibleSlides, type ScriptureSlide } from "../lib/slides";
 
 interface ScripturePanelProps {
-  onSendToOutput: (slides: string[]) => void;
+  onSendToOutput: (slides: ScriptureSlide[]) => void;
   orgId: Id<"organizations"> | null;
 }
 
@@ -143,6 +143,7 @@ export const ScripturePanel = memo(
             verseNumberMode: "inline",
             maxLines: 40,
             maxCharsPerLine: 100,
+            versionName: version,
           });
           onSendToOutput(slides);
         }

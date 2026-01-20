@@ -27,6 +27,7 @@ export interface SlideData {
     label?: string;
     modifier?: string;
     backgroundId?: string;
+    footer?: string;
   };
   index: number;
   id?: string; // Optional unique ID override
@@ -36,7 +37,7 @@ interface SlidesGridProps {
   slides: SlideData[];
   activeSlideId: string | null;
   selectedIndex: number | null;
-  onSelectSlide: (slideId: string, text: string) => void;
+  onSelectSlide: (slideId: string, text: string, footer?: string) => void;
   onEditSlide?: (songId: Id<"songs">, index: number) => void;
 }
 
@@ -75,7 +76,7 @@ export const SlidesGrid = memo(function SlidesGrid({
             index={index}
             isActive={isActive}
             isSelected={isSelected}
-            onClick={() => onSelectSlide(slideId, slide.text)}
+            onClick={() => onSelectSlide(slideId, slide.text, slide.footer)}
             onEdit={
               onEditSlide && song
                 ? () => onEditSlide(song._id, index)
@@ -94,6 +95,7 @@ interface SlideCardProps {
     text: string;
     label?: string;
     modifier?: string;
+    footer?: string;
   };
   index: number;
   isActive: boolean;

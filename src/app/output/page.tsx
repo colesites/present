@@ -15,6 +15,7 @@ type ActiveSlideMessage = {
   orgId: Id<"organizations">;
   slideId: string;
   slideText?: string;
+  slideFooter?: string;
 };
 
 type MediaMessage = {
@@ -60,6 +61,9 @@ export default function OutputPage() {
   const [overrideSlideText, setOverrideSlideText] = useState<string | null>(
     null,
   );
+  const [overrideSlideFooter, setOverrideSlideFooter] = useState<string | null>(
+    null,
+  );
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -87,6 +91,7 @@ export default function OutputPage() {
       if (data.type === "active-slide") {
         setOverrideSlideId(data.slideId);
         setOverrideSlideText(data.slideText ?? null);
+        setOverrideSlideFooter(data.slideFooter ?? null);
       } else if (data.type === "media-update") {
         setMediaItem(data.mediaItem);
         setShowText(data.showText);
@@ -197,15 +202,15 @@ export default function OutputPage() {
   const activeSlideId = overrideSlideId ?? playback?.activeSlideId ?? null;
   const activeSlide = useMemo(() => {
     if (overrideSlideText) {
-      return { text: overrideSlideText };
+      return { text: overrideSlideText, footer: overrideSlideFooter };
     }
     if (!activeSlideId || !songs) return null;
     const [songId, indexString] = activeSlideId.split(":");
     const song = songs.find((item) => item._id === (songId as Id<"songs">));
     if (!song) return null;
     const index = Number(indexString);
-    return song.slides[index];
-  }, [activeSlideId, overrideSlideText, songs]);
+    return song.slides[index] as { text: string; footer?: string };
+  }, [activeSlideId, overrideSlideText, overrideSlideFooter, songs]);
 
   // Font styling from playback
   const fontFamily = playback?.fontFamily ?? "Inter";
@@ -220,7 +225,7 @@ export default function OutputPage() {
     <div
       className={cn(
         "relative flex h-screen w-screen select-none items-center justify-center bg-black text-white",
-        showControls ? "cursor-default" : "cursor-none"
+        showControls ? "cursor-default" : "cursor-none",
       )}
       onDoubleClick={toggleFullscreen}
       onMouseMove={handleMouseMove}
@@ -233,7 +238,7 @@ export default function OutputPage() {
           "absolute right-4 top-4 z-50 rounded-full bg-black/60 p-2 text-white/80 backdrop-blur-sm transition-all hover:bg-red-600 hover:text-white",
           showControls
             ? "opacity-100 translate-y-0"
-            : "opacity-0 -translate-y-2 pointer-events-none"
+            : "opacity-0 -translate-y-2 pointer-events-none",
         )}
         title="Close output window (Esc)"
       >
@@ -267,20 +272,30 @@ export default function OutputPage() {
 
           {/* Text layer (foreground) */}
           {showText && activeSlide && (
-            <div className="relative h-full w-full p-8">
-              <AutoFitText
-                text={stripBracketsForDisplay(activeSlide.text)}
-                className={cn(
-                  "leading-relaxed text-white",
-                  fontBold && "font-bold",
-                  fontItalic && "italic",
-                  fontUnderline && "underline",
-                  // Add text shadow for better readability over media
-                  mediaItem && "drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]",
-                )}
-                style={{ fontFamily, fontSize: `${fontSize}px` }}
-                minScale={0.3}
-              />
+            <div className="relative flex h-full w-full flex-col items-center justify-center p-8">
+              <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+                <AutoFitText
+                  text={stripBracketsForDisplay(activeSlide.text)}
+                  className={cn(
+                    "leading-relaxed text-white",
+                    fontBold && "font-bold",
+                    fontItalic && "italic",
+                    fontUnderline && "underline",
+                    // Add text shadow for better readability over media
+                    mediaItem && "drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]",
+                  )}
+                  style={{ fontFamily, fontSize: `${fontSize}px` }}
+                  minScale={0.3}
+                />
+              </div>
+              {activeSlide.footer && (
+                <div
+                  className="mt-4 text-[2vh] font-semibold uppercase tracking-wide text-white/90 drop-shadow-lg"
+                  style={{ fontFamily }}
+                >
+                  {activeSlide.footer}
+                </div>
+              )}
             </div>
           )}
         </>

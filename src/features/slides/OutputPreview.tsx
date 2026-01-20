@@ -32,6 +32,7 @@ interface SlideGroup {
 
 interface OutputPreviewProps {
   text: string | null;
+  footer?: string | null;
   fontBold: boolean;
   fontItalic: boolean;
   fontUnderline: boolean;
@@ -95,6 +96,7 @@ const FilterSlider = memo(function FilterSlider({
 
 export const OutputPreview = memo(function OutputPreview({
   text,
+  footer,
   fontBold,
   fontItalic,
   fontUnderline,
@@ -160,7 +162,7 @@ export const OutputPreview = memo(function OutputPreview({
         <span
           className={cn(
             "h-2 w-2 rounded-full",
-            activeMediaItem || text ? "bg-green-500" : "bg-primary"
+            activeMediaItem || text ? "bg-green-500" : "bg-primary",
           )}
         />
         <p className="text-xs font-medium text-muted-foreground">Main Output</p>
@@ -197,19 +199,26 @@ export const OutputPreview = memo(function OutputPreview({
 
           {/* Text layer (foreground, on top of media) */}
           {showText && text && (
-            <div className="absolute inset-0 flex items-center justify-center p-2">
-              <AutoFitText
-                text={stripBracketsForDisplay(text)}
-                className={cn(
-                  "pointer-events-none select-none text-sm leading-relaxed text-white",
-                  fontBold && "font-bold",
-                  fontItalic && "italic",
-                  fontUnderline && "underline",
-                  // Add text shadow for better readability over media
-                  activeMediaItem && "drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
-                )}
-                minScale={0.4}
-              />
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
+              <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+                <AutoFitText
+                  text={stripBracketsForDisplay(text)}
+                  className={cn(
+                    "pointer-events-none select-none text-sm leading-relaxed text-white",
+                    fontBold && "font-bold",
+                    fontItalic && "italic",
+                    fontUnderline && "underline",
+                    // Add text shadow for better readability over media
+                    "drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]",
+                  )}
+                  minScale={0.4}
+                />
+              </div>
+              {footer && (
+                <div className="mt-2 text-[8px] font-semibold uppercase tracking-wide text-white/90 drop-shadow-md sm:text-[10px]">
+                  {footer}
+                </div>
+              )}
             </div>
           )}
 
@@ -231,7 +240,7 @@ export const OutputPreview = memo(function OutputPreview({
             "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
             showText
               ? "bg-primary text-primary-foreground"
-              : "bg-secondary text-muted-foreground hover:text-foreground"
+              : "bg-secondary text-muted-foreground hover:text-foreground",
           )}
           title={showText ? "Hide text" : "Show text"}
         >
@@ -245,7 +254,7 @@ export const OutputPreview = memo(function OutputPreview({
             "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
             showMedia
               ? "bg-primary text-primary-foreground"
-              : "bg-secondary text-muted-foreground hover:text-foreground"
+              : "bg-secondary text-muted-foreground hover:text-foreground",
           )}
           title={showMedia ? "Hide media" : "Show media"}
         >
@@ -261,7 +270,7 @@ export const OutputPreview = memo(function OutputPreview({
                 "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
                 showFilters || hasActiveFilters
                   ? "bg-primary text-primary-foreground"
-                  : "bg-secondary text-muted-foreground hover:text-foreground"
+                  : "bg-secondary text-muted-foreground hover:text-foreground",
               )}
               title="Media filters"
             >
@@ -289,7 +298,7 @@ export const OutputPreview = memo(function OutputPreview({
               "flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition",
               videoSettings.loop
                 ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-muted-foreground hover:text-foreground"
+                : "bg-secondary text-muted-foreground hover:text-foreground",
             )}
             title={videoSettings.loop ? "Disable loop" : "Enable loop"}
           >
@@ -305,7 +314,7 @@ export const OutputPreview = memo(function OutputPreview({
               "flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition",
               videoSettings.muted
                 ? "bg-destructive/20 text-destructive"
-                : "bg-secondary text-muted-foreground hover:text-foreground"
+                : "bg-secondary text-muted-foreground hover:text-foreground",
             )}
             title={videoSettings.muted ? "Unmute" : "Mute"}
           >

@@ -4,18 +4,35 @@ export interface SlideConfig {
   maxLines: number;
   maxCharsPerLine: number;
   verseNumberMode: "inline" | "superscript" | "none";
+  versionName?: string;
 }
 
-export function generateBibleSlides(verses: BibleVerse[], config: SlideConfig): string[] {
-  return verses.map(verse => {
-    const versePrefix = config.verseNumberMode === "none" 
-      ? "" 
-      : `${verse.verse}. `;
-    
-    const versionSuffix = verse.version
-      ? ` (${verse.version.toUpperCase()})`
-      : "";
+export interface ScriptureSlide {
+  content: string;
+  label: string;
+  footer: string;
+}
 
-    return `${versePrefix}${verse.text}\n\n[${verse.bookName} ${verse.chapter}:${verse.verse}${versionSuffix}]`;
+export function generateBibleSlides(
+  verses: BibleVerse[],
+  config: SlideConfig,
+): ScriptureSlide[] {
+  return verses.map((verse) => {
+    const versePrefix =
+      config.verseNumberMode === "none" ? "" : `${verse.verse}. `;
+
+    const versionStr = config.versionName
+      ? config.versionName
+      : verse.version
+        ? verse.version.toUpperCase()
+        : "";
+
+    return {
+      content: `${versePrefix}${verse.text}`,
+      label:
+        `${verse.bookName} ${verse.chapter}:${verse.verse} ${versionStr}`.trim(),
+      footer:
+        `${verse.bookName} ${verse.chapter}:${verse.verse} ${versionStr}`.trim(),
+    };
   });
 }

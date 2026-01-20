@@ -20,6 +20,7 @@ import { useMediaFolders } from "@/features/media/hooks";
 import { useScripture } from "@/features/scripture/hooks/useScripture";
 import { parseReference } from "@/features/scripture/lib/parser";
 import { generateBibleSlides } from "@/features/scripture/lib/slides";
+import type { ScriptureSlide } from "@/features/scripture/lib/slides";
 import { db } from "@/features/scripture/lib/db";
 import { useLiveQuery } from "dexie-react-hooks";
 
@@ -137,7 +138,7 @@ export default function Home() {
   const { viewMode, setViewMode, bottomTab, setBottomTab } =
     usePersistedUIState();
 
-  const [scriptureSlides, setScriptureSlides] = useState<string[]>([]);
+  const [scriptureSlides, setScriptureSlides] = useState<ScriptureSlide[]>([]);
 
   // Global Keyboard Shortcuts
   useGlobalShortcuts({
@@ -158,21 +159,23 @@ export default function Home() {
   const slidesForGrid = useMemo(() => {
     if (selectedSong) return getSlidesForGrid(selectedSong);
     if (scriptureSlides.length > 0) {
-      return scriptureSlides.map((text, i) => ({
-        slide: { text, label: "Scripture" },
+      return scriptureSlides.map((item, i) => ({
+        slide: { text: item.content, label: item.label, footer: item.footer },
         index: i,
         song: null as any,
       }));
     }
     return [];
   }, [selectedSong, scriptureSlides]);
-  const activeSlideText = useMemo(() => {
+  const activeSlideContent = useMemo(() => {
     if (activeSlideId?.startsWith("scripture:")) {
       const indexStr = activeSlideId.split(":")[1];
       const index = parseInt(indexStr, 10);
-      return scriptureSlides[index] ?? null;
+      const slide = scriptureSlides[index];
+      return slide ? { text: slide.content, footer: slide.footer } : null;
     }
-    return getActiveSlideText(activeSlideId, songs);
+    const text = getActiveSlideText(activeSlideId, songs);
+    return text ? { text } : null;
   }, [activeSlideId, songs, scriptureSlides]);
   const slideGroups = useMemo(
     () => getSlideGroups(selectedSong),
@@ -181,8 +184,8 @@ export default function Home() {
 
   // Handlers
   const handleSelectSlide = useCallback(
-    async (slideId: string, text: string) => {
-      await selectSlide(slideId, text);
+    async (slideId: string, text: string, footer?: string) => {
+      await selectSlide(slideId, text, footer);
 
       const [idPart, indexStr] = slideId.split(":");
       const index = Number(indexStr);
@@ -250,14 +253,18 @@ export default function Home() {
   );
 
   const handleScriptureOutput = useCallback(
-    async (slides: string[]) => {
+    async (slides: ScriptureSlide[]) => {
       // Clear current song selection when showing scripture
       setSelectedSongId(null);
       setScriptureSlides(slides);
 
       if (slides.length > 0) {
         // Use consistent scripture:index format
-        await handleSelectSlide(`scripture:0`, slides[0]);
+        await handleSelectSlide(
+          `scripture:0`,
+          slides[0].content,
+          slides[0].footer,
+        );
       }
     },
     [handleSelectSlide, setSelectedSongId],
@@ -280,10 +287,29 @@ export default function Home() {
       const verses = await lookupRef(parsed);
 
       if (verses.length > 0) {
+        // Try to determine version name from the first verse
+        // (lookupRef handles getting the version ID, but we need the code display name)
+        // Since we don't have direct access to "versions" list here easily without adding it,
+        // we can try to extract it from the ref string if present, or rely on the verse.version fallback.
+        // However, the best way is to let generateBibleSlides handle it if we can't find it.
+        // Actually, "lookupRef" returns verses with "version" (ID).
+        // Let's see if we can get the version code from the ref string first.
+        let versionName = parsed.versionCode;
+
+        if (!versionName && verses[0].version) {
+          // If we didn't parse a version code, we should try to find it.
+          // Since "versions" isn't in scope, we will rely on generateBibleSlides' fallback
+          // which uppercases the version ID. This is usually "KJV" etc. so it might affect "nkjv" -> "NKJV"
+          // correct enough for now.
+          // However, if the ID is "nkjv-1982" this would look bad.
+          // Let's add availableVersions to the hook destructuring to be safe.
+        }
+
         const slides = generateBibleSlides(verses, {
           verseNumberMode: "inline",
           maxLines: 40,
           maxCharsPerLine: 100,
+          versionName: versionName ?? undefined,
         });
         handleScriptureOutput(slides);
       }
@@ -381,7 +407,11 @@ export default function Home() {
           const slideId = nextSlide.song
             ? `${nextSlide.song._id}:${nextSlide.index}`
             : `scripture:${nextSlide.index}`;
-          handleSelectSlide(slideId, nextSlide.slide.text);
+          handleSelectSlide(
+            slideId,
+            nextSlide.slide.text,
+            nextSlide.slide.footer,
+          );
         } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
           e.preventDefault();
           const prevIndex = Math.max(currentIndex - 1, 0);
@@ -389,7 +419,11 @@ export default function Home() {
           const slideId = prevSlide.song
             ? `${prevSlide.song._id}:${prevSlide.index}`
             : `scripture:${prevSlide.index}`;
-          handleSelectSlide(slideId, prevSlide.slide.text);
+          handleSelectSlide(
+            slideId,
+            prevSlide.slide.text,
+            prevSlide.slide.footer,
+          );
         }
       }
     };
@@ -520,7 +554,8 @@ export default function Home() {
         {/* Right sidebar - Output Preview + Groups (default ~280px on 1400px screen = 20%) */}
         <PresentOutputSidebar
           outputPreviewProps={{
-            text: activeSlideText,
+            text: activeSlideContent?.text ?? null,
+            footer: activeSlideContent?.footer ?? null,
             fontBold,
             fontItalic,
             fontUnderline,

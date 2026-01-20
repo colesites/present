@@ -80,7 +80,7 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
   }, []);
 
   const selectSlide = useCallback(
-    async (slideId: string, slideText?: string) => {
+    async (slideId: string, slideText?: string, slideFooter?: string) => {
       if (!orgId) return;
 
       // Mark that we have local changes (prevents server overwrite)
@@ -96,6 +96,7 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
         orgId,
         slideId,
         slideText,
+        slideFooter,
       });
 
       // Try to persist to database (will fail if offline, that's ok)

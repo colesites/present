@@ -11,6 +11,7 @@ import { LyricsEditor } from "@/features/editor";
 import { ShowsPanel, type ShowsPanelRef } from "@/features/shows";
 import { MediaPanel, type MediaPanelRef } from "@/features/media";
 import { ScripturePanel, type ScripturePanelRef } from "@/features/scripture";
+import type { ScriptureSlide } from "@/features/scripture/lib/slides";
 import { Kbd } from "@/components/ui/kbd";
 import {
   ResizablePanel,
@@ -73,7 +74,7 @@ type Props = {
   showsPanelProps: ShowsProps;
   mediaPanelProps: MediaProps;
 
-  onSendScripture: (slides: string[]) => void;
+  onSendScripture: (slides: ScriptureSlide[]) => void;
   orgId: Id<"organizations"> | null;
 };
 

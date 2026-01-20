@@ -59,8 +59,17 @@ export const ScriptureInput = forwardRef<HTMLInputElement, ScriptureInputProps>(
       [value, availableBooks],
     );
 
+    // Use a ref to track the last emitted value to prevent infinite loops
+    // caused by availableBooks array reference changes
+    const lastParsedJson = useRef("");
+
     useEffect(() => {
-      onRefChange(parsed);
+      // Basic circular reference handling not needed for POJOs from Dexie
+      const json = JSON.stringify(parsed);
+      if (json !== lastParsedJson.current) {
+        lastParsedJson.current = json;
+        onRefChange(parsed);
+      }
     }, [parsed, onRefChange]);
 
     const updateSuggestions = async (val: string) => {
@@ -288,7 +297,7 @@ export const ScriptureInput = forwardRef<HTMLInputElement, ScriptureInputProps>(
 
       setValue(transformedVal);
       updateSuggestions(transformedVal);
-    };;
+    };
 
     // Expose the input ref to the parent
     useImperativeHandle(
