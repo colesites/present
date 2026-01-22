@@ -299,10 +299,18 @@ export const ScriptureInput = forwardRef<HTMLInputElement, ScriptureInputProps>(
       updateSuggestions(transformedVal);
     };
 
-    // Expose the input ref to the parent
+    // Expose methods to the parent
     useImperativeHandle(
       ref,
-      () => internalInputRef.current as HTMLInputElement,
+      () =>
+        ({
+          ...internalInputRef.current,
+          focus: () => internalInputRef.current?.focus(),
+          setValue: (val: string) => {
+            setValue(val);
+            updateSuggestions(val);
+          },
+        }) as any,
     );
 
     return (
