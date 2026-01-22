@@ -272,25 +272,55 @@ export default function OutputPage() {
 
           {/* Text layer (foreground) */}
           {showText && activeSlide && (
-            <div className="relative flex h-full w-full flex-col items-center justify-center p-8">
-              <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+            <div
+              className={cn(
+                "relative flex h-full w-full flex-col",
+                activeSlideId?.startsWith("scripture:")
+                  ? "items-start justify-start p-0"
+                  : "items-center justify-center p-8",
+              )}
+            >
+              <div
+                className={cn(
+                  "flex min-h-0 w-full flex-1",
+                  activeSlideId?.startsWith("scripture:")
+                    ? "items-start justify-start"
+                    : "items-center justify-center",
+                )}
+              >
                 <AutoFitText
                   text={stripBracketsForDisplay(activeSlide.text)}
+                  align={
+                    activeSlideId?.startsWith("scripture:") ? "left" : "center"
+                  }
+                  verticalAlign={
+                    activeSlideId?.startsWith("scripture:") ? "top" : "center"
+                  }
                   className={cn(
-                    "leading-relaxed text-white",
+                    "w-full leading-tight text-white",
                     fontBold && "font-bold",
                     fontItalic && "italic",
                     fontUnderline && "underline",
                     // Add text shadow for better readability over media
-                    mediaItem && "drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]",
+                    mediaItem && "drop-shadow-[0_4px_16px_rgba(0,0,0,1)]",
                   )}
-                  style={{ fontFamily, fontSize: `${fontSize}px` }}
-                  minScale={0.3}
+                  style={{
+                    fontFamily,
+                    fontSize: activeSlideId?.startsWith("scripture:")
+                      ? "18vh"
+                      : `${fontSize}px`,
+                  }}
+                  minScale={0.1}
                 />
               </div>
               {activeSlide.footer && (
                 <div
-                  className="mt-4 text-[2vh] font-semibold uppercase tracking-wide text-white/90 drop-shadow-lg"
+                  className={cn(
+                    "font-semibold uppercase tracking-wide text-white/90 drop-shadow-lg",
+                    activeSlideId?.startsWith("scripture:")
+                      ? "mb-[4vh] mt-0 w-full text-left text-[6vh]"
+                      : "mt-4 text-[2.5vh] text-center",
+                  )}
                   style={{ fontFamily }}
                 >
                   {activeSlide.footer}

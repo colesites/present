@@ -1,74 +1,136 @@
 "use client";
 
-import { memo, useRef, useEffect, useState, type CSSProperties } from "react";
+import React, {
+  memo,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { cn } from "@/lib/utils";
 
-interface AutoFitTextProps {
+export interface AutoFitTextProps {
   text: string;
   className?: string;
   style?: CSSProperties;
   minScale?: number;
+  align?: "left" | "center" | "right";
+  verticalAlign?: "top" | "center" | "bottom";
 }
 
 /**
- * Auto-fit text component that scales text down to fit container
- * without changing the actual font size setting.
+ * Auto-fit text component
+ * Fits by adjusting font-size so wrapping behavior is natural.
  */
-export const AutoFitText = memo(function AutoFitText({
+const AutoFitTextComponent = ({
   text,
   className,
   style,
   minScale = 0.4,
-}: AutoFitTextProps) {
+  align = "center",
+  verticalAlign = "center",
+}: AutoFitTextProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLParagraphElement>(null);
-  const [scale, setScale] = useState(1);
 
-  useEffect(() => {
+  const [fittedFontSizePx, setFittedFontSizePx] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
     const container = containerRef.current;
     const textEl = textRef.current;
     if (!container || !textEl) return;
 
-    // Reset scale to measure natural size
-    setScale(1);
-
-    // Use requestAnimationFrame to ensure DOM has updated
-    const frameId = requestAnimationFrame(() => {
+    const fit = () => {
       const containerWidth = container.clientWidth;
       const containerHeight = container.clientHeight;
-      const textWidth = textEl.scrollWidth;
-      const textHeight = textEl.scrollHeight;
 
-      if (textWidth === 0 || textHeight === 0) return;
+      if (containerWidth === 0 || containerHeight === 0) return;
 
-      // Calculate scale needed to fit
-      const scaleX = containerWidth / textWidth;
-      const scaleY = containerHeight / textHeight;
-      const newScale = Math.min(scaleX, scaleY, 1); // Never scale up, only down
+      // Binary search for the largest font size that fits
+      let min = 10;
+      let max = 500;
+      let best = min;
 
-      // Clamp to reasonable minimum
-      setScale(Math.max(newScale, minScale));
+      // Save original styles to restore later
+      const originalFontSize = textEl.style.fontSize;
+      const originalVisibility = textEl.style.visibility;
+
+      // Hide during measurement to prevent flickering
+      textEl.style.visibility = "hidden";
+
+      for (let i = 0; i < 10; i++) {
+        const mid = (min + max) / 2;
+        textEl.style.fontSize = `${mid}px`;
+
+        const fits =
+          textEl.scrollWidth <= containerWidth &&
+          textEl.scrollHeight <= containerHeight;
+
+        if (fits) {
+          best = mid;
+          min = mid;
+        } else {
+          max = mid;
+        }
+      }
+
+      // Restore and apply best fit
+      textEl.style.visibility = originalVisibility;
+      textEl.style.fontSize = originalFontSize;
+      setFittedFontSizePx(best);
+    };
+
+    const raf = requestAnimationFrame(fit);
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(fit);
     });
+    ro.observe(container);
 
-    return () => cancelAnimationFrame(frameId);
+    // Initial fit
+    fit();
+
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
   }, [text, minScale, style]);
 
   return (
     <div
       ref={containerRef}
-      className="flex h-full w-full items-center justify-center overflow-hidden"
+      className={cn(
+        "flex h-full w-full min-w-0 overflow-hidden",
+        align === "center" && "justify-center",
+        align === "left" && "justify-start",
+        align === "right" && "justify-end",
+        verticalAlign === "center" && "items-center",
+        verticalAlign === "top" && "items-start",
+        verticalAlign === "bottom" && "items-end",
+      )}
     >
       <p
         ref={textRef}
-        className={cn("whitespace-pre-line text-center", className)}
+        className={cn(
+          "min-w-0 whitespace-pre-line break-words",
+          // Don't force w-full, let it naturally width-fit
+          align === "center" && "text-center",
+          align === "left" && "text-left",
+          align === "right" && "text-right",
+          className,
+        )}
         style={{
-          ...style,
-          transform: `scale(${scale})`,
-          transformOrigin: "center",
+          ...(style ?? {}),
+          fontSize:
+            fittedFontSizePx !== null
+              ? `${fittedFontSizePx}px`
+              : (style as any)?.fontSize,
         }}
       >
         {text}
       </p>
     </div>
   );
-});
+};
+
+export const AutoFitText = memo(AutoFitTextComponent);
+AutoFitText.displayName = "AutoFitText";
