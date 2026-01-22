@@ -46,10 +46,10 @@ export const LyricsEditor = memo(function LyricsEditor({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Reset state when song changes
-  useState(() => {
+  useEffect(() => {
     setEditTitle(song.title);
     setEditLyrics(song.lyrics);
-  });
+  }, [song._id, song.title, song.lyrics]);
 
   const [isBlinking, setIsBlinking] = useState(false);
 
