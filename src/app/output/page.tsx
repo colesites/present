@@ -276,7 +276,7 @@ export default function OutputPage() {
               className={cn(
                 "relative flex h-full w-full flex-col",
                 activeSlideId?.startsWith("scripture:")
-                  ? "items-start justify-start p-0"
+                  ? "items-start justify-start p-12"
                   : "items-center justify-center p-8",
               )}
             >
