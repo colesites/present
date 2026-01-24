@@ -45,11 +45,45 @@ export const LyricsEditor = memo(function LyricsEditor({
   const [isFixing, setIsFixing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Reset state when song changes
+  // Track last known server state to detect external updates vs local edits
+  const lastServerTitle = useRef(song.title);
+  const lastServerLyrics = useRef(song.lyrics);
+  const lastSongId = useRef(song._id);
+  const latestSave = useRef<{ title: string; lyrics: string } | null>(null);
+
+  // Sync with server state, but preserve local edits if divergent
   useEffect(() => {
-    setEditTitle(song.title);
-    setEditLyrics(song.lyrics);
-  }, [song._id, song.title, song.lyrics]);
+    // If song changed completely, reset everything
+    if (song._id !== lastSongId.current) {
+      setEditTitle(song.title);
+      setEditLyrics(song.lyrics);
+      lastServerTitle.current = song.title;
+      lastServerLyrics.current = song.lyrics;
+      lastSongId.current = song._id;
+      return;
+    }
+
+    // If server content changed (e.g. external update or save confirmation)
+    if (song.title !== lastServerTitle.current) {
+      // Only update if local matches old server (user hasn't typed)
+      // AND the update isn't just our own save coming back
+      const isMySave = latestSave.current?.title === song.title;
+      if (!isMySave && editTitle === lastServerTitle.current) {
+        setEditTitle(song.title);
+      }
+      lastServerTitle.current = song.title;
+    }
+
+    if (song.lyrics !== lastServerLyrics.current) {
+      // Only update if local matches old server (user hasn't typed)
+      // AND the update isn't just our own save coming back
+      const isMySave = latestSave.current?.lyrics === song.lyrics;
+      if (!isMySave && editLyrics === lastServerLyrics.current) {
+        setEditLyrics(song.lyrics);
+      }
+      lastServerLyrics.current = song.lyrics;
+    }
+  }, [song._id, song.title, song.lyrics, editTitle, editLyrics]);
 
   const [isBlinking, setIsBlinking] = useState(false);
 
@@ -57,8 +91,11 @@ export const LyricsEditor = memo(function LyricsEditor({
   const debouncedAutoSave = useDebouncedCallback(
     async (title: string, lyrics: string) => {
       if (!title.trim()) return;
+      latestSave.current = { title, lyrics };
       try {
         await onSave(title.trim(), lyrics);
+        lastServerTitle.current = title.trim();
+        lastServerLyrics.current = lyrics;
       } catch {
         // Silent fail for auto-save
       }
@@ -115,9 +152,7 @@ export const LyricsEditor = memo(function LyricsEditor({
             end: currentStart > 0 ? currentStart - 1 : 0,
           });
           inBlock = false;
-          if (isLabel) {
-            // Label starts a new potential block context
-          }
+          // Label starts a new potential block context
         }
 
         currentStart = i + 1;
@@ -176,8 +211,11 @@ export const LyricsEditor = memo(function LyricsEditor({
       return;
     }
     setIsSaving(true);
+    latestSave.current = { title: editTitle, lyrics: editLyrics };
     try {
       await onSave(editTitle.trim(), editLyrics);
+      lastServerTitle.current = editTitle.trim();
+      lastServerLyrics.current = editLyrics;
       toast.success("Saved successfully");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save");

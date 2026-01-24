@@ -13,10 +13,14 @@ export function QueryProvider({ children }: QueryProviderProps) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 1000 * 60, // 1 minute
-            retry: 2,
-            refetchOnWindowFocus: true,
-            refetchOnReconnect: true,
+            staleTime: 0,
+            gcTime: 0,
+            refetchOnMount: "always",
+            refetchOnReconnect: "always",
+            refetchOnWindowFocus: "always",
+            retry: 0,
+            // Prevent keeping previous data
+            placeholderData: undefined,
           },
           mutations: {
             retry: 2,

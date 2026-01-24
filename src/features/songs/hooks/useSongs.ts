@@ -7,86 +7,25 @@ import type { Id } from "@/../convex/_generated/dataModel";
 import { parseLyricsToSlides } from "@/lib/lyrics";
 import type { Song } from "@/types";
 
-const SONGS_STATE_KEY = "present-songs-state";
-
-// Load song selection state
-function loadSongsState() {
-  if (typeof window === "undefined") return null;
-  try {
-    const stored = localStorage.getItem(SONGS_STATE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
-
-// Save song selection state
-function saveSongsState(state: {
-  selectedSongId: string | null;
-  selectedCategoryId: string | null;
-}) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(SONGS_STATE_KEY, JSON.stringify(state));
-  } catch (e) {
-    console.error("Failed to save songs state:", e);
-  }
-}
+// Local storage persistence removed to prevent state fighting
 
 export function useSongs(orgId: Id<"organizations"> | null) {
   // Use plain Convex query - no caching to avoid data conflicts
-  const songs = useQuery(
-    api.songs.listByOrg,
-    orgId ? { orgId } : "skip",
-  ) as Song[] | undefined;
+  const songs = useQuery(api.songs.listByOrg, orgId ? { orgId } : "skip") as
+    | Song[]
+    | undefined;
 
-  const [isHydrated, setIsHydrated] = useState(false);
-
-  // Mark hydrated after mount and clean up old caches
-  useEffect(() => {
-    // Remove all old caches that could cause conflicts
-    try {
-      localStorage.removeItem("present-songs-cache");
-      localStorage.removeItem("present-query-cache");
-    } catch {
-      // Ignore
-    }
-    setIsHydrated(true);
-  }, []);
-
+  // Hydration logic removed - online only
   const createSong = useMutation(api.songs.create);
   const updateSong = useMutation(api.songs.update);
   const removeSong = useMutation(api.songs.remove);
 
-  // Initialize with defaults (matches server render)
   const [selectedSongId, setSelectedSongId] = useState<Id<"songs"> | null>(
     null,
   );
   const [selectedCategoryId, setSelectedCategoryId] =
     useState<Id<"categories"> | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-
-  // Restore selection from localStorage after hydration
-  useEffect(() => {
-    const state = loadSongsState();
-    if (state) {
-      if (state.selectedSongId) {
-        setSelectedSongId(state.selectedSongId as Id<"songs">);
-      }
-      if (state.selectedCategoryId) {
-        setSelectedCategoryId(state.selectedCategoryId as Id<"categories">);
-      }
-    }
-  }, []);
-
-  // Persist selection state (only after hydration)
-  useEffect(() => {
-    if (!isHydrated) return;
-    saveSongsState({
-      selectedSongId: selectedSongId as string | null,
-      selectedCategoryId: selectedCategoryId as string | null,
-    });
-  }, [isHydrated, selectedSongId, selectedCategoryId]);
 
   // Validate selection still exists
   useEffect(() => {
@@ -119,7 +58,7 @@ export function useSongs(orgId: Id<"organizations"> | null) {
       result = result.filter(
         (s) =>
           s.title.toLowerCase().includes(query) ||
-          s.lyrics.toLowerCase().includes(query)
+          s.lyrics.toLowerCase().includes(query),
       );
     }
 
@@ -129,7 +68,7 @@ export function useSongs(orgId: Id<"organizations"> | null) {
   const createNewSong = async (
     title: string,
     lyrics: string,
-    categoryId?: Id<"categories">
+    categoryId?: Id<"categories">,
   ) => {
     if (!orgId || !title.trim()) return null;
     const slides = parseLyricsToSlides(lyrics);
@@ -146,7 +85,7 @@ export function useSongs(orgId: Id<"organizations"> | null) {
   const updateExistingSong = async (
     songId: Id<"songs">,
     title: string,
-    lyrics: string
+    lyrics: string,
   ) => {
     const slides = parseLyricsToSlides(lyrics);
     await updateSong({ songId, title, lyrics, slides });
