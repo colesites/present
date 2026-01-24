@@ -36,6 +36,8 @@ interface OutputPreviewProps {
   fontBold: boolean;
   fontItalic: boolean;
   fontUnderline: boolean;
+  fontFamily?: string;
+  fontSize?: number;
   groups?: SlideGroup[];
   activeMediaItem: MediaItem | null;
   videoSettings: VideoSettings;
@@ -100,6 +102,8 @@ export const OutputPreview = memo(function OutputPreview({
   fontBold,
   fontItalic,
   fontUnderline,
+  fontFamily,
+  fontSize,
   groups = [],
   activeMediaItem,
   videoSettings,
@@ -204,13 +208,17 @@ export const OutputPreview = memo(function OutputPreview({
                 <AutoFitText
                   text={stripBracketsForDisplay(text)}
                   className={cn(
-                    "pointer-events-none select-none text-sm leading-relaxed text-white",
+                    "pointer-events-none select-none leading-relaxed text-white",
                     fontBold && "font-bold",
                     fontItalic && "italic",
                     fontUnderline && "underline",
                     // Add text shadow for better readability over media
                     "drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]",
                   )}
+                  style={{
+                    fontFamily,
+                  }}
+                  maxFontSize={fontSize ? fontSize * 0.12 : 24} // Scale for the small preview box
                   minScale={0.4}
                 />
               </div>

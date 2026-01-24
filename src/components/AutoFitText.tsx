@@ -16,6 +16,8 @@ export interface AutoFitTextProps {
   minScale?: number;
   align?: "left" | "center" | "right";
   verticalAlign?: "top" | "center" | "bottom";
+  maxFontSize?: number;
+  bypassFit?: boolean;
 }
 
 /**
@@ -29,6 +31,8 @@ const AutoFitTextComponent = ({
   minScale = 0.4,
   align = "center",
   verticalAlign = "center",
+  maxFontSize,
+  bypassFit = false,
 }: AutoFitTextProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLParagraphElement>(null);
@@ -77,8 +81,18 @@ const AutoFitTextComponent = ({
       // Restore and apply best fit
       textEl.style.visibility = originalVisibility;
       textEl.style.fontSize = originalFontSize;
-      setFittedFontSizePx(best);
+
+      if (maxFontSize && best > maxFontSize) {
+        setFittedFontSizePx(maxFontSize);
+      } else {
+        setFittedFontSizePx(best);
+      }
     };
+
+    if (bypassFit) {
+      setFittedFontSizePx(null);
+      return;
+    }
 
     const raf = requestAnimationFrame(fit);
     const ro = new ResizeObserver(() => {
@@ -93,7 +107,7 @@ const AutoFitTextComponent = ({
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [text, minScale, style]);
+  }, [text, minScale, style, maxFontSize, bypassFit]);
 
   return (
     <div

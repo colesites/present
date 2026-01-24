@@ -452,6 +452,7 @@ export default function Home() {
       >
         {/* Left sidebar - Services (default ~200px on 1400px screen = 14%) */}
         <PresentServicesSidebar
+          order={1}
           servicesSidebarProps={{
             services,
             selectedServiceId,
@@ -553,9 +554,12 @@ export default function Home() {
 
         {/* Right sidebar - Output Preview + Groups (default ~280px on 1400px screen = 20%) */}
         <PresentOutputSidebar
+          order={3}
           outputPreviewProps={{
             text: activeSlideContent?.text ?? null,
             footer: activeSlideContent?.footer ?? null,
+            fontFamily,
+            fontSize,
             fontBold,
             fontItalic,
             fontUnderline,

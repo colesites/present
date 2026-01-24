@@ -39,6 +39,11 @@ interface SlidesGridProps {
   selectedIndex: number | null;
   onSelectSlide: (slideId: string, text: string, footer?: string) => void;
   onEditSlide?: (songId: Id<"songs">, index: number) => void;
+  fontFamily?: string;
+  fontSize?: number;
+  fontBold?: boolean;
+  fontItalic?: boolean;
+  fontUnderline?: boolean;
 }
 
 export const SlidesGrid = memo(function SlidesGrid({
@@ -47,6 +52,11 @@ export const SlidesGrid = memo(function SlidesGrid({
   selectedIndex,
   onSelectSlide,
   onEditSlide,
+  fontFamily,
+  fontSize,
+  fontBold,
+  fontItalic,
+  fontUnderline,
 }: SlidesGridProps) {
   if (slides.length === 0) {
     return (
@@ -82,6 +92,12 @@ export const SlidesGrid = memo(function SlidesGrid({
                 ? () => onEditSlide(song._id, index)
                 : undefined
             }
+            isScripture={!song}
+            fontFamily={fontFamily}
+            fontSize={fontSize}
+            fontBold={fontBold}
+            fontItalic={fontItalic}
+            fontUnderline={fontUnderline}
           />
         );
       })}
@@ -102,6 +118,12 @@ interface SlideCardProps {
   isSelected: boolean;
   onClick: () => void;
   onEdit?: () => void;
+  isScripture?: boolean;
+  fontFamily?: string;
+  fontSize?: number;
+  fontBold?: boolean;
+  fontItalic?: boolean;
+  fontUnderline?: boolean;
 }
 
 const SlideCard = memo(function SlideCard({
@@ -111,6 +133,12 @@ const SlideCard = memo(function SlideCard({
   isSelected,
   onClick,
   onEdit,
+  isScripture,
+  fontFamily,
+  fontSize,
+  fontBold,
+  fontItalic,
+  fontUnderline,
 }: SlideCardProps) {
   return (
     <ContextMenu>
@@ -132,8 +160,20 @@ const SlideCard = memo(function SlideCard({
           <div className="flex flex-1 items-center justify-center overflow-hidden bg-black p-2">
             <AutoFitText
               text={stripBracketsForDisplay(slide.text)}
-              className="pointer-events-none select-none text-sm leading-relaxed text-white"
-              minScale={0.5}
+              className={cn(
+                "pointer-events-none select-none text-white",
+                fontBold && "font-bold",
+                fontItalic && "italic",
+                fontUnderline && "underline",
+              )}
+              style={{
+                fontFamily,
+                fontSize: isScripture ? "18vh" : undefined, // scaled in CSS usually, but let's be safe
+              }}
+              maxFontSize={
+                isScripture ? undefined : fontSize ? fontSize * 0.2 : 24
+              }
+              minScale={isScripture ? 0.1 : 0.5}
             />
           </div>
 

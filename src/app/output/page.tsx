@@ -310,7 +310,12 @@ export default function OutputPage() {
                       ? "18vh"
                       : `${fontSize}px`,
                   }}
-                  minScale={0.1}
+                  maxFontSize={
+                    activeSlideId?.startsWith("scripture:")
+                      ? undefined
+                      : fontSize
+                  }
+                  minScale={activeSlideId?.startsWith("scripture:") ? 0.1 : 0.4}
                 />
               </div>
               {activeSlide.footer && (
@@ -318,7 +323,7 @@ export default function OutputPage() {
                   className={cn(
                     "font-semibold uppercase tracking-wide text-white/90 drop-shadow-lg",
                     activeSlideId?.startsWith("scripture:")
-                      ? "mb-[4vh] mt-0 w-full text-left text-[6vh]"
+                      ? "mb-[4vh] mt-0 w-full text-center text-[6vh]"
                       : "mt-4 text-[2.5vh] text-center",
                   )}
                   style={{ fontFamily }}

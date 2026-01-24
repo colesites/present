@@ -149,6 +149,7 @@ export function PresentCenterArea({
                   selectedIndex={selectedIndex}
                   onSelectSlide={onSelectSlide}
                   onEditSlide={onEditSlide}
+                  {...editorProps}
                 />
               )}
             </div>

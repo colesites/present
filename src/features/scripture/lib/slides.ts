@@ -30,9 +30,13 @@ export function generateBibleSlides(
     return {
       content: `${versePrefix}${verse.text}`,
       label:
-        `${verse.bookName} ${verse.chapter}:${verse.verse} ${versionStr}`.trim(),
+        `${verse.bookName} ${verse.chapter}:${verse.verse} ${versionStr ? `(${versionStr})` : ""}`
+          .trim()
+          .replace(/\s+/g, " "),
       footer:
-        `${verse.bookName} ${verse.chapter}:${verse.verse} ${versionStr}`.trim(),
+        `${verse.bookName} ${verse.chapter}:${verse.verse} ${versionStr ? `(${versionStr})` : ""}`
+          .trim()
+          .replace(/\s+/g, " "),
     };
   });
 }
