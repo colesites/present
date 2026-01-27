@@ -185,6 +185,7 @@ export default function Home() {
   // Handlers
   const handleSelectSlide = useCallback(
     async (slideId: string, text: string, footer?: string) => {
+      setShowTextInOutput(true);
       await selectSlide(slideId, text, footer);
 
       const [idPart, indexStr] = slideId.split(":");
