@@ -1,11 +1,22 @@
 "use client";
 
+import { useState } from "react";
 import { useScripture } from "../hooks/useScripture";
 import { Button } from "@/components/ui/button";
 import { Download, Trash2, FileUp, Loader2 } from "lucide-react";
 
 export function ScriptureDownloader() {
   const { versions, activeImport, importFile, uninstallVersion } = useScripture();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      await uninstallVersion(id);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const handleManualImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -18,7 +29,9 @@ export function ScriptureDownloader() {
   return (
     <div className="space-y-4 p-4 border rounded-lg bg-card">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">Bible Versions</h3>
+        <h3 className="text-sm font-semibold text-foreground">
+          Bible Versions
+        </h3>
       </div>
 
       {activeImport && (
@@ -50,16 +63,22 @@ export function ScriptureDownloader() {
               <div>
                 <p className="text-sm font-medium">{v.name}</p>
                 <p className="text-[10px] text-muted-foreground">
-                  {v.code} • {(v.size / 1024 / 1024).toFixed(2)} MB
+                  {v.code}{" "}
+                  {v.size > 0 && `• ${(v.size / 1024 / 1024).toFixed(2)} MB`}
                 </p>
               </div>
               <Button
                 size="icon"
                 variant="ghost"
                 className="opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
-                onClick={() => uninstallVersion(v.id)}
+                onClick={() => handleDelete(v.id)}
+                disabled={deletingId === v.id}
               >
-                <Trash2 className="h-4 w-4" />
+                {deletingId === v.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
               </Button>
             </div>
           ))

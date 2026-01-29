@@ -17,7 +17,7 @@ import {
 } from "../lib/autocomplete";
 import { parseReference, isValidCharacter } from "../lib/parser";
 import { cn } from "@/lib/utils";
-import { AlertCircle, Search } from "lucide-react";
+import { AlertCircle, Search, X } from "lucide-react";
 
 import { db, type BibleBookRecord, type BibleVersion } from "../lib/db";
 
@@ -325,12 +325,24 @@ export const ScriptureInput = forwardRef<HTMLInputElement, ScriptureInputProps>(
             onFocus={() => updateSuggestions(value)}
             placeholder={placeholder}
             className={cn(
-              "pl-9 h-8 text-xs bg-background/50 border-muted-foreground/20 focus-visible:ring-1 focus-visible:ring-primary/40",
+              "pl-9 pr-8 h-8 text-xs bg-background/50 border-muted-foreground/20 focus-visible:ring-1 focus-visible:ring-primary/40",
               parsed.errors.length > 0 &&
                 value.includes(" ") &&
                 "border-destructive/50 focus-visible:ring-destructive/30",
             )}
           />
+          {value && (
+            <button
+              onClick={() => {
+                setValue("");
+                updateSuggestions("");
+                internalInputRef.current?.focus();
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-foreground transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
           {/* Dropdown removed as per user request */}
         </div>
       </div>
