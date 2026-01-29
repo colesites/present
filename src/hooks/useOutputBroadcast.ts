@@ -39,6 +39,8 @@ export function useOutputBroadcast({
   videoCurrentTime,
 }: Params) {
   const mediaCacheRef = useRef<{ id: string; blob: Blob } | null>(null);
+  /* Track previous video time to only sync when it actually changes */
+  const prevVideoTimeRef = useRef<number | undefined>(undefined);
 
   // 1. Handle full media updates - send Blob directly (fast, no conversion)
   useEffect(() => {
@@ -76,6 +78,10 @@ export function useOutputBroadcast({
         mediaCacheRef.current = null;
       }
 
+      // Check if we should sync time (only if it changed)
+      const shouldSyncTime = prevVideoTimeRef.current !== videoCurrentTime;
+      prevVideoTimeRef.current = videoCurrentTime;
+
       if (!isCancelled) {
         channel.postMessage({
           type: "media-update",
@@ -89,6 +95,7 @@ export function useOutputBroadcast({
           mediaFilterCSS,
           isVideoPlaying,
           videoCurrentTime,
+          shouldSyncTime,
         });
       }
     }

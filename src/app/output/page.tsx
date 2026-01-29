@@ -34,6 +34,7 @@ type MediaMessage = {
   mediaFilterCSS: string;
   isVideoPlaying: boolean;
   videoCurrentTime: number;
+  shouldSyncTime?: boolean;
 };
 
 type PlaybackSyncMessage = {
@@ -73,6 +74,8 @@ export default function OutputPage() {
     type: "image" | "video";
     url: string; // Local blob URL created from received Blob
   } | null>(null);
+  // Ref to track media item for event listeners (avoids stale closures)
+  const mediaItemRef = useRef<{ id: string } | null>(null);
   const [showText, setShowText] = useState(true);
   const [showMedia, setShowMedia] = useState(true);
   const [videoSettings, setVideoSettings] = useState({
@@ -98,43 +101,63 @@ export default function OutputPage() {
         setOverrideSlideText(data.slideText ?? null);
         setOverrideSlideFooter(data.slideFooter ?? null);
       } else if (data.type === "media-update") {
-        // Clean up old blob URL
-        if (currentBlobUrlRef.current) {
-          URL.revokeObjectURL(currentBlobUrlRef.current);
-          currentBlobUrlRef.current = null;
-        }
+        // Use ref to check identity to avoid stale closures in useEffect
+        const isSameMedia = mediaItemRef.current?.id === data.mediaId;
 
-        // Create local blob URL from received Blob
-        if (
-          data.mediaBlob &&
-          data.mediaId &&
-          data.mediaName &&
-          data.mediaType
-        ) {
-          const localBlobUrl = URL.createObjectURL(data.mediaBlob);
-          currentBlobUrlRef.current = localBlobUrl;
-
-          setMediaItem({
-            id: data.mediaId,
-            name: data.mediaName,
-            type: data.mediaType,
-            url: localBlobUrl,
-          });
-
-          // If we're receiving a play request for a video, mark it as pending
-          if (data.isVideoPlaying && data.mediaType === "video") {
-            setPendingPlayRequest(true);
+        // Only update media source if it changed
+        if (!isSameMedia) {
+          // Clean up old blob URL
+          if (currentBlobUrlRef.current) {
+            URL.revokeObjectURL(currentBlobUrlRef.current);
+            currentBlobUrlRef.current = null;
           }
-        } else {
-          setMediaItem(null);
+
+          // Create local blob URL from received Blob
+          if (
+            data.mediaBlob &&
+            data.mediaId &&
+            data.mediaName &&
+            data.mediaType
+          ) {
+            const localBlobUrl = URL.createObjectURL(data.mediaBlob);
+            currentBlobUrlRef.current = localBlobUrl;
+
+            const newMediaItem = {
+              id: data.mediaId,
+              name: data.mediaName,
+              type: data.mediaType,
+              url: localBlobUrl,
+            };
+            setMediaItem(newMediaItem);
+            mediaItemRef.current = { id: data.mediaId }; // Update ref immediately
+
+            // If we're receiving a play request for a NEW video, mark it as pending
+            if (data.isVideoPlaying && data.mediaType === "video") {
+              setPendingPlayRequest(true);
+            }
+          } else {
+            setMediaItem(null);
+            mediaItemRef.current = null;
+          }
         }
 
+        // Always update other controls
         setShowText(data.showText);
         setShowMedia(data.showMedia);
         setVideoSettings(data.videoSettings);
         setMediaFilterCSS(data.mediaFilterCSS ?? "none");
+
+        // Sync playback state
         setIsVideoPlaying(data.isVideoPlaying ?? false);
-        setVideoCurrentTime(data.videoCurrentTime ?? 0);
+
+        // Only sync time if significantly different or if it's new media
+        // AND if the broadcaster explicitly flagged that time should be synced (e.g. seek)
+        if (
+          !isSameMedia ||
+          (data.shouldSyncTime ?? true) // Fallback to true if missing
+        ) {
+          setVideoCurrentTime(data.videoCurrentTime ?? 0);
+        }
       } else if (data.type === "playback-sync") {
         setIsVideoPlaying(data.isVideoPlaying);
         setVideoCurrentTime(data.videoCurrentTime);
@@ -151,14 +174,20 @@ export default function OutputPage() {
     };
   }, []);
 
-  // Apply video settings
+  // Apply video settings and ensure playback consistency
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.loop = videoSettings.loop;
       videoRef.current.muted = videoSettings.muted;
       videoRef.current.volume = videoSettings.volume;
+
+      // Safety check: specific settings updates (like volume) shouldn't pause the video
+      // If global state says playing, but video is paused, force play.
+      if (isVideoPlaying && videoRef.current.paused) {
+        videoRef.current.play().catch((e) => console.warn("Rescue play:", e));
+      }
     }
-  }, [videoSettings]);
+  }, [videoSettings, isVideoPlaying]);
 
   // Handle video load and pending play requests
   useEffect(() => {
@@ -166,8 +195,9 @@ export default function OutputPage() {
     if (!video || mediaItem?.type !== "video") return;
 
     const handleLoadedData = () => {
-      // Video is ready, check if we have a pending play request
-      if (pendingPlayRequest) {
+      // Ensure we play if needed (checking both pending request logic AND global state)
+      // This ensures that when media is toggled visible (Resume), it starts playing
+      if (pendingPlayRequest || isVideoPlaying) {
         video.play().catch((err) => {
           console.warn("Autoplay blocked:", err);
         });
@@ -198,7 +228,7 @@ export default function OutputPage() {
         videoRef.current.pause();
       }
     }
-  }, [isVideoPlaying, mediaItem]);
+  }, [isVideoPlaying, mediaItem, showMedia]);
 
   // Sync video position with Show view
   useEffect(() => {
@@ -209,7 +239,7 @@ export default function OutputPage() {
         videoRef.current.currentTime = videoCurrentTime;
       }
     }
-  }, [videoCurrentTime, mediaItem]);
+  }, [videoCurrentTime, mediaItem, showMedia]);
 
   // Listen for fullscreen changes
   useEffect(() => {

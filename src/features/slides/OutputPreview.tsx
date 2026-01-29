@@ -145,7 +145,7 @@ export const OutputPreview = memo(function OutputPreview({
         videoRef.current.pause();
       }
     }
-  }, [isVideoPlaying, activeMediaItem]);
+  }, [isVideoPlaying, activeMediaItem, showMedia]);
 
   // Sync video position with Show view
   useEffect(() => {
@@ -155,7 +155,7 @@ export const OutputPreview = memo(function OutputPreview({
         videoRef.current.currentTime = videoCurrentTime;
       }
     }
-  }, [videoCurrentTime, activeMediaItem]);
+  }, [videoCurrentTime, activeMediaItem, showMedia]);
 
   const filterStyle = filtersToCSS(mediaFilters);
 
