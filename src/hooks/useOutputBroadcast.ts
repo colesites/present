@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { blobUrlToDataUrl } from "@/features/media/hooks";
 
 type MediaItem =
   | {
@@ -39,42 +38,38 @@ export function useOutputBroadcast({
   isVideoPlaying,
   videoCurrentTime,
 }: Params) {
-  const mediaCacheRef = useRef<{ id: string; dataUrl: string } | null>(null);
+  const mediaCacheRef = useRef<{ id: string; blob: Blob } | null>(null);
 
-  // 1. Handle full media updates (expensive - only when ID changes)
+  // 1. Handle full media updates - send Blob directly (fast, no conversion)
   useEffect(() => {
     const channel = new BroadcastChannel("present-output");
     let isCancelled = false;
 
     async function sendMediaUpdate() {
-      let mediaData: null | {
-        id: string;
-        name: string;
-        type: "image" | "video";
-        url: string; // data url
-      } = null;
+      let mediaBlob: Blob | null = null;
+      let mediaId: string | null = null;
+      let mediaName: string | null = null;
+      let mediaType: "image" | "video" | null = null;
 
       if (activeMediaItem) {
         // Use cache if it's the same item
         if (mediaCacheRef.current?.id === activeMediaItem.id) {
-          mediaData = {
-            id: activeMediaItem.id,
-            name: activeMediaItem.name,
-            type: activeMediaItem.type,
-            url: mediaCacheRef.current.dataUrl,
-          };
+          mediaBlob = mediaCacheRef.current.blob;
+          mediaId = activeMediaItem.id;
+          mediaName = activeMediaItem.name;
+          mediaType = activeMediaItem.type;
         } else {
           try {
-            const dataUrl = await blobUrlToDataUrl(activeMediaItem.url);
-            mediaCacheRef.current = { id: activeMediaItem.id, dataUrl };
-            mediaData = {
-              id: activeMediaItem.id,
-              name: activeMediaItem.name,
-              type: activeMediaItem.type,
-              url: dataUrl,
-            };
+            // Fetch the blob from the blob URL (fast, no conversion)
+            const response = await fetch(activeMediaItem.url);
+            const blob = await response.blob();
+            mediaCacheRef.current = { id: activeMediaItem.id, blob };
+            mediaBlob = blob;
+            mediaId = activeMediaItem.id;
+            mediaName = activeMediaItem.name;
+            mediaType = activeMediaItem.type;
           } catch (e) {
-            console.error("Failed to convert blob to data URL", e);
+            console.error("Failed to fetch blob from URL", e);
           }
         }
       } else {
@@ -84,7 +79,10 @@ export function useOutputBroadcast({
       if (!isCancelled) {
         channel.postMessage({
           type: "media-update",
-          mediaItem: mediaData,
+          mediaBlob, // Send Blob directly (structured clone)
+          mediaId,
+          mediaName,
+          mediaType,
           showText,
           showMedia,
           videoSettings,
@@ -101,20 +99,13 @@ export function useOutputBroadcast({
       isCancelled = true;
       channel.close();
     };
-  }, [activeMediaItem?.id, showText, showMedia, videoSettings, mediaFilterCSS]);
-
-  // 2. Handle lightweight state updates (play/pause/time sync)
-  useEffect(() => {
-    const channel = new BroadcastChannel("present-output");
-
-    channel.postMessage({
-      type: "playback-sync",
-      isVideoPlaying,
-      videoCurrentTime,
-    });
-
-    return () => {
-      channel.close();
-    };
-  }, [isVideoPlaying, videoCurrentTime]);
+  }, [
+    activeMediaItem?.id,
+    showText,
+    showMedia,
+    videoSettings,
+    mediaFilterCSS,
+    isVideoPlaying,
+    videoCurrentTime,
+  ]);
 }

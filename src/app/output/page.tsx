@@ -20,12 +20,10 @@ type ActiveSlideMessage = {
 
 type MediaMessage = {
   type: "media-update";
-  mediaItem: {
-    id: string;
-    name: string;
-    type: "image" | "video";
-    url: string; // Will receive blob URL or data URL
-  } | null;
+  mediaBlob: Blob | null;
+  mediaId: string | null;
+  mediaName: string | null;
+  mediaType: "image" | "video" | null;
   showText: boolean;
   showMedia: boolean;
   videoSettings: {
@@ -69,7 +67,12 @@ export default function OutputPage() {
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Media state
-  const [mediaItem, setMediaItem] = useState<MediaMessage["mediaItem"]>(null);
+  const [mediaItem, setMediaItem] = useState<{
+    id: string;
+    name: string;
+    type: "image" | "video";
+    url: string; // Local blob URL created from received Blob
+  } | null>(null);
   const [showText, setShowText] = useState(true);
   const [showMedia, setShowMedia] = useState(true);
   const [videoSettings, setVideoSettings] = useState({
@@ -80,7 +83,9 @@ export default function OutputPage() {
   const [mediaFilterCSS, setMediaFilterCSS] = useState("none");
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [pendingPlayRequest, setPendingPlayRequest] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const currentBlobUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     const channel = new BroadcastChannel("present-output");
@@ -93,7 +98,37 @@ export default function OutputPage() {
         setOverrideSlideText(data.slideText ?? null);
         setOverrideSlideFooter(data.slideFooter ?? null);
       } else if (data.type === "media-update") {
-        setMediaItem(data.mediaItem);
+        // Clean up old blob URL
+        if (currentBlobUrlRef.current) {
+          URL.revokeObjectURL(currentBlobUrlRef.current);
+          currentBlobUrlRef.current = null;
+        }
+
+        // Create local blob URL from received Blob
+        if (
+          data.mediaBlob &&
+          data.mediaId &&
+          data.mediaName &&
+          data.mediaType
+        ) {
+          const localBlobUrl = URL.createObjectURL(data.mediaBlob);
+          currentBlobUrlRef.current = localBlobUrl;
+
+          setMediaItem({
+            id: data.mediaId,
+            name: data.mediaName,
+            type: data.mediaType,
+            url: localBlobUrl,
+          });
+
+          // If we're receiving a play request for a video, mark it as pending
+          if (data.isVideoPlaying && data.mediaType === "video") {
+            setPendingPlayRequest(true);
+          }
+        } else {
+          setMediaItem(null);
+        }
+
         setShowText(data.showText);
         setShowMedia(data.showMedia);
         setVideoSettings(data.videoSettings);
@@ -109,19 +144,50 @@ export default function OutputPage() {
     return () => {
       channel.removeEventListener("message", handler);
       channel.close();
+      // Clean up blob URL on unmount
+      if (currentBlobUrlRef.current) {
+        URL.revokeObjectURL(currentBlobUrlRef.current);
+      }
     };
   }, []);
 
-  // Apply video settings (always keep muted - audio comes from Show view)
+  // Apply video settings
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.loop = videoSettings.loop;
-      // Don't set muted from videoSettings - output is always muted
-      // Audio comes from the Show view on the presenter's machine
+      videoRef.current.muted = videoSettings.muted;
+      videoRef.current.volume = videoSettings.volume;
     }
   }, [videoSettings]);
 
-  // Sync video playback with Show view
+  // Handle video load and pending play requests
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || mediaItem?.type !== "video") return;
+
+    const handleLoadedData = () => {
+      // Video is ready, check if we have a pending play request
+      if (pendingPlayRequest) {
+        video.play().catch((err) => {
+          console.warn("Autoplay blocked:", err);
+        });
+        setPendingPlayRequest(false);
+      }
+    };
+
+    video.addEventListener("loadeddata", handleLoadedData);
+
+    // If video is already loaded (cached), trigger immediately
+    if (video.readyState >= 2) {
+      handleLoadedData();
+    }
+
+    return () => {
+      video.removeEventListener("loadeddata", handleLoadedData);
+    };
+  }, [mediaItem, pendingPlayRequest]);
+
+  // Sync video playback with Show view (for play/pause after initial load)
   useEffect(() => {
     if (videoRef.current && mediaItem?.type === "video") {
       if (isVideoPlaying) {
@@ -137,8 +203,9 @@ export default function OutputPage() {
   // Sync video position with Show view
   useEffect(() => {
     if (videoRef.current && mediaItem?.type === "video") {
-      // Only seek if the difference is significant (more than 0.5 seconds)
-      if (Math.abs(videoRef.current.currentTime - videoCurrentTime) > 0.5) {
+      // Only seek if the difference is significant (more than 0.1 seconds)
+      // Reduced from 0.5s to minimize delay
+      if (Math.abs(videoRef.current.currentTime - videoCurrentTime) > 0.1) {
         videoRef.current.currentTime = videoCurrentTime;
       }
     }
@@ -265,7 +332,7 @@ export default function OutputPage() {
                 className="absolute inset-0 h-full w-full object-cover"
                 style={{ filter: mediaFilterCSS }}
                 loop={videoSettings.loop}
-                muted // Audio comes from Show view, not output window
+                muted={videoSettings.muted} // Use settings from main output
                 playsInline
               />
             ))}

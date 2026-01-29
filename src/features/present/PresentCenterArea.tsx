@@ -134,7 +134,7 @@ export function PresentCenterArea({
                       className="h-full w-full object-contain"
                       controls
                       loop={videoSettings.loop}
-                      muted={videoSettings.muted}
+                      muted // Audio comes from /output route, not here
                       onPlay={onVideoPlay}
                       onPause={onVideoPause}
                       onEnded={onVideoEnded}
