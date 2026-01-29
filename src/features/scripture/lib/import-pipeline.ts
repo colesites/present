@@ -3,26 +3,75 @@ import { db, type BibleVerse, type BibleVersion } from "./db";
 
 // Known Bible version codes to extract from filenames
 const KNOWN_BIBLE_VERSIONS = [
-  // Most Common English Versions
-  "KJV", "NKJV", "NIV", "ESV", "NASB", "NLT", "RSV", "NRSV",
-  "AMP", "MSG", "CSB", "HCSB", "NCV", "GNT", "CEV",
-  
+  // Long/Specific versions first to prevent partial matches (e.g. NRSV matching RSV)
+  "NRSVCE",
+  "NRSVA",
+  "NRSV",
+  "NKJV",
+  "TNIV",
+  "AMPC",
+  "HCSB",
+  "NIrV",
+  "NABRE",
+  "RSVCE",
+
+  // Base versions
+  "KJV",
+  "NIV",
+  "ESV",
+  "NASB",
+  "NLT",
+  "RSV",
+  "AMP",
+  "MSG",
+  "CSB",
+  "NCV",
+  "GNT",
+  "CEV",
+  "TPT",
+
   // The Passion Translation & Modern Versions
-  "TPT", "VOICE", "TLB", "PHILLIPS", "MOUNCE",
-  
+  "VOICE",
+  "TLB",
+  "PHILLIPS",
+  "MOUNCE",
+
   // Study & Literal Versions
-  "NET", "ISV", "LEB", "WEB", "ASV", "YLT", "DARBY",
-  "AKJV", "RV", "ERV", "WEB", "BBE",
-  
+  "NET",
+  "ISV",
+  "LEB",
+  "WEB",
+  "ASV",
+  "YLT",
+  "DARBY",
+  "AKJV",
+  "RV",
+  "ERV",
+  "BBE",
+
   // Catholic & Apocrypha Versions
-  "DRA", "NABRE", "RSVCE", "NRSVCE", "JB", "NJB",
-  
+  "DRA",
+  "JB",
+  "NJB",
+
   // Other Popular Versions
-  "GW", "JUB", "MEV", "NOG", "TLV", "CEB", "CJB",
-  "EHV", "GNV", "ICB", "NIRV", "NLV", "NRSVA",
-  
+  "GW",
+  "JUB",
+  "MEV",
+  "NOG",
+  "TLV",
+  "CEB",
+  "CJB",
+  "EHV",
+  "GNV",
+  "ICB",
+  "NLV",
+
   // International Versions (common abbreviations)
-  "NIrV", "TNIV", "BSB", "BRG", "EASY", "EXB",
+  "BSB",
+  "BRG",
+  "EASY",
+  "EXB",
 ];
 
 // OSIS book ID to full name mapping
@@ -413,10 +462,10 @@ async function importFromSimpleXml(
   const books: any[] = [];
 
   // Support nested structure (e.g. bible > testament > book)
-  // Use getElementsByTagName("*") and filter for case-insensitivity to handle <Book>, <BOOK>, <book>, etc.
+  // Use getElementsByTagName("*") and filter for case-insensitivity to handle <Book>, <BOOK>, <book>, <BIBLEBOOK>, etc.
   const allElements = Array.from(xmlDoc.getElementsByTagName("*"));
   const bookNodes = allElements.filter((el) =>
-    ["book", "b"].includes(el.tagName.toLowerCase()),
+    ["book", "b", "biblebook"].includes(el.tagName.toLowerCase()),
   );
 
   console.log(`[XML Import] Found ${bookNodes.length} books`);
@@ -428,6 +477,7 @@ async function importFromSimpleXml(
       bookNode.getAttribute("name") ||
       bookNode.getAttribute("title") ||
       bookNode.getAttribute("n") ||
+      bookNode.getAttribute("bname") || // Support <BIBLEBOOK bname="...">
       "";
 
     // If name is actually a number (e.g. <book number="1">), try to look up generic name
@@ -447,10 +497,18 @@ async function importFromSimpleXml(
     // If not, we might need to map index 0 -> Genesis, etc.
 
     // Let's assume standard Protestant ordering if no name found
-    if (!bookName && bookNode.getAttribute("number")) {
+    if (
+      !bookName &&
+      (bookNode.getAttribute("number") || bookNode.getAttribute("bnumber"))
+    ) {
       // Only if we truly can't find a name.
       // We can use the OSIS_BOOK_NAMES keys in order? Or a standard list.
-      const bookNum = parseInt(bookNode.getAttribute("number") || "0", 10);
+      const bookNum = parseInt(
+        bookNode.getAttribute("number") ||
+          bookNode.getAttribute("bnumber") ||
+          "0",
+        10,
+      );
       if (bookNum > 0 && bookNum <= 66) {
         // Map 1-66 to Genesis-Revelation
         const standardBooks = [
@@ -549,7 +607,9 @@ async function importFromSimpleXml(
       const chapterNode = chapterNodes[j];
       const chapterNum = parseInt(
         chapterNode.getAttribute("number") ||
+          chapterNode.getAttribute("number") ||
           chapterNode.getAttribute("n") ||
+          chapterNode.getAttribute("cnumber") || // Support <CHAPTER cnumber="...">
           "0",
         10,
       );
@@ -557,14 +617,16 @@ async function importFromSimpleXml(
 
       // Find verses
       const verseNodes = Array.from(chapterNode.children).filter((el) =>
-        ["verse", "v"].includes(el.tagName.toLowerCase()),
+        ["verse", "v", "vers"].includes(el.tagName.toLowerCase()),
       );
 
       for (let k = 0; k < verseNodes.length; k++) {
         const verseNode = verseNodes[k];
         const verseNum = parseInt(
           verseNode.getAttribute("number") ||
+            verseNode.getAttribute("number") ||
             verseNode.getAttribute("n") ||
+            verseNode.getAttribute("vnumber") || // Support <VERS vnumber="...">
             "0",
           10,
         );
