@@ -290,7 +290,7 @@ export const ScripturePanel = memo(
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 w-[520px] shrink-0">
+                <div className="flex items-center gap-2 w-[320px] shrink-0">
                   {/* Microphone Toggle */}
                   {isSupported && (
                     <div className="flex items-center gap-2">
