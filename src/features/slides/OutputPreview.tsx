@@ -256,76 +256,83 @@ export const OutputPreview = memo(function OutputPreview({
       </div>
 
       {/* Toggle controls */}
-      <div className="mt-3 flex shrink-0 items-center justify-center gap-2 px-3">
-        {onToggleFreeze && (
+      <div className="mt-3 flex shrink-0 justify-center px-3">
+        <div
+          className="flex w-full max-w-[240px] flex-wrap items-center justify-start gap-2"
+        >
           <button
             type="button"
-            onClick={onToggleFreeze}
+            onClick={onToggleText}
             className={cn(
               "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
-              isFrozen
-                ? "bg-sky-500 text-white"
+              showText
+                ? "bg-primary text-primary-foreground"
                 : "bg-secondary text-muted-foreground hover:text-foreground",
             )}
-            title={isFrozen ? "Unfreeze main output" : "Freeze main output"}
+            title={showText ? "Hide text" : "Show text"}
           >
-            <IoSnow className="h-3 w-3" />
-            {isFrozen ? "Frozen" : "Freeze"}
+            <Type className="h-3 w-3" />
+            Text
           </button>
-        )}
-        <button
-          type="button"
-          onClick={onToggleText}
-          className={cn(
-            "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
-            showText
-              ? "bg-primary text-primary-foreground"
-              : "bg-secondary text-muted-foreground hover:text-foreground",
-          )}
-          title={showText ? "Hide text" : "Show text"}
-        >
-          <Type className="h-3 w-3" />
-          Text
-        </button>
-        <button
-          type="button"
-          onClick={onToggleMedia}
-          className={cn(
-            "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
-            showMedia
-              ? "bg-primary text-primary-foreground"
-              : "bg-secondary text-muted-foreground hover:text-foreground",
-          )}
-          title={showMedia ? "Hide media" : "Show media"}
-        >
-          <Image className="h-3 w-3" />
-          Media
-        </button>
-        {activeMediaItem && (
-          <>
+
+          {onToggleFreeze && (
             <button
               type="button"
-              onClick={() => setShowFilters(!showFilters)}
+              onClick={onToggleFreeze}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
-                showFilters || hasActiveFilters
-                  ? "bg-primary text-primary-foreground"
+                isFrozen
+                  ? "bg-sky-500 text-white"
                   : "bg-secondary text-muted-foreground hover:text-foreground",
               )}
-              title="Media filters"
+              title={isFrozen ? "Unfreeze main output" : "Freeze main output"}
             >
-              <SlidersHorizontal className="h-3 w-3" />
+              <IoSnow className="h-4 w-4" />
+              {isFrozen ? "Frozen" : "Freeze"}
             </button>
-            <button
-              type="button"
-              onClick={onClearMedia}
-              className="flex items-center gap-1.5 rounded-md bg-destructive/20 px-2 py-1 text-xs text-destructive transition hover:bg-destructive/30"
-              title="Clear media"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </>
-        )}
+          )}
+
+          <button
+            type="button"
+            onClick={onToggleMedia}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
+              showMedia
+                ? "bg-primary text-primary-foreground"
+                : "bg-secondary text-muted-foreground hover:text-foreground",
+            )}
+            title={showMedia ? "Hide media" : "Show media"}
+          >
+            <Image className="h-3 w-3" />
+            Media
+          </button>
+
+          {activeMediaItem && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowFilters(!showFilters)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
+                  showFilters || hasActiveFilters
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-muted-foreground hover:text-foreground",
+                )}
+                title="Media filters"
+              >
+                <SlidersHorizontal className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                onClick={onClearMedia}
+                className="flex items-center gap-1.5 rounded-md bg-destructive/20 px-2 py-1 text-xs text-destructive transition hover:bg-destructive/30"
+                title="Clear media"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Video controls (only show when video is active) */}

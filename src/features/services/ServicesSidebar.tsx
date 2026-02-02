@@ -1,10 +1,16 @@
 "use client";
 
-import { useState, memo } from "react";
+import { memo, useState } from "react";
 import type { Id } from "@/../convex/_generated/dataModel";
 import type { Service, Song } from "@/types";
 import { Dialog } from "@/components/Dialog";
 import { cn } from "@/lib/utils";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 interface ServiceItem {
   type: "song" | "media" | "scripture";
@@ -285,57 +291,69 @@ const ServiceList = memo(function ServiceList({
   return (
     <div className="space-y-1">
       {services.map((service, index) => (
-        <div
-          key={service._id}
-          draggable={!!onReorder}
-          onDragStart={(e) => handleDragStart(e, index)}
-          onDragOver={(e) => handleDragOver(e, index)}
-          onDragLeave={handleDragLeave}
-          onDrop={(e) => handleDrop(e, index)}
-          onDragEnd={handleDragEnd}
-          className={cn(
-            "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
-            selectedId === service._id
-              ? "bg-primary/20 text-primary"
-              : "text-foreground hover:bg-secondary",
-            draggedIndex === index && "opacity-50",
-            dropTargetIndex === index && "ring-2 ring-primary ring-inset",
-            onReorder && "cursor-grab active:cursor-grabbing"
-          )}
-        >
-          {onReorder && (
-            <span className="text-muted-foreground/50 shrink-0">
-              <GripIcon />
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => onEnter(service._id)}
-            className="flex flex-1 items-center gap-2 text-left"
-          >
-            <FolderIcon />
-            <span className="flex-1 truncate">{service.name}</span>
-            <span className="text-[10px] text-muted-foreground">
-              {service.items.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            aria-label="Rename service"
-            onClick={() => onRename(service._id, service.name)}
-            className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
-          >
-            <EditIcon />
-          </button>
-          <button
-            type="button"
-            aria-label="Delete service"
-            onClick={() => onDelete(service._id, service.name)}
-            className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
-          >
-            <TrashIcon />
-          </button>
-        </div>
+        <ContextMenu key={service._id}>
+          <ContextMenuTrigger asChild>
+            <div
+              draggable={!!onReorder}
+              onDragStart={(e) => handleDragStart(e, index)}
+              onDragOver={(e) => handleDragOver(e, index)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleDrop(e, index)}
+              onDragEnd={handleDragEnd}
+              className={cn(
+                "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
+                selectedId === service._id
+                  ? "bg-primary/20 text-primary"
+                  : "text-foreground hover:bg-secondary",
+                draggedIndex === index && "opacity-50",
+                dropTargetIndex === index && "ring-2 ring-primary ring-inset",
+                onReorder && "cursor-grab active:cursor-grabbing"
+              )}
+            >
+              {onReorder && (
+                <span className="text-muted-foreground/50 shrink-0">
+                  <GripIcon />
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => onEnter(service._id)}
+                className="flex flex-1 min-w-0 items-center gap-2 text-left"
+              >
+                <FolderIcon />
+                <span className="flex-1 truncate">{service.name}</span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  {service.items.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                aria-label="Rename service"
+                onClick={() => onRename(service._id, service.name)}
+                className="shrink-0 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+              >
+                <EditIcon />
+              </button>
+              <button
+                type="button"
+                aria-label="Delete service"
+                onClick={() => onDelete(service._id, service.name)}
+                className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+              >
+                <TrashIcon />
+              </button>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-32">
+            <ContextMenuItem
+              inset
+              className="text-destructive focus:text-destructive"
+              onClick={() => onDelete(service._id, service.name)}
+            >
+              Delete
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       ))}
     </div>
   );
@@ -421,51 +439,63 @@ const ServiceItemsList = memo(function ServiceItemsList({
         }
 
         return (
-          <div
-            key={`${item.refId}-${item.index}`}
-            draggable={!!onReorder}
-            onDragStart={(e) => handleDragStart(e, item.index)}
-            onDragOver={(e) => handleDragOver(e, item.index)}
-            onDragLeave={handleDragLeave}
-            onDrop={(e) => handleDrop(e, item.index)}
-            onDragEnd={handleDragEnd}
-            className={cn(
-              "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
-              selectedIndex === item.index
-                ? "bg-primary/20 text-primary"
-                : "text-foreground hover:bg-secondary",
-              draggedIndex === item.index && "opacity-50",
-              dropTargetIndex === item.index &&
-                "ring-2 ring-primary ring-inset",
-              onReorder && "cursor-grab active:cursor-grabbing"
-            )}
-          >
-            {onReorder && (
-              <span className="text-muted-foreground/50 shrink-0">
-                <GripIcon />
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => onSelect(item.index)}
-              onDoubleClick={() => onDoubleClick?.(item.index)}
-              className="flex flex-1 items-center gap-2 text-left"
-            >
-              <span className="text-[10px] text-muted-foreground w-4">
-                {item.index + 1}
-              </span>
-              <span className="shrink-0 text-muted-foreground">{icon}</span>
-              <span className="flex-1 truncate">{displayName}</span>
-            </button>
-            <button
-              type="button"
-              aria-label="Remove from service"
-              onClick={() => onRemove(item.index)}
-              className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
-            >
-              <CloseIcon />
-            </button>
-          </div>
+          <ContextMenu key={`${item.refId}-${item.index}`}>
+            <ContextMenuTrigger asChild>
+              <div
+                draggable={!!onReorder}
+                onDragStart={(e) => handleDragStart(e, item.index)}
+                onDragOver={(e) => handleDragOver(e, item.index)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, item.index)}
+                onDragEnd={handleDragEnd}
+                className={cn(
+                  "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
+                  selectedIndex === item.index
+                    ? "bg-primary/20 text-primary"
+                    : "text-foreground hover:bg-secondary",
+                  draggedIndex === item.index && "opacity-50",
+                  dropTargetIndex === item.index &&
+                    "ring-2 ring-primary ring-inset",
+                  onReorder && "cursor-grab active:cursor-grabbing"
+                )}
+              >
+                {onReorder && (
+                  <span className="text-muted-foreground/50 shrink-0">
+                    <GripIcon />
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onSelect(item.index)}
+                  onDoubleClick={() => onDoubleClick?.(item.index)}
+                  className="flex flex-1 min-w-0 items-center gap-2 text-left"
+                >
+                  <span className="w-4 text-[10px] text-muted-foreground">
+                    {item.index + 1}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">{icon}</span>
+                  <span className="flex-1 truncate">{displayName}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Remove from service"
+                  onClick={() => onRemove(item.index)}
+                  className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent className="w-32">
+              <ContextMenuItem
+                inset
+                className="text-destructive focus:text-destructive"
+                onClick={() => onRemove(item.index)}
+              >
+                Delete
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         );
       })}
     </div>
