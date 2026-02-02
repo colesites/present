@@ -66,17 +66,18 @@ export function ScriptureResults({
   const handleAddVerseToService = (e: React.MouseEvent, v: BibleVerse) => {
     e.stopPropagation();
     if (!onAddToService) return;
-    const ref = `${v.bookName} ${v.chapter}:${v.verse}`;
-    onAddToService(ref, v.text);
+    const versionCode = getVersionName(v.version);
+    const ref = `${v.bookName} ${v.chapter}:${v.verse}${versionCode ? ` ${versionCode}` : ""}`;
+    onAddToService(ref, ref);
   };
 
   const handleAddRangeToService = () => {
     if (!onAddToService || verses.length === 0) return;
     const first = verses[0];
     const last = verses[verses.length - 1];
-    const ref = `${first.bookName} ${first.chapter}:${first.verse}${verses.length > 1 ? `-${last.verse}` : ""}`;
-    const combinedText = verses.map((v) => v.text).join(" ");
-    // Use ref as label for the service item as per user request
+    const versionCode =
+      parsedRef.versionCode || getVersionName(first.version) || "";
+    const ref = `${first.bookName} ${first.chapter}:${first.verse}${verses.length > 1 ? `-${last.verse}` : ""}${versionCode ? ` ${versionCode}` : ""}`;
     onAddToService(ref, ref);
   };
 

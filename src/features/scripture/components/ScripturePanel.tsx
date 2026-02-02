@@ -10,10 +10,10 @@ import {
   useRef,
   useImperativeHandle,
 } from "react";
-import { 
-  ResizablePanelGroup, 
-  ResizablePanel, 
-  ResizableHandle 
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
 } from "@/components/ui/resizable";
 import { ScriptureDownloader } from "./ScriptureDownloader";
 import { ScriptureInput } from "./ScriptureInput";
@@ -41,7 +41,10 @@ export interface ScripturePanelRef {
 }
 
 export const ScripturePanel = memo(
-  forwardRef<ScripturePanelRef, ScripturePanelProps>(function ScripturePanel({ onSendToOutput, orgId }, ref) {
+  forwardRef<ScripturePanelRef, ScripturePanelProps>(function ScripturePanel(
+    { onSendToOutput, orgId },
+    ref
+  ) {
     const inputRef = useRef<HTMLInputElement>(null);
 
     useImperativeHandle(ref, () => ({
@@ -97,7 +100,7 @@ export const ScripturePanel = memo(
           (inputRef.current as any).setValue(result.transcript);
         }
       },
-      [],
+      []
     );
 
     const onSpeechFinal = useCallback(
@@ -107,7 +110,7 @@ export const ScripturePanel = memo(
         }
         identifyScripture(text);
       },
-      [identifyScripture],
+      [identifyScripture]
     );
 
     const { isListening, isSupported, startListening, stopListening } =
@@ -120,7 +123,7 @@ export const ScripturePanel = memo(
       // Auto-switch version tab if user types a valid version code
       if (parsedRef.versionCode) {
         const matched = availableVersions.find(
-          (v) => v.code.toUpperCase() === parsedRef.versionCode?.toUpperCase(),
+          (v) => v.code.toUpperCase() === parsedRef.versionCode?.toUpperCase()
         );
         if (matched && matched.code !== selectedVersionCode) {
           setSelectedVersionCode(matched.code);
@@ -131,7 +134,7 @@ export const ScripturePanel = memo(
     useEffect(() => {
       if (!selectedVersionCode && availableVersions.length > 0) {
         const nkjv = availableVersions.find(
-          (v) => v.code.toUpperCase() === "NKJV",
+          (v) => v.code.toUpperCase() === "NKJV"
         );
         setSelectedVersionCode(nkjv ? nkjv.code : availableVersions[0].code);
       }
@@ -146,7 +149,7 @@ export const ScripturePanel = memo(
         ...parsedRef,
         versionCode: parsedRef.versionCode || selectedVersionCode,
       }),
-      [parsedRef, selectedVersionCode],
+      [parsedRef, selectedVersionCode]
     );
 
     const { lookupRef } = useScripture();
@@ -177,12 +180,7 @@ export const ScripturePanel = memo(
         }
         ref += ` ${version}`;
 
-        // 3. Add to Service (if service selected)
-        if (selectedServiceId) {
-          await addScriptureToService(selectedServiceId, ref, ref);
-        }
-
-        // 4. Project to Output (Live)
+        // 3. Project to Output (Live)
         const verses = await lookupRef({
           ...activeParsed,
           versionCode: version,
@@ -197,6 +195,11 @@ export const ScripturePanel = memo(
           });
           onSendToOutput(slides);
         }
+
+        // 4. Add to Service (if service selected)
+        if (selectedServiceId) {
+          await addScriptureToService(selectedServiceId, ref, ref);
+        }
       },
       [
         parsedRef,
@@ -206,7 +209,7 @@ export const ScripturePanel = memo(
         lookupRef,
         onSendToOutput,
         availableBooks,
-      ],
+      ]
     );
 
     const handleAcceptSuggestion = useCallback(
@@ -243,7 +246,7 @@ export const ScripturePanel = memo(
         onSendToOutput,
         selectedServiceId,
         addScriptureToService,
-      ],
+      ]
     );
 
     return (
@@ -281,7 +284,7 @@ export const ScripturePanel = memo(
                           "px-2 py-0.5 rounded text-[10px] font-bold transition-all border shrink-0",
                           selectedVersionCode === v.code
                             ? "bg-primary border-primary text-primary-foreground shadow-sm"
-                            : "bg-background/40 border-border/60 text-muted-foreground hover:bg-accent/40",
+                            : "bg-background/40 border-border/60 text-muted-foreground hover:bg-accent/40"
                         )}
                       >
                         {v.code}
@@ -305,7 +308,7 @@ export const ScripturePanel = memo(
                           "h-8 w-8 flex items-center justify-center rounded-md border transition-all relative group shadow-sm",
                           isListening
                             ? "bg-red-500 border-red-600 text-white"
-                            : "bg-background border-border text-muted-foreground hover:border-primary hover:text-primary",
+                            : "bg-background border-border text-muted-foreground hover:border-primary hover:text-primary"
                         )}
                       >
                         {isListening ? (
@@ -376,5 +379,5 @@ export const ScripturePanel = memo(
         )}
       </div>
     );
-  }),
+  })
 );
