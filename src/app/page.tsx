@@ -153,8 +153,9 @@ export default function Home() {
     index: number;
   } | null>(null);
   const [editScrollToSlide, setEditScrollToSlide] = useState<number | null>(
-    null,
+    null
   );
+  const [isOutputFrozen, setIsOutputFrozen] = useState(false);
 
   const slidesForGrid = useMemo(() => {
     if (selectedSong) return getSlidesForGrid(selectedSong);
@@ -179,14 +180,16 @@ export default function Home() {
   }, [activeSlideId, songs, scriptureSlides]);
   const slideGroups = useMemo(
     () => getSlideGroups(selectedSong),
-    [selectedSong],
+    [selectedSong]
   );
 
   // Handlers
   const handleSelectSlide = useCallback(
     async (slideId: string, text: string, footer?: string) => {
       setShowTextInOutput(true);
-      await selectSlide(slideId, text, footer);
+      await selectSlide(slideId, text, footer, {
+        suppressBroadcast: isOutputFrozen,
+      });
 
       const [idPart, indexStr] = slideId.split(":");
       const index = Number(indexStr);
@@ -197,7 +200,7 @@ export default function Home() {
         setSelected({ songId: idPart as any, index });
       }
     },
-    [selectSlide],
+    [selectSlide, isOutputFrozen]
   );
 
   const handleEditSlide = useCallback(
@@ -209,7 +212,7 @@ export default function Home() {
       setSelected({ songId, index: slideIndex });
       setEditScrollToSlide(slideIndex);
     },
-    [setSelectedSongId],
+    [setSelectedSongId]
   );
 
   const handleRemoveFromService = useCallback(
@@ -217,7 +220,7 @@ export default function Home() {
       if (!selectedServiceId) return;
       await removeFromService(selectedServiceId, index);
     },
-    [selectedServiceId, removeFromService],
+    [selectedServiceId, removeFromService]
   );
 
   const handleAddToService = useCallback(
@@ -225,7 +228,7 @@ export default function Home() {
       if (!selectedServiceId) return;
       await addSongToService(selectedServiceId, songId);
     },
-    [selectedServiceId, addSongToService],
+    [selectedServiceId, addSongToService]
   );
 
   const handleAddMediaToService = useCallback(
@@ -233,7 +236,7 @@ export default function Home() {
       if (!selectedServiceId) return;
       await addMediaToService(selectedServiceId, mediaId, mediaName);
     },
-    [selectedServiceId, addMediaToService],
+    [selectedServiceId, addMediaToService]
   );
 
   const handleSaveSong = useCallback(
@@ -241,7 +244,7 @@ export default function Home() {
       if (!selectedSongId) return;
       await updateExistingSong(selectedSongId, title, lyrics);
     },
-    [selectedSongId, updateExistingSong],
+    [selectedSongId, updateExistingSong]
   );
 
   const handleRenameSong = useCallback(
@@ -250,7 +253,7 @@ export default function Home() {
       if (!song) return;
       await updateExistingSong(songId, newTitle, song.lyrics);
     },
-    [songs, updateExistingSong],
+    [songs, updateExistingSong]
   );
 
   const handleScriptureOutput = useCallback(
@@ -264,11 +267,11 @@ export default function Home() {
         await handleSelectSlide(
           `scripture:0`,
           slides[0].content,
-          slides[0].footer,
+          slides[0].footer
         );
       }
     },
-    [handleSelectSlide, setSelectedSongId],
+    [handleSelectSlide, setSelectedSongId]
   );
 
   const handleSelectScripture = useCallback(
@@ -280,7 +283,7 @@ export default function Home() {
         console.warn(
           "Failed to parse scripture ref from service:",
           refString,
-          parsed.errors,
+          parsed.errors
         );
         return;
       }
@@ -315,7 +318,7 @@ export default function Home() {
         handleScriptureOutput(slides);
       }
     },
-    [availableBooks, lookupRef, handleScriptureOutput],
+    [availableBooks, lookupRef, handleScriptureOutput]
   );
 
   const {
@@ -332,7 +335,10 @@ export default function Home() {
     setServiceItemIndex,
     setSelectedSongId,
     selectMediaForOutput,
-    selectSlide,
+    selectSlide: (slideId: string, text: string) =>
+      selectSlide(slideId, text, undefined, {
+        suppressBroadcast: isOutputFrozen,
+      }),
     setShouldAutoPlay,
     onSelectScripture: handleSelectScripture,
   });
@@ -374,6 +380,7 @@ export default function Home() {
     mediaFilterCSS,
     isVideoPlaying,
     videoCurrentTime,
+    isFrozen: isOutputFrozen,
   });
 
   // Keyboard shortcuts
@@ -402,7 +409,7 @@ export default function Home() {
           e.preventDefault();
           const nextIndex = Math.min(
             currentIndex + 1,
-            slidesForGrid.length - 1,
+            slidesForGrid.length - 1
           );
           const nextSlide = slidesForGrid[nextIndex];
           const slideId = nextSlide.song
@@ -411,7 +418,7 @@ export default function Home() {
           handleSelectSlide(
             slideId,
             nextSlide.slide.text,
-            nextSlide.slide.footer,
+            nextSlide.slide.footer
           );
         } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
           e.preventDefault();
@@ -423,7 +430,7 @@ export default function Home() {
           handleSelectSlide(
             slideId,
             prevSlide.slide.text,
-            prevSlide.slide.footer,
+            prevSlide.slide.footer
           );
         }
       }
@@ -578,6 +585,8 @@ export default function Home() {
             onResetFilters: resetMediaFilters,
             isVideoPlaying,
             videoCurrentTime,
+            isFrozen: isOutputFrozen,
+            onToggleFreeze: () => setIsOutputFrozen((prev) => !prev),
           }}
         />
       </ResizablePanelGroup>

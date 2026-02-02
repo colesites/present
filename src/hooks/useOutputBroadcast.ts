@@ -4,11 +4,11 @@ import { useEffect, useRef } from "react";
 
 type MediaItem =
   | {
-      id: string;
-      name: string;
-      type: "image" | "video";
-      url: string; // blob url in main app
-    }
+    id: string;
+    name: string;
+    type: "image" | "video";
+    url: string; // blob url in main app
+  }
   | null
   | undefined;
 
@@ -27,6 +27,7 @@ type Params = {
 
   isVideoPlaying: boolean;
   videoCurrentTime: number;
+  isFrozen?: boolean;
 };
 
 export function useOutputBroadcast({
@@ -37,13 +38,21 @@ export function useOutputBroadcast({
   mediaFilterCSS,
   isVideoPlaying,
   videoCurrentTime,
+  isFrozen,
 }: Params) {
   const mediaCacheRef = useRef<{ id: string; blob: Blob } | null>(null);
   /* Track previous video time to only sync when it actually changes */
   const prevVideoTimeRef = useRef<number | undefined>(undefined);
+  const wasFrozenRef = useRef(false);
 
   // 1. Handle full media updates - send Blob directly (fast, no conversion)
   useEffect(() => {
+    const previouslyFrozen = wasFrozenRef.current;
+    wasFrozenRef.current = !!isFrozen;
+
+    if (isFrozen) return;
+    if (previouslyFrozen && !isFrozen) return;
+
     const channel = new BroadcastChannel("present-output");
     let isCancelled = false;
 
@@ -108,11 +117,13 @@ export function useOutputBroadcast({
     };
   }, [
     activeMediaItem?.id,
+    activeMediaItem?.type,
     showText,
     showMedia,
     videoSettings,
     mediaFilterCSS,
     isVideoPlaying,
     videoCurrentTime,
+    isFrozen,
   ]);
 }

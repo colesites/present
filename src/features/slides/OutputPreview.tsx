@@ -14,6 +14,7 @@ import {
   SlidersHorizontal,
   RotateCcw,
 } from "lucide-react";
+import { IoSnow } from "react-icons/io5";
 import type {
   MediaItem,
   VideoSettings,
@@ -52,6 +53,8 @@ interface OutputPreviewProps {
   onResetFilters: () => void;
   isVideoPlaying: boolean;
   videoCurrentTime: number;
+  isFrozen?: boolean;
+  onToggleFreeze?: () => void;
 }
 
 // Filter slider component - compact version
@@ -118,6 +121,8 @@ export const OutputPreview = memo(function OutputPreview({
   onResetFilters,
   isVideoPlaying,
   videoCurrentTime,
+  isFrozen,
+  onToggleFreeze,
 }: OutputPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -166,10 +171,21 @@ export const OutputPreview = memo(function OutputPreview({
         <span
           className={cn(
             "h-2 w-2 rounded-full",
-            activeMediaItem || text ? "bg-green-500" : "bg-primary",
+            activeMediaItem || text
+              ? isFrozen
+                ? "bg-sky-400"
+                : "bg-green-500"
+              : "bg-primary",
           )}
         />
-        <p className="text-xs font-medium text-muted-foreground">Main Output</p>
+        <p className="text-xs font-medium text-muted-foreground">
+          Main Output
+          {isFrozen && (
+            <span className="ml-2 text-[10px] uppercase tracking-wide text-sky-400">
+              Frozen
+            </span>
+          )}
+        </p>
       </div>
 
       {/* Preview box - fixed size rectangle (16:9) */}
@@ -241,6 +257,22 @@ export const OutputPreview = memo(function OutputPreview({
 
       {/* Toggle controls */}
       <div className="mt-3 flex shrink-0 items-center justify-center gap-2 px-3">
+        {onToggleFreeze && (
+          <button
+            type="button"
+            onClick={onToggleFreeze}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
+              isFrozen
+                ? "bg-sky-500 text-white"
+                : "bg-secondary text-muted-foreground hover:text-foreground",
+            )}
+            title={isFrozen ? "Unfreeze main output" : "Freeze main output"}
+          >
+            <IoSnow className="h-3 w-3" />
+            {isFrozen ? "Frozen" : "Freeze"}
+          </button>
+        )}
         <button
           type="button"
           onClick={onToggleText}

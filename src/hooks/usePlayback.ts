@@ -80,7 +80,12 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
   }, []);
 
   const selectSlide = useCallback(
-    async (slideId: string, slideText?: string, slideFooter?: string) => {
+    async (
+      slideId: string,
+      slideText?: string,
+      slideFooter?: string,
+      options?: { suppressBroadcast?: boolean },
+    ) => {
       if (!orgId) return;
 
       // Mark that we have local changes (prevents server overwrite)
@@ -91,13 +96,15 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
       saveLocalPlayback({ activeSlideId: slideId });
 
       // Broadcast for instant local update
-      getBroadcast().postMessage({
-        type: "active-slide",
-        orgId,
-        slideId,
-        slideText,
-        slideFooter,
-      });
+      if (!options?.suppressBroadcast) {
+        getBroadcast().postMessage({
+          type: "active-slide",
+          orgId,
+          slideId,
+          slideText,
+          slideFooter,
+        });
+      }
 
       // Try to persist to database (will fail if offline, that's ok)
       try {
