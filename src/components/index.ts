@@ -7,3 +7,5 @@ export {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
+export { FontSizeInput } from "./FontSizeInput";
+export { FontFamilySelect } from "./FontFamilySelect";

@@ -46,6 +46,7 @@ export const ScripturePanel = memo(
     ref
   ) {
     const inputRef = useRef<HTMLInputElement>(null);
+    const identifyTimeoutRef = useRef<number | null>(null);
 
     useImperativeHandle(ref, () => ({
       focusSearch: () => {
@@ -70,9 +71,10 @@ export const ScripturePanel = memo(
       errors: [],
     });
 
-    // Voice Suggestion State
     const [suggestion, setSuggestion] = useState<string | null>(null);
     const [isIdentifying, setIsIdentifying] = useState(false);
+    const [liveTranscript, setLiveTranscript] = useState("");
+    const [speechLang, setSpeechLang] = useState("en-US");
 
     const identifyScripture = useCallback(async (transcript: string) => {
       if (!transcript.trim()) return;
@@ -96,28 +98,77 @@ export const ScripturePanel = memo(
 
     const onSpeechResult = useCallback(
       (result: { transcript: string; isFinal: boolean }) => {
-        if (result.transcript && inputRef.current) {
+        if (!result.transcript) return;
+        setLiveTranscript(result.transcript);
+        if (inputRef.current) {
           (inputRef.current as any).setValue(result.transcript);
         }
       },
       []
     );
 
-    const onSpeechFinal = useCallback(
-      (text: string) => {
-        if (inputRef.current) {
-          (inputRef.current as any).setValue(text);
-        }
-        identifyScripture(text);
-      },
-      [identifyScripture]
-    );
+    const onSpeechFinal = useCallback((text: string) => {
+      if (inputRef.current) {
+        (inputRef.current as any).setValue(text);
+      }
+      setLiveTranscript(text);
+    }, []);
 
     const { isListening, isSupported, startListening, stopListening } =
       useSpeechRecognition({
         onResult: onSpeechResult,
         onFinalResult: onSpeechFinal,
+        lang: speechLang,
       });
+
+    useEffect(() => {
+      try {
+        const raw = localStorage.getItem("present-settings");
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as { scriptureSpeechLang?: string };
+        if (parsed.scriptureSpeechLang) {
+          setSpeechLang(parsed.scriptureSpeechLang);
+        }
+      } catch (err) {
+        console.error("Failed to load settings:", err);
+      }
+    }, []);
+
+    useEffect(() => {
+      if (!isListening) {
+        if (identifyTimeoutRef.current !== null) {
+          window.clearTimeout(identifyTimeoutRef.current);
+          identifyTimeoutRef.current = null;
+        }
+        return;
+      }
+
+      const text = liveTranscript.trim();
+      if (!text) return;
+
+      const quickParsed = parseReference(text, availableBooks);
+      if (quickParsed.book && quickParsed.chapter) {
+        let quickRef = `${quickParsed.book.name} ${quickParsed.chapter}`;
+        if (quickParsed.verseStart) {
+          quickRef += `:${quickParsed.verseStart}`;
+          if (quickParsed.verseEnd) {
+            quickRef += `-${quickParsed.verseEnd}`;
+          }
+        }
+        if (quickParsed.versionCode) {
+          quickRef += ` ${quickParsed.versionCode}`;
+        }
+        setSuggestion(quickRef);
+      }
+
+      if (identifyTimeoutRef.current !== null) {
+        window.clearTimeout(identifyTimeoutRef.current);
+      }
+
+      identifyTimeoutRef.current = window.setTimeout(() => {
+        identifyScripture(text);
+      }, 100);
+    }, [isListening, liveTranscript, identifyScripture, availableBooks]);
 
     useEffect(() => {
       // Auto-switch version tab if user types a valid version code

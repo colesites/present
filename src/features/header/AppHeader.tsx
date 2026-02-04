@@ -1,25 +1,26 @@
 "use client";
 
+import { Settings } from "lucide-react";
 import { memo } from "react";
 import { AuthControls } from "@/components/AuthControls";
-import type { ViewMode } from "@/types";
 import { cn } from "@/lib/utils";
+import type { ViewMode } from "@/types";
 
 interface AppHeaderProps {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
+  isAutopilotEnabled: boolean;
+  onToggleAutopilot: () => void;
 }
 
 export const AppHeader = memo(function AppHeader({
   viewMode,
   onViewModeChange,
+  isAutopilotEnabled,
+  onToggleAutopilot,
 }: AppHeaderProps) {
   const openOutput = () => {
     window.open("/output", "present-output", "width=1280,height=720");
-  };
-
-  const openStage = () => {
-    window.open("/stage-display", "present-stage", "width=1280,height=720");
   };
 
   return (
@@ -31,6 +32,27 @@ export const AppHeader = memo(function AppHeader({
 
       {/* Center - View mode tabs */}
       <div className="flex flex-1 items-center justify-center gap-1">
+        {/* Autopilot toggle */}
+        <button
+          type="button"
+          onClick={onToggleAutopilot}
+          className={cn(
+            "flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium transition",
+            isAutopilotEnabled
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:text-foreground",
+          )}
+          title="Automatically follow the active service"
+        >
+          <span
+            className={cn(
+              "h-3 w-3 rounded-full border border-current",
+              isAutopilotEnabled && "bg-primary",
+            )}
+          />
+          Auto Pilot
+        </button>
+
         {/* Show mode */}
         <button
           type="button"
@@ -61,14 +83,19 @@ export const AppHeader = memo(function AppHeader({
           Edit
         </button>
 
-        {/* Stage display */}
+        {/* Settings */}
         <button
           type="button"
-          onClick={openStage}
-          className="flex items-center gap-2 rounded-md px-4 py-1.5 text-xs font-medium text-muted-foreground transition hover:text-foreground"
+          onClick={() => onViewModeChange("settings")}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-4 py-1.5 text-xs font-medium transition",
+            viewMode === "settings"
+              ? "bg-primary/20 text-primary"
+              : "text-muted-foreground hover:text-foreground",
+          )}
         >
-          <MonitorIcon />
-          Stage
+          <Settings className="h-3.5 w-3.5" />
+          Settings
         </button>
       </div>
 

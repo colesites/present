@@ -24,6 +24,7 @@ export function usePresentMediaFlow<
 
   selectSlide: (slideId: string, text: string) => Promise<void> | void;
   onSelectScripture?: (refId: string) => void;
+  onClearScripture?: () => void;
 
   setShouldAutoPlay: (v: boolean) => void;
 }) {
@@ -35,6 +36,7 @@ export function usePresentMediaFlow<
     setSelectedSongId,
     selectMediaForOutput,
     selectSlide,
+    onClearScripture,
     setShouldAutoPlay,
   } = params;
 
@@ -54,6 +56,7 @@ export function usePresentMediaFlow<
         if (songId) {
           setSelectedSongId(songId);
           setPreviewMediaItem(null);
+          onClearScripture?.();
           return;
         }
       }
@@ -65,6 +68,12 @@ export function usePresentMediaFlow<
         const mediaItem = allMediaItems.find((m) => m.id === refId) ?? null;
         setPreviewMediaItem(mediaItem);
         setSelectedSongId(null);
+        onClearScripture?.();
+
+        // Go live immediately for media items
+        if ((mediaItem as any)?.type === "video") setShouldAutoPlay(true);
+        selectMediaForOutput(mediaItem);
+        selectSlide("", "");
       }
 
       if (item.type === "scripture") {
@@ -113,17 +122,26 @@ export function usePresentMediaFlow<
 
     selectMediaForOutput(previewMediaItem);
     selectSlide("", "");
-  }, [previewMediaItem, setShouldAutoPlay, selectMediaForOutput, selectSlide]);
+    onClearScripture?.();
+  }, [
+    previewMediaItem,
+    setShouldAutoPlay,
+    selectMediaForOutput,
+    selectSlide,
+    onClearScripture,
+  ]);
 
   const onMediaPanelSelect = useCallback(
     (item: TMedia | null) => {
       setPreviewMediaItem(null);
+      onClearScripture?.();
 
       if ((item as any)?.type === "video") setShouldAutoPlay(true);
 
       selectMediaForOutput(item);
+      selectSlide("", "");
     },
-    [setShouldAutoPlay, selectMediaForOutput],
+    [setShouldAutoPlay, selectMediaForOutput, selectSlide, onClearScripture],
   );
 
   const isPreviewOutputting =

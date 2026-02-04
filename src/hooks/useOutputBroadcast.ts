@@ -28,6 +28,11 @@ type Params = {
   isVideoPlaying: boolean;
   videoCurrentTime: number;
   isFrozen?: boolean;
+  scriptureStyle: {
+    fontSize: number;
+    fontFamily: string;
+    textAlign: "left" | "center" | "right";
+  };
 };
 
 export function useOutputBroadcast({
@@ -39,6 +44,7 @@ export function useOutputBroadcast({
   isVideoPlaying,
   videoCurrentTime,
   isFrozen,
+  scriptureStyle,
 }: Params) {
   const mediaCacheRef = useRef<{ id: string; blob: Blob } | null>(null);
   /* Track previous video time to only sync when it actually changes */
@@ -105,6 +111,7 @@ export function useOutputBroadcast({
           isVideoPlaying,
           videoCurrentTime,
           shouldSyncTime,
+          scriptureStyle,
         });
       }
     }
@@ -125,5 +132,8 @@ export function useOutputBroadcast({
     isVideoPlaying,
     videoCurrentTime,
     isFrozen,
+    scriptureStyle.fontSize,
+    scriptureStyle.fontFamily,
+    scriptureStyle.textAlign,
   ]);
 }

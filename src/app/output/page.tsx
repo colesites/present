@@ -35,6 +35,11 @@ type MediaMessage = {
   isVideoPlaying: boolean;
   videoCurrentTime: number;
   shouldSyncTime?: boolean;
+  scriptureStyle?: {
+    fontSize: number;
+    fontFamily: string;
+    textAlign: "left" | "center" | "right";
+  };
 };
 
 type PlaybackSyncMessage = {
@@ -87,7 +92,20 @@ export default function OutputPage() {
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const [pendingPlayRequest, setPendingPlayRequest] = useState(false);
+  const [scriptureStyle, setScriptureStyle] = useState({
+    fontSize: 18,
+    fontFamily: "Inter",
+    textAlign: "left" as "left" | "center" | "right",
+  });
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [windowHeight, setWindowHeight] = useState(0);
+
+  useEffect(() => {
+    setWindowHeight(window.innerHeight);
+    const handleResize = () => setWindowHeight(window.innerHeight);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
   const currentBlobUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -157,6 +175,10 @@ export default function OutputPage() {
           (data.shouldSyncTime ?? true) // Fallback to true if missing
         ) {
           setVideoCurrentTime(data.videoCurrentTime ?? 0);
+        }
+
+        if (data.scriptureStyle) {
+          setScriptureStyle(data.scriptureStyle);
         }
       } else if (data.type === "playback-sync") {
         setIsVideoPlaying(data.isVideoPlaying);
@@ -352,14 +374,14 @@ export default function OutputPage() {
               <img
                 src={mediaItem.url}
                 alt={mediaItem.name}
-                className="absolute inset-0 h-full w-full object-cover"
+                className="absolute inset-0 h-full w-full object-cover z-0"
                 style={{ filter: mediaFilterCSS }}
               />
             ) : (
               <video
                 ref={videoRef}
                 src={mediaItem.url}
-                className="absolute inset-0 h-full w-full object-cover"
+                className="absolute inset-0 h-full w-full object-cover z-0"
                 style={{ filter: mediaFilterCSS }}
                 loop={videoSettings.loop}
                 muted={videoSettings.muted} // Use settings from main output
@@ -371,7 +393,7 @@ export default function OutputPage() {
           {showText && activeSlide && (
             <div
               className={cn(
-                "relative flex h-full w-full flex-col",
+                "relative flex h-full w-full flex-col z-10",
                 activeSlideId?.startsWith("scripture:")
                   ? "items-start justify-start p-12"
                   : "items-center justify-center p-8",
@@ -388,7 +410,9 @@ export default function OutputPage() {
                 <AutoFitText
                   text={stripBracketsForDisplay(activeSlide.text)}
                   align={
-                    activeSlideId?.startsWith("scripture:") ? "left" : "center"
+                    activeSlideId?.startsWith("scripture:")
+                      ? scriptureStyle.textAlign
+                      : "center"
                   }
                   verticalAlign={
                     activeSlideId?.startsWith("scripture:") ? "top" : "center"
@@ -402,14 +426,16 @@ export default function OutputPage() {
                     mediaItem && "drop-shadow-[0_4px_16px_rgba(0,0,0,1)]",
                   )}
                   style={{
-                    fontFamily,
+                    fontFamily: activeSlideId?.startsWith("scripture:")
+                      ? scriptureStyle.fontFamily
+                      : fontFamily,
                     fontSize: activeSlideId?.startsWith("scripture:")
-                      ? "18vh"
+                      ? `${scriptureStyle.fontSize}vh`
                       : `${fontSize}px`,
                   }}
                   maxFontSize={
                     activeSlideId?.startsWith("scripture:")
-                      ? undefined
+                      ? (scriptureStyle.fontSize * windowHeight) / 100
                       : fontSize
                   }
                   minScale={activeSlideId?.startsWith("scripture:") ? 0.1 : 0.4}
@@ -423,7 +449,14 @@ export default function OutputPage() {
                       ? "mb-[4vh] mt-0 w-full text-center text-[6vh]"
                       : "mt-4 text-[2.5vh] text-center",
                   )}
-                  style={{ fontFamily }}
+                  style={{
+                    fontFamily: activeSlideId?.startsWith("scripture:")
+                      ? scriptureStyle.fontFamily
+                      : fontFamily,
+                    textAlign: activeSlideId?.startsWith("scripture:")
+                      ? scriptureStyle.textAlign
+                      : "center",
+                  }}
                 >
                   {activeSlide.footer}
                 </div>

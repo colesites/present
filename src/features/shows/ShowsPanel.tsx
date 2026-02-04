@@ -129,7 +129,7 @@ export const ShowsPanel = memo(
                 "px-2 py-1 rounded text-[10px] transition",
                 !selectedCategoryId
                   ? "bg-primary/20 text-primary"
-                  : "text-muted-foreground hover:text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               All
@@ -143,7 +143,7 @@ export const ShowsPanel = memo(
                   "px-2 py-1 rounded text-[10px] transition",
                   selectedCategoryId === cat._id
                     ? "bg-primary/20 text-primary"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {cat.name}
@@ -186,7 +186,7 @@ export const ShowsPanel = memo(
                   <Check
                     className={cn(
                       "mr-2 h-3 w-3",
-                      sortBy === "recent" ? "opacity-100" : "opacity-0"
+                      sortBy === "recent" ? "opacity-100" : "opacity-0",
                     )}
                   />
                   Recent
@@ -195,7 +195,7 @@ export const ShowsPanel = memo(
                   <Check
                     className={cn(
                       "mr-2 h-3 w-3",
-                      sortBy === "name" ? "opacity-100" : "opacity-0"
+                      sortBy === "name" ? "opacity-100" : "opacity-0",
                     )}
                   />
                   Name
@@ -205,7 +205,7 @@ export const ShowsPanel = memo(
                   <ArrowUp
                     className={cn(
                       "mr-2 h-3 w-3",
-                      sortOrder === "asc" ? "opacity-100" : "opacity-0"
+                      sortOrder === "asc" ? "opacity-100" : "opacity-0",
                     )}
                   />
                   Ascending
@@ -214,7 +214,7 @@ export const ShowsPanel = memo(
                   <ArrowDown
                     className={cn(
                       "mr-2 h-3 w-3",
-                      sortOrder === "desc" ? "opacity-100" : "opacity-0"
+                      sortOrder === "desc" ? "opacity-100" : "opacity-0",
                     )}
                   />
                   Descending
@@ -227,6 +227,7 @@ export const ShowsPanel = memo(
         {/* Songs grid */}
         <div className="flex-1 overflow-auto p-2">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
+            <NewSongButton onClick={() => setShowNewSongDialog(true)} />
             {filteredSongs.map((song) => (
               <SongCard
                 key={song._id}
@@ -243,7 +244,6 @@ export const ShowsPanel = memo(
                 onAddToService={() => onAddToService(song._id)}
               />
             ))}
-            <NewSongButton onClick={() => setShowNewSongDialog(true)} />
           </div>
         </div>
 

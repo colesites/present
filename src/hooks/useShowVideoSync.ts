@@ -24,6 +24,7 @@ export function useShowVideoSync(params: {
   // ✅ controlled from Home
   shouldAutoPlay: boolean;
   onAutoPlayConsumed: () => void;
+  forcePlay?: boolean;
 }) {
   const {
     showViewMedia,
@@ -31,6 +32,7 @@ export function useShowVideoSync(params: {
     videoSettings,
     shouldAutoPlay,
     onAutoPlayConsumed,
+    forcePlay = false,
   } = params;
 
   const showVideoRef = useRef<HTMLVideoElement>(null);
@@ -64,14 +66,21 @@ export function useShowVideoSync(params: {
       setVideoCurrentTime(0);
       prevMediaIdRef.current = undefined;
     }
-  }, [activeMediaItem?.id, activeMediaItem?.type, shouldAutoPlay, onAutoPlayConsumed]);
+  }, [
+    activeMediaItem?.id,
+    activeMediaItem?.type,
+    shouldAutoPlay,
+    onAutoPlayConsumed,
+  ]);
+
+  const effectiveIsVideoPlaying = forcePlay || isVideoPlaying;
 
   // Sync Show view video element with isVideoPlaying
   useEffect(() => {
     if (showVideoRef.current && showViewMedia?.type === "video") {
       isProgrammaticPlayRef.current = true;
 
-      if (isVideoPlaying) {
+      if (effectiveIsVideoPlaying) {
         showVideoRef.current.play().catch(() => {
           // autoplay may be blocked
           isProgrammaticPlayRef.current = false;
@@ -84,7 +93,7 @@ export function useShowVideoSync(params: {
         isProgrammaticPlayRef.current = false;
       }, 100);
     }
-  }, [isVideoPlaying, showViewMedia?.type]);
+  }, [effectiveIsVideoPlaying, showViewMedia?.type]);
 
   const handleVideoPlay = useCallback(() => {
     if (!isProgrammaticPlayRef.current) setIsVideoPlaying(true);
@@ -102,12 +111,12 @@ export function useShowVideoSync(params: {
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
       setVideoCurrentTime(e.currentTarget.currentTime);
     },
-    []
+    [],
   );
 
   return {
     showVideoRef,
-    isVideoPlaying,
+    isVideoPlaying: effectiveIsVideoPlaying,
     videoCurrentTime,
 
     handleVideoPlay,
