@@ -4,6 +4,7 @@ import { memo, useState } from "react";
 import type { Id } from "@/../convex/_generated/dataModel";
 import type { Service, Song } from "@/types";
 import { Dialog } from "@/components/Dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
   ContextMenu,
@@ -28,6 +29,7 @@ interface ServicesSidebarProps {
   selectedService: Service | null;
   serviceItems: ServiceItem[];
   serviceItemIndex: number | null;
+  isLoading?: boolean;
   onEnterService: (id: Id<"services">) => void;
   onExitService: () => void;
   onSelectServiceItem: (index: number) => void;
@@ -47,6 +49,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
   selectedService,
   serviceItems,
   serviceItemIndex,
+  isLoading = false,
   onEnterService,
   onExitService,
   onSelectServiceItem,
@@ -108,7 +111,9 @@ export const ServicesSidebar = memo(function ServicesSidebar({
       </div>
 
       <div className="flex-1 overflow-hidden p-2">
-        {isInsideService && selectedService ? (
+        {isLoading ? (
+          <ServiceListSkeleton />
+        ) : isInsideService && selectedService ? (
           <ServiceItemsList
             items={serviceItems}
             selectedIndex={serviceItemIndex}
@@ -655,5 +660,23 @@ function BookIcon() {
       <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
       <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
     </svg>
+  );
+}
+
+// Skeleton loading component
+function ServiceListSkeleton() {
+  return (
+    <div className="space-y-1">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-2 rounded-md px-2 py-1.5"
+        >
+          <Skeleton className="h-3 w-3 shrink-0" />
+          <Skeleton className="h-3 flex-1" />
+          <Skeleton className="h-3 w-4 shrink-0" />
+        </div>
+      ))}
+    </div>
   );
 }

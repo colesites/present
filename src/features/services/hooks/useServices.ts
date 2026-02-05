@@ -200,6 +200,7 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
 
   return {
     services: services ?? [],
+    isLoading: services === undefined,
     selectedService,
     selectedServiceId,
     isInsideService,

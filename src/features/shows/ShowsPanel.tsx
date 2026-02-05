@@ -12,6 +12,8 @@ import type { Id } from "@/../convex/_generated/dataModel";
 import type { Song, Category } from "@/types";
 import { Dialog } from "@/components/Dialog";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Search, ArrowUpDown, Check, ArrowUp, ArrowDown } from "lucide-react";
 import {
@@ -29,12 +31,13 @@ interface ShowsPanelProps {
   selectedCategoryId: Id<"categories"> | null;
   isInsideService: boolean;
   selectedServiceId: Id<"services"> | null;
+  isLoading?: boolean;
   onSelectSong: (id: Id<"songs">) => void;
   onSelectCategory: (id: Id<"categories"> | null) => void;
   onCreateSong: (
     title: string,
     lyrics: string,
-    categoryId?: Id<"categories">
+    categoryId?: Id<"categories">,
   ) => Promise<unknown>;
   onRenameSong: (id: Id<"songs">, title: string) => Promise<void>;
   onDeleteSong: (id: Id<"songs">) => Promise<void>;
@@ -58,6 +61,7 @@ export const ShowsPanel = memo(
       selectedCategoryId,
       isInsideService,
       selectedServiceId,
+      isLoading = false,
       onSelectSong,
       onSelectCategory,
       onCreateSong,
@@ -69,7 +73,7 @@ export const ShowsPanel = memo(
       searchQuery,
       onSearchChange,
     }: ShowsPanelProps,
-    ref
+    ref,
   ) {
     const [showNewSongDialog, setShowNewSongDialog] = useState(false);
     const [showNewCategoryDialog, setShowNewCategoryDialog] = useState(false);
@@ -226,25 +230,29 @@ export const ShowsPanel = memo(
 
         {/* Songs grid */}
         <div className="flex-1 overflow-auto p-2">
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
-            <NewSongButton onClick={() => setShowNewSongDialog(true)} />
-            {filteredSongs.map((song) => (
-              <SongCard
-                key={song._id}
-                song={song}
-                isSelected={selectedSongId === song._id}
-                showAddToService={isInsideService && !!selectedServiceId}
-                onSelect={() => onSelectSong(song._id)}
-                onRename={() =>
-                  setRenameTarget({ id: song._id, title: song.title })
-                }
-                onDelete={() =>
-                  setDeleteTarget({ id: song._id, title: song.title })
-                }
-                onAddToService={() => onAddToService(song._id)}
-              />
-            ))}
-          </div>
+          {isLoading ? (
+            <ShowsGridSkeleton />
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
+              <NewSongButton onClick={() => setShowNewSongDialog(true)} />
+              {filteredSongs.map((song) => (
+                <SongCard
+                  key={song._id}
+                  song={song}
+                  isSelected={selectedSongId === song._id}
+                  showAddToService={isInsideService && !!selectedServiceId}
+                  onSelect={() => onSelectSong(song._id)}
+                  onRename={() =>
+                    setRenameTarget({ id: song._id, title: song.title })
+                  }
+                  onDelete={() =>
+                    setDeleteTarget({ id: song._id, title: song.title })
+                  }
+                  onAddToService={() => onAddToService(song._id)}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Dialogs */}
@@ -280,15 +288,15 @@ export const ShowsPanel = memo(
           <DeleteSongDialog
             title={deleteTarget.title}
             onClose={() => setDeleteTarget(null)}
-            onDelete={() => {
-              onDeleteSong(deleteTarget.id);
+            onDelete={async () => {
+              await onDeleteSong(deleteTarget.id);
               setDeleteTarget(null);
             }}
           />
         )}
       </div>
     );
-  })
+  }),
 );
 
 // Sub-components
@@ -403,6 +411,7 @@ function NewSongDialog({
   const [title, setTitle] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [isFixing, setIsFixing] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Default to selected category, or first available category if "All" is selected
@@ -415,15 +424,18 @@ function NewSongDialog({
       setError("Title is required");
       return;
     }
+    setIsCreating(true);
     try {
       await onCreate(
         title.trim(),
         lyrics,
-        (targetCategoryId as Id<"categories">) || undefined
+        (targetCategoryId as Id<"categories">) || undefined,
       );
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create");
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -500,9 +512,11 @@ function NewSongDialog({
           <button
             type="button"
             onClick={handleCreate}
-            className="flex-1 rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+            disabled={isCreating}
+            className="flex-1 rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            Create
+            {isCreating && <Spinner className="size-3" />}
+            {isCreating ? "Creating..." : "Create"}
           </button>
         </div>
       </div>
@@ -606,8 +620,19 @@ function DeleteSongDialog({
 }: {
   title: string;
   onClose: () => void;
-  onDelete: () => void;
+  onDelete: () => Promise<void>;
 }) {
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <Dialog title="Delete song" onClose={onClose}>
       <div className="space-y-3">
@@ -618,22 +643,26 @@ function DeleteSongDialog({
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 rounded-md border border-input py-2 text-xs font-medium text-foreground hover:bg-secondary"
+            disabled={isDeleting}
+            className="flex-1 rounded-md border border-input py-2 text-xs font-medium text-foreground hover:bg-secondary disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="button"
-            onClick={onDelete}
-            className="flex-1 rounded-md bg-destructive py-2 text-xs font-semibold text-white hover:bg-destructive/90"
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="flex-1 rounded-md bg-destructive py-2 text-xs font-semibold text-white hover:bg-destructive/90 disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            Delete
+            {isDeleting && <Spinner className="size-3" />}
+            {isDeleting ? "Deleting..." : "Delete"}
           </button>
         </div>
       </div>
     </Dialog>
   );
 }
+
 
 // Icons
 function EditIcon() {
@@ -665,5 +694,22 @@ function TrashIcon() {
     >
       <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
     </svg>
+  );
+}
+
+// Skeleton loading component
+function ShowsGridSkeleton() {
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
+      {Array.from({ length: 12 }).map((_, i) => (
+        <div
+          key={i}
+          className="rounded-lg border border-border px-3 py-2"
+        >
+          <Skeleton className="h-4 w-3/4 mb-2" />
+          <Skeleton className="h-3 w-1/2" />
+        </div>
+      ))}
+    </div>
   );
 }

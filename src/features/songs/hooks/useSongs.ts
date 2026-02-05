@@ -100,6 +100,7 @@ export function useSongs(orgId: Id<"organizations"> | null) {
 
   return {
     songs: songs ?? [],
+    isLoading: songs === undefined,
     filteredSongs,
     selectedSong,
     selectedSongId,

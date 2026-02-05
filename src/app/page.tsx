@@ -107,10 +107,12 @@ export default function Home() {
     createNewSong,
     updateExistingSong,
     deleteSong,
+    isLoading: songsLoading,
   } = useSongs(orgId);
 
   const {
     services,
+    isLoading: servicesLoading,
     selectedService,
     selectedServiceId,
     isInsideService,
@@ -967,6 +969,7 @@ export default function Home() {
             order={1}
             servicesSidebarProps={{
               services,
+              isLoading: servicesLoading,
               selectedServiceId,
               isInsideService,
               selectedService,
@@ -1032,6 +1035,7 @@ export default function Home() {
               scripturePanelRef={scripturePanelRef}
               showsPanelProps={{
                 songs: filteredSongs,
+                isLoading: songsLoading,
                 categories,
                 selectedSongId,
                 selectedCategoryId,
