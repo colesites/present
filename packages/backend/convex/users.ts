@@ -81,17 +81,19 @@ export const listMyOrganizations = query({
         const link = await ctx.db
           .query("organizationLinks")
           .withIndex("by_org", (q) => q.eq("orgId", org._id))
-          .unique();
+          .first();
+
 
         return {
           id: org._id,
-          authOrganizationId: link?.authOrganizationId,
+          authOrganizationId: link?.authOrganizationId ?? null,
           name: org.name,
           slug: org.slug,
-          logo: org.logo,
+          logo: org.logo ?? null,
           role: member.role,
           createdAt: org.createdAt,
         };
+
       })
     );
 
