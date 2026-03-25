@@ -44,6 +44,15 @@ let pendingAuthToken: string | null = null;
 const DESKTOP_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 
 const getWebAppBaseUrl = () => {
+  const configuredAuthUrl = process.env.BETTER_AUTH_URL;
+  if (configuredAuthUrl) {
+    try {
+      return new URL(configuredAuthUrl).origin;
+    } catch (error) {
+      console.warn('Invalid BETTER_AUTH_URL. Falling back to default auth URL.', error);
+    }
+  }
+
   return process.env.NODE_ENV === 'development'
     ? 'http://localhost:3001'
     : 'https://present.app';

@@ -2,9 +2,18 @@ import { MonitorPlay } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { useState } from "react";
 
-export function SignInScreen() {
+interface SignInScreenProps {
+  isAuthHandoffPending?: boolean;
+  handoffError?: string | null;
+}
+
+export function SignInScreen({
+  isAuthHandoffPending = false,
+  handoffError = null,
+}: SignInScreenProps) {
   const [isOpeningBrowser, setIsOpeningBrowser] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isWaitingForBrowser = isOpeningBrowser && !handoffError;
 
   const handleSignIn = async () => {
     setIsOpeningBrowser(true);
@@ -35,18 +44,26 @@ export function SignInScreen() {
         <Button 
           size="lg" 
           onClick={handleSignIn}
-          disabled={isOpeningBrowser}
+          disabled={isWaitingForBrowser || isAuthHandoffPending}
           className="w-full text-md font-semibold h-12 shadow-lg hover:shadow-primary/25 transition-all ring-1 ring-primary/50"
         >
-          {isOpeningBrowser ? "Opening Browser..." : "Sign In"}
+          {isWaitingForBrowser ? "Opening Browser..." : "Sign In"}
         </Button>
-        {isOpeningBrowser && (
+        {isWaitingForBrowser && !isAuthHandoffPending && (
           <p className="text-sm text-muted-foreground mt-2">
             Waiting for browser authentication to complete...
           </p>
         )}
+        {isAuthHandoffPending && (
+          <p className="text-sm text-muted-foreground mt-2">
+            Completing sign-in from browser...
+          </p>
+        )}
         {error ? (
           <p className="text-sm text-destructive mt-2">{error}</p>
+        ) : null}
+        {handoffError ? (
+          <p className="text-sm text-destructive mt-2">{handoffError}</p>
         ) : null}
       </div>
     </div>

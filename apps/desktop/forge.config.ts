@@ -64,7 +64,13 @@ const config: ForgeConfig = {
           },
         ],
       },
-      devContentSecurityPolicy: "default-src 'self' 'unsafe-inline' data: local-media:; script-src 'self' 'unsafe-eval' 'unsafe-inline'; connect-src 'self' http://localhost:3000 https://wary-badger-863.convex.site https://wary-badger-863.convex.cloud wss://wary-badger-863.convex.cloud; img-src 'self' data: local-media: https://*.gravatar.com https://*.wp.com; media-src 'self' local-media:; font-src 'self' data: https:;",
+      devContentSecurityPolicy:
+        "default-src 'self' 'unsafe-inline' data: local-media:; " +
+        "script-src 'self' 'unsafe-eval' 'unsafe-inline'; " +
+        "connect-src 'self' http://localhost:3000 http://localhost:3001 http://127.0.0.1:3001 ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:* https://present-gha.vercel.app https://present.app https://wary-badger-863.convex.site https://wary-badger-863.convex.cloud wss://wary-badger-863.convex.cloud; " +
+        "img-src 'self' data: local-media: https://*.gravatar.com https://*.wp.com; " +
+        "media-src 'self' local-media:; " +
+        "font-src 'self' data: https:;",
     }),
     // Fuses are used to enable/disable various Electron functionality
     // at package time, before code signing the application

@@ -31,6 +31,7 @@ export default function Home() {
   const isAuthenticated = !!sessionData?.session;
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [isAuthHandoffPending, setIsAuthHandoffPending] = useState(false);
+  const [authHandoffError, setAuthHandoffError] = useState<string | null>(null);
   const processedTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -40,6 +41,21 @@ export default function Home() {
 
     const oneTimeTokenApi = authClient as typeof authClient & OneTimeTokenApi;
 
+    const waitForSessionAfterHandoff = async () => {
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const { data: refreshedSession } = await authClient.getSession();
+        if (refreshedSession?.session) {
+          return true;
+        }
+
+        await new Promise((resolve) => {
+          setTimeout(resolve, 250);
+        });
+      }
+
+      return false;
+    };
+
     const processAuthToken = async (token: string) => {
       if (!token || processedTokenRef.current === token) {
         return;
@@ -47,6 +63,7 @@ export default function Home() {
 
       processedTokenRef.current = token;
       setIsAuthHandoffPending(true);
+      setAuthHandoffError(null);
 
       try {
         const { error: verifyError } = await oneTimeTokenApi.oneTimeToken.verify({
@@ -55,6 +72,14 @@ export default function Home() {
 
         if (verifyError) {
           console.error("Desktop auth handoff failed:", verifyError.message);
+          setAuthHandoffError(verifyError.message || "Desktop sign-in verification failed.");
+          processedTokenRef.current = null;
+          return;
+        }
+
+        const hasSession = await waitForSessionAfterHandoff();
+        if (!hasSession) {
+          setAuthHandoffError("Sign-in completed, but desktop session did not initialize. Please sign in again.");
           processedTokenRef.current = null;
           return;
         }
@@ -63,6 +88,11 @@ export default function Home() {
           .$store?.notify?.("$sessionSignal");
       } catch (authError) {
         console.error("Desktop auth handoff failed:", authError);
+        const message =
+          authError instanceof Error
+            ? authError.message
+            : "Desktop sign-in handoff failed.";
+        setAuthHandoffError(message);
         processedTokenRef.current = null;
       } finally {
         setIsAuthHandoffPending(false);
@@ -155,7 +185,12 @@ export default function Home() {
   }
 
   if (!isAuthenticated) {
-    return <SignInScreen />;
+    return (
+      <SignInScreen
+        isAuthHandoffPending={isAuthHandoffPending}
+        handoffError={authHandoffError}
+      />
+    );
   }
 
   return (

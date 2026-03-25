@@ -18,11 +18,21 @@ export const authComponent = createClient<any, typeof authSchema>(
 );
 
 export const createAuthOptions = (ctx: GenericCtx) => {
+  const envTrustedOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   const trustedOrigins = [
     process.env.BETTER_AUTH_URL,
+    "https://present-gha.vercel.app",
+    "https://present.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
     "app://app",
+    ...envTrustedOrigins,
   ].filter((origin): origin is string => Boolean(origin));
 
   return {
@@ -35,6 +45,7 @@ export const createAuthOptions = (ctx: GenericCtx) => {
         origin &&
         (origin.startsWith("http://localhost:") ||
           origin.startsWith("http://127.0.0.1:") ||
+          /^https:\/\/present-gha(-[a-z0-9-]+)?\.vercel\.app$/.test(origin) ||
           origin === "app://app")
       ) {
         return [...trustedOrigins, origin];

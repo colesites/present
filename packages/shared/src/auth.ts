@@ -1,13 +1,14 @@
 import { createAuthClient } from "better-auth/react";
 import { oneTimeTokenClient, organizationClient } from "better-auth/client/plugins";
 
-const defaultBaseURL =
-  process.env.NODE_ENV === "development"
-    ? "http://localhost:3001"
-    : "https://present.app";
+const isDevelopment = process.env.NODE_ENV === "development";
+const defaultBaseURL = isDevelopment ? "http://localhost:3001" : "https://present.app";
+const resolvedBaseURL = isDevelopment
+  ? process.env.BETTER_AUTH_URL || defaultBaseURL
+  : process.env.BETTER_AUTH_URL || process.env.CONVEX_SITE_URL || defaultBaseURL;
 
 export const authClient = createAuthClient({
-  baseURL: process.env.BETTER_AUTH_URL || process.env.CONVEX_SITE_URL || defaultBaseURL,
+  baseURL: resolvedBaseURL,
   plugins: [
     organizationClient(),
     oneTimeTokenClient(),
