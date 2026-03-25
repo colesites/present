@@ -15,11 +15,19 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
+    const slug = args.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+
     const orgId = await ctx.db.insert("organizations", {
       name: args.name,
+      slug,
       ...(args.logo !== undefined ? { logo: args.logo } : {}),
       createdAt: now,
     });
+
+
     return orgId;
   },
 });
@@ -46,11 +54,20 @@ export const ensureForAuthOrganization = mutation({
     }
 
     const now = Date.now();
+    const orgName = args.name ?? "Organization";
+    const slug = orgName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+
     const orgId = await ctx.db.insert("organizations", {
-      name: args.name ?? "Organization",
+      name: orgName,
+      slug,
       ...(args.logo !== undefined ? { logo: args.logo } : {}),
       createdAt: now,
     });
+
+
 
     await ctx.db.insert("organizationLinks", {
       authOrganizationId: args.authOrganizationId,
