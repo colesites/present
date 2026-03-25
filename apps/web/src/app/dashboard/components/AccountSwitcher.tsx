@@ -69,7 +69,8 @@ export function AccountSwitcher({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-4 rounded-[24px] border border-white/10 bg-white/[0.04] px-4 py-4 text-left shadow-[0_18px_40px_rgba(0,0,0,0.18)] backdrop-blur-sm transition hover:bg-white/[0.07]"
+        className="flex w-full items-center gap-4 rounded-[24px] border border-white/10 bg-white/4 px-4 py-4 text-left shadow-[0_18px_40px_rgba(0,0,0,0.18)] backdrop-blur-sm transition hover:bg-white/7"
+
       >
         <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[18px] bg-white/10">
           {activeOrganization?.logo ? (
@@ -113,7 +114,8 @@ export function AccountSwitcher({
 
           <div className="space-y-2">
             {organizations.length === 0 ? (
-              <div className="rounded-[22px] border border-white/6 bg-white/[0.03] px-4 py-4 text-sm text-white/56">
+              <div className="rounded-[22px] border border-white/6 bg-white/3 px-4 py-4 text-sm text-white/56">
+
                 No organizations yet.
               </div>
             ) : (
@@ -130,9 +132,10 @@ export function AccountSwitcher({
                     disabled={isSwitching}
                     className={`flex w-full items-center gap-3 rounded-[22px] border px-4 py-3 text-left transition ${
                       isActive
-                        ? "border-white/12 bg-white/[0.08] text-white"
-                        : "border-transparent text-white/70 hover:border-white/8 hover:bg-white/[0.05] hover:text-white"
+                        ? "border-white/12 bg-white/8 text-white"
+                        : "border-transparent text-white/70 hover:border-white/8 hover:bg-white/5 hover:text-white"
                     }`}
+
                   >
                     <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[14px] bg-white/10">
                       {organization.logo ? (
@@ -182,7 +185,8 @@ export function AccountSwitcher({
                 await onSignOut();
                 onClose();
               }}
-              className="flex w-full items-center justify-center gap-2 rounded-[22px] border border-white/15 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-2 rounded-[22px] border border-white/15 bg-white/4 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+
             >
               <LogOut className="h-4 w-4" />
               {isSigningOut ? "Signing out..." : "Log out"}

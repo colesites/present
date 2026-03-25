@@ -4,9 +4,13 @@ import { v } from "convex/values";
 export default defineSchema({
   organizations: defineTable({
     name: v.string(),
+    slug: v.string(),
     logo: v.optional(v.string()),
     createdAt: v.number(),
-  }).index("by_name", ["name"]),
+  })
+    .index("by_name", ["name"])
+    .index("by_slug", ["slug"]),
+
   // Link Better Auth organizations (string IDs) to Convex organizations (Id<"organizations">).
   organizationLinks: defineTable({
     authOrganizationId: v.string(),

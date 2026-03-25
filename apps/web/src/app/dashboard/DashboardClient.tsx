@@ -1,6 +1,9 @@
 "use client";
 
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+
+import { useQuery } from "convex/react";
+import { api } from "../../../../../packages/backend/convex/_generated/api";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { DashboardSidebar } from "./components/DashboardSidebar";
@@ -45,6 +48,8 @@ export function DashboardClient({
   shouldAutoOpen,
   section,
 }: DashboardClientProps) {
+
+
   const router = useRouter();
   const { data: session, isPending: isSessionPending } = authClient.useSession();
   const organizationApi = authClient.organization as OrganizationApi;
@@ -54,6 +59,48 @@ export function DashboardClient({
   const [activeOrganizationId, setActiveOrganizationId] = useState<string | null>(null);
   const [isOrganizationModalOpen, setIsOrganizationModalOpen] = useState(false);
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
+
+  const nativeOrganizations = useQuery(api.users.listMyOrganizations);
+
+  
+  useEffect(() => {
+    if (nativeOrganizations) {
+      const list: DashboardOrganizationListItem[] = (nativeOrganizations as Array<{
+        id: string;
+        authOrganizationId?: string;
+        name: string;
+        slug: string;
+        logo?: string | null;
+        role: string;
+        createdAt: number;
+      }>).map((org) => ({
+        id: org.id,
+        authOrganizationId: org.authOrganizationId,
+        name: org.name,
+        slug: org.slug,
+        logo: org.logo ?? undefined,
+        createdAt: new Date(org.createdAt),
+      }));
+
+      setOrganizations(list);
+
+
+      const sessionActiveOrganizationId =
+        session?.session?.activeOrganizationId &&
+        typeof session.session.activeOrganizationId === "string"
+          ? session.session.activeOrganizationId
+          : null;
+
+      const nextActiveOrganization =
+        list.find((organization) => organization.authOrganizationId === sessionActiveOrganizationId) ??
+        list[0] ??
+        null;
+        
+      setActiveOrganizationId(nextActiveOrganization?.id ?? null);
+      setCurrentOrg(nextActiveOrganization);
+    }
+  }, [nativeOrganizations, session]);
+
 
 
   const [orgName, setOrgName] = useState(org?.name ?? "");
@@ -120,78 +167,8 @@ export function DashboardClient({
     }
   }, [isSessionPending, router, session]);
 
-  useEffect(() => {
-    if (isSessionPending || !session?.session) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadOrganizations = async () => {
-
-
-      const timeoutId = setTimeout(() => {
-        if (!cancelled) {
-          console.warn("Organization list fetch timed out.");
-          setOrganizations([]);
-          setActiveOrganizationId(null);
-          setCurrentOrg(null);
-        }
-      }, 8000); // 8 second timeout
-
-
-      try {
-        const response = await organizationApi.listOrganizations();
-        
-        if (cancelled) {
-          return;
-        }
-
-        const list = (response.data ?? []).map((organization) => ({
-          id: organization.id,
-          name: organization.name,
-          slug: organization.slug,
-          logo: organization.logo ?? undefined,
-          createdAt: organization.createdAt,
-        }));
-
-        const sessionActiveOrganizationId =
-          typeof session.session.activeOrganizationId === "string"
-            ? session.session.activeOrganizationId
-            : null;
-
-        const nextActiveOrganization =
-          list.find((organization) => organization.id === sessionActiveOrganizationId) ??
-          list[0] ??
-          null;
-
-        setOrganizations(list);
-        setActiveOrganizationId(nextActiveOrganization?.id ?? null);
-        setCurrentOrg(
-          nextActiveOrganization
-            ? {
-                name: nextActiveOrganization.name,
-                logo: nextActiveOrganization.logo,
-              }
-            : null,
-        );
-      } catch (error) {
-        console.error("Failed to load organizations:", error);
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    };
-
-
-
-    void loadOrganizations();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isSessionPending, organizationApi, session]);
-
   const openDesktopApp = useCallback(async () => {
+
     const oneTimeTokenApi = authClient as typeof authClient & OneTimeTokenApi;
 
     try {
@@ -343,8 +320,10 @@ export function DashboardClient({
         body: JSON.stringify({
           orgName: name,
           logo: nextLogo,
+          authOrganizationId: data?.id,
         }),
       });
+
 
       const syncResult = (await syncResponse.json().catch(() => null)) as
         | { error?: string }
@@ -355,22 +334,14 @@ export function DashboardClient({
         return;
       }
 
-      const createdOrganization: DashboardOrganizationListItem = {
-        id: data?.id ?? slug,
-        name,
-        slug,
-        logo: nextLogo,
-      };
-
-      setOrganizations((currentList) => [createdOrganization, ...currentList]);
-      setActiveOrganizationId(createdOrganization.id);
-      setCurrentOrg({
-        name,
-        logo: nextLogo,
-      });
-      setFeedback(null);
+      // better-auth will trigger a session update, and useQuery will trigger a list update
       setIsOrganizationModalOpen(false);
-      router.refresh();
+      setOrgName("");
+      setLogoUrl("");
+      setLogoPreview(null);
+      setUploadedLogo(null);
+      setFeedback(null);
+
     } catch (error) {
       console.error("Failed to create organization:", error);
       setFeedback(
@@ -380,6 +351,7 @@ export function DashboardClient({
       setIsPending(false);
     }
   };
+
 
 
   const handleSignOut = async () => {

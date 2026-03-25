@@ -61,6 +61,47 @@ export const getCurrentWithOrg = query({
   },
 });
 
+export const listMyOrganizations = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return [];
+    }
+
+    const members = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
+      .collect();
+
+    const orgs = await Promise.all(
+      members.map(async (member) => {
+        const org = await ctx.db.get(member.orgId);
+        if (!org) return null;
+        const link = await ctx.db
+          .query("organizationLinks")
+          .withIndex("by_org", (q) => q.eq("orgId", org._id))
+          .unique();
+
+        return {
+          id: org._id,
+          authOrganizationId: link?.authOrganizationId,
+          name: org.name,
+          slug: org.slug,
+          logo: org.logo,
+          role: member.role,
+          createdAt: org.createdAt,
+        };
+      })
+    );
+
+
+
+    return orgs.filter((o): o is NonNullable<typeof o> => o !== null);
+  },
+});
+
+
 export const createForCurrent = mutation({
   args: {
     orgId: v.id("organizations"),
@@ -118,6 +159,7 @@ export const ensureCurrent = mutation({
   args: {
     orgName: v.optional(v.string()),
     logo: v.optional(v.string()),
+    authOrganizationId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -132,6 +174,7 @@ export const ensureCurrent = mutation({
         q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
       .unique();
+
 
     // Migration logic: Link by email if token differs
     if (!existing && identity.email) {
@@ -154,8 +197,26 @@ export const ensureCurrent = mutation({
           ...(args.logo !== undefined ? { logo: args.logo } : {}),
         });
       }
+
+      // Ensure link exists if authOrganizationId provided
+      if (args.authOrganizationId) {
+        const existingLink = await ctx.db
+          .query("organizationLinks")
+          .withIndex("by_auth_org", (q) => q.eq("authOrganizationId", args.authOrganizationId!))
+          .unique();
+        
+        if (!existingLink) {
+          await ctx.db.insert("organizationLinks", {
+            authOrganizationId: args.authOrganizationId,
+            orgId: existing.orgId,
+            createdAt: Date.now(),
+          });
+        }
+      }
+
       return { userId: existing._id, orgId: existing.orgId };
     }
+
 
     const now = Date.now();
     const orgName =
@@ -165,12 +226,19 @@ export const ensureCurrent = mutation({
       identity.nickname ??
       "Untitled Organization";
     
+    const slug = orgName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+
     // Create new organization for the new user
     const orgId = await ctx.db.insert("organizations", {
       name: orgName,
+      slug,
       ...(args.logo !== undefined ? { logo: args.logo } : {}),
       createdAt: now,
     });
+
 
     const userId = await ctx.db.insert("users", {
       orgId,
@@ -181,6 +249,15 @@ export const ensureCurrent = mutation({
       createdAt: now,
     });
 
+    if (args.authOrganizationId) {
+      await ctx.db.insert("organizationLinks", {
+        authOrganizationId: args.authOrganizationId,
+        orgId,
+        createdAt: now,
+      });
+    }
+
     return { userId, orgId };
   },
 });
+

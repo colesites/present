@@ -6,12 +6,16 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => ({}))) as {
       orgName?: string;
       logo?: string;
+      authOrganizationId?: string;
     };
+
 
     await fetchAuthMutation(api.users.ensureCurrent, {
       ...(body.orgName ? { orgName: body.orgName } : {}),
       ...(body.logo ? { logo: body.logo } : {}),
+      ...(body.authOrganizationId ? { authOrganizationId: body.authOrganizationId } : {}),
     });
+
 
     return Response.json({ ok: true });
   } catch (error) {

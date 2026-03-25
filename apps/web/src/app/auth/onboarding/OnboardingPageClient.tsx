@@ -107,8 +107,15 @@ export default function OnboardingPageClient() {
         }
       }
 
+      const createdOrg = await organizationApi.listOrganizations().then(res => 
+        res.data?.find(o => o.slug === slug || o.name.toLowerCase() === orgName.trim().toLowerCase())
+      );
+      
+      const authOrganizationId = createdOrg?.id;
+
       let syncOrgName = orgName;
       let syncLogo = selectedLogo;
+
 
       if (orgError) {
         const orgListResponse = await organizationApi.listOrganizations();
@@ -133,7 +140,9 @@ export default function OnboardingPageClient() {
         body: JSON.stringify({
           orgName: syncOrgName,
           logo: syncLogo,
+          authOrganizationId: authOrganizationId,
         }),
+
       });
 
       if (!syncResponse.ok) {
