@@ -7,6 +7,7 @@ import {
   useImperativeHandle,
   useRef,
   useMemo,
+  type ChangeEvent,
 } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { Song, Category, ContentSource } from "../../types";
@@ -15,7 +16,15 @@ import { Input } from "../../components/ui/input";
 import { Spinner } from "../../components/ui/spinner";
 import { Skeleton } from "../../components/ui/skeleton";
 import { cn } from "../../lib/utils";
-import { Search, ArrowUpDown, Check, ArrowUp, ArrowDown } from "lucide-react";
+import {
+  Search,
+  ArrowUpDown,
+  Check,
+  ArrowUp,
+  ArrowDown,
+  Download,
+  Upload,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -92,6 +101,7 @@ export const ShowsPanel = memo(
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
     const searchInputRef = useRef<HTMLInputElement>(null);
+    const importInputRef = useRef<HTMLInputElement>(null);
 
     useImperativeHandle(ref, () => ({
       focusSearch: () => searchInputRef.current?.focus(),
@@ -120,13 +130,68 @@ export const ShowsPanel = memo(
       return result;
     }, [songs, selectedCategoryId, sortBy, sortOrder]);
 
+    const handleExportLibraries = () => {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        version: 1,
+        items: songs.map((song) => ({
+          title: song.title,
+          lyrics: song.lyrics,
+          categoryId: song.categoryId ?? null,
+        })),
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const fileName = `present-libraries-${new Date().toISOString().slice(0, 10)}.json`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    };
+
+    const handleImportLibraries = async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text) as {
+          items?: Array<{
+            title?: string;
+            lyrics?: string;
+            categoryId?: Id<"categories"> | null;
+          }>;
+        };
+
+        const items = Array.isArray(parsed.items) ? parsed.items : [];
+        for (const item of items) {
+          const title = typeof item.title === "string" ? item.title.trim() : "";
+          const lyrics = typeof item.lyrics === "string" ? item.lyrics : "";
+          if (!title) {
+            continue;
+          }
+          await onCreateSong(title, lyrics, item.categoryId ?? undefined);
+        }
+      } catch (error) {
+        console.error("Failed to import libraries:", error);
+      } finally {
+        event.target.value = "";
+      }
+    };
+
     return (
       <div className="flex h-full flex-col">
-        {/* Category bar and Search */}
+        {/* Library bar and Search */}
         <div className="flex items-center justify-between border-b border-border px-2 py-1 gap-2">
           <div className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1">
             <p className="text-[10px] text-muted-foreground mr-2 shrink-0">
-              Categories:
+              Libraries:
             </p>
             <button
               type="button"
@@ -181,6 +246,33 @@ export const ShowsPanel = memo(
               />
             </div>
 
+            <button
+              type="button"
+              onClick={handleExportLibraries}
+              className="h-7 w-7 flex items-center justify-center rounded-md border border-input hover:bg-secondary text-muted-foreground"
+              title="Export libraries"
+            >
+              <Download className="h-3 w-3" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+              className="h-7 w-7 flex items-center justify-center rounded-md border border-input hover:bg-secondary text-muted-foreground"
+              title="Import libraries"
+            >
+              <Upload className="h-3 w-3" />
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={(event) => {
+                void handleImportLibraries(event);
+              }}
+            />
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="h-7 w-7 flex items-center justify-center rounded-md border border-input hover:bg-secondary text-muted-foreground">
@@ -230,7 +322,7 @@ export const ShowsPanel = memo(
           </div>
         </div>
 
-        {/* Songs grid */}
+        {/* Library items grid */}
         <div className="flex-1 overflow-auto p-2">
           {isLoading ? (
             <ShowsGridSkeleton />
@@ -350,7 +442,7 @@ const SongCard = memo(function SongCard({
         <div className="flex gap-1 opacity-0 group-hover:opacity-100">
           <button
             type="button"
-            aria-label="Rename song"
+            aria-label="Rename library item"
             onClick={onRename}
             className="text-muted-foreground hover:text-foreground p-1"
           >
@@ -358,7 +450,7 @@ const SongCard = memo(function SongCard({
           </button>
           <button
             type="button"
-            aria-label="Delete song"
+            aria-label="Delete library item"
             onClick={onDelete}
             className="text-muted-foreground hover:text-destructive p-1"
           >
@@ -397,7 +489,7 @@ function NewSongButton({ onClick }: { onClick: () => void }) {
       >
         <path d="M12 5v14M5 12h14" />
       </svg>
-      New show
+      New library item
     </button>
   );
 }
@@ -465,12 +557,12 @@ function NewSongDialog({
   };
 
   return (
-    <Dialog title="New show" onClose={onClose}>
+    <Dialog title="New library item" onClose={onClose}>
       <div className="space-y-3">
-        {/* Category Dropdown */}
+        {/* Library Dropdown */}
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">
-            Category
+            Library
           </label>
           <select
             value={targetCategoryId}
@@ -492,7 +584,7 @@ function NewSongDialog({
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Song title"
+            placeholder="Library item title"
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
             autoFocus
           />
@@ -500,7 +592,7 @@ function NewSongDialog({
 
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">
-            Lyrics
+            Content
           </label>
           <textarea
             value={lyrics}
@@ -552,12 +644,12 @@ function NewCategoryDialog({
   };
 
   return (
-    <Dialog title="New category" onClose={onClose}>
+    <Dialog title="New library" onClose={onClose}>
       <div className="space-y-3">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Category name"
+          placeholder="Library name"
           className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
           autoFocus
           onKeyDown={(e) => e.key === "Enter" && handleCreate()}
@@ -595,7 +687,7 @@ function RenameSongDialog({
   const [newTitle, setNewTitle] = useState(title);
 
   return (
-    <Dialog title="Rename song" onClose={onClose}>
+    <Dialog title="Rename library item" onClose={onClose}>
       <div className="space-y-3">
         <input
           value={newTitle}
@@ -646,7 +738,7 @@ function DeleteSongDialog({
   };
 
   return (
-    <Dialog title="Delete song" onClose={onClose}>
+    <Dialog title="Delete library item" onClose={onClose}>
       <div className="space-y-3">
         <p className="text-sm text-muted-foreground">
           Are you sure you want to delete "{title}"?

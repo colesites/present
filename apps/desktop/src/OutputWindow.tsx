@@ -199,7 +199,12 @@ export function OutputWindow() {
                 "text-white leading-relaxed drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)] pointer-events-none select-none",
               )}
               style={textStyle}
-              minScale={0.1}
+              maxFontSize={
+                isScripture
+                  ? state.scriptureStyle.fontSize
+                  : state.songStyle.fontSize
+              }
+              minScale={isScripture ? 0.3 : 0.1}
             />
           </div>
           

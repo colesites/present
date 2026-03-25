@@ -49,8 +49,8 @@ export function SettingsScreen({
   selectMediaForOutput,
 }: SettingsScreenProps) {
   return (
-    <div className="flex flex-1">
-      <aside className="flex w-60 flex-col gap-4 border-r border-border bg-card px-4 py-4">
+    <div className="flex h-full min-h-0 bg-background">
+      <aside className="flex h-full w-64 shrink-0 flex-col gap-4 border-r border-border bg-card px-4 py-5">
         <div>
           <h1 className="text-sm font-semibold">Settings</h1>
           <p className="text-[11px] text-muted-foreground">
@@ -65,7 +65,7 @@ export function SettingsScreen({
         </nav>
       </aside>
 
-      <main className="flex flex-1 flex-col overflow-hidden">
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="shrink-0 border-b border-border bg-card px-6 py-3">
           <h2 className="text-sm font-semibold">Scripture</h2>
           <p className="text-[11px] text-muted-foreground">

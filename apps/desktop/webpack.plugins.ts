@@ -6,12 +6,23 @@ const ForkTsCheckerWebpackPlugin: typeof IForkTsCheckerWebpackPlugin = require('
 import * as webpack from 'webpack';
 import * as dotenv from 'dotenv';
 
-// Load variables from .env.local
-const envConfig = dotenv.config({ path: path.resolve(__dirname, './.env.local') });
-if (envConfig.error) {
-  console.warn('[Webpack Config] Warning: .env.local not found at root. Using shell environment.');
+const isProductionBuild = process.env.NODE_ENV === 'production';
+const preferredEnvFile = isProductionBuild ? '.env.production' : '.env.local';
+const preferredEnvPath = path.resolve(__dirname, preferredEnvFile);
+const fallbackEnvPath = path.resolve(__dirname, '.env');
+
+const preferredEnvConfig = dotenv.config({ path: preferredEnvPath });
+if (preferredEnvConfig.error) {
+  const fallbackEnvConfig = dotenv.config({ path: fallbackEnvPath });
+  if (fallbackEnvConfig.error) {
+    console.warn(
+      `[Webpack Config] Warning: ${preferredEnvFile} and .env were not found. Using shell environment.`,
+    );
+  } else {
+    console.log(`[Webpack Config] Loaded fallback environment file: ${fallbackEnvPath}`);
+  }
 } else {
-  console.log('[Webpack Config] Successfully loaded .env.local');
+  console.log(`[Webpack Config] Loaded environment file: ${preferredEnvPath}`);
 }
 
 export const plugins = [

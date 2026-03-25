@@ -17,21 +17,28 @@ export const ensureDefaults = mutation({
     const existing = await ctx.db
       .query("categories")
       .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
-      .first();
-
-    if (existing) return;
+      .collect();
 
     const now = Date.now();
-    const defaults = ["Songs", "Flows", "Hymns"];
+    const defaults = ["Songs", "Flows", "Hymns", "Notes"];
+    const existingByName = new Set(existing.map((category) => category.name.toLowerCase()));
+    let nextOrder =
+      existing.length > 0
+        ? Math.max(...existing.map((category) => category.order ?? 0)) + 1
+        : 0;
 
-    for (let i = 0; i < defaults.length; i++) {
+    for (const defaultName of defaults) {
+      if (existingByName.has(defaultName.toLowerCase())) {
+        continue;
+      }
       await ctx.db.insert("categories", {
         orgId: args.orgId,
-        name: defaults[i],
+        name: defaultName,
         isDefault: true,
-        order: i,
+        order: nextOrder,
         createdAt: now,
       });
+      nextOrder += 1;
     }
   },
 });

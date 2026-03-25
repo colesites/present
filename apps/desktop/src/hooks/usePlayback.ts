@@ -68,8 +68,6 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
       slideFooter?: string,
       options?: { suppressBroadcast?: boolean },
     ) => {
-      if (!orgId) return;
-
       // Mark that we have local changes (prevents server overwrite)
       hasLocalChanges.current = true;
 
@@ -85,6 +83,10 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
           slideText,
           slideFooter,
         });
+      }
+
+      if (!orgId) {
+        return;
       }
 
       // Try to persist to database (will fail if offline, that's ok)

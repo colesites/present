@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, protocol, dialog, shell, net } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, protocol, dialog, shell, net, Menu, type MenuItemConstructorOptions } from 'electron';
 import fs from 'fs';
 import { createServer, type Server as HttpServer } from 'http';
 import path from 'path';
@@ -42,6 +42,170 @@ const isDev = MAIN_WINDOW_WEBPACK_ENTRY.startsWith('http');
 let pendingDeepLink: string | null = null;
 let pendingAuthToken: string | null = null;
 const DESKTOP_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
+const SUPPORTED_BIBLE_EXTENSIONS = new Set(['.xml', '.json', '.zip']);
+const KNOWN_BIBLE_CODES = [
+  'NRSVCE',
+  'NRSVA',
+  'NRSV',
+  'NKJV',
+  'TNIV',
+  'AMPC',
+  'HCSB',
+  'NIrV',
+  'NABRE',
+  'RSVCE',
+  'KJV',
+  'NIV',
+  'ESV',
+  'NASB',
+  'NLT',
+  'RSV',
+  'AMP',
+  'MSG',
+  'CSB',
+  'NCV',
+  'GNT',
+  'CEV',
+  'TPT',
+  'VOICE',
+  'TLB',
+  'PHILLIPS',
+  'MOUNCE',
+  'NET',
+  'ISV',
+  'LEB',
+  'WEB',
+  'ASV',
+  'YLT',
+  'DARBY',
+  'AKJV',
+  'RV',
+  'ERV',
+  'BBE',
+  'DRA',
+  'JB',
+  'NJB',
+  'GW',
+  'JUB',
+  'MEV',
+  'NOG',
+  'TLV',
+  'CEB',
+  'CJB',
+  'EHV',
+  'GNV',
+  'ICB',
+  'NLV',
+  'BSB',
+  'BRG',
+  'EASY',
+  'EXB',
+];
+
+type BundledBibleFile = {
+  id: string;
+  code: string;
+  name: string;
+  filePath: string;
+  sizeBytes: number;
+};
+
+const inferBibleCodeFromName = (fileNameBase: string): string => {
+  const upperBase = fileNameBase.toUpperCase();
+  const knownCode = KNOWN_BIBLE_CODES.find((code) => upperBase.includes(code));
+  if (knownCode) {
+    return knownCode;
+  }
+
+  const compact = fileNameBase.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  if (compact.length >= 2 && compact.length <= 8) {
+    return compact;
+  }
+
+  return 'BIBLE';
+};
+
+const formatBibleName = (fileNameBase: string): string => {
+  const spaced = fileNameBase
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return spaced.length > 0 ? spaced : 'Bible';
+};
+
+const resolveBundledBibleDirectories = (): string[] => {
+  const candidates = new Set<string>([
+    path.join(process.resourcesPath, 'bible'),
+    path.join(app.getAppPath(), 'bible'),
+    path.resolve(process.cwd(), 'apps/desktop/bible'),
+    path.resolve(process.cwd(), 'bible'),
+  ]);
+  return Array.from(candidates);
+};
+
+const isPathWithinRoot = (candidatePath: string, rootPath: string): boolean => {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
+const getExistingBundledBibleRoots = async (): Promise<string[]> => {
+  const roots: string[] = [];
+  for (const directory of resolveBundledBibleDirectories()) {
+    try {
+      const stats = await fs.promises.stat(directory);
+      if (!stats.isDirectory()) {
+        continue;
+      }
+      roots.push(await fs.promises.realpath(directory));
+    } catch {
+      // ignore missing candidate roots
+    }
+  }
+  return roots;
+};
+
+const discoverBundledBibles = async (): Promise<BundledBibleFile[]> => {
+  const discovered = new Map<string, BundledBibleFile>();
+
+  for (const directory of resolveBundledBibleDirectories()) {
+    try {
+      const stats = await fs.promises.stat(directory);
+      if (!stats.isDirectory()) {
+        continue;
+      }
+
+      const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) {
+          continue;
+        }
+
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!SUPPORTED_BIBLE_EXTENSIONS.has(ext)) {
+          continue;
+        }
+
+        const fullPath = path.resolve(directory, entry.name);
+        const fileStats = await fs.promises.stat(fullPath);
+        const fileNameBase = path.basename(entry.name, ext);
+        const code = inferBibleCodeFromName(fileNameBase);
+        const name = formatBibleName(fileNameBase);
+
+        discovered.set(fullPath, {
+          id: `${code.toLowerCase()}-${fileStats.size}-${Math.round(fileStats.mtimeMs)}`,
+          code,
+          name,
+          filePath: fullPath,
+          sizeBytes: fileStats.size,
+        });
+      }
+    } catch {
+      // ignore missing directories
+    }
+  }
+
+  return Array.from(discovered.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
 
 const getWebAppBaseUrl = () => {
   const configuredAuthUrl = process.env.BETTER_AUTH_URL;
@@ -56,6 +220,17 @@ const getWebAppBaseUrl = () => {
   return process.env.NODE_ENV === 'development'
     ? 'http://localhost:3001'
     : 'https://present.app';
+};
+
+const getMainRendererUrl = (windowType?: 'settings') => {
+  const baseUrl = isDev ? MAIN_WINDOW_WEBPACK_ENTRY : 'app://app/main_window';
+  if (!windowType) {
+    return baseUrl;
+  }
+
+  const url = new URL(baseUrl);
+  url.searchParams.set('window', windowType);
+  return url.toString();
 };
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -141,8 +316,184 @@ app.on('open-url', (event, url) => {
 
 let mainWindow: BrowserWindow | null = null;
 let outputWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
 let loopbackAuthServer: HttpServer | null = null;
 let loopbackAuthTimeout: NodeJS.Timeout | null = null;
+
+const getDisplayArea = (display: Electron.Display) => display.bounds.width * display.bounds.height;
+
+const getPreferredOutputDisplay = (): Electron.Display => {
+  const displays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  const externals = displays.filter((d) => d.id !== primary.id);
+
+  if (externals.length === 0) {
+    return primary;
+  }
+
+  // Prefer the largest external display (usually the TV/projector).
+  externals.sort((a, b) => getDisplayArea(b) - getDisplayArea(a));
+  return externals[0];
+};
+
+const moveOutputWindowToDisplay = (target: Electron.Display) => {
+  if (!outputWindow || outputWindow.isDestroyed()) {
+    return;
+  }
+
+  const { bounds } = target;
+  // Move first (so fullscreen is applied on correct display).
+  outputWindow.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }, false);
+
+  const isPrimary = target.id === screen.getPrimaryDisplay().id;
+  if (isPrimary) {
+    if (outputWindow.isFullScreen()) {
+      outputWindow.setFullScreen(false);
+    }
+  } else {
+    if (!outputWindow.isFullScreen()) {
+      outputWindow.setFullScreen(true);
+    }
+  }
+};
+
+const reconcileOutputWindowDisplay = () => {
+  if (!outputWindow || outputWindow.isDestroyed()) {
+    return;
+  }
+  moveOutputWindowToDisplay(getPreferredOutputDisplay());
+};
+
+const createSettingsWindow = () => {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+
+  settingsWindow = new BrowserWindow({
+    width: 1120,
+    height: 820,
+    minWidth: 980,
+    minHeight: 700,
+    title: 'Present Settings',
+    webPreferences: {
+      preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
+    },
+  });
+
+  settingsWindow.loadURL(getMainRendererUrl('settings'));
+
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
+  });
+};
+
+const openSettingsFromMenu = () => {
+  createSettingsWindow();
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) {
+      settingsWindow.restore();
+    }
+    settingsWindow.focus();
+  }
+};
+
+const buildApplicationMenu = () => {
+  const isMac = process.platform === 'darwin';
+  const makeSettingsItem = (): MenuItemConstructorOptions => ({
+    label: 'Settings…',
+    accelerator: 'CmdOrCtrl+,',
+    click: () => openSettingsFromMenu(),
+  });
+
+  const template: MenuItemConstructorOptions[] = [];
+
+  if (isMac) {
+    const appSubmenu: MenuItemConstructorOptions[] = [
+      makeSettingsItem(),
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' },
+    ];
+    template.push({
+      label: app.name,
+      submenu: appSubmenu,
+    });
+  }
+
+  const fileSubmenu: MenuItemConstructorOptions[] = [
+    makeSettingsItem(),
+    { type: 'separator' },
+    isMac ? { role: 'close' } : { role: 'quit' },
+  ];
+
+  const editSubmenu: MenuItemConstructorOptions[] = [
+    { role: 'undo' },
+    { role: 'redo' },
+    { type: 'separator' },
+    { role: 'cut' },
+    { role: 'copy' },
+    { role: 'paste' },
+  ];
+  if (isMac) {
+    editSubmenu.push(
+      { role: 'pasteAndMatchStyle' },
+      { role: 'delete' },
+      { role: 'selectAll' },
+    );
+  } else {
+    editSubmenu.push(
+      { role: 'delete' },
+      { type: 'separator' },
+      { role: 'selectAll' },
+    );
+  }
+
+  const viewSubmenu: MenuItemConstructorOptions[] = [
+    { role: 'reload' },
+    { role: 'forceReload' },
+    { role: 'toggleDevTools' },
+    { type: 'separator' },
+    { role: 'resetZoom' },
+    { role: 'zoomIn' },
+    { role: 'zoomOut' },
+    { type: 'separator' },
+    { role: 'togglefullscreen' },
+  ];
+
+  const windowSubmenu: MenuItemConstructorOptions[] = isMac
+    ? [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        { role: 'front' },
+      ]
+    : [{ role: 'minimize' }, { role: 'close' }];
+
+  template.push(
+    {
+      label: 'File',
+      submenu: fileSubmenu,
+    },
+    {
+      label: 'Edit',
+      submenu: editSubmenu,
+    },
+    {
+      label: 'View',
+      submenu: viewSubmenu,
+    },
+    {
+      label: 'Window',
+      submenu: windowSubmenu,
+    },
+  );
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+};
 
 const clearLoopbackAuthFlow = () => {
   if (loopbackAuthTimeout) {
@@ -170,19 +521,17 @@ const sendAuthTokenToRenderer = (token: string) => {
 const createWindow = (): void => {
   // Create the browser window.
   mainWindow = new BrowserWindow({
-    height: 600,
-    width: 800,
+    height: 980,
+    width: 1560,
+    minWidth: 1180,
+    minHeight: 760,
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
     },
   });
 
   // In dev, load from webpack dev server. In prod, load via our custom app:// protocol.
-  if (isDev) {
-    mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
-  } else {
-    mainWindow.loadURL('app://app/main_window');
-  }
+  mainWindow.loadURL(getMainRendererUrl());
 
   mainWindow.webContents.on('did-finish-load', () => {
     if (pendingDeepLink) {
@@ -194,6 +543,16 @@ const createWindow = (): void => {
 
   // Open the DevTools for debugging.
   mainWindow.webContents.openDevTools();
+
+  mainWindow.on('close', () => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.close();
+    }
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
 };
 
 // IPC Handlers for Output Window Management
@@ -210,20 +569,19 @@ ipcMain.handle('get-displays', () => {
 ipcMain.handle('open-output-window', () => {
   if (outputWindow) {
     outputWindow.focus();
+    reconcileOutputWindowDisplay();
     return true;
   }
 
-  const displays = screen.getAllDisplays();
-  const primaryDisplay = screen.getPrimaryDisplay();
-  // Find first external display
-  const externalDisplay = displays.find(d => d.id !== primaryDisplay.id);
+  const preferredDisplay = getPreferredOutputDisplay();
+  const isPrimary = preferredDisplay.id === screen.getPrimaryDisplay().id;
 
   outputWindow = new BrowserWindow({
-    x: externalDisplay ? externalDisplay.bounds.x : undefined,
-    y: externalDisplay ? externalDisplay.bounds.y : undefined,
-    width: externalDisplay?.bounds.width || 1280,
-    height: externalDisplay?.bounds.height || 720,
-    fullscreen: !!externalDisplay,
+    x: preferredDisplay.bounds.x,
+    y: preferredDisplay.bounds.y,
+    width: preferredDisplay.bounds.width || 1280,
+    height: preferredDisplay.bounds.height || 720,
+    fullscreen: !isPrimary,
     autoHideMenuBar: true,
     webPreferences: {
       preload: OUTPUT_WINDOW_PRELOAD_WEBPACK_ENTRY,
@@ -268,8 +626,9 @@ ipcMain.on('output-ready', () => {
   }
 });
 
-ipcMain.handle('select-folder', async () => {
-  const result = await dialog.showOpenDialog(mainWindow || undefined, {
+ipcMain.handle('select-folder', async (event) => {
+  const parentWindow = BrowserWindow.fromWebContents(event.sender) ?? mainWindow ?? undefined;
+  const result = await dialog.showOpenDialog(parentWindow, {
     properties: ['openDirectory'],
   });
   if (result.canceled || result.filePaths.length === 0) {
@@ -390,6 +749,81 @@ ipcMain.handle('read-folder', async (_, folderPath: string) => {
   }
 });
 
+ipcMain.handle('list-bundled-bibles', async () => {
+  try {
+    return await discoverBundledBibles();
+  } catch (error) {
+    console.error('Failed to list bundled bibles', error);
+    return [];
+  }
+});
+
+ipcMain.handle('read-bundled-bible', async (_, filePath: string) => {
+  try {
+    if (typeof filePath !== 'string' || filePath.trim().length === 0) {
+      throw new Error('Missing file path');
+    }
+
+    const requestedPath = path.resolve(filePath);
+    const extension = path.extname(requestedPath).toLowerCase();
+    if (!SUPPORTED_BIBLE_EXTENSIONS.has(extension)) {
+      throw new Error('Unsupported bible file type');
+    }
+
+    const roots = await getExistingBundledBibleRoots();
+    if (roots.length === 0) {
+      throw new Error('No bundled bible directory found');
+    }
+
+    const realRequestedPath = await fs.promises.realpath(requestedPath);
+    const isAllowed = roots.some((root) => isPathWithinRoot(realRequestedPath, root));
+    if (!isAllowed) {
+      throw new Error('File path is outside bundled bible directories');
+    }
+
+    const fileBuffer = await fs.promises.readFile(realRequestedPath);
+    return new Uint8Array(fileBuffer);
+  } catch (error) {
+    console.error('Failed to read bundled bible', error);
+    return null;
+  }
+});
+
+async function fetchJsonFollowingRedirects(url: string, maxRedirects = 5): Promise<unknown> {
+  let currentUrl = url;
+  for (let i = 0; i <= maxRedirects; i += 1) {
+    const response = await net.fetch(currentUrl, { cache: 'no-store' });
+    if (
+      response.status >= 300
+      && response.status < 400
+    ) {
+      const location = response.headers.get('location');
+      if (!location) {
+        throw new Error(`Redirect without location header (${response.status})`);
+      }
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(`Request failed (${response.status})`);
+    }
+    return await response.json();
+  }
+  throw new Error('Too many redirects');
+}
+
+ipcMain.handle('fetch-hosted-bible-catalog', async (_, catalogUrl: string) => {
+  try {
+    if (typeof catalogUrl !== 'string' || catalogUrl.trim().length === 0) {
+      throw new Error('Missing catalog URL');
+    }
+    return await fetchJsonFollowingRedirects(catalogUrl);
+  } catch (error) {
+    console.error('Failed to fetch hosted bible catalog', error);
+    return null;
+  }
+});
+
 app.on('ready', () => {
 
   // Custom app:// protocol: serve webpack production assets in a way that gives
@@ -500,6 +934,12 @@ app.on('ready', () => {
   });
 
   createWindow();
+  buildApplicationMenu();
+
+  // Keep output window on the best available display as displays change (HDMI plug/unplug).
+  screen.on('display-added', () => reconcileOutputWindowDisplay());
+  screen.on('display-removed', () => reconcileOutputWindowDisplay());
+  screen.on('display-metrics-changed', () => reconcileOutputWindowDisplay());
 
   const initialDeepLink = process.argv.find((arg) => arg.startsWith('present://'));
   if (initialDeepLink) {

@@ -32,9 +32,9 @@ import { MainView } from "./MainView";
 
 interface PresentContainerProps {
   orgId: Id<"organizations"> | undefined;
+  userId: Id<"users"> | null;
   viewMode: ViewMode;
   bottomTab: BottomTab;
-  setBottomTab: (tab: BottomTab) => void;
   contentSource: ContentSource;
   mediaState: MediaState; 
   settings: any;   
@@ -46,9 +46,9 @@ interface PresentContainerProps {
 
 export function PresentContainer({
   orgId,
+  userId,
   viewMode,
   bottomTab,
-  setBottomTab,
   mediaState,
   settings,
   showsPanelRef,
@@ -102,7 +102,7 @@ export function PresentContainer({
     updateExistingSong,
     deleteSong,
     isLoading: songsLoading,
-  } = useSongs(orgId, contentSource);
+  } = useSongs({ orgId: orgId ?? null, userId }, contentSource);
 
   const {
     services,
@@ -123,9 +123,9 @@ export function PresentContainer({
     reorderServices,
     enterService,
     exitService,
-  } = useServices(orgId, songs);
+  } = useServices({ orgId: orgId ?? null, userId }, songs);
 
-  const { categories, createNewCategory } = useCategories(orgId);
+  const { categories, createNewCategory } = useCategories({ orgId: orgId ?? null, userId });
 
   // Output visibility toggles
   const [showTextInOutput, setShowTextInOutput] = useState(true);
@@ -147,7 +147,7 @@ export function PresentContainer({
   // Memos
   const slidesForGrid = useMemo(() => {
     if (selectedSong) return getSlidesForGrid(selectedSong);
-    if (scriptureSlides.length > 0) {
+    if (bottomTab === "scripture" && scriptureSlides.length > 0) {
       return scriptureSlides.map((item, i) => ({
         slide: { text: item.content, label: item.label, footer: item.footer },
         index: i,
@@ -155,7 +155,7 @@ export function PresentContainer({
       }));
     }
     return [];
-  }, [selectedSong, scriptureSlides]);
+  }, [bottomTab, selectedSong, scriptureSlides]);
 
   const isScriptureActive = useMemo(() => {
     if (activeSlideId?.startsWith("scripture:")) return true;
@@ -313,9 +313,9 @@ export function PresentContainer({
     <MainView
       viewMode={viewMode}
       bottomTab={bottomTab}
-      setBottomTab={setBottomTab}
       contentSource={contentSource}
       orgId={orgId}
+      userId={userId}
       servicesSidebarProps={{
         services,
         isLoading: servicesLoading,
@@ -397,6 +397,9 @@ export function PresentContainer({
         fontBold,
         fontItalic,
         fontUnderline,
+        scriptureFontFamily: settingsScriptureFontFamily,
+        scriptureFontSize: settingsScriptureFontSize,
+        scriptureTextAlign: settingsScriptureTextAlign,
         updateFontStyle,
       }}
       panelRefs={{

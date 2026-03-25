@@ -9,6 +9,7 @@ import {
 import { PresentServicesSidebar } from "./PresentServicesSidebar";
 import { PresentCenterArea } from "./PresentCenterArea";
 import { PresentOutputSidebar } from "./PresentOutputSidebar";
+import { Kbd } from "../../components/ui/kbd";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { SlideData } from "../../features/slides";
 import { 
@@ -17,6 +18,7 @@ import {
   MediaFilters,
   MediaState
 } from "../../features/media/hooks/useMediaFolders";
+import { MediaPanel } from "../media";
 import type { ViewMode, BottomTab, Song, Category, Service, PlaybackState, ServiceItem, ContentSource } from "../../types/index";
 import { fixLyrics } from "../../lib/lyrics";
 import { ScriptureSlide } from "../../features/scripture/lib/slides";
@@ -87,6 +89,9 @@ export interface MainViewStyleState {
   fontBold: boolean;
   fontItalic: boolean;
   fontUnderline: boolean;
+  scriptureFontFamily: string;
+  scriptureFontSize: number;
+  scriptureTextAlign: "left" | "center" | "right";
   updateFontStyle: (style: Partial<PlaybackState>) => void;
 }
 
@@ -107,8 +112,8 @@ export interface MainViewOutputState {
 interface MainViewProps {
   viewMode: ViewMode;
   bottomTab: BottomTab;
-  setBottomTab: (tab: BottomTab) => void;
   orgId: Id<"organizations"> | undefined;
+  userId: Id<"users"> | null;
   
   servicesSidebarProps: {
     services: Service[];
@@ -142,8 +147,8 @@ interface MainViewProps {
 export function MainView({
   viewMode,
   bottomTab,
-  setBottomTab,
   orgId,
+  userId,
   servicesSidebarProps,
   presentState,
   mediaState,
@@ -174,7 +179,6 @@ export function MainView({
     handleAddMediaToService,
     updateVideoSettings,
     showMediaInOutput,
-    setShowMediaInOutput,
     onClearMedia,
     mediaFilters,
     onMediaFiltersChange: updateMediaFilters,
@@ -221,6 +225,9 @@ export function MainView({
     fontBold,
     fontItalic,
     fontUnderline,
+    scriptureFontFamily,
+    scriptureFontSize,
+    scriptureTextAlign,
     updateFontStyle,
   } = styleState;
 
@@ -254,120 +261,151 @@ export function MainView({
     <ResizablePanelGroup
       direction="horizontal"
       className="flex-1 w-full h-full"
-      autoSaveId="present-main-layout-v10"
+      autoSaveId="present-main-layout-v11"
     >
-      <ResizablePanel defaultSize="25" minSize="15" maxSize="30" order={1}>
-        <PresentServicesSidebar
-          servicesSidebarProps={{
-            services,
-            isLoading: servicesLoading,
-            selectedServiceId,
-            isInsideService,
-            selectedService,
-            serviceItems,
-            serviceItemIndex,
-            onEnterService: enterService,
-            onExitService: exitService,
-            onSelectServiceItem: handleSelectServiceItem,
-            onDoubleClickServiceItem: handleDoubleClickServiceItem,
-            onRemoveFromService: (index: number) => handleRemoveFromService(index),
-            onCreateService: createNewService,
-            onRenameService: renameExistingService,
-            onDeleteService: deleteService,
-            onReorderServiceItems: reorderServiceItems,
-            onReorderServices: reorderServices,
-          }}
-        />
+      <ResizablePanel defaultSize="78" minSize="60" maxSize="84" order={1}>
+        <ResizablePanelGroup
+          direction="vertical"
+          className="h-full w-full"
+          autoSaveId="present-workspace-layout-v11"
+        >
+          <ResizablePanel defaultSize="68" minSize="45" maxSize="84" order={1}>
+            <ResizablePanelGroup
+              direction="horizontal"
+              className="h-full w-full"
+              autoSaveId="present-main-top-layout-v11"
+            >
+              <ResizablePanel defaultSize="24" minSize="16" maxSize="32" order={1}>
+                <PresentServicesSidebar
+                  servicesSidebarProps={{
+                    services,
+                    isLoading: servicesLoading,
+                    selectedServiceId,
+                    isInsideService,
+                    selectedService,
+                    serviceItems,
+                    serviceItemIndex,
+                    onEnterService: enterService,
+                    onExitService: exitService,
+                    onSelectServiceItem: handleSelectServiceItem,
+                    onDoubleClickServiceItem: handleDoubleClickServiceItem,
+                    onRemoveFromService: (index: number) => handleRemoveFromService(index),
+                    onCreateService: createNewService,
+                    onRenameService: renameExistingService,
+                    onDeleteService: deleteService,
+                    onReorderServiceItems: reorderServiceItems,
+                    onReorderServices: reorderServices,
+                  }}
+                />
+              </ResizablePanel>
+
+              <ResizableHandle withHandle />
+
+              <ResizablePanel defaultSize="76" minSize="56" maxSize="84" order={2}>
+                <PresentCenterArea
+                  viewMode={viewMode}
+                  bottomTab={bottomTab}
+                  slidesForGrid={slidesForGrid}
+                  activeSlideId={activeSlideId}
+                  selectedIndex={selected?.index ?? null}
+                  selectedSong={selectedSong}
+                  selectedSongId={selectedSongId}
+                  onSelectSlide={handleSelectSlide}
+                  onEditSlide={handleEditSlide}
+                  editorProps={{
+                    fontFamily,
+                    fontSize,
+                    fontBold,
+                    fontItalic,
+                    fontUnderline,
+                    onFontStyleChange: updateFontStyle,
+                    onSave: handleSaveSong,
+                    onFixLyrics: fixLyrics,
+                    scrollToSlideIndex: editScrollToSlide,
+                    onScrollComplete: () => setEditScrollToSlide(null),
+                  }}
+                  showViewMedia={showViewMedia}
+                  showVideoRef={showVideoRef}
+                  videoSettings={videoSettings}
+                  onOutputPreviewMedia={() => handleOutputPreviewMedia()}
+                  onVideoPlay={handleVideoPlay}
+                  onVideoPause={handleVideoPause}
+                  onVideoEnded={handleVideoEnded}
+                  onVideoSeeked={handleVideoSeeked}
+                  showsPanelRef={showsPanelRef}
+                  scripturePanelRef={scripturePanelRef}
+                  showsPanelProps={{
+                    songs: filteredSongs,
+                    isLoading: songsLoading,
+                    categories,
+                    selectedSongId,
+                    selectedCategoryId,
+                    isInsideService,
+                    selectedServiceId,
+                    onSelectSong: setSelectedSongId,
+                    onSelectCategory: setSelectedCategoryId,
+                    onCreateSong: createNewSong,
+                    onRenameSong: handleRenameSong,
+                    onDeleteSong: deleteSong,
+                    onAddToService: handleAddToService,
+                    onCreateCategory: createNewCategory,
+                    onFixLyrics: fixLyrics,
+                    searchQuery,
+                    onSearchChange: setSearchQuery,
+                    contentSource,
+                  }}
+                  onSendScripture={handleScriptureOutput}
+                  orgId={orgId ?? null}
+                  userId={userId}
+                />
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          <ResizablePanel defaultSize="32" minSize="16" maxSize="55" order={2}>
+            <div className="flex h-full flex-col border-t border-border bg-card">
+              <div className="flex h-8 items-center justify-between border-b border-border px-3">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                  Media
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  Search <Kbd className="ml-1">⌘M</Kbd>
+                </span>
+              </div>
+              <div className="min-h-0 flex-1">
+                <MediaPanel
+                  ref={mediaPanelRef}
+                  mediaState={mediaState.mediaState}
+                  onSelectForOutput={handleMediaPanelSelect}
+                  isInsideService={isInsideService}
+                  selectedServiceId={selectedServiceId}
+                  onAddToService={handleAddMediaToService}
+                  orgId={orgId ?? null}
+                />
+              </div>
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </ResizablePanel>
 
       <ResizableHandle withHandle />
 
-      <ResizablePanel
-        id="center-area"
-        order={2}
-        defaultSize="55"
-        minSize="40"
-        maxSize="75"
-      >
-        <PresentCenterArea
-          viewMode={viewMode}
-          bottomTab={bottomTab}
-          setBottomTab={setBottomTab}
-          slidesForGrid={slidesForGrid}
-          activeSlideId={activeSlideId}
-          selectedIndex={selected?.index ?? null}
-          selectedSong={selectedSong}
-          selectedSongId={selectedSongId}
-          onSelectSlide={handleSelectSlide}
-          onEditSlide={handleEditSlide}
-          editorProps={{
-            fontFamily,
-            fontSize,
-            fontBold,
-            fontItalic,
-            fontUnderline,
-            onFontStyleChange: updateFontStyle,
-            onSave: handleSaveSong,
-            onFixLyrics: fixLyrics,
-            scrollToSlideIndex: editScrollToSlide,
-            onScrollComplete: () => setEditScrollToSlide(null),
-          }}
-          showViewMedia={showViewMedia}
-          showVideoRef={showVideoRef}
-          videoSettings={videoSettings}
-          onOutputPreviewMedia={() => handleOutputPreviewMedia()}
-          onVideoPlay={handleVideoPlay}
-          onVideoPause={handleVideoPause}
-          onVideoEnded={handleVideoEnded}
-          onVideoSeeked={handleVideoSeeked}
-          showsPanelRef={showsPanelRef}
-          mediaPanelRef={mediaPanelRef}
-          scripturePanelRef={scripturePanelRef}
-          showsPanelProps={{
-            songs: filteredSongs,
-            isLoading: songsLoading,
-            categories,
-            selectedSongId,
-            selectedCategoryId,
-            isInsideService,
-            selectedServiceId,
-            onSelectSong: setSelectedSongId,
-            onSelectCategory: setSelectedCategoryId,
-            onCreateSong: createNewSong,
-            onRenameSong: handleRenameSong,
-            onDeleteSong: deleteSong,
-            onAddToService: handleAddToService,
-            onCreateCategory: createNewCategory,
-            onFixLyrics: fixLyrics,
-            searchQuery,
-            onSearchChange: setSearchQuery,
-            contentSource,
-          }}
-          mediaPanelProps={{
-            mediaState: mediaState.mediaState,
-            onSelectForOutput: handleMediaPanelSelect,
-            isInsideService,
-            selectedServiceId,
-            onAddToService: handleAddMediaToService,
-            orgId: orgId ?? null,
-          }}
-          onSendScripture={handleScriptureOutput}
-          orgId={orgId ?? null}
-        />
-      </ResizablePanel>
-
-      <ResizableHandle withHandle />
-
-      <ResizablePanel defaultSize="20" minSize="15" maxSize="22" order={3}>
+      <ResizablePanel defaultSize="22" minSize="16" maxSize="28" order={2}>
         <PresentOutputSidebar
           outputPreviewProps={{
             text: activeSlideContent?.text ?? null,
             footer: activeSlideContent?.footer ?? null,
+            activeSlideId,
             fontFamily,
             fontSize,
             fontBold,
             fontItalic,
             fontUnderline,
+            scriptureFontFamily,
+            scriptureFontSize,
+            scriptureTextAlign,
             groups: slideGroups,
             activeMediaItem: effectiveActiveMediaItem,
             videoSettings,
@@ -375,7 +413,6 @@ export function MainView({
             showText: showTextInOutput,
             showMedia: showMediaInOutput,
             onToggleText: () => setShowTextInOutput(!showTextInOutput),
-            onToggleMedia: () => setShowMediaInOutput(!showMediaInOutput),
             onClearMedia: () => onClearMedia(),
             mediaFilters,
             onMediaFiltersChange: updateMediaFilters,

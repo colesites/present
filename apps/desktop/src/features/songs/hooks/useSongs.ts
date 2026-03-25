@@ -10,18 +10,22 @@ import type { Song, ContentSource } from "../../../types";
 // Local storage persistence removed to prevent state fighting
 
 export function useSongs(
-  orgId: Id<"organizations"> | null,
+  input: { orgId: Id<"organizations"> | null; userId: Id<"users"> | null },
   contentSource: ContentSource,
 ) {
+  const { orgId, userId } = input;
   // Use plain Convex query - no caching to avoid data conflicts
-  const songs = useQuery(api.songs.listByOrg, orgId ? { orgId } : "skip") as
+  const songs = useQuery(
+    orgId ? api.songs.listByOrg : api.personalSongs.listByUser,
+    orgId ? { orgId } : userId ? { userId } : "skip",
+  ) as
     | Song[]
     | undefined;
 
   // Hydration logic removed - online only
-  const createSong = useMutation(api.songs.create);
-  const updateSong = useMutation(api.songs.update);
-  const removeSong = useMutation(api.songs.remove);
+  const createSong = useMutation(orgId ? api.songs.create : api.personalSongs.create);
+  const updateSong = useMutation(orgId ? api.songs.update : api.personalSongs.update);
+  const removeSong = useMutation(orgId ? api.songs.remove : api.personalSongs.remove);
 
   const [selectedSongId, setSelectedSongId] = useState<Id<"songs"> | null>(
     null,
@@ -80,15 +84,28 @@ export function useSongs(
     lyrics: string,
     categoryId?: Id<"categories">,
   ) => {
-    if (!orgId || !title.trim()) return null;
+    if (!title.trim()) return null;
+    if (!orgId && !userId) {
+      throw new Error("Account not ready yet. Please wait a moment and try again.");
+    }
     const slides = parseLyricsToSlides(lyrics);
-    const id = await createSong({
-      orgId,
-      title: title.trim(),
-      lyrics,
-      slides,
-      categoryId,
-    });
+    const id = await createSong(
+      orgId
+        ? ({
+            orgId,
+            title: title.trim(),
+            lyrics,
+            slides,
+            categoryId,
+          } as any)
+        : ({
+            userId,
+            title: title.trim(),
+            lyrics,
+            slides,
+            categoryId: categoryId as any,
+          } as any),
+    );
     return id;
   };
 
@@ -98,19 +115,19 @@ export function useSongs(
     lyrics: string,
   ) => {
     const slides = parseLyricsToSlides(lyrics);
-    await updateSong({ songId, title, lyrics, slides });
+    await updateSong({ songId, title, lyrics, slides } as any);
   };
 
   const deleteSong = async (songId: Id<"songs">) => {
-    await removeSong({ songId });
+    await removeSong({ songId } as any);
     if (selectedSongId === songId) {
       setSelectedSongId(null);
     }
   };
 
   return {
-    songs: songs ?? [],
-    isLoading: songs === undefined,
+    songs: (songs ?? []) as any,
+    isLoading: Boolean(orgId) && songs === undefined,
     filteredSongs,
     selectedSong,
     selectedSongId,

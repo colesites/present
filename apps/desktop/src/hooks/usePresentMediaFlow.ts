@@ -69,7 +69,7 @@ export function usePresentMediaFlow<
         // Go live immediately for media items
         if (mediaItem?.type === "video") setShouldAutoPlay(true);
         selectMediaForOutput(mediaItem);
-        selectSlide("", "");
+        // Keep current text/slide active when changing backgrounds.
       }
 
       if (item.type === "scripture") {
@@ -110,7 +110,7 @@ export function usePresentMediaFlow<
 
       setPreviewMediaItem(mediaItem);
       selectMediaForOutput(mediaItem);
-      selectSlide("", "");
+      // Keep current text/slide active when changing backgrounds.
     },
     [
       serviceItems,
@@ -127,7 +127,7 @@ export function usePresentMediaFlow<
     if (previewMediaItem.type === "video") setShouldAutoPlay(true);
 
     selectMediaForOutput(previewMediaItem);
-    selectSlide("", "");
+    // Keep current text/slide active when changing backgrounds.
     onClearScripture?.();
   }, [
     previewMediaItem,
@@ -145,7 +145,7 @@ export function usePresentMediaFlow<
       if (item?.type === "video") setShouldAutoPlay(true);
 
       selectMediaForOutput(item);
-      selectSlide("", "");
+      // Keep current text/slide active when changing backgrounds.
     },
     [setShouldAutoPlay, selectMediaForOutput, selectSlide, onClearScripture],
   );

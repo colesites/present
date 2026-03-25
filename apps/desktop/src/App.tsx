@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { authClient } from "../../../packages/shared/src/auth";
 import { SignInScreen } from "./features/auth/SignInScreen";
 import { Loader2 } from "lucide-react";
@@ -12,11 +12,13 @@ import type { ShowsPanelRef } from "./features/shows";
 import {
   useOrganization,
   usePersistedUIState,
+  useGlobalShortcuts,
 } from "./hooks";
 import { useAppSettings } from "./hooks/useAppSettings";
 import { SettingsScreen } from "./features/settings/components/SettingsScreen";
 import { PresentContainer } from "./features/present/PresentContainer";
 import type { ContentSource } from "./types";
+import type { HeaderSearchScope } from "./features/header/AppHeader";
 
 type OneTimeTokenApi = {
   oneTimeToken: {
@@ -29,6 +31,13 @@ type OneTimeTokenApi = {
 export default function Home() {
   const { data: sessionData, isPending: isLoading, error } = authClient.useSession();
   const isAuthenticated = !!sessionData?.session;
+  const isSettingsWindow = useMemo(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    return new URLSearchParams(window.location.search).get("window") === "settings";
+  }, []);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [isAuthHandoffPending, setIsAuthHandoffPending] = useState(false);
   const [authHandoffError, setAuthHandoffError] = useState<string | null>(null);
@@ -135,12 +144,37 @@ export default function Home() {
   }, [isLoading]);
 
   // Organization & auth
-  const { orgId } = useOrganization();
+  const { orgId, userId } = useOrganization();
 
   // Root UI state
-  const { viewMode, setViewMode, bottomTab, setBottomTab } = usePersistedUIState();
-  const [contentSource, setContentSource] = useState<ContentSource>("my-creations");
-  const [isAutopilotEnabled, setIsAutopilotEnabled] = useState(false);
+  const { viewMode, setViewMode, bottomTab, setBottomTab } = usePersistedUIState({
+    viewMode: isSettingsWindow ? "settings" : "show",
+    bottomTab: "media",
+  }, {
+    restoreStored: isSettingsWindow,
+  });
+
+  useEffect(() => {
+    if (isSettingsWindow) {
+      return;
+    }
+    setViewMode("show");
+    setBottomTab("media");
+  }, [isSettingsWindow, setBottomTab, setViewMode]);
+  const effectiveViewMode = isSettingsWindow
+    ? "settings"
+    : viewMode === "settings"
+      ? "show"
+      : viewMode;
+  const contentSource: ContentSource = "my-creations";
+  const isAutopilotEnabled = false;
+  const isBibleActive = effectiveViewMode === "show" && bottomTab === "scripture";
+  const isLibrariesActive = effectiveViewMode === "show" && bottomTab === "shows";
+  const headerSearchScope: HeaderSearchScope = isLibrariesActive
+    ? "libraries"
+    : isBibleActive
+      ? "bible"
+      : "services";
 
   // Shared Data hooks (lifted for Settings vs Present toggling)
   const mediaState = useMediaFolders();
@@ -150,6 +184,14 @@ export default function Home() {
   const showsPanelRef = useRef<ShowsPanelRef>(null);
   const mediaPanelRef = useRef<MediaPanelRef>(null);
   const scripturePanelRef = useRef<ScripturePanelRef>(null);
+
+  useGlobalShortcuts({
+    enabled: !isSettingsWindow,
+    setBottomTab,
+    showsPanelRef,
+    mediaPanelRef,
+    scripturePanelRef,
+  });
 
   // Auth Gate: Ensure user is authenticated before loading Heavy UI/Convex
   if (isLoading) {
@@ -193,41 +235,54 @@ export default function Home() {
     );
   }
 
-  return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
-      <AppHeader
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-        contentSource={contentSource}
-        onContentSourceChange={setContentSource}
-        isAutopilotEnabled={isAutopilotEnabled}
-        onToggleAutopilot={() => setIsAutopilotEnabled((prev) => !prev)}
-      />
-
-      <Activity mode={viewMode === "settings" ? "visible" : "hidden"}>
+  if (isSettingsWindow) {
+    return (
+      <div className="h-screen bg-background text-foreground">
         <SettingsScreen
           {...settings}
           folders={folders}
           allMediaItems={allMediaItems}
           selectMediaForOutput={selectMediaForOutput}
         />
-      </Activity>
+      </div>
+    );
+  }
 
-      <Activity mode={viewMode === "settings" ? "hidden" : "visible"}>
-        <PresentContainer
-          orgId={orgId}
-          viewMode={viewMode}
-          bottomTab={bottomTab}
-          setBottomTab={setBottomTab}
-          contentSource={contentSource}
-          mediaState={mediaState}
-          settings={settings}
-          showsPanelRef={showsPanelRef}
-          mediaPanelRef={mediaPanelRef}
-          scripturePanelRef={scripturePanelRef}
-          isAutopilotEnabled={isAutopilotEnabled}
-        />
-      </Activity>
+  return (
+    <div className="flex h-screen flex-col bg-background text-foreground">
+      <AppHeader
+        viewMode={effectiveViewMode}
+        isBibleActive={isBibleActive}
+        isLibrariesActive={isLibrariesActive}
+        searchScope={headerSearchScope}
+        onViewModeChange={setViewMode}
+        onOpenShow={() => {
+          setBottomTab("media");
+          setViewMode("show");
+        }}
+        onOpenLibraries={() => {
+          setBottomTab("shows");
+          setViewMode("show");
+        }}
+        onOpenBible={() => {
+          setBottomTab("scripture");
+          setViewMode("show");
+        }}
+      />
+
+      <PresentContainer
+        orgId={orgId}
+        userId={userId}
+        viewMode={effectiveViewMode}
+        bottomTab={bottomTab}
+        contentSource={contentSource}
+        mediaState={mediaState}
+        settings={settings}
+        showsPanelRef={showsPanelRef}
+        mediaPanelRef={mediaPanelRef}
+        scripturePanelRef={scripturePanelRef}
+        isAutopilotEnabled={isAutopilotEnabled}
+      />
     </div>
   );
 }

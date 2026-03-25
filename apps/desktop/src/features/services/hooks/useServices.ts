@@ -35,19 +35,29 @@ function saveServiceState(state: {
   }
 }
 
-export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
+export function useServices(
+  input: { orgId: Id<"organizations"> | null; userId: Id<"users"> | null },
+  songs: Song[],
+) {
+  const { orgId, userId } = input;
   // Use plain Convex query - no caching to avoid data conflicts
   const services = useQuery(
-    api.services.listByOrg,
-    orgId ? { orgId } : "skip",
+    orgId ? api.services.listByOrg : api.personalServices.listByUser,
+    orgId ? { orgId } : userId ? { userId } : "skip",
   ) as Service[] | undefined;
-  const createService = useMutation(api.services.create);
-  const renameService = useMutation(api.services.rename);
-  const removeService = useMutation(api.services.remove);
-  const addItemToService = useMutation(api.services.addItem);
-  const removeItemFromService = useMutation(api.services.removeItem);
-  const reorderItemsMutation = useMutation(api.services.reorderItems);
-  const reorderServicesMutation = useMutation(api.services.reorderServices);
+  const createService = useMutation(orgId ? api.services.create : api.personalServices.create);
+  const renameService = useMutation(orgId ? api.services.rename : api.personalServices.rename);
+  const removeService = useMutation(orgId ? api.services.remove : api.personalServices.remove);
+  const addItemToService = useMutation(orgId ? api.services.addItem : api.personalServices.addItem);
+  const removeItemFromService = useMutation(
+    orgId ? api.services.removeItem : api.personalServices.removeItem,
+  );
+  const reorderItemsMutation = useMutation(
+    orgId ? api.services.reorderItems : api.personalServices.reorderItems,
+  );
+  const reorderServicesMutation = useMutation(
+    orgId ? api.services.reorderServices : api.personalServices.reorderServices,
+  );
 
   const [initialState] = useState(() => loadServiceState());
 
@@ -113,8 +123,15 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
   }, [selectedService, songs]);
 
   const createNewService = async (name: string) => {
-    if (!orgId || !name.trim()) return null;
-    const id = await createService({ orgId, name: name.trim() });
+    if (!name.trim()) return null;
+    if (!orgId && !userId) {
+      throw new Error("Account not ready yet. Please wait a moment and try again.");
+    }
+    const id = await createService(
+      orgId
+        ? ({ orgId, name: name.trim() } as any)
+        : ({ userId, name: name.trim() } as any),
+    );
     return id;
   };
 
@@ -122,11 +139,11 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
     serviceId: Id<"services">,
     name: string
   ) => {
-    await renameService({ serviceId, name });
+    await renameService({ serviceId, name } as any);
   };
 
   const deleteService = async (serviceId: Id<"services">) => {
-    await removeService({ serviceId });
+    await removeService({ serviceId } as any);
     if (selectedServiceId === serviceId) {
       setSelectedServiceId(null);
       setIsInsideService(false);
@@ -137,7 +154,7 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
     serviceId: Id<"services">,
     songId: Id<"songs">
   ) => {
-    await addItemToService({ serviceId, type: "song", refId: songId });
+    await addItemToService({ serviceId, type: "song", refId: songId } as any);
   };
 
   const addMediaToService = async (
@@ -150,7 +167,7 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
       type: "media",
       refId: mediaId,
       label: mediaName,
-    });
+    } as any);
   };
 
   const addScriptureToService = async (
@@ -163,14 +180,14 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
       type: "scripture",
       refId: ref,
       label: text,
-    });
+    } as any);
   };
 
   const removeFromService = async (
     serviceId: Id<"services">,
     index: number
   ) => {
-    await removeItemFromService({ serviceId, itemIndex: index });
+    await removeItemFromService({ serviceId, itemIndex: index } as any);
   };
 
   const enterService = (serviceId: Id<"services">) => {
@@ -190,17 +207,24 @@ export function useServices(orgId: Id<"organizations"> | null, songs: Song[]) {
     toIndex: number
   ) => {
     if (fromIndex === toIndex) return;
-    await reorderItemsMutation({ serviceId, fromIndex, toIndex });
+    await reorderItemsMutation({ serviceId, fromIndex, toIndex } as any);
   };
 
   const reorderServices = async (fromIndex: number, toIndex: number) => {
-    if (!orgId || fromIndex === toIndex) return;
-    await reorderServicesMutation({ orgId, fromIndex, toIndex });
+    if (fromIndex === toIndex) return;
+    if (orgId) {
+      await reorderServicesMutation({ orgId, fromIndex, toIndex } as any);
+      return;
+    }
+    if (!userId) {
+      throw new Error("Account not ready yet. Please wait a moment and try again.");
+    }
+    await reorderServicesMutation({ userId, fromIndex, toIndex } as any);
   };
 
   return {
-    services: services ?? [],
-    isLoading: services === undefined,
+    services: (services ?? []) as any,
+    isLoading: Boolean(orgId) && services === undefined,
     selectedService,
     selectedServiceId,
     isInsideService,

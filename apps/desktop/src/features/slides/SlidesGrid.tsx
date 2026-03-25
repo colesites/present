@@ -61,7 +61,7 @@ export const SlidesGrid = memo(function SlidesGrid({
   if (slides.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Select a song or search scripture to view slides
+        Select a library item to view slides
       </div>
     );
   }

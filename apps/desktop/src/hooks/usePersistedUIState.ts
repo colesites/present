@@ -10,13 +10,31 @@ type PersistedState = {
 
 const STORAGE_KEY = "present-ui-state";
 
-export function usePersistedUIState(defaults?: Partial<PersistedState>) {
-  const [viewMode, setViewMode] = useState<ViewMode>(defaults?.viewMode ?? "show");
-  const [bottomTab, setBottomTab] = useState<BottomTab>(defaults?.bottomTab ?? "shows");
+type PersistedOptions = {
+  restoreStored?: boolean;
+};
+
+export function usePersistedUIState(
+  defaults?: Partial<PersistedState>,
+  options?: PersistedOptions,
+) {
+  const defaultViewMode = defaults?.viewMode ?? "show";
+  const defaultBottomTab = defaults?.bottomTab ?? "media";
+  const restoreStored = options?.restoreStored ?? true;
+
+  const [viewMode, setViewMode] = useState<ViewMode>(defaultViewMode);
+  const [bottomTab, setBottomTab] = useState<BottomTab>(defaultBottomTab);
   const [isHydrated, setIsHydrated] = useState(false);
 
   // Restore persisted UI state after hydration
   useEffect(() => {
+    if (!restoreStored) {
+      setViewMode(defaultViewMode);
+      setBottomTab(defaultBottomTab);
+      setIsHydrated(true);
+      return;
+    }
+
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
@@ -29,7 +47,7 @@ export function usePersistedUIState(defaults?: Partial<PersistedState>) {
     } finally {
       setIsHydrated(true);
     }
-  }, []);
+  }, [defaultBottomTab, defaultViewMode, restoreStored]);
 
   // Persist view state (only after hydration)
   useEffect(() => {

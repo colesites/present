@@ -17,13 +17,15 @@ export const authClient = createAuthClient({
 
 export function useBetterAuthConvex() {
   const { data: session, isPending } = authClient.useSession();
+  const isSignedIn = !!(session as any)?.session;
 
   return {
     isLoading: isPending,
-    isAuthenticated: !!session,
+    isAuthenticated: isSignedIn,
     fetchAccessToken: async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
       // BetterAuth v1 stores the token in session.session.token (or you can use the session id)
       // For Convex integration, we usually pass the session token.
+      void forceRefreshToken;
       return (session as any)?.session?.token ?? null;
     },
   };

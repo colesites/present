@@ -24,6 +24,44 @@ export const create = mutation({
   },
 });
 
+export const ensureForAuthOrganization = mutation({
+  args: {
+    authOrganizationId: v.string(),
+    name: v.optional(v.string()),
+    logo: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const existingLink = await ctx.db
+      .query("organizationLinks")
+      .withIndex("by_auth_org", (q) => q.eq("authOrganizationId", args.authOrganizationId))
+      .unique();
+
+    if (existingLink) {
+      return existingLink.orgId;
+    }
+
+    const now = Date.now();
+    const orgId = await ctx.db.insert("organizations", {
+      name: args.name ?? "Organization",
+      ...(args.logo !== undefined ? { logo: args.logo } : {}),
+      createdAt: now,
+    });
+
+    await ctx.db.insert("organizationLinks", {
+      authOrganizationId: args.authOrganizationId,
+      orgId,
+      createdAt: now,
+    });
+
+    return orgId;
+  },
+});
+
 export const updateCurrent = mutation({
   args: {
     name: v.optional(v.string()),

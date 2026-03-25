@@ -93,21 +93,39 @@ export const ServicesSidebar = memo(function ServicesSidebar({
 
   return (
     <aside className="flex h-full flex-col">
-      <div className="border-b border-border px-3 py-2 flex items-center justify-between">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          {isInsideService && selectedService
-            ? selectedService.name
-            : "Services"}
-        </p>
-        {isInsideService && (
-          <button
-            type="button"
-            onClick={onExitService}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            ← Back
-          </button>
-        )}
+      <div className="border-b border-border px-3 py-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            {isInsideService ? (
+              <button
+                type="button"
+                onClick={onExitService}
+                className="inline-flex h-6 items-center rounded border border-border px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+              >
+                Back
+              </button>
+            ) : null}
+            <p className="truncate text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+              {isInsideService && selectedService ? selectedService.name : "Services"}
+            </p>
+          </div>
+
+          {!isInsideService ? (
+            <button
+              type="button"
+              onClick={() => setShowNewDialog(true)}
+              className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-secondary/30 text-xs font-semibold text-muted-foreground transition hover:border-primary hover:text-primary"
+              aria-label="Add service"
+              title="Add service"
+            >
+              +
+            </button>
+          ) : (
+            <span className="text-[10px] text-muted-foreground">
+              {serviceItems.length} item{serviceItems.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-hidden p-2">
@@ -133,18 +151,6 @@ export const ServicesSidebar = memo(function ServicesSidebar({
           />
         )}
       </div>
-
-      {!isInsideService && (
-        <div className="border-t border-border p-2">
-          <button
-            type="button"
-            onClick={() => setShowNewDialog(true)}
-            className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground transition hover:border-primary hover:text-primary"
-          >
-            + New service
-          </button>
-        </div>
-      )}
 
       {/* New Service Dialog */}
       {showNewDialog && (
@@ -295,6 +301,11 @@ const ServiceList = memo(function ServiceList({
 
   return (
     <div className="space-y-1">
+      {services.length === 0 ? (
+        <p className="px-2 py-1 text-[10px] text-muted-foreground">
+          No services yet. Create one to get started.
+        </p>
+      ) : null}
       {services.map((service, index) => (
         <ContextMenu key={service._id}>
           <ContextMenuTrigger asChild>

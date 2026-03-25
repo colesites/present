@@ -7,6 +7,14 @@ interface Display {
   isPrimary: boolean;
 }
 
+interface BundledBibleFile {
+  id: string;
+  code: string;
+  name: string;
+  filePath: string;
+  sizeBytes: number;
+}
+
 interface ElectronAPI {
   openOutputWindow: () => Promise<boolean>;
   closeOutputWindow: () => Promise<boolean>;
@@ -14,6 +22,9 @@ interface ElectronAPI {
   onOutputWindowClosed: (callback: () => void) => void;
   selectFolder: () => Promise<{ id: string; name: string; path: string } | null>;
   readFolder: (folderPath: string) => Promise<{ name: string; lastModified: number }[]>;
+  listBundledBibles: () => Promise<BundledBibleFile[]>;
+  readBundledBible: (filePath: string) => Promise<Uint8Array | null>;
+  fetchHostedBibleCatalog: (catalogUrl: string) => Promise<unknown | null>;
 
   // Output window IPC
   sendToOutput: (data: unknown) => void;
@@ -26,6 +37,7 @@ interface ElectronAPI {
   consumePendingAuthToken: () => Promise<string | null>;
   openExternalBrowser: (url: string) => Promise<boolean>;
   onAuthCallback: (callback: (token: string) => void) => void;
+  onOpenSettingsFromMenu: (callback: () => void) => void;
 }
 
 interface Window {

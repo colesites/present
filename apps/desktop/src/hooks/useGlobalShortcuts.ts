@@ -7,6 +7,7 @@ import type { ScripturePanelRef } from "../features/scripture";
 import type { RefObject } from "react";
 
 type Params = {
+  enabled?: boolean;
   setBottomTab: (tab: BottomTab) => void;
   showsPanelRef: RefObject<ShowsPanelRef | null>;
   mediaPanelRef: RefObject<MediaPanelRef | null>;
@@ -14,12 +15,17 @@ type Params = {
 };
 
 export function useGlobalShortcuts({
+  enabled = true,
   setBottomTab,
   showsPanelRef,
   mediaPanelRef,
   scripturePanelRef,
 }: Params) {
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
       if (!isCmdOrCtrl) return;
@@ -56,5 +62,5 @@ export function useGlobalShortcuts({
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [setBottomTab, showsPanelRef, mediaPanelRef, scripturePanelRef]);
+  }, [enabled, setBottomTab, showsPanelRef, mediaPanelRef, scripturePanelRef]);
 }

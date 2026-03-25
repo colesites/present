@@ -1,47 +1,71 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 
-export function useCategories(orgId: Id<"organizations"> | null) {
+export function useCategories(input: {
+  orgId: Id<"organizations"> | null;
+  userId: Id<"users"> | null;
+}) {
+  const { orgId, userId } = input;
   // Use plain Convex query - no caching to avoid data conflicts
   const categories = useQuery(
-    api.categories.listByOrg,
-    orgId ? { orgId } : "skip",
+    orgId ? api.categories.listByOrg : api.personalCategories.listByUser,
+    orgId ? { orgId } : userId ? { userId } : "skip",
   );
-  const ensureDefaultCategories = useMutation(api.categories.ensureDefaults);
-  const createCategory = useMutation(api.categories.create);
-  const removeCategory = useMutation(api.categories.remove);
-  const renameCategory = useMutation(api.categories.update);
+  const ensureDefaultCategories = useMutation(
+    orgId ? api.categories.ensureDefaults : api.personalCategories.ensureDefaults,
+  );
+  const createCategory = useMutation(orgId ? api.categories.create : api.personalCategories.create);
+  const removeCategory = useMutation(orgId ? api.categories.remove : api.personalCategories.remove);
+  const renameCategory = useMutation(orgId ? api.categories.update : api.personalCategories.update);
 
-  // Ensure default categories exist
+  const ensuredScopeRef = useRef<string | null>(null);
+
+  // Ensure default library categories exist for each org once per app session.
   useEffect(() => {
-    if (orgId && categories && categories.length === 0) {
-      void ensureDefaultCategories({ orgId });
+    const scopeKey = (orgId ?? userId) as unknown as string | null;
+    if (!scopeKey || categories === undefined) {
+      return;
     }
-  }, [orgId, categories, ensureDefaultCategories]);
+
+    if (ensuredScopeRef.current === scopeKey) {
+      return;
+    }
+
+    ensuredScopeRef.current = scopeKey;
+    void (orgId
+      ? ensureDefaultCategories({ orgId } as any)
+      : ensureDefaultCategories({ userId } as any));
+  }, [orgId, userId, categories, ensureDefaultCategories]);
 
   const createNewCategory = async (name: string) => {
-    if (!orgId || !name.trim()) return null;
-    const id = await createCategory({ orgId, name: name.trim() });
-    return id;
+    if (!name.trim()) return null;
+    if (orgId) {
+      const id = await createCategory({ orgId, name: name.trim() } as any);
+      return id;
+    }
+    if (!userId) {
+      throw new Error("Account not ready yet. Please wait a moment and try again.");
+    }
+    return await createCategory({ userId, name: name.trim() } as any);
   };
 
   const renameExistingCategory = async (
-    categoryId: Id<"categories">,
+    categoryId: any,
     name: string,
   ) => {
-    await renameCategory({ categoryId, name });
+    await renameCategory({ categoryId, name } as any);
   };
 
   const deleteCategory = async (categoryId: Id<"categories">) => {
-    await removeCategory({ categoryId });
+    await removeCategory({ categoryId } as any);
   };
 
   return {
-    categories: categories ?? [],
+    categories: (categories ?? []) as any,
     createNewCategory,
     renameExistingCategory,
     deleteCategory,
