@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Download, User, ChevronDown } from "lucide-react";
+import { desktopDownloadPath } from "@/lib/download";
 
 export function Navbar() {
   return (
@@ -42,7 +43,10 @@ export function Navbar() {
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2 sm:gap-6">
-          <Link href="#" className="hidden sm:flex items-center gap-1.5 text-[13px] font-medium text-white/70 hover:text-white transition-colors">
+          <Link
+            href={desktopDownloadPath}
+            className="hidden sm:flex items-center gap-1.5 text-[13px] font-medium text-white/70 hover:text-white transition-colors"
+          >
             Download <Download className="w-3.5 h-3.5" />
           </Link>
           <Link href="/auth/login" className="flex items-center gap-1.5 text-[13px] font-medium text-white/70 hover:text-white transition-colors border-l border-white/10 pl-6 ml-2 sm:ml-0">
@@ -52,7 +56,7 @@ export function Navbar() {
             href="/auth/signup" 
             className="hidden md:flex bg-white text-black text-[13px] font-bold px-5 py-2.5 rounded hover:bg-white/90 transition-all hover:scale-[1.02] active:scale-[0.98]"
           >
-            Start $0 trial
+            Get started
           </Link>
         </div>
       </div>

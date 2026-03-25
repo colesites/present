@@ -1,58 +1,153 @@
+"use client";
+
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Download } from "lucide-react";
+import { motion } from "framer-motion";
+import { desktopDownloadPath } from "@/lib/download";
+
+const heroEase = [0.22, 1, 0.36, 1] as const;
 
 export function Hero() {
   return (
     <section className="relative overflow-hidden pt-32 pb-20 lg:pt-48 px-6 lg:px-12 flex flex-col items-center justify-center text-center">
       {/* Massive radial glow using primary blue on black background */}
-      <div className="absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-[1200px] aspect-square bg-primary/20 rounded-full blur-[160px] opacity-70 pointer-events-none" />
+      <motion.div
+        className="absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-[1200px] aspect-square bg-primary/20 rounded-full blur-[160px] opacity-70 pointer-events-none"
+        initial={{ opacity: 0, scale: 0.92 }}
+        animate={{ opacity: 0.7, scale: 1 }}
+        transition={{ duration: 1, ease: heroEase, delay: 0.04 }}
+      />
       
       <div className="container mx-auto relative z-10 flex flex-col items-center max-w-4xl mb-16">
-        <div className="flex items-center gap-3 mb-8 opacity-80">
+        <motion.h1
+          className="text-6xl lg:text-[7rem] font-bold tracking-tight leading-none mb-6 text-white font-outfit flex flex-col items-center"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, ease: heroEase }}
+        >
+          <span className="flex flex-wrap items-center justify-center">
+            <span className="hero-legacy-wrap">
+              <motion.span
+                className="hero-legacy-fragment"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.08, duration: 0.34, ease: heroEase }}
+              >
+                Pro
+              </motion.span>
+              <svg viewBox="0 0 140 44" preserveAspectRatio="none" className="hero-marker hero-marker-pro" aria-hidden="true">
+                {[
+                  { d: "M6 30 C 30 12, 72 37, 134 13", delay: 0.2, width: 6 },
+                  { d: "M9 34 C 40 20, 84 40, 137 18", delay: 0.34, width: 4.8 },
+                ].map((line, index) => (
+                  <motion.path
+                    key={`pro-${index}`}
+                    className="hero-marker-path"
+                    d={line.d}
+                    strokeWidth={line.width}
+                    initial={{ opacity: 0, pathLength: 0 }}
+                    animate={{ opacity: 1, pathLength: 1 }}
+                    transition={{ delay: line.delay, duration: 0.62, ease: heroEase }}
+                  />
+                ))}
+              </svg>
+            </span>
+
+            <motion.span
+              className="hero-present-reveal"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: [0.9, 1.05, 1] }}
+              transition={{ delay: 0.54, duration: 0.72, ease: heroEase }}
+            >
+              Present
+            </motion.span>
+
+            <span className="hero-legacy-wrap">
+              <motion.span
+                className="hero-legacy-fragment"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.16, duration: 0.34, ease: heroEase }}
+              >
+                er
+              </motion.span>
+              <svg viewBox="0 0 120 42" preserveAspectRatio="none" className="hero-marker hero-marker-er" aria-hidden="true">
+                {[
+                  { d: "M5 29 C 32 13, 70 34, 114 12", delay: 0.46, width: 6 },
+                  { d: "M7 34 C 36 22, 78 37, 116 18", delay: 0.6, width: 4.8 },
+                ].map((line, index) => (
+                  <motion.path
+                    key={`er-${index}`}
+                    className="hero-marker-path"
+                    d={line.d}
+                    strokeWidth={line.width}
+                    initial={{ opacity: 0, pathLength: 0 }}
+                    animate={{ opacity: 1, pathLength: 1 }}
+                    transition={{ delay: line.delay, duration: 0.62, ease: heroEase }}
+                  />
+                ))}
+              </svg>
+            </span>
+          </span>
+          <motion.span
+            className="mt-2 text-3xl md:text-5xl lg:text-7xl font-medium tracking-tight text-white/72"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 1, duration: 0.46, ease: heroEase }}
+          >
+            like a pro
+          </motion.span>
+        </motion.h1>
+
+        <motion.div
+          className="flex items-center gap-3 mb-8 opacity-80"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 0.8, y: 0 }}
+          transition={{ delay: 1.15, duration: 0.42, ease: heroEase }}
+        >
           <div className="h-5 w-5 rounded-sm bg-primary flex items-center justify-center font-bold text-white text-[10px] shadow-[0_0_15px_rgba(var(--primary),0.5)]">
             <span className="translate-y-[0.5px]">P</span>
           </div>
           <span className="text-xs font-bold tracking-[0.2em] uppercase text-white/60">Present</span>
-        </div>
+        </motion.div>
         
-        <h1 className="text-6xl lg:text-[7rem] font-bold tracking-tight leading-none mb-8 text-white font-outfit flex flex-wrap items-center justify-center">
-          <span className="relative inline-block px-1">
-            <span className="text-white/20">Pro</span>
-            <svg 
-              viewBox="0 0 100 20" 
-              preserveAspectRatio="none" 
-              className="absolute top-1/2 left-[-5%] w-[110%] h-6 lg:h-10 -translate-y-1/2 text-primary drop-shadow-[0_0_8px_rgba(var(--primary),0.5)]"
-            >
-              <path 
-                d="M0 13 Q 50 16, 100 7" 
-                fill="none" 
-                stroke="currentColor" 
-                strokeWidth="5" 
-                strokeLinecap="round" 
-              />
-            </svg>
-          </span>
-          <span>Present</span>
-          <span className="ml-4 text-white/90">like a pro</span>
-        </h1>
-        
-        <p className="text-lg md:text-xl text-white/50 leading-relaxed max-w-2xl mb-12 font-medium">
+        <motion.p
+          className="text-lg md:text-xl text-white/50 leading-relaxed max-w-2xl mb-12 font-medium"
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 1.24, duration: 0.58, ease: heroEase }}
+        >
           Present is the definitive choice in live production & presentation software. Take your events to the next level with Present&apos;s intuitive features and stunning visuals.
-        </p>
+        </motion.p>
         
-        <div className="flex flex-wrap items-center justify-center gap-8">
-          <Link href="#" className="inline-flex h-14 items-center justify-center rounded-lg bg-white px-10 text-[15px] font-bold text-black shadow-xl transition-all hover:scale-[1.03] active:scale-[0.98]">
-            Subscribe
+        <motion.div
+          className="flex flex-wrap items-center justify-center gap-5"
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 1.34, duration: 0.54, ease: heroEase }}
+        >
+          <Link href="/auth/signup" className="inline-flex h-14 items-center justify-center gap-2 rounded-lg bg-white px-8 text-[15px] font-bold text-black shadow-xl transition-all hover:scale-[1.03] active:scale-[0.98]">
+            Get started
+            <ArrowRight className="h-5 w-5" />
           </Link>
-          <Link href="#" className="inline-flex h-14 items-center justify-center gap-2 group px-4 text-[15px] font-semibold text-white transition-colors hover:text-white/80">
-            Start a $0 trial <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+          <Link
+            href={desktopDownloadPath}
+            className="inline-flex h-14 items-center justify-center gap-2 rounded-lg border border-white/20 px-8 text-[15px] font-semibold text-white transition-all hover:border-white/35 hover:bg-white/5"
+          >
+            Download
+            <Download className="h-4 w-4" />
           </Link>
-        </div>
+        </motion.div>
       </div>
 
       {/* Main Hero Container */}
-      <div className="relative w-full max-w-6xl mx-auto z-20 px-4">
+      <motion.div
+        className="relative w-full max-w-6xl mx-auto z-20 px-4"
+        initial={{ opacity: 0, y: 24, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ delay: 1.48, duration: 0.74, ease: heroEase }}
+      >
         {/* Main large image */}
         <div className="relative aspect-[16/9] w-full rounded-2xl overflow-hidden shadow-[0_40px_100px_rgba(0,0,0,0.8)] ring-1 ring-white/10 group">
           <Image 
@@ -95,7 +190,7 @@ export function Hero() {
             </div>
           </div>
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }

@@ -60,21 +60,31 @@ const withCors = (request: Request, response: Response) => {
     return response;
   }
 
-  const headers = new Headers(response.headers);
-  headers.set("Access-Control-Allow-Origin", origin!);
-  headers.set("Access-Control-Allow-Credentials", "true");
-  headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  headers.set(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Requested-With",
-  );
-  appendVaryHeader(headers, "Origin");
+  const applyCorsHeaders = (headers: Headers) => {
+    headers.set("Access-Control-Allow-Origin", origin!);
+    headers.set("Access-Control-Allow-Credentials", "true");
+    headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    headers.set(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Requested-With",
+    );
+    appendVaryHeader(headers, "Origin");
+  };
 
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  try {
+    // Preserve native auth response headers (especially Set-Cookie)
+    // by mutating the original response whenever possible.
+    applyCorsHeaders(response.headers);
+    return response;
+  } catch {
+    const headers = new Headers(response.headers);
+    applyCorsHeaders(headers);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
 };
 
 export async function OPTIONS(request: Request) {

@@ -18,6 +18,17 @@ export const authComponent = createClient<any, typeof authSchema>(
 );
 
 export const createAuthOptions = (ctx: GenericCtx) => {
+  const isHttpsAuthBaseUrl = (process.env.BETTER_AUTH_URL ?? "").startsWith("https://");
+  const defaultCookieAttributes = isHttpsAuthBaseUrl
+    ? ({
+        sameSite: "none",
+        secure: true,
+        httpOnly: true,
+      } as const)
+    : ({
+        sameSite: "lax",
+      } as const);
+
   const envTrustedOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
@@ -52,6 +63,10 @@ export const createAuthOptions = (ctx: GenericCtx) => {
       }
 
       return trustedOrigins;
+    },
+    advanced: {
+      useSecureCookies: isHttpsAuthBaseUrl,
+      defaultCookieAttributes,
     },
     plugins: [
       convex({

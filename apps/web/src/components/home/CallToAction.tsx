@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { desktopDownloadPath } from "@/lib/download";
 
 export function CallToAction() {
   return (
@@ -11,7 +12,10 @@ export function CallToAction() {
               <p className="text-lg text-white/90 mb-10 leading-relaxed font-medium">
                 You can have confidence in your purchase. Our software offers fully-functional, free downloads along with free tutorials, user guides and customer support, even before you buy. What do you have to lose?
               </p>
-              <Link href="#" className="inline-flex h-14 items-center justify-center rounded-md bg-white px-8 text-base font-bold text-black shadow-lg hover:shadow-xl transition-all hover:scale-105">
+              <Link
+                href={desktopDownloadPath}
+                className="inline-flex h-14 items-center justify-center rounded-md bg-white px-8 text-base font-bold text-black shadow-lg hover:shadow-xl transition-all hover:scale-105"
+              >
                 Download Now
               </Link>
             </div>
