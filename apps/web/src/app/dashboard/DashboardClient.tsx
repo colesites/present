@@ -289,69 +289,85 @@ export function DashboardClient({
     setIsPending(true);
     setFeedback(null);
 
-    const nextLogo =
-      removeLogo
-        ? undefined
-        : logoMode === "upload"
-          ? uploadedLogo ?? undefined
-          : logoUrl.trim() || undefined;
+    try {
+      const nextLogo =
+        removeLogo
+          ? undefined
+          : logoMode === "upload"
+            ? uploadedLogo ?? undefined
+            : logoUrl.trim() || undefined;
 
-    const slug = name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)+/g, "");
+      const slug = name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/(^-|-$)+/g, "");
 
-    const { data, error: orgError } = await authClient.organization.create({
-      name,
-      slug,
-      logo: nextLogo,
-    });
-
-    if (orgError) {
-      setIsPending(false);
-      setFeedback(orgError.message || "Unable to create organization.");
-      return;
-    }
-
-    const syncResponse = await fetch("/api/onboarding/complete", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        orgName: name,
+      const { data, error: orgError } = await authClient.organization.create({
+        name,
+        slug,
         logo: nextLogo,
-      }),
-    });
+      });
 
-    const syncResult = (await syncResponse.json().catch(() => null)) as
-      | { error?: string }
-      | null;
+      if (orgError) {
+        // If the error is that the organization already exists, we can still try to sync it.
+        // This handles cases where the Better Auth side succeeded but the Convex side failed previously.
+        const errorMessage = orgError.message || "Unable to create organization.";
+        const isExistingOrgError =
+          errorMessage.toLowerCase().includes("already exists") ||
+          errorMessage.toLowerCase().includes("already taken");
 
-    if (!syncResponse.ok) {
+        if (!isExistingOrgError) {
+          setFeedback(errorMessage);
+          return;
+        }
+      }
+
+      const syncResponse = await fetch("/api/onboarding/complete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          orgName: name,
+          logo: nextLogo,
+        }),
+      });
+
+      const syncResult = (await syncResponse.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+
+      if (!syncResponse.ok) {
+        setFeedback(syncResult?.error || "Organization was created, but sync failed.");
+        return;
+      }
+
+      const createdOrganization: DashboardOrganizationListItem = {
+        id: data?.id ?? slug,
+        name,
+        slug,
+        logo: nextLogo,
+      };
+
+      setOrganizations((currentList) => [createdOrganization, ...currentList]);
+      setActiveOrganizationId(createdOrganization.id);
+      setCurrentOrg({
+        name,
+        logo: nextLogo,
+      });
+      setFeedback(null);
+      setIsOrganizationModalOpen(false);
+      router.refresh();
+    } catch (error) {
+      console.error("Failed to create organization:", error);
+      setFeedback(
+        error instanceof Error ? error.message : "An unexpected error occurred during creation."
+      );
+    } finally {
       setIsPending(false);
-      setFeedback(syncResult?.error || "Organization was created, but sync failed.");
-      return;
     }
-
-    const createdOrganization: DashboardOrganizationListItem = {
-      id: data?.id ?? slug,
-      name,
-      slug,
-      logo: nextLogo,
-    };
-
-    setOrganizations((currentList) => [createdOrganization, ...currentList]);
-    setActiveOrganizationId(createdOrganization.id);
-    setCurrentOrg({
-      name,
-      logo: nextLogo,
-    });
-    setIsPending(false);
-    setFeedback(null);
-    setIsOrganizationModalOpen(false);
-    router.refresh();
   };
+
 
   const handleSignOut = async () => {
     if (isSigningOut) {

@@ -12,15 +12,16 @@ import type * as admin from "../admin.js";
 import type * as auth from "../auth.js";
 import type * as categories from "../categories.js";
 import type * as http from "../http.js";
+import type * as libraries from "../libraries.js";
 import type * as lyrics from "../lyrics.js";
-import type * as organizations from "../organizations.js";
+import type * as orgScopes from "../orgScopes.js";
 import type * as personalCategories from "../personalCategories.js";
+import type * as personalLibraries from "../personalLibraries.js";
 import type * as personalServices from "../personalServices.js";
 import type * as personalSongs from "../personalSongs.js";
 import type * as playback from "../playback.js";
 import type * as playlists from "../playlists.js";
 import type * as services from "../services.js";
-import type * as songs from "../songs.js";
 import type * as users from "../users.js";
 
 import type {
@@ -34,15 +35,16 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   categories: typeof categories;
   http: typeof http;
+  libraries: typeof libraries;
   lyrics: typeof lyrics;
-  organizations: typeof organizations;
+  orgScopes: typeof orgScopes;
   personalCategories: typeof personalCategories;
+  personalLibraries: typeof personalLibraries;
   personalServices: typeof personalServices;
   personalSongs: typeof personalSongs;
   playback: typeof playback;
   playlists: typeof playlists;
   services: typeof services;
-  songs: typeof songs;
   users: typeof users;
 }>;
 

@@ -17,7 +17,7 @@ export async function POST(request: Request) {
       );
     }
 
-    await fetchAuthMutation(api.organizations.updateCurrent, {
+    await fetchAuthMutation(api.orgScopes.updateCurrent, {
       name: body.name.trim(),
       ...(body.logo ? { logo: body.logo } : {}),
       ...(body.clearLogo ? { clearLogo: true } : {}),

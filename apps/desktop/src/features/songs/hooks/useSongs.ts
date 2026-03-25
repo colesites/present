@@ -16,16 +16,17 @@ export function useSongs(
   const { orgId, userId } = input;
   // Use plain Convex query - no caching to avoid data conflicts
   const songs = useQuery(
-    orgId ? api.songs.listByOrg : api.personalSongs.listByUser,
+    orgId ? api.libraries.listByOrg : api.personalLibraries.listByUser,
     orgId ? { orgId } : userId ? { userId } : "skip",
   ) as
     | Song[]
     | undefined;
 
   // Hydration logic removed - online only
-  const createSong = useMutation(orgId ? api.songs.create : api.personalSongs.create);
-  const updateSong = useMutation(orgId ? api.songs.update : api.personalSongs.update);
-  const removeSong = useMutation(orgId ? api.songs.remove : api.personalSongs.remove);
+  const createSong = useMutation(orgId ? api.libraries.create : api.personalLibraries.create);
+  const ensureCurrentUser = useMutation(api.users.ensureCurrent);
+  const updateSong = useMutation(orgId ? api.libraries.update : api.personalLibraries.update);
+  const removeSong = useMutation(orgId ? api.libraries.remove : api.personalLibraries.remove);
 
   const [selectedSongId, setSelectedSongId] = useState<Id<"songs"> | null>(
     null,
@@ -85,7 +86,12 @@ export function useSongs(
     categoryId?: Id<"categories">,
   ) => {
     if (!title.trim()) return null;
-    if (!orgId && !userId) {
+    let effectiveUserId = userId;
+    if (!orgId && !effectiveUserId) {
+      const ensured = await ensureCurrentUser({});
+      effectiveUserId = (ensured as { userId?: Id<"users"> } | null)?.userId ?? null;
+    }
+    if (!orgId && !effectiveUserId) {
       throw new Error("Account not ready yet. Please wait a moment and try again.");
     }
     const slides = parseLyricsToSlides(lyrics);
@@ -99,7 +105,7 @@ export function useSongs(
             categoryId,
           } as any)
         : ({
-            userId,
+            userId: effectiveUserId,
             title: title.trim(),
             lyrics,
             slides,
@@ -115,11 +121,11 @@ export function useSongs(
     lyrics: string,
   ) => {
     const slides = parseLyricsToSlides(lyrics);
-    await updateSong({ songId, title, lyrics, slides } as any);
+    await updateSong({ libraryId: songId, title, lyrics, slides } as any);
   };
 
   const deleteSong = async (songId: Id<"songs">) => {
-    await removeSong({ songId } as any);
+    await removeSong({ libraryId: songId } as any);
     if (selectedSongId === songId) {
       setSelectedSongId(null);
     }

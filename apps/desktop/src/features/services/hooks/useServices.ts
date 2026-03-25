@@ -46,6 +46,7 @@ export function useServices(
     orgId ? { orgId } : userId ? { userId } : "skip",
   ) as Service[] | undefined;
   const createService = useMutation(orgId ? api.services.create : api.personalServices.create);
+  const ensureCurrentUser = useMutation(api.users.ensureCurrent);
   const renameService = useMutation(orgId ? api.services.rename : api.personalServices.rename);
   const removeService = useMutation(orgId ? api.services.remove : api.personalServices.remove);
   const addItemToService = useMutation(orgId ? api.services.addItem : api.personalServices.addItem);
@@ -124,13 +125,18 @@ export function useServices(
 
   const createNewService = async (name: string) => {
     if (!name.trim()) return null;
-    if (!orgId && !userId) {
+    let effectiveUserId = userId;
+    if (!orgId && !effectiveUserId) {
+      const ensured = await ensureCurrentUser({});
+      effectiveUserId = (ensured as { userId?: Id<"users"> } | null)?.userId ?? null;
+    }
+    if (!orgId && !effectiveUserId) {
       throw new Error("Account not ready yet. Please wait a moment and try again.");
     }
     const id = await createService(
       orgId
         ? ({ orgId, name: name.trim() } as any)
-        : ({ userId, name: name.trim() } as any),
+        : ({ userId: effectiveUserId, name: name.trim() } as any),
     );
     return id;
   };
@@ -216,10 +222,15 @@ export function useServices(
       await reorderServicesMutation({ orgId, fromIndex, toIndex } as any);
       return;
     }
-    if (!userId) {
+    let effectiveUserId = userId;
+    if (!effectiveUserId) {
+      const ensured = await ensureCurrentUser({});
+      effectiveUserId = (ensured as { userId?: Id<"users"> } | null)?.userId ?? null;
+    }
+    if (!effectiveUserId) {
       throw new Error("Account not ready yet. Please wait a moment and try again.");
     }
-    await reorderServicesMutation({ userId, fromIndex, toIndex } as any);
+    await reorderServicesMutation({ userId: effectiveUserId, fromIndex, toIndex } as any);
   };
 
   return {

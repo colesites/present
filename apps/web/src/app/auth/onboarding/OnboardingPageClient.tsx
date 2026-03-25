@@ -83,69 +83,79 @@ export default function OnboardingPageClient() {
     setIsLoading(true);
     setError(null);
 
-    const slug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
+    try {
+      const slug = orgName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/(^-|-$)+/g, "");
 
-    const { error: orgError } = await authClient.organization.create({
-      name: orgName,
-      slug,
-      logo: selectedLogo,
-    });
+      const { error: orgError } = await authClient.organization.create({
+        name: orgName,
+        slug,
+        logo: selectedLogo,
+      });
 
-    if (orgError) {
-      const errorMessage = orgError.message || "Failed to create organization";
-      const isExistingOrgError =
-        errorMessage.toLowerCase().includes("already exists") ||
-        errorMessage.toLowerCase().includes("already taken");
+      if (orgError) {
+        const errorMessage = orgError.message || "Failed to create organization";
+        const isExistingOrgError =
+          errorMessage.toLowerCase().includes("already exists") ||
+          errorMessage.toLowerCase().includes("already taken");
 
-      if (!isExistingOrgError) {
-        setIsLoading(false);
-        setError(errorMessage);
+        if (!isExistingOrgError) {
+          setError(errorMessage);
+          return;
+        }
+      }
+
+      let syncOrgName = orgName;
+      let syncLogo = selectedLogo;
+
+      if (orgError) {
+        const orgListResponse = await organizationApi.listOrganizations();
+        const matchedOrganization =
+          orgListResponse.data?.find(
+            (organization) =>
+              organization.slug === slug ||
+              organization.name.toLowerCase() === orgName.trim().toLowerCase(),
+          ) ?? orgListResponse.data?.[0];
+
+        if (matchedOrganization) {
+          syncOrgName = matchedOrganization.name;
+          syncLogo = matchedOrganization.logo ?? syncLogo;
+        }
+      }
+
+      const syncResponse = await fetch("/api/onboarding/complete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          orgName: syncOrgName,
+          logo: syncLogo,
+        }),
+      });
+
+      if (!syncResponse.ok) {
+        const payload = (await syncResponse.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+
+        setError(payload?.error || "Organization was created, but dashboard setup failed.");
         return;
       }
+
+      router.push("/dashboard?setup=1");
+    } catch (error) {
+      console.error("Failed to create organization during onboarding:", error);
+      setError(
+        error instanceof Error ? error.message : "An unexpected error occurred during setup."
+      );
+    } finally {
+      setIsLoading(false);
     }
-
-    let syncOrgName = orgName;
-    let syncLogo = selectedLogo;
-
-    if (orgError) {
-      const orgListResponse = await organizationApi.listOrganizations();
-      const matchedOrganization =
-        orgListResponse.data?.find(
-          (organization) =>
-            organization.slug === slug ||
-            organization.name.toLowerCase() === orgName.trim().toLowerCase(),
-        ) ?? orgListResponse.data?.[0];
-
-      if (matchedOrganization) {
-        syncOrgName = matchedOrganization.name;
-        syncLogo = matchedOrganization.logo ?? syncLogo;
-      }
-    }
-
-    const syncResponse = await fetch("/api/onboarding/complete", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        orgName: syncOrgName,
-        logo: syncLogo,
-      }),
-    });
-
-    setIsLoading(false);
-
-    if (!syncResponse.ok) {
-      const payload = (await syncResponse.json().catch(() => null)) as
-        | { error?: string }
-        | null;
-
-      setError(payload?.error || "Organization was created, but dashboard setup failed.");
-      return;
-    }
-
-    router.push("/dashboard?setup=1");
   };
+
 
   return (
     <div className="flex min-h-screen items-center justify-center p-4">

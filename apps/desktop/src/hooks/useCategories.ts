@@ -19,6 +19,7 @@ export function useCategories(input: {
     orgId ? api.categories.ensureDefaults : api.personalCategories.ensureDefaults,
   );
   const createCategory = useMutation(orgId ? api.categories.create : api.personalCategories.create);
+  const ensureCurrentUser = useMutation(api.users.ensureCurrent);
   const removeCategory = useMutation(orgId ? api.categories.remove : api.personalCategories.remove);
   const renameCategory = useMutation(orgId ? api.categories.update : api.personalCategories.update);
 
@@ -47,10 +48,15 @@ export function useCategories(input: {
       const id = await createCategory({ orgId, name: name.trim() } as any);
       return id;
     }
-    if (!userId) {
+    let effectiveUserId = userId;
+    if (!effectiveUserId) {
+      const ensured = await ensureCurrentUser({});
+      effectiveUserId = (ensured as { userId?: Id<"users"> } | null)?.userId ?? null;
+    }
+    if (!effectiveUserId) {
       throw new Error("Account not ready yet. Please wait a moment and try again.");
     }
-    return await createCategory({ userId, name: name.trim() } as any);
+    return await createCategory({ userId: effectiveUserId, name: name.trim() } as any);
   };
 
   const renameExistingCategory = async (

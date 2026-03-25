@@ -180,61 +180,23 @@ export function AuthControls() {
   };
 
   const handleCreateOrganization = async () => {
-    const input = window.prompt("Organization name");
-    const name = input?.trim();
-    if (!name) {
-      return;
-    }
-
-    const slug = name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)+/g, "");
-
-    if (!slug) {
-      setMenuError("Enter a valid organization name.");
-      return;
-    }
-
     setIsCreatingOrganization(true);
     setMenuError(null);
-
     try {
-      const organizationApi = authClient.organization as OrganizationApi;
-      const response = await organizationApi.create({
-        name,
-        slug,
-      });
+      const baseUrl =
+        process.env.BETTER_AUTH_URL ||
+        (process.env.NODE_ENV === "development"
+          ? "http://localhost:3001"
+          : "https://present.app");
+      const dashboardUrl = `${baseUrl.replace(/\/+$/, "")}/dashboard`;
 
-      if (response.error) {
-        setMenuError(response.error.message || "Unable to create organization.");
-        return;
+      if (window.electronAPI?.openExternalBrowser) {
+        await window.electronAPI.openExternalBrowser(dashboardUrl);
+      } else {
+        window.open(dashboardUrl, "_blank", "noopener,noreferrer");
       }
-
-      let organizationId = response.data?.id ?? null;
-      const nextOrganizations = await refreshOrganizations();
-
-      if (!organizationId) {
-        organizationId =
-          nextOrganizations.find((organization) => organization.slug === slug)?.id ??
-          null;
-      }
-
-      if (organizationId) {
-        const switchResponse = await organizationApi.setActive({
-          organizationId,
-        });
-        if (switchResponse.error) {
-          setMenuError(
-            switchResponse.error.message || "Organization created but not activated.",
-          );
-          return;
-        }
-      }
-
-      await refreshOrganizations();
     } catch (error) {
-      setMenuError(getErrorMessage(error, "Unable to create organization."));
+      setMenuError(getErrorMessage(error, "Unable to open dashboard."));
     } finally {
       setIsCreatingOrganization(false);
     }

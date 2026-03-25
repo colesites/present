@@ -15,16 +15,18 @@ export function useOrganization() {
       : null;
 
   const ensureCurrent = useMutation(api.users.ensureCurrent);
-  const ensureForAuthOrganization = useMutation(api.organizations.ensureForAuthOrganization);
+  const ensureForAuthOrganization = useMutation(api.orgScopes.ensureForAuthOrganization);
   const current = useQuery(api.users.getCurrentWithOrg);
   const currentUser = useQuery(api.users.getCurrent);
   const [ensuredOrgId, setEnsuredOrgId] = useState<Id<"organizations"> | null>(null);
+  const [ensuredUserId, setEnsuredUserId] = useState<Id<"users"> | null>(null);
   const lastEnsuredKeyRef = useRef<string | null>(null);
 
   // Initialize user on sign-in
   useEffect(() => {
     if (!isAuthenticated) {
       setEnsuredOrgId(null);
+      setEnsuredUserId(null);
       lastEnsuredKeyRef.current = null;
       return;
     }
@@ -48,7 +50,11 @@ export function useOrganization() {
 
         // Personal space (no active organization selected)
         const result = await ensureCurrent({});
+        const userId = (result as { userId?: Id<"users"> } | null)?.userId;
         const orgId = (result as { orgId?: Id<"organizations"> } | null)?.orgId;
+        if (userId) {
+          setEnsuredUserId(userId);
+        }
         if (orgId) {
           setEnsuredOrgId(orgId);
         }
@@ -64,8 +70,8 @@ export function useOrganization() {
     [current, ensuredOrgId],
   );
   const userId = useMemo(
-    () => current?.user?._id ?? currentUser?._id ?? null,
-    [current, currentUser],
+    () => current?.user?._id ?? currentUser?._id ?? ensuredUserId ?? null,
+    [current, currentUser, ensuredUserId],
   );
 
   return {
