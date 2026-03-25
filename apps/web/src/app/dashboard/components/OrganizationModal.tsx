@@ -8,7 +8,6 @@ import { getInitials } from "../types";
 interface OrganizationModalProps {
   isOpen: boolean;
   isPending: boolean;
-  isLoading: boolean;
   orgName: string;
   logoMode: "url" | "upload";
   logoUrl: string;
@@ -26,7 +25,6 @@ interface OrganizationModalProps {
 export function OrganizationModal({
   isOpen,
   isPending,
-  isLoading,
   orgName,
   logoMode,
   logoUrl,
@@ -87,7 +85,7 @@ export function OrganizationModal({
                 className="w-full rounded-2xl border border-[#e8ecf4] px-4 py-3 text-sm text-[#232946] outline-none transition placeholder:text-[#a5afc0] focus:border-[#9eb7e5]"
                 placeholder="Grace City Church"
                 required
-                disabled={isPending || isLoading}
+                disabled={isPending}
               />
             </div>
 
@@ -154,7 +152,7 @@ export function OrganizationModal({
                   onChange={(event) => onLogoUrlChange(event.target.value)}
                   className="w-full rounded-2xl border border-[#e8ecf4] bg-white px-4 py-3 text-sm text-[#232946] outline-none transition placeholder:text-[#a5afc0] focus:border-[#9eb7e5]"
                   placeholder="https://example.com/logo.png"
-                  disabled={isPending || isLoading}
+                  disabled={isPending}
                 />
               ) : (
                 <label
@@ -174,7 +172,7 @@ export function OrganizationModal({
                     accept="image/png,image/jpeg,image/webp,image/svg+xml"
                     className="hidden"
                     onChange={onLogoUpload}
-                    disabled={isPending || isLoading}
+                    disabled={isPending}
                   />
                 </label>
               )}
@@ -202,10 +200,10 @@ export function OrganizationModal({
             </button>
             <button
               type="submit"
-              disabled={isPending || isLoading}
+              disabled={isPending}
               className="inline-flex h-12 items-center justify-center rounded-2xl bg-[#232946] px-5 text-sm font-semibold text-white transition hover:bg-[#1c223f] disabled:opacity-60"
             >
-              {isLoading ? "Loading..." : isPending ? "Creating..." : "Create organization"}
+              {isPending ? "Creating..." : "Create organization"}
             </button>
           </div>
         </form>
@@ -213,3 +211,4 @@ export function OrganizationModal({
     </div>
   );
 }
+

@@ -52,9 +52,9 @@ export function DashboardClient({
   const [currentOrg, setCurrentOrg] = useState<DashboardOrganization | null>(org);
   const [organizations, setOrganizations] = useState<DashboardOrganizationListItem[]>([]);
   const [activeOrganizationId, setActiveOrganizationId] = useState<string | null>(null);
-  const [isLoadingOrganization, setIsLoadingOrganization] = useState(true);
   const [isOrganizationModalOpen, setIsOrganizationModalOpen] = useState(false);
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
+
 
   const [orgName, setOrgName] = useState(org?.name ?? "");
   const [logoMode, setLogoMode] = useState<"url" | "upload">("url");
@@ -128,10 +128,25 @@ export function DashboardClient({
     let cancelled = false;
 
     const loadOrganizations = async () => {
-      setIsLoadingOrganization(true);
+
+
+      const timeoutId = setTimeout(() => {
+        if (!cancelled) {
+          console.warn("Organization list fetch timed out.");
+          setOrganizations([]);
+          setActiveOrganizationId(null);
+          setCurrentOrg(null);
+        }
+      }, 8000); // 8 second timeout
+
 
       try {
         const response = await organizationApi.listOrganizations();
+        
+        if (cancelled) {
+          return;
+        }
+
         const list = (response.data ?? []).map((organization) => ({
           id: organization.id,
           name: organization.name,
@@ -139,10 +154,6 @@ export function DashboardClient({
           logo: organization.logo ?? undefined,
           createdAt: organization.createdAt,
         }));
-
-        if (cancelled) {
-          return;
-        }
 
         const sessionActiveOrganizationId =
           typeof session.session.activeOrganizationId === "string"
@@ -164,12 +175,14 @@ export function DashboardClient({
               }
             : null,
         );
+      } catch (error) {
+        console.error("Failed to load organizations:", error);
       } finally {
-        if (!cancelled) {
-          setIsLoadingOrganization(false);
-        }
+        clearTimeout(timeoutId);
       }
     };
+
+
 
     void loadOrganizations();
 
@@ -375,22 +388,32 @@ export function DashboardClient({
     }
 
     setIsSigningOut(true);
+    setFeedback(null);
 
     try {
-      await authClient.signOut();
-    } finally {
-      router.replace("/auth/login");
-      router.refresh();
+      const { error } = await authClient.signOut();
+      if (error) {
+        setFeedback(error.message || "Failed to sign out. Please try again.");
+        setIsSigningOut(false);
+        return;
+      }
+
+      // Use window.location.href for a hard reload to clear all client-side state
+      window.location.href = "/auth/login";
+    } catch (error) {
+      console.error("Sign out exception:", error);
+      setFeedback("An unexpected error occurred during sign out.");
       setIsSigningOut(false);
     }
   };
+
 
   if (isSessionPending) {
     return (
       <div className="fixed inset-0 box-border overflow-hidden bg-[#111111] px-6 py-8 text-white">
         <div className="flex h-full items-center justify-center rounded-[36px] bg-[#191919]">
           <div className="rounded-full bg-white/6 px-5 py-3 text-sm text-white/72">
-            Loading workspace...
+            Verifying session...
           </div>
         </div>
       </div>
@@ -400,6 +423,7 @@ export function DashboardClient({
   return (
     <>
       <div className="fixed inset-0 box-border overflow-hidden bg-[#111111] px-10 py-10">
+
         <div className="mx-auto flex h-full min-h-0 w-full max-w-[1700px] items-stretch overflow-hidden">
           <div className="flex w-full min-h-0 items-stretch gap-14 overflow-hidden">
             <DashboardSidebar
@@ -422,9 +446,8 @@ export function DashboardClient({
                 void handleOrganizationSwitch(organization);
               }}
               isSigningOut={isSigningOut}
-              onSignOut={() => {
-                void handleSignOut();
-              }}
+              onSignOut={handleSignOut}
+
             />
             <main className="h-full max-h-full min-h-0 min-w-0 max-w-[1320px] flex-1 self-stretch overflow-y-auto overflow-x-hidden overscroll-contain rounded-[56px] border border-[#e8e8e8] bg-white shadow-[0_28px_76px_rgba(0,0,0,0.08)] [scrollbar-gutter:stable]">
               {section === "dashboard" ? (
@@ -443,9 +466,8 @@ export function DashboardClient({
                   currentOrg={currentOrg}
                   songs={sortedSongs}
                   isSigningOut={isSigningOut}
-                  onSignOut={() => {
-                    void handleSignOut();
-                  }}
+                  onSignOut={handleSignOut}
+
                 />
               )}
             </main>
@@ -456,8 +478,8 @@ export function DashboardClient({
       <OrganizationModal
         isOpen={isOrganizationModalOpen}
         isPending={isPending}
-        isLoading={isLoadingOrganization}
         orgName={orgName}
+
         logoMode={logoMode}
         logoUrl={logoUrl}
         logoPreview={logoPreview}

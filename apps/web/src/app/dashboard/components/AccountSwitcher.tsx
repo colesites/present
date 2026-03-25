@@ -178,9 +178,9 @@ export function AccountSwitcher({
             <button
               type="button"
               disabled={isSigningOut}
-              onClick={() => {
+              onClick={async () => {
+                await onSignOut();
                 onClose();
-                onSignOut();
               }}
               className="flex w-full items-center justify-center gap-2 rounded-[22px] border border-white/15 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
             >
