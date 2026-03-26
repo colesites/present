@@ -52,8 +52,8 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^1.1.0",
-    "@auth/core": "0.37.0",
-    "@convex-dev/auth": "^0.0.76",
+    "@auth/core": "^0.37.0",
+    "@convex-dev/auth": "^0.0.91",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
     "@present/backend": "workspace:*",
