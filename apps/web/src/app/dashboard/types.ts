@@ -26,7 +26,6 @@ export interface DashboardOrganizationListItem {
   slug: string;
   logo?: string;
   createdAt?: string | Date;
-  authOrganizationId?: string;
 }
 
 export interface DashboardServiceItem {

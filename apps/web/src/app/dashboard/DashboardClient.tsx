@@ -3,10 +3,11 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { useMutation, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
+import { useAuthActions } from "@convex-dev/auth/react";
 
 import { api } from "../../../../../packages/backend/convex/_generated/api";
 import { useRouter } from "next/navigation";
-import { authClient } from "@/lib/auth-client";
 import { useWorkspaceStore } from "../../../../../packages/shared/src/store/workspace";
 import { DashboardSidebar } from "./components/DashboardSidebar";
 import { DashboardOverview } from "./components/DashboardOverview";
@@ -22,43 +23,17 @@ import {
 
 const MAX_LOGO_FILE_SIZE = 4 * 1024 * 1024;
 
-type OrganizationApi = typeof authClient.organization & {
-  listOrganizations: () => Promise<{
-    data?: Array<{
-      id: string;
-      name: string;
-      slug: string;
-      logo?: string | null;
-      createdAt?: string | Date;
-    }>;
-  }>;
-  setActiveOrganization: (input: { organizationId: string }) => Promise<{
-    error?: { message?: string } | null;
-  }>;
-};
-
-type OneTimeTokenApi = {
-  oneTimeToken: {
-    generate: () => Promise<{
-      data?: { token?: string | null } | null;
-      error?: { message?: string } | null;
-    }>;
-  };
-};
-
 export function DashboardClient({
   org,
   libraryItems,
   shouldAutoOpen,
   section,
 }: DashboardClientProps) {
-
-
   const router = useRouter();
-  const { data: session, isPending: isSessionPending } = authClient.useSession();
-  const organizationApi = authClient.organization as OrganizationApi;
+  const { isAuthenticated, isLoading: isSessionPending } = useConvexAuth();
+  const { signOut } = useAuthActions();
+  const currentUser = useQuery(api.users.getCurrentUser);
   const syncOrganization = useMutation(api.users.createOrganization);
-  const linkAuthOrg = useMutation(api.users.linkAuthOrganization);
 
   const { type: activeWorkspaceType, id: activeWorkspaceId, setWorkspace } = useWorkspaceStore();
 
@@ -79,12 +54,10 @@ export function DashboardClient({
 
   const nativeOrganizations = useQuery(api.users.listMyOrganizations);
 
-  
   useEffect(() => {
     if (nativeOrganizations) {
       const list: DashboardOrganizationListItem[] = (nativeOrganizations as Array<{
         id: string;
-        authOrganizationId?: string;
         name: string;
         slug: string;
         logo?: string | null;
@@ -92,7 +65,6 @@ export function DashboardClient({
         createdAt: number;
       }>).map((org) => ({
         id: org.id,
-        authOrganizationId: org.authOrganizationId,
         name: org.name,
         slug: org.slug,
         logo: org.logo ?? undefined,
@@ -101,9 +73,6 @@ export function DashboardClient({
 
       setOrganizations(list);
 
-      // We don't need to auto-set the active workspace here anymore if it's managed by Zustand,
-      // but if the activeorg is null and we have an organization we could fallback.
-      // For now, respect the Zustand store.
       const activeOrg = activeWorkspaceType === "organization"
         ? list.find((org) => org.id === activeWorkspaceId) ?? null
         : null;
@@ -111,8 +80,6 @@ export function DashboardClient({
       setCurrentOrg(activeOrg);
     }
   }, [nativeOrganizations, activeWorkspaceType, activeWorkspaceId]);
-
-
 
   const [orgName, setOrgName] = useState(org?.name ?? "");
   const [logoMode, setLogoMode] = useState<"url" | "upload">("url");
@@ -125,24 +92,14 @@ export function DashboardClient({
   const [orgType, setOrgType] = useState("church");
   const [userRole, setUserRole] = useState("tech-director");
 
-
   const [isPending, setIsPending] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isSwitchingOrganization, setIsSwitchingOrganization] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
-  const sessionUser = (session?.user ?? null) as Record<string, unknown> | null;
-  const viewerName =
-    (typeof sessionUser?.name === "string" && sessionUser.name) ||
-    (typeof sessionUser?.email === "string" && sessionUser.email) ||
-    "Your account";
-  const viewerEmail = (typeof sessionUser?.email === "string" && sessionUser.email) || "";
-  const viewerImage =
-    (typeof sessionUser?.image === "string" && sessionUser.image) ||
-    (typeof sessionUser?.picture === "string" && sessionUser.picture) ||
-    (typeof sessionUser?.avatar === "string" && sessionUser.avatar) ||
-    (typeof sessionUser?.imageUrl === "string" && sessionUser.imageUrl) ||
-    null;
+  const viewerName = currentUser?.name || currentUser?.email || "Your account";
+  const viewerEmail = currentUser?.email || "";
+  const viewerImage = currentUser?.image || null;
 
   useEffect(() => {
     setCurrentOrg(org);
@@ -176,27 +133,12 @@ export function DashboardClient({
       return;
     }
 
-    if (!session?.session) {
+    if (!isAuthenticated) {
       router.replace("/auth/login");
     }
-  }, [isSessionPending, router, session]);
+  }, [isSessionPending, router, isAuthenticated]);
 
   const openDesktopApp = useCallback(async () => {
-
-    const oneTimeTokenApi = authClient as typeof authClient & OneTimeTokenApi;
-
-    try {
-      const tokenResponse = await oneTimeTokenApi.oneTimeToken.generate();
-      const token = tokenResponse.data?.token;
-
-      if (token) {
-        window.location.href = `present://auth-callback?token=${encodeURIComponent(token)}`;
-        return;
-      }
-    } catch {
-      // Fall back to plain app open when token generation fails.
-    }
-
     window.location.href = "present://open";
   }, []);
 
@@ -226,11 +168,9 @@ export function DashboardClient({
     setIsOrganizationModalOpen(true);
   };
 
-
   const handleSwitchContext = async (
     type: "personal" | "organization",
     id: string | null,
-    authOrgId?: string | null,
   ) => {
     if (type === activeWorkspaceType && id === activeWorkspaceId) {
       setIsAccountSwitcherOpen(false);
@@ -240,31 +180,16 @@ export function DashboardClient({
     setIsSwitchingOrganization(true);
     setFeedback(null);
 
-    // Update global store
     setWorkspace(type, id);
 
-    try {
-      if (type === "organization" && authOrgId) {
-        await organizationApi.setActiveOrganization({
-          organizationId: authOrgId,
-        });
-      } else if (type === "personal") {
-        await organizationApi.setActiveOrganization({
-          organizationId: "", // Clear BetterAuth active org
-        });
-      }
-    } catch (err) {
-      console.warn("Failed to sync BetterAuth session, but context changed:", err);
-    } finally {
-      setIsSwitchingOrganization(false);
-      setIsAccountSwitcherOpen(false);
-      
-      const nextActiveOrg = type === "organization" 
-        ? organizations.find((o) => o.id === id) ?? null 
-        : null;
-      
-      setCurrentOrg(nextActiveOrg ? { name: nextActiveOrg.name, logo: nextActiveOrg.logo } : null);
-    }
+    setIsSwitchingOrganization(false);
+    setIsAccountSwitcherOpen(false);
+    
+    const nextActiveOrg = type === "organization" 
+      ? organizations.find((o) => o.id === id) ?? null 
+      : null;
+    
+    setCurrentOrg(nextActiveOrg ? { name: nextActiveOrg.name, logo: nextActiveOrg.logo } : null);
     setIsAccountSwitcherOpen(false);
     router.refresh();
   };
@@ -315,60 +240,13 @@ export function DashboardClient({
             ? uploadedLogo ?? undefined
             : logoUrl.trim() || undefined;
 
-      // STEP 1: Create in Convex FIRST (source of truth)
-      // If this fails, we never touch BetterAuth — no orphaned records.
-      let convexResult;
-      try {
-        convexResult = await syncOrganization({
-          orgName: name,
-          logo: nextLogo,
-          orgType,
-          userRole,
-        });
-      } catch (convexError: unknown) {
-        console.error("Convex organization creation failed:", convexError);
-        const msg = convexError instanceof Error ? convexError.message : String(convexError);
-        setFeedback(`Failed to create organization: ${msg}`);
-        return;
-      }
+      await syncOrganization({
+        orgName: name,
+        logo: nextLogo,
+        orgType,
+        userRole,
+      });
 
-      // STEP 2: Now create in BetterAuth (secondary, for auth session linkage)
-      const slug = name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/(^-|-$)+/g, "");
-
-      try {
-        const { data, error: orgError } = await authClient.organization.create({
-          name,
-          slug,
-          logo: nextLogo,
-        });
-
-        if (data?.id && convexResult) {
-          // Link the BetterAuth org ID to the Convex org
-          // This is best-effort — if it fails, the org still exists in Convex
-          try {
-            await linkAuthOrg({
-              orgId: convexResult.orgId,
-              authOrganizationId: data.id,
-            });
-          } catch (linkError) {
-            console.warn("Failed to link BetterAuth org to Convex, but org was created:", linkError);
-          }
-        }
-
-
-        if (orgError) {
-          // BetterAuth failed, but org is in Convex — that's OK, log it
-          console.warn("BetterAuth org creation failed (Convex org exists):", orgError.message);
-        }
-      } catch (authError) {
-        // BetterAuth creation failed entirely - org still exists in Convex, which is fine
-        console.warn("BetterAuth org creation threw (Convex org exists):", authError);
-      }
-
-      // Success — the org is in Convex (the source of truth)
       setIsOrganizationModalOpen(false);
       setOrgName("");
       setOrgType("church");
@@ -388,8 +266,6 @@ export function DashboardClient({
     }
   };
 
-
-
   const handleSignOut = async () => {
     if (isSigningOut) {
       return;
@@ -399,14 +275,7 @@ export function DashboardClient({
     setFeedback(null);
 
     try {
-      const { error } = await authClient.signOut();
-      if (error) {
-        setFeedback(error.message || "Failed to sign out. Please try again.");
-        setIsSigningOut(false);
-        return;
-      }
-
-      // Use window.location.href for a hard reload to clear all client-side state
+      await signOut();
       window.location.href = "/auth/login";
     } catch (error) {
       console.error("Sign out exception:", error);
@@ -414,7 +283,6 @@ export function DashboardClient({
       setIsSigningOut(false);
     }
   };
-
 
   if (isSessionPending) {
     return (
@@ -431,7 +299,6 @@ export function DashboardClient({
   return (
     <>
       <div className="fixed inset-0 box-border overflow-hidden bg-[#111111] px-10 py-10">
-
         <div className="mx-auto flex h-full min-h-0 w-full max-w-[1700px] items-stretch overflow-hidden">
           <div className="flex w-full min-h-0 items-stretch gap-14 overflow-hidden">
             <DashboardSidebar
@@ -454,7 +321,6 @@ export function DashboardClient({
               onSwitchContext={handleSwitchContext}
               isSigningOut={isSigningOut}
               onSignOut={handleSignOut}
-
             />
             <main className="h-full max-h-full min-h-0 min-w-0 max-w-[1320px] flex-1 self-stretch overflow-y-auto overflow-x-hidden overscroll-contain rounded-[56px] border border-[#e8e8e8] bg-white shadow-[0_28px_76px_rgba(0,0,0,0.08)] [scrollbar-gutter:stable]">
               {section === "dashboard" ? (
@@ -508,7 +374,6 @@ export function DashboardClient({
           setLogoMode(mode);
           setRemoveLogo(false);
         }}
-
         onLogoUrlChange={(value) => {
           setRemoveLogo(false);
           setUploadedLogo(null);

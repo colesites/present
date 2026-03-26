@@ -1,10 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-// This file contains legacy BetterAuth organization code
-// Most of this is no longer needed with Convex Auth
-// Keeping minimal functionality for now
-
 export const list = query({
   args: {},
   handler: async (ctx) => {

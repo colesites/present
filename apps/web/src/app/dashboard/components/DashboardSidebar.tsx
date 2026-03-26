@@ -30,7 +30,7 @@ interface DashboardSidebarProps {
   onToggleAccountSwitcher: () => void;
   onCloseAccountSwitcher: () => void;
   onCreateOrganization: () => void;
-  onSwitchContext: (type: "personal" | "organization", id: string | null, authOrgId?: string | null) => void;
+  onSwitchContext: (type: "personal" | "organization", id: string | null) => void;
   isSigningOut: boolean;
   onSignOut: () => void;
 }

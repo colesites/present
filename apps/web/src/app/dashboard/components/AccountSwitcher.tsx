@@ -16,7 +16,7 @@ interface AccountSwitcherProps {
   onToggle: () => void;
   onClose: () => void;
   onCreateOrganization: () => void;
-  onSwitchContext: (type: "personal" | "organization", id: string | null, authOrgId?: string | null) => void;
+  onSwitchContext: (type: "personal" | "organization", id: string | null) => void;
   isSigningOut: boolean;
   onSignOut: () => void;
 }
@@ -180,7 +180,7 @@ export function AccountSwitcher({
                     key={organization.id}
                     type="button"
                     onClick={() => {
-                      onSwitchContext("organization", organization.id, organization.authOrganizationId);
+                      onSwitchContext("organization", organization.id);
                     }}
                     disabled={isSwitching}
                     className={`flex w-full items-center gap-3 rounded-[22px] border px-4 py-3 text-left transition ${
