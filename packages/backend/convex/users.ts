@@ -10,12 +10,18 @@ export const getCurrentUser = query({
       return null;
     }
     
+    // Get user from Convex Auth's users table
+    const user = await ctx.db.get(identity.subject as Id<"users">);
+    if (!user) {
+      return null;
+    }
+    
     // Return user info from Convex Auth identity
     return {
       _id: identity.subject as Id<"users">,
-      name: identity.name,
-      email: identity.email,
-      image: identity.pictureUrl,
+      name: user.name ?? identity.name,
+      email: user.email ?? identity.email,
+      image: user.image ?? identity.pictureUrl,
     };
   },
 });
@@ -42,12 +48,22 @@ export const getCurrentWithOrg = query({
     }
 
     const user = await ctx.db.get(identity.subject as Id<"users">);
-    if (!user || !("orgId" in user)) {
+    if (!user) {
       return null;
     }
 
-    const org = await ctx.db.get(user.orgId);
-    return { user, org };
+    // Get user profile which has the orgId
+    const userProfile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .first();
+
+    if (!userProfile) {
+      return null;
+    }
+
+    const org = await ctx.db.get(userProfile.orgId);
+    return { user, org, userProfile };
   },
 });
 
@@ -59,25 +75,34 @@ export const listMyOrganizations = query({
       return [];
     }
 
-    // For now, return the single organization the user belongs to
     const user = await ctx.db.get(identity.subject as Id<"users">);
-    if (!user || !("orgId" in user)) {
+    if (!user) {
       return [];
     }
 
-    const org = await ctx.db.get(user.orgId);
-    if (!org || !("name" in org)) {
-      return [];
-    }
+    // Get all user profiles for this user (they might belong to multiple orgs)
+    const userProfiles = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .collect();
 
-    return [{
-      id: org._id,
-      name: org.name,
-      slug: org.slug,
-      logo: org.logo ?? null,
-      role: user.role,
-      createdAt: org.createdAt,
-    }];
+    const organizations = await Promise.all(
+      userProfiles.map(async (profile) => {
+        const org = await ctx.db.get(profile.orgId);
+        if (!org) return null;
+        
+        return {
+          id: org._id,
+          name: org.name,
+          slug: org.slug,
+          logo: org.logo ?? null,
+          role: profile.role,
+          createdAt: org.createdAt,
+        };
+      })
+    );
+
+    return organizations.filter((org) => org !== null);
   },
 });
 
@@ -94,13 +119,21 @@ export const ensureCurrent = mutation({
       throw new ConvexError("Not authenticated");
     }
 
-    // Check if user record already exists
-    const existingUser = await ctx.db.get(identity.subject as Id<"users">);
+    const user = await ctx.db.get(identity.subject as Id<"users">);
+    if (!user) {
+      throw new ConvexError("User not found");
+    }
+
+    // Check if user already has a profile
+    const existingProfile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .first();
     
-    if (existingUser && "orgId" in existingUser) {
+    if (existingProfile) {
       // Update existing org if metadata provided
       if (args.orgName !== undefined || args.logo !== undefined || args.orgType !== undefined) {
-        await ctx.db.patch(existingUser.orgId, {
+        await ctx.db.patch(existingProfile.orgId, {
           ...(args.orgName !== undefined ? { name: args.orgName } : {}),
           ...(args.logo !== undefined ? { logo: args.logo } : {}),
           ...(args.orgType !== undefined ? { orgType: args.orgType } : {}),
@@ -109,17 +142,17 @@ export const ensureCurrent = mutation({
 
       // Update user role if provided
       if (args.userRole !== undefined) {
-        await ctx.db.patch(existingUser._id, {
+        await ctx.db.patch(existingProfile._id, {
           userRole: args.userRole,
         });
       }
 
-      return { userId: existingUser._id, orgId: existingUser.orgId };
+      return { userId: user._id, orgId: existingProfile.orgId };
     }
 
-    // Create new organization and user
+    // Create new organization and user profile
     const now = Date.now();
-    const orgName = args.orgName || identity.name || identity.email || "Untitled Organization";
+    const orgName = args.orgName || user.name || user.email || "Untitled Organization";
     
     const slug = orgName
       .toLowerCase()
@@ -134,16 +167,15 @@ export const ensureCurrent = mutation({
       createdAt: now,
     });
 
-    const newUserId = await ctx.db.insert("users", {
+    const profileId = await ctx.db.insert("userProfiles", {
+      userId: user._id,
       orgId,
-      email: identity.email ?? undefined,
-      name: identity.name ?? undefined,
       role: "admin",
       userRole: args.userRole ?? undefined,
       createdAt: now,
     });
 
-    return { userId: newUserId, orgId };
+    return { userId: user._id, orgId, profileId };
   },
 });
 
@@ -160,6 +192,11 @@ export const createOrganization = mutation({
       throw new ConvexError("Not authenticated");
     }
 
+    const user = await ctx.db.get(identity.subject as Id<"users">);
+    if (!user) {
+      throw new ConvexError("User not found");
+    }
+
     const now = Date.now();
     const slug = args.orgName
       .toLowerCase()
@@ -174,15 +211,14 @@ export const createOrganization = mutation({
       createdAt: now,
     });
 
-    const newUserId = await ctx.db.insert("users", {
+    const profileId = await ctx.db.insert("userProfiles", {
+      userId: user._id,
       orgId,
-      email: identity.email ?? undefined,
-      name: identity.name ?? undefined,
       role: "admin",
       userRole: args.userRole ?? undefined,
       createdAt: now,
     });
 
-    return { userId: newUserId, orgId };
+    return { userId: user._id, orgId, profileId };
   },
 });
