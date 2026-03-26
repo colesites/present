@@ -93,3 +93,7 @@ typings/
 out/
 
 .env.local
+
+# Convex
+_generated/
+convex/_generated/

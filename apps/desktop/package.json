@@ -1,7 +1,8 @@
 {
   "name": "@present/desktop",
   "productName": "present",
-  "version": "1.0.0",
+  "version": "0.1.0",
+
   "description": "My Electron application description",
   "main": ".webpack/main",
   "private": true,
