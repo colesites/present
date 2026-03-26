@@ -25,7 +25,9 @@ const getCatalogUrlFromRuntime = (): string => {
   return (
     runtimeEnv?.NEXT_PUBLIC_SCRIPTURE_CATALOG_URL
     ?? runtimeEnv?.SCRIPTURE_CATALOG_URL
-    ?? "https://present.app/bibles/catalog.json"
+    ?? runtimeEnv?.WEB_APP_URL
+      ? `${runtimeEnv.WEB_APP_URL}/bibles/catalog.json`
+      : "https://present-gha.vercel.app/bibles/catalog.json"
   );
 };
 

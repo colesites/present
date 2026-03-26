@@ -78,10 +78,10 @@ export function AuthControls() {
     setIsCreatingOrganization(true);
     setMenuError(null);
     try {
-      const baseUrl =
-        process.env.NODE_ENV === "development"
+      const baseUrl = process.env.WEB_APP_URL ||
+        (process.env.NODE_ENV === "development"
           ? "http://localhost:3001"
-          : "https://present.app";
+          : "https://present-gha.vercel.app");
       const dashboardUrl = `${baseUrl.replace(/\/+$/, "")}/dashboard`;
 
       if (window.electronAPI?.openExternalBrowser) {
