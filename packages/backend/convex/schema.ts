@@ -5,6 +5,17 @@ import { authTables } from "@convex-dev/auth/server";
 export default defineSchema({
   ...authTables,
 
+  // Organization-specific user profile data
+  userProfiles: defineTable({
+    userId: v.id("users"), // References Convex Auth's users table
+    orgId: v.id("organizations"),
+    role: v.string(), // "admin", "user", or custom roles like "pastor"
+    userRole: v.optional(v.string()), // The specific functional role like "tech-director"
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_org", ["orgId"]),
+
   organizations: defineTable({
     name: v.string(),
     slug: v.string(),
@@ -14,17 +25,6 @@ export default defineSchema({
   })
     .index("by_name", ["name"])
     .index("by_slug", ["slug"]),
-
-  users: defineTable({
-    orgId: v.id("organizations"),
-    email: v.optional(v.string()),
-    name: v.optional(v.string()),
-    role: v.string(), // "admin", "user", or custom roles like "pastor"
-    userRole: v.optional(v.string()), // The specific functional role like "tech-director"
-    createdAt: v.number(),
-  })
-    .index("by_org", ["orgId"])
-    .index("by_email", ["email"]),
   // Categories for organizing library items (Songs, Flows, Hymns, custom)
   categories: defineTable({
     orgId: v.id("organizations"),
