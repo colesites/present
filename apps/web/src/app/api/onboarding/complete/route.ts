@@ -16,12 +16,17 @@ export async function POST(request: Request) {
       ...(body.authOrganizationId ? { authOrganizationId: body.authOrganizationId } : {}),
     });
 
-
+    console.log("Onboarding sync successful", { 
+      orgName: body.orgName, 
+      authOrgId: body.authOrganizationId 
+    });
     return Response.json({ ok: true });
   } catch (error) {
+    console.error("Onboarding sync failed:", error);
     const message =
       error instanceof Error ? error.message : "Unable to complete onboarding";
 
     return Response.json({ error: message }, { status: 500 });
   }
 }
+

@@ -205,9 +205,13 @@ export const ensureCurrent = mutation({
         const existingLink = await ctx.db
           .query("organizationLinks")
           .withIndex("by_auth_org", (q) => q.eq("authOrganizationId", args.authOrganizationId!))
-          .unique();
+          .first();
         
         if (!existingLink) {
+          console.log("Linking existing Convex org to BetterAuth org", { 
+            orgId: existing.orgId, 
+            authOrgId: args.authOrganizationId 
+          });
           await ctx.db.insert("organizationLinks", {
             authOrganizationId: args.authOrganizationId,
             orgId: existing.orgId,
@@ -215,6 +219,7 @@ export const ensureCurrent = mutation({
           });
         }
       }
+
 
       return { userId: existing._id, orgId: existing.orgId };
     }
@@ -234,14 +239,31 @@ export const ensureCurrent = mutation({
       .replace(/(^-|-$)+/g, "");
 
     // Create new organization for the new user
-    const orgId = await ctx.db.insert("organizations", {
-      name: orgName,
-      slug,
-      ...(args.logo !== undefined ? { logo: args.logo } : {}),
-      createdAt: now,
-    });
+    // First, check for slug collision to avoid index collision errors
+    let orgId: any;
+    const existingOrgBySlug = await ctx.db
+      .query("organizations")
+      .withIndex("by_slug", (q) => q.eq("slug", slug))
+      .first();
 
+    if (existingOrgBySlug) {
+      console.log("Found existing org by slug collision", { slug, orgId: existingOrgBySlug._id });
+      orgId = existingOrgBySlug._id;
+      // Optionally update logo if provided
+      if (args.logo) {
+        await ctx.db.patch(orgId, { logo: args.logo });
+      }
+    } else {
+      console.log("Creating new Convex organization", { name: orgName, slug });
+      orgId = await ctx.db.insert("organizations", {
+        name: orgName,
+        slug,
+        ...(args.logo !== undefined ? { logo: args.logo } : {}),
+        createdAt: now,
+      });
+    }
 
+    console.log("Creating new Convex user", { orgId, userId: identity.tokenIdentifier });
     const userId = await ctx.db.insert("users", {
       orgId,
       tokenIdentifier: identity.tokenIdentifier,
@@ -252,6 +274,7 @@ export const ensureCurrent = mutation({
     });
 
     if (args.authOrganizationId) {
+      console.log("Linking new Convex org to BetterAuth org", { orgId, authOrgId: args.authOrganizationId });
       await ctx.db.insert("organizationLinks", {
         authOrganizationId: args.authOrganizationId,
         orgId,
@@ -260,6 +283,7 @@ export const ensureCurrent = mutation({
     }
 
     return { userId, orgId };
+
   },
 });
 

@@ -298,6 +298,8 @@ export function DashboardClient({
         logo: nextLogo,
       });
 
+      let finalAuthOrgId = data?.id;
+
       if (orgError) {
         // If the error is that the organization already exists, we can still try to sync it.
         // This handles cases where the Better Auth side succeeded but the Convex side failed previously.
@@ -310,6 +312,13 @@ export function DashboardClient({
           setFeedback(errorMessage);
           return;
         }
+
+        // Try to find the existing organization ID from Better Auth
+        const orgList = await organizationApi.listOrganizations();
+        const existingOrg = orgList.data?.find(o => o.slug === slug);
+        if (existingOrg) {
+          finalAuthOrgId = existingOrg.id;
+        }
       }
 
       const syncResponse = await fetch("/api/onboarding/complete", {
@@ -320,9 +329,10 @@ export function DashboardClient({
         body: JSON.stringify({
           orgName: name,
           logo: nextLogo,
-          authOrganizationId: data?.id,
+          authOrganizationId: finalAuthOrgId,
         }),
       });
+
 
 
       const syncResult = (await syncResponse.json().catch(() => null)) as

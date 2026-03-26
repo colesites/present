@@ -5,6 +5,8 @@ export default defineSchema({
   organizations: defineTable({
     name: v.string(),
     slug: v.string(),
+
+
     logo: v.optional(v.string()),
     createdAt: v.number(),
   })
