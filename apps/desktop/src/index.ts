@@ -39,6 +39,15 @@ protocol.registerSchemesAsPrivileged([
 
 // Whether we are in dev (webpack dev server) or production (packaged asar)
 const isDev = MAIN_WINDOW_WEBPACK_ENTRY.startsWith('http');
+
+// Disable console in production
+if (!isDev) {
+  console.log = () => {};
+  console.info = () => {};
+  console.warn = () => {};
+  console.error = () => {};
+  console.debug = () => {};
+}
 let pendingDeepLink: string | null = null;
 let pendingAuthToken: string | null = null;
 const DESKTOP_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -541,8 +550,10 @@ const createWindow = (): void => {
     }
   });
 
-  // Open the DevTools for debugging.
-  mainWindow.webContents.openDevTools();
+  // Open DevTools only in development
+  if (isDev) {
+    mainWindow.webContents.openDevTools();
+  }
 
   mainWindow.on('close', () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
