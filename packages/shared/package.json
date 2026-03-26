@@ -1,1 +1,11 @@
-{"name":"@present/shared","version":"1.0.0","main":"./src/index.ts","exports":{".":"./src/index.ts","./auth":"./src/auth.ts"},"dependencies":{"@convex-dev/better-auth":"^0.11.3","better-auth":"latest"}}
+{
+  "name": "@present/shared",
+  "version": "1.0.0",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zustand": "^5.0.2"
+  }
+}

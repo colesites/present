@@ -6,11 +6,11 @@
     "convex": "convex"
   },
   "dependencies": {
-    "convex": "^1.13.0",
-    "better-auth": "^1.5.0",
-    "@convex-dev/better-auth": "^0.11.3",
-    "ai": "^4.1.0",
     "@ai-sdk/openai": "^1.1.0",
+    "@auth/core": "^0.37.0",
+    "@convex-dev/auth": "^0.0.91",
+    "ai": "^4.1.0",
+    "convex": "^1.13.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {

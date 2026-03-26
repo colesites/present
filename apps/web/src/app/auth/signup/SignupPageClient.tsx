@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { authClient } from "@/lib/auth-client";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { useConvexAuth } from "convex/react";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -13,16 +14,13 @@ interface SignupPageClientProps {
 
 export default function SignupPageClient({ setup = false, nextPath }: SignupPageClientProps) {
   const router = useRouter();
-  const { data: session, isPending: isSessionPending } = authClient.useSession();
-  const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
-  const [isLoadingEmail, setIsLoadingEmail] = useState(false);
+  const { isAuthenticated, isLoading: isSessionPending } = useConvexAuth();
+  const { signIn } = useAuthActions();
   
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
   const dashboardPath = "/dashboard";
-
 
   const destinationPath = nextPath || dashboardPath;
   const authParams = new URLSearchParams();
@@ -35,20 +33,17 @@ export default function SignupPageClient({ setup = false, nextPath }: SignupPage
   const authQuery = authParams.toString() ? `?${authParams.toString()}` : "";
 
   useEffect(() => {
-    if (!isSessionPending && session?.session) {
+    if (!isSessionPending && isAuthenticated) {
       router.replace(destinationPath);
     }
-  }, [destinationPath, isSessionPending, router, session]);
+  }, [destinationPath, isSessionPending, router, isAuthenticated]);
 
   const handleGoogleSignIn = async () => {
     setIsLoadingGoogle(true);
     setError(null);
 
     try {
-      await authClient.signIn.social({
-        provider: "google",
-        callbackURL: destinationPath,
-      });
+      await signIn("google", { redirectTo: destinationPath });
     } catch (socialSignInError) {
       const message =
         socialSignInError instanceof Error
@@ -56,26 +51,6 @@ export default function SignupPageClient({ setup = false, nextPath }: SignupPage
           : "Unable to start Google sign up. Please try again.";
       setError(message);
       setIsLoadingGoogle(false);
-    }
-  };
-
-  const handleEmailSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoadingEmail(true);
-    setError(null);
-
-    const { error: signUpError } = await authClient.signUp.email({
-      name,
-      email,
-      password,
-    });
-
-    setIsLoadingEmail(false);
-
-    if (signUpError) {
-      setError(signUpError.message || "Failed to create account");
-    } else {
-      router.push(destinationPath);
     }
   };
 
@@ -87,7 +62,7 @@ export default function SignupPageClient({ setup = false, nextPath }: SignupPage
             P
           </div>
           <h1 className="text-3xl font-bold tracking-tight">Create an account</h1>
-          <p className="text-muted-foreground text-sm text-balance">Sign up to get started with Present.</p>
+          <p className="text-muted-foreground text-sm text-balance">Get started with Present today.</p>
         </div>
         
         {error && (
@@ -96,69 +71,10 @@ export default function SignupPageClient({ setup = false, nextPath }: SignupPage
           </div>
         )}
 
-        <form onSubmit={handleEmailSignUp} className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground/90" htmlFor="name">Full Name</label>
-            <input
-              id="name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="w-full rounded-md border border-white/10 bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-              placeholder="John Doe"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground/90" htmlFor="email">Email</label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full rounded-md border border-white/10 bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-              placeholder="you@example.com"
-            />
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-foreground/90" htmlFor="password">Password</label>
-            </div>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full rounded-md border border-white/10 bg-background/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-              placeholder="••••••••"
-              minLength={8}
-            />
-          </div>
-          
-          <button
-            type="submit"
-            disabled={isLoadingEmail || isLoadingGoogle}
-            className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-50"
-          >
-            {isLoadingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign Up"}
-          </button>
-        </form>
-
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-white/10" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
-          </div>
-        </div>
-
         <button
           className="flex w-full items-center justify-center gap-3 rounded-md bg-white px-4 py-2.5 text-sm font-medium text-black shadow-sm ring-1 ring-gray-300 hover:bg-gray-100 transition-colors disabled:opacity-50"
           onClick={handleGoogleSignIn}
-          disabled={isLoadingGoogle || isLoadingEmail}
+          disabled={isLoadingGoogle}
         >
           {isLoadingGoogle ? (
             <Loader2 className="h-5 w-5 animate-spin" />
@@ -182,7 +98,7 @@ export default function SignupPageClient({ setup = false, nextPath }: SignupPage
               />
             </svg>
           )}
-          Google
+          Continue with Google
         </button>
 
         <p className="text-center text-sm text-muted-foreground mt-8">

@@ -1,6 +1,10 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
+// This file contains legacy BetterAuth organization code
+// Most of this is no longer needed with Convex Auth
+// Keeping minimal functionality for now
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -27,54 +31,6 @@ export const create = mutation({
       createdAt: now,
     });
 
-
-    return orgId;
-  },
-});
-
-export const ensureForAuthOrganization = mutation({
-  args: {
-    authOrganizationId: v.string(),
-    name: v.optional(v.string()),
-    logo: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Not authenticated");
-    }
-
-    const existingLink = await ctx.db
-      .query("organizationLinks")
-      .withIndex("by_auth_org", (q) => q.eq("authOrganizationId", args.authOrganizationId))
-      .unique();
-
-    if (existingLink) {
-      return existingLink.orgId;
-    }
-
-    const now = Date.now();
-    const orgName = args.name ?? "Organization";
-    const slug = orgName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)+/g, "");
-
-    const orgId = await ctx.db.insert("organizations", {
-      name: orgName,
-      slug,
-      ...(args.logo !== undefined ? { logo: args.logo } : {}),
-      createdAt: now,
-    });
-
-
-
-    await ctx.db.insert("organizationLinks", {
-      authOrganizationId: args.authOrganizationId,
-      orgId,
-      createdAt: now,
-    });
-
     return orgId;
   },
 });
@@ -91,21 +47,12 @@ export const updateCurrent = mutation({
       throw new Error("Not authenticated");
     }
 
-    let user = await ctx.db
+    const user = await ctx.db
       .query("users")
-      .withIndex("by_token", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique();
+      .withIndex("by_email", (q) => q.eq("email", identity.email ?? ""))
+      .first();
 
-    if (!user && identity.email) {
-      user = await ctx.db
-        .query("users")
-        .withIndex("by_email", (q) => q.eq("email", identity.email))
-        .unique();
-    }
-
-    if (!user) {
+    if (!user || !("orgId" in user)) {
       throw new Error("Current user was not found");
     }
 

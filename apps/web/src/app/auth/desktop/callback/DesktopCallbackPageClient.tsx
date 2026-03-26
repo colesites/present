@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { authClient } from "@/lib/auth-client";
+import { useConvexAuth } from "convex/react";
+import { useMutation } from "convex/react";
+import { api } from "@present/backend/convex/_generated/api";
 
 interface DesktopCallbackPageClientProps {
   returnTo: string | null;
@@ -16,7 +18,7 @@ export default function DesktopCallbackPageClient({
   nextPath,
 }: DesktopCallbackPageClientProps) {
   const router = useRouter();
-  const { data: session, isPending: isSessionPending } = authClient.useSession();
+  const { isAuthenticated, isLoading: isSessionPending } = useConvexAuth();
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
@@ -25,13 +27,13 @@ export default function DesktopCallbackPageClient({
       return;
     }
 
-    if (!session?.session) {
+    if (!isAuthenticated) {
       router.replace(`/auth/login?next=${encodeURIComponent(nextPath)}`);
     }
-  }, [isSessionPending, nextPath, returnTo, router, session]);
+  }, [isSessionPending, nextPath, returnTo, router, isAuthenticated]);
 
   useEffect(() => {
-    if (!returnTo || isSessionPending || !session?.session) {
+    if (!returnTo || isSessionPending || !isAuthenticated) {
       return;
     }
 
@@ -41,19 +43,10 @@ export default function DesktopCallbackPageClient({
       setError(null);
 
       try {
-        const { data, error: tokenError } = await authClient.oneTimeToken.generate();
-        if (cancelled) {
-          return;
-        }
-
-        const token = data?.token;
-        if (tokenError || !token) {
-          setError(tokenError?.message || "Unable to hand off the session to the desktop app.");
-          return;
-        }
-
+        // For now, we'll use a simple approach: redirect with a success flag
+        // The desktop app will use its existing Convex Auth session
         const target = new URL(returnTo);
-        target.searchParams.set("token", token);
+        target.searchParams.set("success", "true");
         window.location.replace(target.toString());
       } catch (handoffError) {
         if (cancelled) {
@@ -73,7 +66,7 @@ export default function DesktopCallbackPageClient({
     return () => {
       cancelled = true;
     };
-  }, [attempt, isSessionPending, returnTo, session]);
+  }, [attempt, isSessionPending, returnTo, isAuthenticated]);
 
   if (!returnTo) {
     return (

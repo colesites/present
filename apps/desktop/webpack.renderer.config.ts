@@ -20,6 +20,9 @@ export const rendererConfig: Configuration = {
     alias: {
       '@': path.resolve(__dirname, 'src'),
       '@present/backend': path.resolve(__dirname, '../../packages/backend'),
+      // Ensure single React instance to prevent "Invalid hook call" errors
+      'react': path.resolve(__dirname, 'node_modules/react'),
+      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
     },
   },
 };

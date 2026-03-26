@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { authClient } from "../../../packages/shared/src/auth";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
 import { SignInScreen } from "./features/auth/SignInScreen";
 import { Loader2 } from "lucide-react";
 import { AppHeader } from "./features/header";
@@ -21,17 +22,8 @@ import { PresentContainer } from "./features/present/PresentContainer";
 import type { ContentSource } from "./types";
 import type { HeaderSearchScope } from "./features/header/AppHeader";
 
-type OneTimeTokenApi = {
-  oneTimeToken: {
-    verify: (input: { token: string }) => Promise<{
-      error?: { message?: string } | null;
-    }>;
-  };
-};
-
 export default function Home() {
-  const { data: sessionData, isPending: isLoading, error } = authClient.useSession();
-  const isAuthenticated = !!sessionData?.session;
+  const { signIn } = useAuthActions();
   const isSettingsWindow = useMemo(() => {
     if (typeof window === "undefined") {
       return false;
@@ -39,7 +31,6 @@ export default function Home() {
 
     return new URLSearchParams(window.location.search).get("window") === "settings";
   }, []);
-  const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [isAuthHandoffPending, setIsAuthHandoffPending] = useState(false);
   const [authHandoffError, setAuthHandoffError] = useState<string | null>(null);
   const processedTokenRef = useRef<string | null>(null);
@@ -48,23 +39,6 @@ export default function Home() {
     if (typeof window === "undefined") {
       return;
     }
-
-    const oneTimeTokenApi = authClient as typeof authClient & OneTimeTokenApi;
-
-    const waitForSessionAfterHandoff = async () => {
-      for (let attempt = 0; attempt < 8; attempt += 1) {
-        const { data: refreshedSession } = await authClient.getSession();
-        if (refreshedSession?.session) {
-          return true;
-        }
-
-        await new Promise((resolve) => {
-          setTimeout(resolve, 250);
-        });
-      }
-
-      return false;
-    };
 
     const processAuthToken = async (token: string) => {
       if (!token || processedTokenRef.current === token) {
@@ -76,26 +50,8 @@ export default function Home() {
       setAuthHandoffError(null);
 
       try {
-        const { error: verifyError } = await oneTimeTokenApi.oneTimeToken.verify({
-          token,
-        });
-
-        if (verifyError) {
-          console.error("Desktop auth handoff failed:", verifyError.message);
-          setAuthHandoffError(verifyError.message || "Desktop sign-in verification failed.");
-          processedTokenRef.current = null;
-          return;
-        }
-
-        const hasSession = await waitForSessionAfterHandoff();
-        if (!hasSession) {
-          setAuthHandoffError("Sign-in completed, but desktop session did not initialize. Please sign in again.");
-          processedTokenRef.current = null;
-          return;
-        }
-
-        (authClient as unknown as { $store?: { notify?: (signal: string) => void } })
-          .$store?.notify?.("$sessionSignal");
+        // Use Convex Auth to sign in with the token
+        await signIn("password", { token });
       } catch (authError) {
         console.error("Desktop auth handoff failed:", authError);
         const message =
@@ -132,18 +88,36 @@ export default function Home() {
     return () => {
       window.clearInterval(pollTimer);
     };
-  }, []);
+  }, [signIn]);
 
-  useEffect(() => {
-    if (isLoading) {
-      const timer = setTimeout(() => setShowDiagnostic(true), 8000);
-      return () => {
-        clearTimeout(timer);
-        setShowDiagnostic(false);
-      };
-    }
-  }, [isLoading]);
+  return (
+    <>
+      <AuthLoading>
+        <div className="flex h-screen flex-col items-center justify-center bg-background p-6 text-center">
+          <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
+          {isAuthHandoffPending && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              Completing sign-in from browser...
+            </p>
+          )}
+        </div>
+      </AuthLoading>
 
+      <Unauthenticated>
+        <SignInScreen
+          isAuthHandoffPending={isAuthHandoffPending}
+          handoffError={authHandoffError}
+        />
+      </Unauthenticated>
+
+      <Authenticated>
+        <AuthenticatedApp isSettingsWindow={isSettingsWindow} />
+      </Authenticated>
+    </>
+  );
+}
+
+function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
   // Organization & auth
   const { userId } = useOrganization();
   const { type: activeWorkspaceType, id: activeWorkspaceId } = useWorkspaceStore();
@@ -168,6 +142,7 @@ export default function Home() {
     setViewMode("show");
     setBottomTab("media");
   }, [isSettingsWindow, setBottomTab, setViewMode]);
+  
   const effectiveViewMode = isSettingsWindow
     ? "settings"
     : viewMode === "settings"
@@ -199,48 +174,6 @@ export default function Home() {
     mediaPanelRef,
     scripturePanelRef,
   });
-
-  // Auth Gate: Ensure user is authenticated before loading Heavy UI/Convex
-  if (isLoading) {
-    return (
-      <div className="flex h-screen flex-col items-center justify-center bg-background p-6 text-center">
-        <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
-        {showDiagnostic && (
-          <div className="max-w-md animate-in fade-in slide-in-from-bottom-4 duration-1000">
-            <h2 className="mb-2 text-xl font-semibold text-foreground">Still loading...</h2>
-            <p className="mb-4 text-sm text-muted-foreground">
-              The authentication service is taking longer than expected to initialize.
-            </p>
-            <div className="rounded-lg bg-secondary/50 p-4 text-left text-xs font-mono max-h-48 overflow-y-auto">
-              <p className="mb-1 text-muted-foreground">// Diagnostic Info</p>
-              <p>Origin: {typeof window !== "undefined" ? window.location.origin : "unknown"}</p>
-              <p>Auth0 Domain: {process.env.AUTH0_DOMAIN ? "✅ Present" : "❌ MISSING"}</p>
-              <p>Auth0 Client ID: {process.env.AUTH0_CLIENT_ID ? "✅ Present" : "❌ MISSING"}</p>
-              {error && (
-                <p className="mt-2 text-destructive">
-                  ⚠️ Auth Error: {error.message}
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-        {isAuthHandoffPending && (
-          <p className="mt-3 text-sm text-muted-foreground">
-            Completing sign-in from browser...
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <SignInScreen
-        isAuthHandoffPending={isAuthHandoffPending}
-        handoffError={authHandoffError}
-      />
-    );
-  }
 
   if (isSettingsWindow) {
     return (
@@ -279,7 +212,7 @@ export default function Home() {
 
       <PresentContainer
         orgId={effectiveOrgId}
-        userId={userId}
+        userId={userId as any}
         viewMode={effectiveViewMode}
         bottomTab={bottomTab}
         contentSource={contentSource}

@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { LogOut, Plus, Building2, Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
+import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "@present/backend/convex/_generated/api";
-import { authClient, useWorkspaceStore } from "../../../../packages/shared/src";
+import { useWorkspaceStore } from "../../../../packages/shared/src";
 
 import {
   DropdownMenu,
@@ -15,12 +17,6 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
-
-type OrganizationApi = typeof authClient.organization & {
-  setActive: (input: { organizationId: string | null }) => Promise<{
-    error?: { message?: string } | null;
-  }>;
-};
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (
@@ -36,9 +32,9 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 export function AuthControls() {
-  const { data: sessionData } = authClient.useSession();
-  const user = sessionData?.user;
-  const isAuthenticated = !!sessionData?.session;
+  const { isAuthenticated } = useConvexAuth();
+  const { signOut } = useAuthActions();
+  const currentUser = useQuery(api.users.getCurrentUser);
   const [isSwitchingOrganization, setIsSwitchingOrganization] = useState(false);
   const [isCreatingOrganization, setIsCreatingOrganization] = useState(false);
   const [menuError, setMenuError] = useState<string | null>(null);
@@ -49,25 +45,9 @@ export function AuthControls() {
   // Get workspaces from Context store
   const { type: activeWorkspaceType, id: activeWorkspaceId, setWorkspace } = useWorkspaceStore();
 
-  const activeAuthOrganizationId =
-    typeof sessionData?.session?.activeOrganizationId === "string"
-      ? sessionData.session.activeOrganizationId
-      : null;
-
-  const displayName =
-    (typeof user?.name === "string" && user.name) ||
-    (typeof user?.email === "string" && user.email) ||
-    "Account";
-  const displayEmail = (typeof user?.email === "string" && user.email) || "";
-  const userImage =
-    (typeof user?.image === "string" && user.image) ||
-    (typeof (user as Record<string, unknown> | undefined)?.picture === "string" &&
-      ((user as Record<string, unknown>).picture as string)) ||
-    (typeof (user as Record<string, unknown> | undefined)?.avatar === "string" &&
-      ((user as Record<string, unknown>).avatar as string)) ||
-    (typeof (user as Record<string, unknown> | undefined)?.imageUrl === "string" &&
-      ((user as Record<string, unknown>).imageUrl as string)) ||
-    null;
+  const displayName = currentUser?.name || currentUser?.email || "Account";
+  const displayEmail = currentUser?.email || "";
+  const userImage = currentUser?.image || null;
 
   // Find active org from the Convex list (used for display name if it's an org)
   const activeOrganization =
@@ -75,7 +55,7 @@ export function AuthControls() {
       ? nativeOrganizations?.find((org) => org.id === activeWorkspaceId) ?? null
       : null;
 
-  const handleSwitchContext = async (type: "personal" | "organization", id: string | null, authOrgId?: string | null) => {
+  const handleSwitchContext = async (type: "personal" | "organization", id: string | null) => {
     if (type === activeWorkspaceType && id === activeWorkspaceId) {
       return;
     }
@@ -86,22 +66,9 @@ export function AuthControls() {
     try {
       // Update global zustand store immediately for snappy UI
       setWorkspace(type, id);
-
-      // Keep BetterAuth in sync if switching to an organization
-      // Optional, but good for backend helpers if they rely on session.activeOrganizationId
-      if (type === "organization" && authOrgId) {
-        const organizationApi = authClient.organization as OrganizationApi;
-        await organizationApi.setActive({
-          organizationId: authOrgId,
-        });
-      } else if (type === "personal" && activeAuthOrganizationId) {
-        const organizationApi = authClient.organization as OrganizationApi;
-        await organizationApi.setActive({
-          organizationId: null,
-        });
-      }
     } catch (error) {
-      console.warn("BetterAuth active org sync failed, but local context switched.", error);
+      console.warn("Context switch failed.", error);
+      setMenuError(getErrorMessage(error, "Failed to switch workspace"));
     } finally {
       setIsSwitchingOrganization(false);
     }
@@ -112,10 +79,9 @@ export function AuthControls() {
     setMenuError(null);
     try {
       const baseUrl =
-        process.env.BETTER_AUTH_URL ||
-        (process.env.NODE_ENV === "development"
+        process.env.NODE_ENV === "development"
           ? "http://localhost:3001"
-          : "https://present.app");
+          : "https://present.app";
       const dashboardUrl = `${baseUrl.replace(/\/+$/, "")}/dashboard`;
 
       if (window.electronAPI?.openExternalBrowser) {
@@ -130,7 +96,7 @@ export function AuthControls() {
     }
   };
 
-  if (!isAuthenticated || !user) {
+  if (!isAuthenticated || !currentUser) {
     return null;
   }
 
@@ -233,7 +199,7 @@ export function AuthControls() {
               <DropdownMenuItem
                 key={org.id}
                 onClick={() => {
-                  void handleSwitchContext("organization", org.id, org.authOrganizationId);
+                  void handleSwitchContext("organization", org.id);
                 }}
                 disabled={isSwitchingOrganization}
                 className={cn(
@@ -273,7 +239,7 @@ export function AuthControls() {
         <DropdownMenuItem
           variant="destructive"
           onClick={async () => {
-            await authClient.signOut();
+            await signOut();
           }}
           className="flex items-center gap-2"
         >

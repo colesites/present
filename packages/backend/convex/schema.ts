@@ -1,9 +1,9 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { tables as betterAuthTables } from "./betterAuth/schema";
+import { authTables } from "@convex-dev/auth/server";
 
 export default defineSchema({
-  ...betterAuthTables,
+  ...authTables,
 
   organizations: defineTable({
     name: v.string(),
@@ -15,25 +15,14 @@ export default defineSchema({
     .index("by_name", ["name"])
     .index("by_slug", ["slug"]),
 
-  // Link Better Auth organizations (string IDs) to Convex organizations (Id<"organizations">).
-  organizationLinks: defineTable({
-    authOrganizationId: v.string(),
-    orgId: v.id("organizations"),
-    createdAt: v.number(),
-  })
-    .index("by_auth_org", ["authOrganizationId"])
-    .index("by_org", ["orgId"]),
   users: defineTable({
     orgId: v.id("organizations"),
-    tokenIdentifier: v.string(),
     email: v.optional(v.string()),
     name: v.optional(v.string()),
     role: v.string(), // "admin", "user", or custom roles like "pastor"
     userRole: v.optional(v.string()), // The specific functional role like "tech-director"
     createdAt: v.number(),
   })
-
-    .index("by_token", ["tokenIdentifier"])
     .index("by_org", ["orgId"])
     .index("by_email", ["email"]),
   // Categories for organizing library items (Songs, Flows, Hymns, custom)

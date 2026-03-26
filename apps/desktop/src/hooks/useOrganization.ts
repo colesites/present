@@ -1,54 +1,37 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { authClient } from "../../../../packages/shared/src/auth";
+import { useConvexAuth } from "convex/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 
 export function useOrganization() {
-  const { data: sessionData } = authClient.useSession();
-  const isAuthenticated = !!sessionData?.session;
-  const activeAuthOrganizationId =
-    typeof (sessionData as any)?.session?.activeOrganizationId === "string"
-      ? ((sessionData as any).session.activeOrganizationId as string)
-      : null;
-
+  const { isAuthenticated } = useConvexAuth();
+  
   const ensureCurrent = useMutation(api.users.ensureCurrent);
-  const ensureForAuthOrganization = useMutation(api.orgScopes.ensureForAuthOrganization);
   const current = useQuery(api.users.getCurrentWithOrg);
   const currentUser = useQuery(api.users.getCurrent);
   const [ensuredOrgId, setEnsuredOrgId] = useState<Id<"organizations"> | null>(null);
   const [ensuredUserId, setEnsuredUserId] = useState<Id<"users"> | null>(null);
-  const lastEnsuredKeyRef = useRef<string | null>(null);
+  const lastEnsuredRef = useRef<boolean>(false);
 
   // Initialize user on sign-in
   useEffect(() => {
     if (!isAuthenticated) {
       setEnsuredOrgId(null);
       setEnsuredUserId(null);
-      lastEnsuredKeyRef.current = null;
+      lastEnsuredRef.current = false;
       return;
     }
 
-    const ensureKey = activeAuthOrganizationId ? `auth-org:${activeAuthOrganizationId}` : "personal";
-    if (lastEnsuredKeyRef.current === ensureKey) {
+    if (lastEnsuredRef.current) {
       return;
     }
-    lastEnsuredKeyRef.current = ensureKey;
+    lastEnsuredRef.current = true;
 
     void (async () => {
       try {
-        if (activeAuthOrganizationId) {
-          // Map Better Auth organization → Convex organization.
-          const orgId = await ensureForAuthOrganization({
-            authOrganizationId: activeAuthOrganizationId,
-          });
-          setEnsuredOrgId(orgId);
-          return;
-        }
-
-        // Personal space (no active organization selected)
         const result = await ensureCurrent({});
         const userId = (result as { userId?: Id<"users"> } | null)?.userId;
         const orgId = (result as { orgId?: Id<"organizations"> } | null)?.orgId;
@@ -62,9 +45,9 @@ export function useOrganization() {
         console.error("Failed to ensure org scope:", error);
       }
     })();
-  }, [isAuthenticated, activeAuthOrganizationId, ensureCurrent, ensureForAuthOrganization]);
+  }, [isAuthenticated, ensureCurrent]);
 
-  // Derive orgId directly from query result — no local state needed
+  // Derive orgId directly from query result
   const orgId = useMemo(
     () => current?.org?._id ?? ensuredOrgId ?? null,
     [current, ensuredOrgId],
@@ -79,7 +62,6 @@ export function useOrganization() {
     current,
     orgId,
     organization: current?.org ?? null,
-    activeAuthOrganizationId,
     userId,
   };
 }

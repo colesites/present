@@ -1,8 +1,8 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
-import { useBetterAuthConvex } from "../../../../packages/shared/src/auth";
+import { ConvexReactClient } from "convex/react";
+import { ConvexAuthProvider } from "@convex-dev/auth/react";
 
 const convexUrl = process.env.CONVEX_URL;
 if (!convexUrl) {
@@ -17,8 +17,8 @@ export default function ConvexClientProvider({
   children: ReactNode;
 }) {
   return (
-    <ConvexProviderWithAuth client={convex} useAuth={useBetterAuthConvex}>
+    <ConvexAuthProvider client={convex}>
       {children}
-    </ConvexProviderWithAuth>
+    </ConvexAuthProvider>
   );
 }

@@ -4,7 +4,6 @@ import {
   memo,
   useState,
   useMemo,
-  Activity,
   forwardRef,
   useImperativeHandle,
   useRef,
@@ -274,7 +273,7 @@ export const MediaPanel = memo(
 
       if (orgId) {
         try {
-          await removeMediaFromServices({ folderId: folderToRemove.id, orgId });
+          await removeMediaFromServices({ folderId: folderToRemove.id, workspaceId: orgId });
         } catch (e) {
           console.error("Failed to cleanup media from services", e);
           // Continue with local removal even if cleanup fails
@@ -563,11 +562,35 @@ export const MediaPanel = memo(
                   </div>
                 ) : (
                   <>
-                    {/* All items view - pre-rendered with Activity */}
-                    <Activity mode={filter === "all" ? "visible" : "hidden"}>
-                      <div className="absolute inset-0 overflow-auto p-3">
-                        <div className="grid grid-cols-4 gap-2">
-                          {filteredItems.map((item) => {
+                    <div className={cn("absolute inset-0 overflow-auto p-3", filter !== "all" && "hidden")}>
+                      <div className="grid grid-cols-4 gap-2">
+                        {filteredItems.map((item) => {
+                          return (
+                            <div key={item.id}>
+                              <MediaItemCard
+                                item={item}
+                                isActive={activeMediaItem?.id === item.id}
+                                onSelect={handleSelectMedia}
+                                onAddToService={handleAddToService}
+                                isInsideService={isInsideService}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* Empty state overlay */}
+                      {filteredItems.length === 0 && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                          <Image className="h-8 w-8" />
+                          <span>No items found</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className={cn("absolute inset-0 overflow-auto p-3", filter !== "images" && "hidden")}>
+                      <div className="grid grid-cols-4 gap-2">
+                        {filteredItems
+                          .filter((item) => item.type === "image")
+                          .map((item) => {
                             return (
                               <div key={item.id}>
                                 <MediaItemCard
@@ -580,74 +603,41 @@ export const MediaPanel = memo(
                               </div>
                             );
                           })}
-                        </div>
-                        {/* Empty state overlay */}
-                        {filteredItems.length === 0 && (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                            <Image className="h-8 w-8" />
-                            <span>No items found</span>
-                          </div>
-                        )}
                       </div>
-                    </Activity>
-                    {/* Images view - pre-rendered with Activity */}
-                    <Activity mode={filter === "images" ? "visible" : "hidden"}>
-                      <div className="absolute inset-0 overflow-auto p-3">
-                        <div className="grid grid-cols-4 gap-2">
-                          {filteredItems
-                            .filter((item) => item.type === "image")
-                            .map((item) => {
-                              return (
-                                <div key={item.id}>
-                                  <MediaItemCard
-                                    item={item}
-                                    isActive={activeMediaItem?.id === item.id}
-                                    onSelect={handleSelectMedia}
-                                    onAddToService={handleAddToService}
-                                    isInsideService={isInsideService}
-                                  />
-                                </div>
-                              );
-                            })}
+                      {/* Empty state overlay */}
+                      {imageCount === 0 && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                          <Image className="h-8 w-8" />
+                          <span>No images found</span>
                         </div>
-                        {/* Empty state overlay */}
-                        {imageCount === 0 && (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                            <Image className="h-8 w-8" />
-                            <span>No images found</span>
-                          </div>
-                        )}
+                      )}
+                    </div>
+                    <div className={cn("absolute inset-0 overflow-auto p-3", filter !== "videos" && "hidden")}>
+                      <div className="grid grid-cols-4 gap-2">
+                        {filteredItems
+                          .filter((item) => item.type === "video")
+                          .map((item) => {
+                            return (
+                              <div key={item.id}>
+                                <MediaItemCard
+                                  item={item}
+                                  isActive={activeMediaItem?.id === item.id}
+                                  onSelect={handleSelectMedia}
+                                  onAddToService={handleAddToService}
+                                  isInsideService={isInsideService}
+                                />
+                              </div>
+                            );
+                          })}
                       </div>
-                    </Activity>
-                    {/* Videos view - pre-rendered with Activity */}
-                    <Activity mode={filter === "videos" ? "visible" : "hidden"}>
-                      <div className="absolute inset-0 overflow-auto p-3">
-                        <div className="grid grid-cols-4 gap-2">
-                          {filteredItems
-                            .filter((item) => item.type === "video")
-                            .map((item) => {
-                              return (
-                                <div key={item.id}>
-                                  <MediaItemCard
-                                    item={item}
-                                    isActive={activeMediaItem?.id === item.id}
-                                    onSelect={handleSelectMedia}
-                                    onAddToService={handleAddToService}
-                                    isInsideService={isInsideService}
-                                  />
-                                </div>
-                              );
-                            })}
+                      {/* Empty state overlay */}
+                      {videoCount === 0 && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                          <Video className="h-8 w-8" />
+                          <span>No videos found</span>
                         </div>
-                        {/* Empty state overlay */}
-                        {videoCount === 0 && (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                            <Video className="h-8 w-8" />
-                            <span>No videos found</span>
-                          </div>
-                        )}
-                      </div>
-                    </Activity>
+                      )}
+                    </div>
                   </>
                 )}
               </div>

@@ -283,7 +283,7 @@ function handleDeepLink(urlStr: string) {
       return;
     }
 
-    // BetterAuth callback: the URL contains the session token
+    // Auth callback: the URL contains the session token
     if (parsedUrl.pathname.includes('auth-callback') || parsedUrl.host === 'auth-callback') { 
       const token = parsedUrl.searchParams.get('token');
       if (token) {
