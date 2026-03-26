@@ -10,11 +10,19 @@ export async function POST(request: Request) {
     };
 
 
-    await fetchAuthMutation(api.users.ensureCurrent, {
-      ...(body.orgName ? { orgName: body.orgName } : {}),
-      ...(body.logo ? { logo: body.logo } : {}),
-      ...(body.authOrganizationId ? { authOrganizationId: body.authOrganizationId } : {}),
-    });
+    if (body.authOrganizationId) {
+      await fetchAuthMutation(api.users.createOrganization, {
+        orgName: body.orgName || "Untitled Organization",
+        logo: body.logo,
+        authOrganizationId: body.authOrganizationId,
+      });
+    } else {
+      await fetchAuthMutation(api.users.ensureCurrent, {
+        ...(body.orgName ? { orgName: body.orgName } : {}),
+        ...(body.logo ? { logo: body.logo } : {}),
+      });
+    }
+
 
     console.log("Onboarding sync successful", { 
       orgName: body.orgName, 

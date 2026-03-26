@@ -169,13 +169,14 @@ export const ensureCurrent = mutation({
       throw new Error("Not authenticated");
     }
 
-    // Try by token
+    // Try by token - use first() to support multiple org associations for the same token
     let existing = await ctx.db
       .query("users")
       .withIndex("by_token", (q) =>
         q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
-      .unique();
+      .first();
+
 
 
     // Migration logic: Link by email if token differs
@@ -183,7 +184,8 @@ export const ensureCurrent = mutation({
       existing = await ctx.db
         .query("users")
         .withIndex("by_email", (q) => q.eq("email", identity.email))
-        .unique();
+        .first();
+
       
       if (existing) {
         await ctx.db.patch(existing._id, {
@@ -283,7 +285,56 @@ export const ensureCurrent = mutation({
     }
 
     return { userId, orgId };
-
   },
 });
+
+export const createOrganization = mutation({
+  args: {
+    orgName: v.string(),
+    logo: v.optional(v.string()),
+    authOrganizationId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const now = Date.now();
+    const slug = args.orgName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+
+    // 1. Create native organization
+    const orgId = await ctx.db.insert("organizations", {
+      name: args.orgName,
+      slug,
+      logo: args.logo ?? undefined,
+      createdAt: now,
+    });
+
+    // 2. Link to BetterAuth if ID provided
+    if (args.authOrganizationId) {
+      await ctx.db.insert("organizationLinks", {
+        authOrganizationId: args.authOrganizationId,
+        orgId,
+        createdAt: now,
+      });
+    }
+
+    // 3. Create native user record for THIS organization
+    const userId = await ctx.db.insert("users", {
+      orgId,
+      tokenIdentifier: identity.tokenIdentifier,
+      email: identity.email ?? undefined,
+      name: identity.name ?? identity.givenName ?? undefined,
+      role: "admin",
+      createdAt: now,
+    });
+
+    return { userId, orgId };
+  },
+});
+
 
