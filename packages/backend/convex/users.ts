@@ -297,6 +297,7 @@ export const createOrganization = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
+    console.log("createOrganization called by:", identity?.tokenIdentifier);
     if (!identity) {
       throw new Error("Not authenticated");
     }
@@ -308,6 +309,7 @@ export const createOrganization = mutation({
       .replace(/(^-|-$)+/g, "");
 
     // 1. Create native organization
+    console.log("Creating native organization:", { name: args.orgName, slug });
     const orgId = await ctx.db.insert("organizations", {
       name: args.orgName,
       slug,
@@ -315,9 +317,11 @@ export const createOrganization = mutation({
       orgType: args.orgType ?? undefined,
       createdAt: now,
     });
+    console.log("Native organization created:", orgId);
 
     // 2. Link to BetterAuth if ID provided
     if (args.authOrganizationId) {
+      console.log("Linking to BetterAuth organization:", args.authOrganizationId);
       await ctx.db.insert("organizationLinks", {
         authOrganizationId: args.authOrganizationId,
         orgId,
@@ -326,6 +330,7 @@ export const createOrganization = mutation({
     }
 
     // 3. Create native user record for THIS organization
+    console.log("Creating native user record for:", identity.email);
     const userId = await ctx.db.insert("users", {
       orgId,
       tokenIdentifier: identity.tokenIdentifier,
@@ -335,6 +340,8 @@ export const createOrganization = mutation({
       userRole: args.userRole ?? undefined,
       createdAt: now,
     });
+    console.log("Native user record created:", userId);
+
 
     return { userId, orgId };
   },

@@ -22,6 +22,7 @@ import type * as personalServices from "../personalServices.js";
 import type * as personalSongs from "../personalSongs.js";
 import type * as playback from "../playback.js";
 import type * as playlists from "../playlists.js";
+import type * as reset from "../reset.js";
 import type * as services from "../services.js";
 import type * as users from "../users.js";
 
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   personalSongs: typeof personalSongs;
   playback: typeof playback;
   playlists: typeof playlists;
+  reset: typeof reset;
   services: typeof services;
   users: typeof users;
 }>;

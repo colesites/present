@@ -339,11 +339,24 @@ export function DashboardClient({
           userRole,
         });
       } catch (syncError) {
-
         console.error("Sync to Convex failed:", syncError);
-        setFeedback("Organization was created in Auth, but failed to sync to Convex.");
+        
+        // ROLLBACK: If it failed to sync to Convex, delete from BetterAuth to keep them in sync
+        if (finalAuthOrgId) {
+          try {
+            console.log("Rolling back BetterAuth organization:", finalAuthOrgId);
+            await authClient.organization.delete({
+              organizationId: finalAuthOrgId,
+            });
+          } catch (deleteError) {
+            console.error("Rollback failed:", deleteError);
+          }
+        }
+
+        setFeedback("Organization was created in Auth, but failed to sync to Convex. The creation has been rolled back.");
         return;
       }
+
 
 
       // better-auth will trigger a session update, and useQuery will trigger a list update
