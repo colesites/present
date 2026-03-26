@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, LogOut, Plus, Building2, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { LogOut, Plus, Building2, Loader2 } from "lucide-react";
+import { useQuery } from "convex/react";
+import { api } from "@present/backend/convex/_generated/api";
 import { authClient } from "../../../../packages/shared/src/auth";
 import {
   DropdownMenu,
@@ -13,44 +15,11 @@ import {
 } from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
 
-type OrganizationItem = {
-  id: string;
-  name: string;
-  slug: string;
-  logo?: string | null;
-  createdAt?: string | Date;
-};
-
 type OrganizationApi = typeof authClient.organization & {
-  list: () => Promise<{
-    data?: OrganizationItem[];
-    error?: { message?: string } | null;
-  }>;
   setActive: (input: { organizationId: string | null }) => Promise<{
     error?: { message?: string } | null;
   }>;
-  create: (input: {
-    name: string;
-    slug: string;
-    logo?: string;
-  }) => Promise<{
-    data?: { id?: string | null } | null;
-    error?: { message?: string } | null;
-  }>;
 };
-
-function getErrorStatus(error: unknown) {
-  if (
-    error &&
-    typeof error === "object" &&
-    "status" in error &&
-    typeof (error as { status?: unknown }).status === "number"
-  ) {
-    return (error as { status: number }).status;
-  }
-
-  return null;
-}
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (
@@ -69,12 +38,12 @@ export function AuthControls() {
   const { data: sessionData } = authClient.useSession();
   const user = sessionData?.user;
   const isAuthenticated = !!sessionData?.session;
-  const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
-  const [isLoadingOrganizations, setIsLoadingOrganizations] = useState(false);
   const [isSwitchingOrganization, setIsSwitchingOrganization] = useState(false);
   const [isCreatingOrganization, setIsCreatingOrganization] = useState(false);
-  const [isOrganizationApiAvailable, setIsOrganizationApiAvailable] = useState(true);
   const [menuError, setMenuError] = useState<string | null>(null);
+
+  // Get organizations from Convex (source of truth)
+  const nativeOrganizations = useQuery(api.users.listMyOrganizations);
 
   const activeOrganizationId =
     typeof sessionData?.session?.activeOrganizationId === "string"
@@ -96,64 +65,14 @@ export function AuthControls() {
       ((user as Record<string, unknown>).imageUrl as string)) ||
     null;
 
-  const activeOrganization = useMemo(
-    () =>
-      organizations.find((organization) => organization.id === activeOrganizationId) ??
-      null,
-    [activeOrganizationId, organizations],
-  );
+  // Find active org from the Convex list
+  const activeOrganization =
+    nativeOrganizations?.find((org) => org.authOrganizationId === activeOrganizationId) ??
+    nativeOrganizations?.[0] ??
+    null;
 
-  const refreshOrganizations = useCallback(async () => {
-    if (!isAuthenticated) {
-      setOrganizations([]);
-      setIsLoadingOrganizations(false);
-      return [];
-    }
-
-    setIsLoadingOrganizations(true);
-    setMenuError(null);
-
-    try {
-      const organizationApi = authClient.organization as OrganizationApi;
-      const response = await organizationApi.list();
-
-      if (response.error) {
-        setMenuError(response.error.message || "Unable to load organizations.");
-        return [];
-      }
-
-      const nextOrganizations = response.data ?? [];
-      setOrganizations(nextOrganizations);
-      setIsOrganizationApiAvailable(true);
-      return nextOrganizations;
-    } catch (error) {
-      if (getErrorStatus(error) === 404) {
-        setIsOrganizationApiAvailable(false);
-        setOrganizations([]);
-        setMenuError("Organizations are unavailable on this auth deployment.");
-        return [];
-      }
-
-      setMenuError(getErrorMessage(error, "Unable to load organizations."));
-      return [];
-    } finally {
-      setIsLoadingOrganizations(false);
-    }
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setOrganizations([]);
-      setMenuError(null);
-      setIsOrganizationApiAvailable(true);
-      return;
-    }
-
-    void refreshOrganizations();
-  }, [isAuthenticated, refreshOrganizations]);
-
-  const handleSwitchOrganization = async (organizationId: string) => {
-    if (organizationId === activeOrganizationId) {
+  const handleSwitchOrganization = async (authOrgId: string | null) => {
+    if (authOrgId === activeOrganizationId) {
       return;
     }
 
@@ -163,15 +82,12 @@ export function AuthControls() {
     try {
       const organizationApi = authClient.organization as OrganizationApi;
       const response = await organizationApi.setActive({
-        organizationId,
+        organizationId: authOrgId,
       });
 
       if (response.error) {
         setMenuError(response.error.message || "Unable to switch organization.");
-        return;
       }
-
-      await refreshOrganizations();
     } catch (error) {
       setMenuError(getErrorMessage(error, "Unable to switch organization."));
     } finally {
@@ -206,12 +122,16 @@ export function AuthControls() {
     return null;
   }
 
+  const organizations = nativeOrganizations ?? [];
+  const isLoadingOrganizations = nativeOrganizations === undefined;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex items-center gap-2 rounded-md border border-input bg-background px-2 py-1 transition hover:bg-accent"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:ring-2 hover:ring-primary/40"
+          title={displayName}
         >
           {userImage ? (
             <img
@@ -224,10 +144,6 @@ export function AuthControls() {
               {displayName.charAt(0).toUpperCase()}
             </div>
           )}
-          <span className="max-w-[88px] truncate text-xs font-medium text-foreground">
-            {displayName}
-          </span>
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>
 
@@ -247,7 +163,7 @@ export function AuthControls() {
           onClick={() => {
             void handleCreateOrganization();
           }}
-          disabled={isCreatingOrganization || !isOrganizationApiAvailable}
+          disabled={isCreatingOrganization}
           className="flex items-center gap-2"
         >
           {isCreatingOrganization ? (
@@ -264,12 +180,7 @@ export function AuthControls() {
           Organizations
         </DropdownMenuLabel>
 
-        {!isOrganizationApiAvailable ? (
-          <DropdownMenuItem disabled>
-            <Building2 className="h-4 w-4" />
-            <span>Organization API unavailable</span>
-          </DropdownMenuItem>
-        ) : isLoadingOrganizations ? (
+        {isLoadingOrganizations ? (
           <DropdownMenuItem disabled>
             <Loader2 className="h-4 w-4 animate-spin" />
             <span>Loading organizations...</span>
@@ -280,23 +191,30 @@ export function AuthControls() {
             <span>No organizations yet</span>
           </DropdownMenuItem>
         ) : (
-          organizations.map((organization) => {
-            const isActive = organization.id === activeOrganizationId;
+          organizations.map((org) => {
+            const isActive = org.authOrganizationId === activeOrganizationId;
 
             return (
               <DropdownMenuItem
-                key={organization.id}
+                key={org.id}
                 onClick={() => {
-                  void handleSwitchOrganization(organization.id);
+                  if (org.authOrganizationId) {
+                    void handleSwitchOrganization(org.authOrganizationId);
+                  }
                 }}
-                disabled={isSwitchingOrganization}
+                disabled={isSwitchingOrganization || !org.authOrganizationId}
                 className={cn(
-                  "flex items-center justify-between gap-2",
-                  isActive && "bg-primary/10 text-primary",
+                  "flex items-center gap-2",
+                  isActive && "bg-primary/10 text-primary font-semibold",
                 )}
               >
-                <span className="truncate">{organization.name}</span>
-                {isActive ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                {isSwitchingOrganization ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                ) : (
+                  <Building2 className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <span className="truncate">{org.name}</span>
+                {isActive && <span className="ml-auto text-[10px] text-muted-foreground">Active</span>}
               </DropdownMenuItem>
             );
           })

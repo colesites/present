@@ -55,6 +55,8 @@ export function DashboardClient({
   const { data: session, isPending: isSessionPending } = authClient.useSession();
   const organizationApi = authClient.organization as OrganizationApi;
   const syncOrganization = useMutation(api.users.createOrganization);
+  const linkAuthOrg = useMutation(api.users.linkAuthOrganization);
+
 
 
   const [currentOrg, setCurrentOrg] = useState<DashboardOrganization | null>(org);
@@ -296,70 +298,60 @@ export function DashboardClient({
             ? uploadedLogo ?? undefined
             : logoUrl.trim() || undefined;
 
+      // STEP 1: Create in Convex FIRST (source of truth)
+      // If this fails, we never touch BetterAuth — no orphaned records.
+      let convexResult;
+      try {
+        convexResult = await syncOrganization({
+          orgName: name,
+          logo: nextLogo,
+          orgType,
+          userRole,
+        });
+      } catch (convexError: unknown) {
+        console.error("Convex organization creation failed:", convexError);
+        const msg = convexError instanceof Error ? convexError.message : String(convexError);
+        setFeedback(`Failed to create organization: ${msg}`);
+        return;
+      }
+
+      // STEP 2: Now create in BetterAuth (secondary, for auth session linkage)
       const slug = name
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)+/g, "");
 
-      const { data, error: orgError } = await authClient.organization.create({
-        name,
-        slug,
-        logo: nextLogo,
-      });
-
-      let finalAuthOrgId = data?.id;
-
-      if (orgError) {
-        // If the error is that the organization already exists, we can still try to sync it.
-        // This handles cases where the Better Auth side succeeded but the Convex side failed previously.
-        const errorMessage = orgError.message || "Unable to create organization.";
-        const isExistingOrgError =
-          errorMessage.toLowerCase().includes("already exists") ||
-          errorMessage.toLowerCase().includes("already taken");
-
-        if (!isExistingOrgError) {
-          setFeedback(errorMessage);
-          return;
-        }
-
-        // Try to find the existing organization ID from Better Auth
-        const orgList = await organizationApi.listOrganizations();
-        const existingOrg = orgList.data?.find(o => o.slug === slug);
-        if (existingOrg) {
-          finalAuthOrgId = existingOrg.id;
-        }
-      }
-
       try {
-        await syncOrganization({
-          orgName: name,
+        const { data, error: orgError } = await authClient.organization.create({
+          name,
+          slug,
           logo: nextLogo,
-          authOrganizationId: finalAuthOrgId,
-          orgType,
-          userRole,
         });
-      } catch (syncError) {
-        console.error("Sync to Convex failed:", syncError);
-        
-        // ROLLBACK: If it failed to sync to Convex, delete from BetterAuth to keep them in sync
-        if (finalAuthOrgId) {
+
+        if (data?.id && convexResult) {
+          // Link the BetterAuth org ID to the Convex org
+          // This is best-effort — if it fails, the org still exists in Convex
           try {
-            console.log("Rolling back BetterAuth organization:", finalAuthOrgId);
-            await authClient.organization.delete({
-              organizationId: finalAuthOrgId,
+            await linkAuthOrg({
+              orgId: convexResult.orgId,
+              authOrganizationId: data.id,
             });
-          } catch (deleteError) {
-            console.error("Rollback failed:", deleteError);
+          } catch (linkError) {
+            console.warn("Failed to link BetterAuth org to Convex, but org was created:", linkError);
           }
         }
 
-        setFeedback("Organization was created in Auth, but failed to sync to Convex. The creation has been rolled back.");
-        return;
+
+        if (orgError) {
+          // BetterAuth failed, but org is in Convex — that's OK, log it
+          console.warn("BetterAuth org creation failed (Convex org exists):", orgError.message);
+        }
+      } catch (authError) {
+        // BetterAuth creation failed entirely - org still exists in Convex, which is fine
+        console.warn("BetterAuth org creation threw (Convex org exists):", authError);
       }
 
-
-
-      // better-auth will trigger a session update, and useQuery will trigger a list update
+      // Success — the org is in Convex (the source of truth)
       setIsOrganizationModalOpen(false);
       setOrgName("");
       setOrgType("church");
@@ -368,7 +360,6 @@ export function DashboardClient({
       setLogoPreview(null);
       setUploadedLogo(null);
       setFeedback(null);
-
 
     } catch (error) {
       console.error("Failed to create organization:", error);

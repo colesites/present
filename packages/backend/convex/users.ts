@@ -346,3 +346,34 @@ export const createOrganization = mutation({
     return { userId, orgId };
   },
 });
+
+export const linkAuthOrganization = mutation({
+  args: {
+    orgId: v.id("organizations"),
+    authOrganizationId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    // Check if already linked
+    const existingLink = await ctx.db
+      .query("organizationLinks")
+      .withIndex("by_auth_org", (q) => q.eq("authOrganizationId", args.authOrganizationId))
+      .first();
+
+    if (existingLink) {
+      return { linked: true, existing: true };
+    }
+
+    await ctx.db.insert("organizationLinks", {
+      authOrganizationId: args.authOrganizationId,
+      orgId: args.orgId,
+      createdAt: Date.now(),
+    });
+
+    return { linked: true, existing: false };
+  },
+});
