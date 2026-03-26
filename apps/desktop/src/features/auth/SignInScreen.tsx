@@ -3,26 +3,27 @@ import { Button } from "../../components/ui/button";
 import { useState } from "react";
 
 interface SignInScreenProps {
-  isAuthHandoffPending?: boolean;
-  handoffError?: string | null;
+  signIn: (provider: string) => Promise<{ signingIn: boolean; redirect?: URL }>;
 }
 
-export function SignInScreen({
-  isAuthHandoffPending = false,
-  handoffError = null,
-}: SignInScreenProps) {
-  const [isOpeningBrowser, setIsOpeningBrowser] = useState(false);
+export function SignInScreen({ signIn }: SignInScreenProps) {
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isWaitingForBrowser = isOpeningBrowser && !handoffError;
 
   const handleSignIn = async () => {
-    setIsOpeningBrowser(true);
+    setIsSigningIn(true);
     setError(null);
 
-    const result = await window.electronAPI.beginAuthFlow();
-    if (!result.ok) {
-      setError(result.error || "Unable to open browser sign-in.");
-      setIsOpeningBrowser(false);
+    try {
+      // Use Convex Auth's Google OAuth directly
+      await signIn("google");
+    } catch (authError) {
+      const message =
+        authError instanceof Error
+          ? authError.message
+          : "Unable to sign in. Please try again.";
+      setError(message);
+      setIsSigningIn(false);
     }
   };
 
@@ -44,27 +45,19 @@ export function SignInScreen({
         <Button 
           size="lg" 
           onClick={handleSignIn}
-          disabled={isWaitingForBrowser || isAuthHandoffPending}
+          disabled={isSigningIn}
           className="w-full text-md font-semibold h-12 shadow-lg hover:shadow-primary/25 transition-all ring-1 ring-primary/50"
         >
-          {isWaitingForBrowser ? "Opening Browser..." : "Sign In"}
+          {isSigningIn ? "Opening Browser..." : "Sign In with Google"}
         </Button>
-        {isWaitingForBrowser && !isAuthHandoffPending && (
+        {isSigningIn && (
           <p className="text-sm text-muted-foreground mt-2">
-            Waiting for browser authentication to complete...
+            Complete sign-in in your browser...
           </p>
         )}
-        {isAuthHandoffPending && (
-          <p className="text-sm text-muted-foreground mt-2">
-            Completing sign-in from browser...
-          </p>
-        )}
-        {error ? (
+        {error && (
           <p className="text-sm text-destructive mt-2">{error}</p>
-        ) : null}
-        {handoffError ? (
-          <p className="text-sm text-destructive mt-2">{handoffError}</p>
-        ) : null}
+        )}
       </div>
     </div>
   );

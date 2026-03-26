@@ -31,83 +31,24 @@ export default function Home() {
 
     return new URLSearchParams(window.location.search).get("window") === "settings";
   }, []);
-  const [isAuthHandoffPending, setIsAuthHandoffPending] = useState(false);
-  const [authHandoffError, setAuthHandoffError] = useState<string | null>(null);
-  const processedTokenRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const processAuthToken = async (token: string) => {
-      if (!token || processedTokenRef.current === token) {
-        return;
-      }
-
-      processedTokenRef.current = token;
-      setIsAuthHandoffPending(true);
-      setAuthHandoffError(null);
-
-      try {
-        // Use Convex Auth to sign in with the token
-        await signIn("password", { token });
-      } catch (authError) {
-        console.error("Desktop auth handoff failed:", authError);
-        const message =
-          authError instanceof Error
-            ? authError.message
-            : "Desktop sign-in handoff failed.";
-        setAuthHandoffError(message);
-        processedTokenRef.current = null;
-      } finally {
-        setIsAuthHandoffPending(false);
-      }
-    };
-
-    const consumePendingToken = async () => {
-      try {
-        const token = await window.electronAPI.consumePendingAuthToken();
-        if (token) {
-          await processAuthToken(token);
-        }
-      } catch (consumeError) {
-        console.error("Failed to consume pending auth token:", consumeError);
-      }
-    };
-
-    window.electronAPI.onAuthCallback((token) => {
-      void processAuthToken(token);
-    });
-
-    void consumePendingToken();
-    const pollTimer = window.setInterval(() => {
-      void consumePendingToken();
-    }, 1500);
-
-    return () => {
-      window.clearInterval(pollTimer);
-    };
-  }, [signIn]);
+  // For desktop, we'll use direct OAuth instead of token handoff
+  // The browser auth flow will open, complete OAuth, and the desktop app
+  // will automatically be authenticated via the shared Convex session
 
   return (
     <>
       <AuthLoading>
         <div className="flex h-screen flex-col items-center justify-center bg-background p-6 text-center">
           <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
-          {isAuthHandoffPending && (
-            <p className="mt-3 text-sm text-muted-foreground">
-              Completing sign-in from browser...
-            </p>
-          )}
+          <p className="mt-3 text-sm text-muted-foreground">
+            Verifying authentication...
+          </p>
         </div>
       </AuthLoading>
 
       <Unauthenticated>
-        <SignInScreen
-          isAuthHandoffPending={isAuthHandoffPending}
-          handoffError={authHandoffError}
-        />
+        <SignInScreen signIn={signIn} />
       </Unauthenticated>
 
       <Authenticated>

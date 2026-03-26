@@ -5,7 +5,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth } from "convex/react";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 interface LoginPageClientProps {
   setup?: boolean;
@@ -14,6 +14,7 @@ interface LoginPageClientProps {
 
 export default function LoginPageClient({ setup = false, nextPath }: LoginPageClientProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { isAuthenticated, isLoading: isSessionPending } = useConvexAuth();
   const { signIn } = useAuthActions();
   
@@ -21,8 +22,8 @@ export default function LoginPageClient({ setup = false, nextPath }: LoginPageCl
   const [error, setError] = useState<string | null>(null);
   
   const dashboardPath = "/dashboard";
-
   const destinationPath = nextPath || dashboardPath;
+  
   const authParams = new URLSearchParams();
   if (setup) {
     authParams.set("setup", "1");
@@ -32,9 +33,18 @@ export default function LoginPageClient({ setup = false, nextPath }: LoginPageCl
   }
   const authQuery = authParams.toString() ? `?${authParams.toString()}` : "";
 
+  // Check if we're returning from OAuth
+  const isReturningFromOAuth = searchParams.get("code") !== null;
+
+  useEffect(() => {
+    if (isReturningFromOAuth) {
+      setIsLoadingGoogle(true);
+    }
+  }, [isReturningFromOAuth]);
+
   useEffect(() => {
     if (!isSessionPending && isAuthenticated) {
-      router.replace(destinationPath);
+      router.push(destinationPath);
     }
   }, [destinationPath, isSessionPending, router, isAuthenticated]);
 
@@ -43,7 +53,7 @@ export default function LoginPageClient({ setup = false, nextPath }: LoginPageCl
     setError(null);
 
     try {
-      await signIn("google", { redirectTo: destinationPath });
+      await signIn("google");
     } catch (socialSignInError) {
       const message =
         socialSignInError instanceof Error
@@ -53,6 +63,21 @@ export default function LoginPageClient({ setup = false, nextPath }: LoginPageCl
       setIsLoadingGoogle(false);
     }
   };
+
+  if (isSessionPending || (isAuthenticated && !error)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="mx-auto w-full max-w-sm space-y-6 rounded-2xl bg-card p-8 shadow-2xl border border-white/10">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">
+              {isReturningFromOAuth ? "Completing sign in..." : "Verifying session..."}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
