@@ -97,8 +97,6 @@ export const listMyOrganizations = query({
       })
     );
 
-
-
     return orgs.filter((o): o is NonNullable<typeof o> => o !== null);
   },
 });
@@ -107,7 +105,7 @@ export const listMyOrganizations = query({
 export const createForCurrent = mutation({
   args: {
     orgId: v.id("organizations"),
-    role: v.optional(v.union(v.literal("admin"), v.literal("user"))),
+    role: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -162,6 +160,8 @@ export const ensureCurrent = mutation({
     orgName: v.optional(v.string()),
     logo: v.optional(v.string()),
     authOrganizationId: v.optional(v.string()),
+    orgType: v.optional(v.string()),
+    userRole: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -177,15 +177,12 @@ export const ensureCurrent = mutation({
       )
       .first();
 
-
-
     // Migration logic: Link by email if token differs
     if (!existing && identity.email) {
       existing = await ctx.db
         .query("users")
         .withIndex("by_email", (q) => q.eq("email", identity.email))
         .first();
-
       
       if (existing) {
         await ctx.db.patch(existing._id, {
@@ -195,10 +192,19 @@ export const ensureCurrent = mutation({
     }
 
     if (existing) {
-      if (args.orgName !== undefined || args.logo !== undefined) {
+      // Update existing org if metadata provided
+      if (args.orgName !== undefined || args.logo !== undefined || args.orgType !== undefined) {
         await ctx.db.patch(existing.orgId, {
           ...(args.orgName !== undefined ? { name: args.orgName } : {}),
           ...(args.logo !== undefined ? { logo: args.logo } : {}),
+          ...(args.orgType !== undefined ? { orgType: args.orgType } : {}),
+        });
+      }
+
+      // Update existing user record if functional role provided
+      if (args.userRole !== undefined) {
+        await ctx.db.patch(existing._id, {
+          userRole: args.userRole,
         });
       }
 
@@ -210,10 +216,6 @@ export const ensureCurrent = mutation({
           .first();
         
         if (!existingLink) {
-          console.log("Linking existing Convex org to BetterAuth org", { 
-            orgId: existing.orgId, 
-            authOrgId: args.authOrganizationId 
-          });
           await ctx.db.insert("organizationLinks", {
             authOrganizationId: args.authOrganizationId,
             orgId: existing.orgId,
@@ -222,17 +224,15 @@ export const ensureCurrent = mutation({
         }
       }
 
-
       return { userId: existing._id, orgId: existing.orgId };
     }
 
-
+    // No existing user found, create new organization and user
     const now = Date.now();
     const orgName =
       args.orgName ??
       identity.name ??
       identity.email ??
-      identity.nickname ??
       "Untitled Organization";
     
     const slug = orgName
@@ -240,8 +240,7 @@ export const ensureCurrent = mutation({
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)+/g, "");
 
-    // Create new organization for the new user
-    // First, check for slug collision to avoid index collision errors
+    // Create new organization
     let orgId: any;
     const existingOrgBySlug = await ctx.db
       .query("organizations")
@@ -249,34 +248,34 @@ export const ensureCurrent = mutation({
       .first();
 
     if (existingOrgBySlug) {
-      console.log("Found existing org by slug collision", { slug, orgId: existingOrgBySlug._id });
       orgId = existingOrgBySlug._id;
-      // Optionally update logo if provided
-      if (args.logo) {
-        await ctx.db.patch(orgId, { logo: args.logo });
+      if (args.logo || args.orgType) {
+        await ctx.db.patch(orgId, { 
+          ...(args.logo ? { logo: args.logo } : {}),
+          ...(args.orgType ? { orgType: args.orgType } : {})
+        });
       }
     } else {
-      console.log("Creating new Convex organization", { name: orgName, slug });
       orgId = await ctx.db.insert("organizations", {
         name: orgName,
         slug,
         ...(args.logo !== undefined ? { logo: args.logo } : {}),
+        ...(args.orgType !== undefined ? { orgType: args.orgType } : {}),
         createdAt: now,
       });
     }
 
-    console.log("Creating new Convex user", { orgId, userId: identity.tokenIdentifier });
     const userId = await ctx.db.insert("users", {
       orgId,
       tokenIdentifier: identity.tokenIdentifier,
       email: identity.email ?? undefined,
       name: identity.name ?? identity.givenName ?? undefined,
       role: "admin",
+      userRole: args.userRole ?? undefined,
       createdAt: now,
     });
 
     if (args.authOrganizationId) {
-      console.log("Linking new Convex org to BetterAuth org", { orgId, authOrgId: args.authOrganizationId });
       await ctx.db.insert("organizationLinks", {
         authOrganizationId: args.authOrganizationId,
         orgId,
@@ -293,6 +292,8 @@ export const createOrganization = mutation({
     orgName: v.string(),
     logo: v.optional(v.string()),
     authOrganizationId: v.optional(v.string()),
+    orgType: v.optional(v.string()),
+    userRole: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -311,6 +312,7 @@ export const createOrganization = mutation({
       name: args.orgName,
       slug,
       logo: args.logo ?? undefined,
+      orgType: args.orgType ?? undefined,
       createdAt: now,
     });
 
@@ -330,11 +332,10 @@ export const createOrganization = mutation({
       email: identity.email ?? undefined,
       name: identity.name ?? identity.givenName ?? undefined,
       role: "admin",
+      userRole: args.userRole ?? undefined,
       createdAt: now,
     });
 
     return { userId, orgId };
   },
 });
-
-

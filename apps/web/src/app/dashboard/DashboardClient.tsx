@@ -2,7 +2,8 @@
 
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+
 import { api } from "../../../../../packages/backend/convex/_generated/api";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
@@ -53,6 +54,8 @@ export function DashboardClient({
   const router = useRouter();
   const { data: session, isPending: isSessionPending } = authClient.useSession();
   const organizationApi = authClient.organization as OrganizationApi;
+  const syncOrganization = useMutation(api.users.createOrganization);
+
 
   const [currentOrg, setCurrentOrg] = useState<DashboardOrganization | null>(org);
   const [organizations, setOrganizations] = useState<DashboardOrganizationListItem[]>([]);
@@ -111,6 +114,9 @@ export function DashboardClient({
     org?.logo && !org.logo.startsWith("data:") ? org.logo : "",
   );
   const [uploadedLogo, setUploadedLogo] = useState<string | null>(null);
+  const [orgType, setOrgType] = useState("church");
+  const [userRole, setUserRole] = useState("tech-director");
+
 
   const [isPending, setIsPending] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -201,6 +207,8 @@ export function DashboardClient({
   const openCreateOrganizationModal = () => {
     setFeedback(null);
     setOrgName("");
+    setOrgType("church");
+    setUserRole("tech-director");
     setLogoMode("url");
     setLogoPreview(null);
     setRemoveLogo(false);
@@ -209,6 +217,7 @@ export function DashboardClient({
     setIsAccountSwitcherOpen(false);
     setIsOrganizationModalOpen(true);
   };
+
 
   const handleOrganizationSwitch = async (
     organization: DashboardOrganizationListItem,
@@ -321,36 +330,32 @@ export function DashboardClient({
         }
       }
 
-      const syncResponse = await fetch("/api/onboarding/complete", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      try {
+        await syncOrganization({
           orgName: name,
           logo: nextLogo,
           authOrganizationId: finalAuthOrgId,
-        }),
-      });
+          orgType,
+          userRole,
+        });
+      } catch (syncError) {
 
-
-
-      const syncResult = (await syncResponse.json().catch(() => null)) as
-        | { error?: string }
-        | null;
-
-      if (!syncResponse.ok) {
-        setFeedback(syncResult?.error || "Organization was created, but sync failed.");
+        console.error("Sync to Convex failed:", syncError);
+        setFeedback("Organization was created in Auth, but failed to sync to Convex.");
         return;
       }
+
 
       // better-auth will trigger a session update, and useQuery will trigger a list update
       setIsOrganizationModalOpen(false);
       setOrgName("");
+      setOrgType("church");
+      setUserRole("tech-director");
       setLogoUrl("");
       setLogoPreview(null);
       setUploadedLogo(null);
       setFeedback(null);
+
 
     } catch (error) {
       console.error("Failed to create organization:", error);
@@ -461,7 +466,8 @@ export function DashboardClient({
         isOpen={isOrganizationModalOpen}
         isPending={isPending}
         orgName={orgName}
-
+        orgType={orgType}
+        userRole={userRole}
         logoMode={logoMode}
         logoUrl={logoUrl}
         logoPreview={logoPreview}
@@ -475,10 +481,13 @@ export function DashboardClient({
           void handleCreateOrganization();
         }}
         onOrgNameChange={setOrgName}
+        onOrgTypeChange={setOrgType}
+        onUserRoleChange={setUserRole}
         onLogoModeChange={(mode) => {
           setLogoMode(mode);
           setRemoveLogo(false);
         }}
+
         onLogoUrlChange={(value) => {
           setRemoveLogo(false);
           setUploadedLogo(null);

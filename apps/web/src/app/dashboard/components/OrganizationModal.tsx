@@ -9,6 +9,8 @@ interface OrganizationModalProps {
   isOpen: boolean;
   isPending: boolean;
   orgName: string;
+  orgType: string;
+  userRole: string;
   logoMode: "url" | "upload";
   logoUrl: string;
   logoPreview: string | null;
@@ -16,6 +18,8 @@ interface OrganizationModalProps {
   onClose: () => void;
   onSubmit: () => void;
   onOrgNameChange: (value: string) => void;
+  onOrgTypeChange: (value: string) => void;
+  onUserRoleChange: (value: string) => void;
   onLogoModeChange: (mode: "url" | "upload") => void;
   onLogoUrlChange: (value: string) => void;
   onLogoUpload: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -26,6 +30,8 @@ export function OrganizationModal({
   isOpen,
   isPending,
   orgName,
+  orgType,
+  userRole,
   logoMode,
   logoUrl,
   logoPreview,
@@ -33,11 +39,14 @@ export function OrganizationModal({
   onClose,
   onSubmit,
   onOrgNameChange,
+  onOrgTypeChange,
+  onUserRoleChange,
   onLogoModeChange,
   onLogoUrlChange,
   onLogoUpload,
   onRemoveLogo,
 }: OrganizationModalProps) {
+
   if (!isOpen) {
     return null;
   }
@@ -89,7 +98,46 @@ export function OrganizationModal({
               />
             </div>
 
-            <div className="rounded-[28px] bg-[#f7f9fc] p-4">
+            <div className="space-y-2">
+              <label htmlFor="org-type-modal" className="text-sm font-medium text-[#232946]">
+                Organization type
+              </label>
+              <select
+                id="org-type-modal"
+                value={orgType}
+                onChange={(e) => onOrgTypeChange(e.target.value)}
+                className="w-full rounded-2xl border border-[#e8ecf4] bg-white px-4 py-3 text-sm text-[#232946] outline-none transition focus:border-[#9eb7e5] appearance-none"
+                disabled={isPending}
+              >
+                <option value="church">Church</option>
+                <option value="school">School</option>
+                <option value="business">Business</option>
+                <option value="concert">Concert/Event</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="user-role-modal" className="text-sm font-medium text-[#232946]">
+                Your role
+              </label>
+              <select
+                id="user-role-modal"
+                value={userRole}
+                onChange={(e) => onUserRoleChange(e.target.value)}
+                className="w-full rounded-2xl border border-[#e8ecf4] bg-white px-4 py-3 text-sm text-[#232946] outline-none transition focus:border-[#9eb7e5] appearance-none"
+                disabled={isPending}
+              >
+                <option value="tech-director">Tech Director</option>
+                <option value="pastor">Pastor/Leader</option>
+                <option value="volunteer">Volunteer</option>
+                <option value="staff">Staff</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div className="rounded-[28px] bg-[#f7f9fc] p-4 lg:row-span-3">
+
               <p className="text-[11px] uppercase tracking-[0.2em] text-[#9ba4b5]">Preview</p>
               <div className="mt-4 flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-[28px] bg-white">
                 {logoPreview ? (

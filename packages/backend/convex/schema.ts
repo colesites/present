@@ -5,9 +5,8 @@ export default defineSchema({
   organizations: defineTable({
     name: v.string(),
     slug: v.string(),
-
-
     logo: v.optional(v.string()),
+    orgType: v.optional(v.string()), // e.g. "church", "school", "business"
     createdAt: v.number(),
   })
     .index("by_name", ["name"])
@@ -26,9 +25,11 @@ export default defineSchema({
     tokenIdentifier: v.string(),
     email: v.optional(v.string()),
     name: v.optional(v.string()),
-    role: v.union(v.literal("admin"), v.literal("user")),
+    role: v.string(), // "admin", "user", or custom roles like "pastor"
+    userRole: v.optional(v.string()), // The specific functional role like "tech-director"
     createdAt: v.number(),
   })
+
     .index("by_token", ["tokenIdentifier"])
     .index("by_org", ["orgId"])
     .index("by_email", ["email"]),

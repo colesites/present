@@ -21,8 +21,9 @@ export default function SignupPageClient({ setup = false, nextPath }: SignupPage
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const setupQuery = setup ? "?setup=1" : "";
-  const dashboardPath = `/dashboard${setupQuery}`;
+  const dashboardPath = "/dashboard";
+
+
   const destinationPath = nextPath || dashboardPath;
   const authParams = new URLSearchParams();
   if (setup) {
