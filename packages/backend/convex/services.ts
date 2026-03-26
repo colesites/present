@@ -5,20 +5,25 @@ import { validateWorkspace } from "./authUtils";
 export const list = query({
   args: { workspaceId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    try {
+      const workspace = await validateWorkspace(ctx, args.workspaceId);
 
-    if (workspace.type === "personal") {
-      const services = await ctx.db
-        .query("personalServices")
-        .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
-        .collect();
-      return services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    } else {
-      const services = await ctx.db
-        .query("services")
-        .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
-        .collect();
-      return services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      if (workspace.type === "personal") {
+        const services = await ctx.db
+          .query("personalServices")
+          .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
+          .collect();
+        return services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      } else {
+        const services = await ctx.db
+          .query("services")
+          .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
+          .collect();
+        return services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      }
+    } catch (error) {
+      // Return empty array if user is not authenticated yet
+      return [];
     }
   },
 });

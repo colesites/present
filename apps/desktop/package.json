@@ -1,8 +1,8 @@
 {
   "name": "@present/desktop",
-  "productName": "present",
+  "productName": "Present",
   "version": "0.1.0",
-  "description": "My Electron application description",
+  "description": "Church presentation software for worship services",
   "main": ".webpack/main",
   "private": true,
   "scripts": {

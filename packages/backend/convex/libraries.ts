@@ -5,18 +5,23 @@ import { validateWorkspace } from "./authUtils";
 export const list = query({
   args: { workspaceId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    try {
+      const workspace = await validateWorkspace(ctx, args.workspaceId);
 
-    if (workspace.type === "personal") {
-      return await ctx.db
-        .query("personalLibraries")
-        .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
-        .collect();
-    } else {
-      return await ctx.db
-        .query("libraries")
-        .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
-        .collect();
+      if (workspace.type === "personal") {
+        return await ctx.db
+          .query("personalLibraries")
+          .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
+          .collect();
+      } else {
+        return await ctx.db
+          .query("libraries")
+          .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
+          .collect();
+      }
+    } catch (error) {
+      // Return empty array if user is not authenticated yet
+      return [];
     }
   },
 });
