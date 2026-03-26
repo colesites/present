@@ -11,7 +11,7 @@ type VideoSettings = {
   muted: boolean;
 };
 
-type SongStyle = {
+type LibraryStyle = {
   fontFamily: string;
   fontSize: number;
   fontBold: boolean;
@@ -42,7 +42,7 @@ type OutputState = {
     fontFamily: string;
     textAlign: "left" | "center" | "right";
   };
-  songStyle: SongStyle;
+  libraryStyle: LibraryStyle;
 };
 
 export function OutputWindow() {
@@ -65,7 +65,7 @@ export function OutputWindow() {
       fontFamily: "Inter",
       textAlign: "center"
     },
-    songStyle: {
+    libraryStyle: {
       fontFamily: "Inter",
       fontSize: 72,
       fontBold: false,
@@ -97,7 +97,7 @@ export function OutputWindow() {
           videoCurrentTime: msg.videoCurrentTime as number,
           shouldSyncTime: msg.shouldSyncTime as boolean,
           scriptureStyle: msg.scriptureStyle as OutputState["scriptureStyle"],
-          songStyle: msg.songStyle ? msg.songStyle as SongStyle : prev.songStyle,
+          libraryStyle: msg.libraryStyle ? msg.libraryStyle as LibraryStyle : prev.libraryStyle,
         }));
       } 
       else if (msg.type === "active-slide") {
@@ -156,11 +156,11 @@ export function OutputWindow() {
         textDecoration: "none" as const,
       }
     : {
-        fontFamily: state.songStyle.fontFamily,
-        textAlign: "center" as const,  // Songs are always centered
-        fontWeight: state.songStyle.fontBold ? "bold" as const : "normal" as const,
-        fontStyle: state.songStyle.fontItalic ? "italic" as const : "normal" as const,
-        textDecoration: state.songStyle.fontUnderline ? "underline" as const : "none" as const,
+        fontFamily: state.libraryStyle.fontFamily,
+        textAlign: "center" as const,  // Items are always centered
+        fontWeight: state.libraryStyle.fontBold ? "bold" as const : "normal" as const,
+        fontStyle: state.libraryStyle.fontItalic ? "italic" as const : "normal" as const,
+        textDecoration: state.libraryStyle.fontUnderline ? "underline" as const : "none" as const,
       };
 
   return (
@@ -202,7 +202,7 @@ export function OutputWindow() {
               maxFontSize={
                 isScripture
                   ? state.scriptureStyle.fontSize
-                  : state.songStyle.fontSize
+                  : state.libraryStyle.fontSize
               }
               minScale={isScripture ? 0.3 : 0.1}
             />

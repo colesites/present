@@ -10,7 +10,7 @@ import {
   type ChangeEvent,
 } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { Song, Category, ContentSource } from "../../types";
+import type { LibraryItem, Category, ContentSource } from "../../types";
 import { Dialog } from "../../components/Dialog";
 import { Input } from "../../components/ui/input";
 import { Spinner } from "../../components/ui/spinner";
@@ -34,23 +34,23 @@ import {
 } from "../../components/ui/dropdown-menu";
 
 interface ShowsPanelProps {
-  songs: Song[];
+  libraryItems: LibraryItem[];
   categories: Category[];
-  selectedSongId: Id<"songs"> | null;
-  selectedCategoryId: Id<"categories"> | null;
+  selectedLibraryId: string | null;
+  selectedCategoryId: string | null;
   isInsideService: boolean;
   selectedServiceId: Id<"services"> | null;
   isLoading?: boolean;
-  onSelectSong: (id: Id<"songs">) => void;
-  onSelectCategory: (id: Id<"categories"> | null) => void;
-  onCreateSong: (
+  onSelectLibraryItem: (id: string) => void;
+  onSelectCategory: (id: string | null) => void;
+  onCreateLibraryItem: (
     title: string,
-    lyrics: string,
-    categoryId?: Id<"categories">,
+    body: string,
+    categoryId?: string,
   ) => Promise<unknown>;
-  onRenameSong: (id: Id<"songs">, title: string) => Promise<void>;
-  onDeleteSong: (id: Id<"songs">) => Promise<void>;
-  onAddToService: (songId: Id<"songs">) => void;
+  onRenameLibraryItem: (id: string, title: string) => Promise<void>;
+  onDeleteLibraryItem: (id: string) => Promise<void>;
+  onAddToService: (libraryId: string) => void;
   onCreateCategory: (name: string) => Promise<unknown>;
   onFixLyrics: (lyrics: string) => Promise<string>;
   searchQuery: string;
@@ -65,18 +65,18 @@ export interface ShowsPanelRef {
 export const ShowsPanel = memo(
   forwardRef<ShowsPanelRef, ShowsPanelProps>(function ShowsPanel(
     {
-      songs,
+      libraryItems,
       categories,
-      selectedSongId,
+      selectedLibraryId,
       selectedCategoryId,
       isInsideService,
       selectedServiceId,
       isLoading = false,
-      onSelectSong,
+      onSelectLibraryItem,
       onSelectCategory,
-      onCreateSong,
-      onRenameSong,
-      onDeleteSong,
+      onCreateLibraryItem,
+      onRenameLibraryItem,
+      onDeleteLibraryItem,
       onAddToService,
       onCreateCategory,
       onFixLyrics,
@@ -86,14 +86,14 @@ export const ShowsPanel = memo(
     }: ShowsPanelProps,
     ref,
   ) {
-    const [showNewSongDialog, setShowNewSongDialog] = useState(false);
+    const [showNewLibraryItemDialog, setShowNewLibraryItemDialog] = useState(false);
     const [showNewCategoryDialog, setShowNewCategoryDialog] = useState(false);
     const [renameTarget, setRenameTarget] = useState<{
-      id: Id<"songs">;
+      id: string;
       title: string;
     } | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<{
-      id: Id<"songs">;
+      id: string;
       title: string;
     } | null>(null);
 
@@ -107,11 +107,11 @@ export const ShowsPanel = memo(
       focusSearch: () => searchInputRef.current?.focus(),
     }));
 
-    // Filter songs by category
-    const filteredSongs = useMemo(() => {
+    // Filter library items by category
+    const filteredItems = useMemo(() => {
       let result = selectedCategoryId
-        ? songs.filter((s) => s.categoryId === selectedCategoryId)
-        : songs;
+        ? libraryItems.filter((s) => s.categoryId === selectedCategoryId)
+        : libraryItems;
 
       // Sorting
       result = [...result].sort((a, b) => {
@@ -128,16 +128,16 @@ export const ShowsPanel = memo(
       });
 
       return result;
-    }, [songs, selectedCategoryId, sortBy, sortOrder]);
+    }, [libraryItems, selectedCategoryId, sortBy, sortOrder]);
 
     const handleExportLibraries = () => {
       const payload = {
         exportedAt: new Date().toISOString(),
         version: 1,
-        items: songs.map((song) => ({
-          title: song.title,
-          lyrics: song.lyrics,
-          categoryId: song.categoryId ?? null,
+        items: libraryItems.map((item) => ({
+          title: item.title,
+          body: item.body,
+          categoryId: item.categoryId ?? null,
         })),
       };
 
@@ -164,7 +164,8 @@ export const ShowsPanel = memo(
         const parsed = JSON.parse(text) as {
           items?: Array<{
             title?: string;
-            lyrics?: string;
+            body?: string;
+            lyrics?: string; // fallback
             categoryId?: Id<"categories"> | null;
           }>;
         };
@@ -172,11 +173,11 @@ export const ShowsPanel = memo(
         const items = Array.isArray(parsed.items) ? parsed.items : [];
         for (const item of items) {
           const title = typeof item.title === "string" ? item.title.trim() : "";
-          const lyrics = typeof item.lyrics === "string" ? item.lyrics : "";
+          const body = typeof item.body === "string" ? item.body : (typeof item.lyrics === "string" ? item.lyrics : "");
           if (!title) {
             continue;
           }
-          await onCreateSong(title, lyrics, item.categoryId ?? undefined);
+          await onCreateLibraryItem(title, body, item.categoryId ?? undefined);
         }
       } catch (error) {
         console.error("Failed to import libraries:", error);
@@ -338,21 +339,21 @@ export const ShowsPanel = memo(
             </div>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
-              <NewSongButton onClick={() => setShowNewSongDialog(true)} />
-              {filteredSongs.map((song) => (
-                <SongCard
-                  key={song._id}
-                  song={song}
-                  isSelected={selectedSongId === song._id}
+              <NewLibraryItemButton onClick={() => setShowNewLibraryItemDialog(true)} />
+              {filteredItems.map((item) => (
+                <LibraryItemCard
+                  key={item._id}
+                  item={item}
+                  isSelected={selectedLibraryId === item._id}
                   showAddToService={isInsideService && !!selectedServiceId}
-                  onSelect={() => onSelectSong(song._id)}
+                  onSelect={() => onSelectLibraryItem(item._id)}
                   onRename={() =>
-                    setRenameTarget({ id: song._id, title: song.title })
+                    setRenameTarget({ id: item._id, title: item.title })
                   }
                   onDelete={() =>
-                    setDeleteTarget({ id: song._id, title: song.title })
+                    setDeleteTarget({ id: item._id, title: item.title })
                   }
-                  onAddToService={() => onAddToService(song._id)}
+                  onAddToService={() => onAddToService(item._id)}
                 />
               ))}
             </div>
@@ -360,10 +361,10 @@ export const ShowsPanel = memo(
         </div>
 
         {/* Dialogs */}
-        {showNewSongDialog && (
-          <NewSongDialog
-            onClose={() => setShowNewSongDialog(false)}
-            onCreate={onCreateSong}
+        {showNewLibraryItemDialog && (
+          <NewLibraryItemDialog
+            onClose={() => setShowNewLibraryItemDialog(false)}
+            onCreate={onCreateLibraryItem}
             onFixLyrics={onFixLyrics}
             categoryId={selectedCategoryId}
             categories={categories}
@@ -378,22 +379,22 @@ export const ShowsPanel = memo(
         )}
 
         {renameTarget && (
-          <RenameSongDialog
+          <RenameLibraryItemDialog
             title={renameTarget.title}
             onClose={() => setRenameTarget(null)}
             onSave={(newTitle) => {
-              onRenameSong(renameTarget.id, newTitle);
+              onRenameLibraryItem(renameTarget.id, newTitle);
               setRenameTarget(null);
             }}
           />
         )}
 
         {deleteTarget && (
-          <DeleteSongDialog
+          <DeleteLibraryItemDialog
             title={deleteTarget.title}
             onClose={() => setDeleteTarget(null)}
             onDelete={async () => {
-              await onDeleteSong(deleteTarget.id);
+              await onDeleteLibraryItem(deleteTarget.id);
               setDeleteTarget(null);
             }}
           />
@@ -404,8 +405,8 @@ export const ShowsPanel = memo(
 );
 
 // Sub-components
-interface SongCardProps {
-  song: Song;
+interface LibraryItemCardProps {
+  item: LibraryItem;
   isSelected: boolean;
   showAddToService: boolean;
   onSelect: () => void;
@@ -414,15 +415,15 @@ interface SongCardProps {
   onAddToService: () => void;
 }
 
-const SongCard = memo(function SongCard({
-  song,
+const LibraryItemCard = memo(function LibraryItemCard({
+  item,
   isSelected,
   showAddToService,
   onSelect,
   onRename,
   onDelete,
   onAddToService,
-}: SongCardProps) {
+}: LibraryItemCardProps) {
   return (
     <div
       className={cn(
@@ -434,9 +435,9 @@ const SongCard = memo(function SongCard({
     >
       <div className="flex items-start justify-between">
         <button type="button" onClick={onSelect} className="flex-1 text-left">
-          <div className="font-medium">{song.title}</div>
+          <div className="font-medium">{item.title}</div>
           <div className="mt-1 text-muted-foreground">
-            {song.slides.length} slides
+            {item.slides.length} slides
           </div>
         </button>
         <div className="flex gap-1 opacity-0 group-hover:opacity-100">
@@ -471,7 +472,7 @@ const SongCard = memo(function SongCard({
   );
 });
 
-function NewSongButton({ onClick }: { onClick: () => void }) {
+function NewLibraryItemButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
@@ -495,7 +496,7 @@ function NewSongButton({ onClick }: { onClick: () => void }) {
 }
 
 // Dialog components
-function NewSongDialog({
+function NewLibraryItemDialog({
   onClose,
   onCreate,
   onFixLyrics,
@@ -505,15 +506,15 @@ function NewSongDialog({
   onClose: () => void;
   onCreate: (
     title: string,
-    lyrics: string,
-    categoryId?: Id<"categories">
+    body: string,
+    categoryId?: string
   ) => Promise<unknown>;
   onFixLyrics: (lyrics: string) => Promise<string>;
-  categoryId: Id<"categories"> | null;
+  categoryId: string | null;
   categories: Category[];
 }) {
   const [title, setTitle] = useState("");
-  const [lyrics, setLyrics] = useState("");
+  const [body, setBody] = useState("");
   const [isFixing, setIsFixing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -532,8 +533,8 @@ function NewSongDialog({
     try {
       await onCreate(
         title.trim(),
-        lyrics,
-        (targetCategoryId as Id<"categories">) || undefined,
+        body,
+        targetCategoryId || undefined,
       );
       onClose();
     } catch (err) {
@@ -544,11 +545,11 @@ function NewSongDialog({
   };
 
   const handleFix = async () => {
-    if (!lyrics.trim()) return;
+    if (!body.trim()) return;
     setIsFixing(true);
     try {
-      const fixed = await onFixLyrics(lyrics);
-      setLyrics(fixed);
+      const fixed = await onFixLyrics(body);
+      setBody(fixed);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fix");
     } finally {
@@ -595,8 +596,8 @@ function NewSongDialog({
             Content
           </label>
           <textarea
-            value={lyrics}
-            onChange={(e) => setLyrics(e.target.value)}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
             placeholder={"[Verse 1]\nLine 1\nLine 2\n\n[Chorus]\nLine 1"}
             rows={10}
             className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
@@ -611,7 +612,7 @@ function NewSongDialog({
             disabled={isFixing}
             className="flex-1 rounded-md border border-input py-2 text-xs font-medium text-foreground hover:bg-secondary disabled:opacity-50"
           >
-            {isFixing ? "Fixing..." : "Fix lyrics"}
+            {isFixing ? "Fixing..." : "Fix body"}
           </button>
           <button
             type="button"
@@ -675,7 +676,7 @@ function NewCategoryDialog({
   );
 }
 
-function RenameSongDialog({
+function RenameLibraryItemDialog({
   title,
   onClose,
   onSave,
@@ -717,7 +718,7 @@ function RenameSongDialog({
   );
 }
 
-function DeleteSongDialog({
+function DeleteLibraryItemDialog({
   title,
   onClose,
   onDelete,

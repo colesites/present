@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import * as React from "react";
 import { 
   ResizableHandle, 
   ResizablePanel, 
@@ -19,7 +19,7 @@ import {
   MediaState
 } from "../../features/media/hooks/useMediaFolders";
 import { MediaPanel } from "../media";
-import type { ViewMode, BottomTab, Song, Category, Service, PlaybackState, ServiceItem, ContentSource } from "../../types/index";
+import type { ViewMode, BottomTab, LibraryItem, Category, Service, PlaybackState, ServiceItem, ContentSource } from "../../types/index";
 import { fixLyrics } from "../../lib/lyrics";
 import { ScriptureSlide } from "../../features/scripture/lib/slides";
 import type { MediaPanelRef } from "../media/MediaPanel";
@@ -29,13 +29,13 @@ import type { ShowsPanelRef } from "../shows/ShowsPanel";
 export interface MainViewPresentState {
   slidesForGrid: SlideData[];
   activeSlideId: string | null;
-  selected: { songId: Id<"songs"> | null; index: number } | null;
-  selectedSong: Song | null;
-  selectedSongId: Id<"songs"> | null;
-  setSelectedSongId: (id: Id<"songs"> | null) => void;
+  selected: { libraryId: string | null; index: number } | null;
+  selectedLibraryItem: LibraryItem | null;
+  selectedLibraryId: string | null;
+  setSelectedLibraryId: (id: string | null) => void;
   handleSelectSlide: (slideId: string, text: string, footer?: string) => Promise<void>;
-  handleEditSlide: (songId: Id<"songs">, slideIndex: number) => void;
-  handleSaveSong: (title: string, lyrics: string) => Promise<void>;
+  handleEditSlide: (libraryId: string, slideIndex: number) => void;
+  handleSaveLibraryItem: (title: string, body: string) => Promise<void>;
   editScrollToSlide: number | null;
   setEditScrollToSlide: (index: number | null) => void;
   handleScriptureOutput: (slides: ScriptureSlide[]) => void;
@@ -67,16 +67,16 @@ export interface MainViewMediaState {
   videoCurrentTime: number;
 }
 
-export interface MainViewSongState {
-  filteredSongs: Song[];
-  songsLoading: boolean;
+export interface MainViewLibraryState {
+  filteredLibraryItems: LibraryItem[];
+  libraryLoading: boolean;
   categories: Category[];
-  selectedCategoryId: Id<"categories"> | null;
-  setSelectedCategoryId: (id: Id<"categories"> | null) => void;
-  createNewSong: (title: string, lyrics: string, categoryId?: Id<"categories">) => Promise<void>;
-  handleRenameSong: (songId: Id<"songs">, newTitle: string) => Promise<void>;
-  deleteSong: (songId: Id<"songs">) => Promise<void>;
-  handleAddToService: (songId: Id<"songs">) => Promise<void>;
+  selectedCategoryId: string | null;
+  setSelectedCategoryId: (id: string | null) => void;
+  createNewLibraryItem: (title: string, body: string, categoryId?: string) => Promise<void>;
+  handleRenameLibraryItem: (libraryId: string, newTitle: string) => Promise<void>;
+  deleteLibraryItem: (libraryId: string) => Promise<void>;
+  handleAddToService: (libraryId: string) => Promise<void>;
   createNewCategory: (name: string) => Promise<void>;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
@@ -137,7 +137,7 @@ interface MainViewProps {
 
   presentState: MainViewPresentState;
   mediaState: MainViewMediaState;
-  songState: MainViewSongState;
+  libraryState: MainViewLibraryState;
   styleState: MainViewStyleState;
   panelRefs: MainViewPanelRefs;
   outputState: MainViewOutputState;
@@ -152,7 +152,7 @@ export function MainView({
   servicesSidebarProps,
   presentState,
   mediaState,
-  songState,
+  libraryState,
   styleState,
   panelRefs,
   outputState,
@@ -191,12 +191,12 @@ export function MainView({
     slidesForGrid,
     activeSlideId,
     selected,
-    selectedSong,
-    selectedSongId,
-    setSelectedSongId,
+    selectedLibraryItem,
+    selectedLibraryId,
+    setSelectedLibraryId,
     handleSelectSlide,
     handleEditSlide,
-    handleSaveSong,
+    handleSaveLibraryItem,
     editScrollToSlide,
     setEditScrollToSlide,
     handleScriptureOutput,
@@ -205,19 +205,19 @@ export function MainView({
   } = presentState;
 
   const {
-    filteredSongs,
-    songsLoading,
+    filteredLibraryItems,
+    libraryLoading,
     categories,
     selectedCategoryId,
     setSelectedCategoryId,
-    createNewSong,
-    handleRenameSong,
-    deleteSong,
+    createNewLibraryItem,
+    handleRenameLibraryItem,
+    deleteLibraryItem,
     handleAddToService,
     createNewCategory,
     searchQuery,
     setSearchQuery,
-  } = songState;
+  } = libraryState;
 
   const {
     fontFamily,
@@ -308,8 +308,8 @@ export function MainView({
                   slidesForGrid={slidesForGrid}
                   activeSlideId={activeSlideId}
                   selectedIndex={selected?.index ?? null}
-                  selectedSong={selectedSong}
-                  selectedSongId={selectedSongId}
+                  selectedLibraryItem={selectedLibraryItem}
+                  selectedLibraryId={selectedLibraryId}
                   onSelectSlide={handleSelectSlide}
                   onEditSlide={handleEditSlide}
                   editorProps={{
@@ -319,7 +319,7 @@ export function MainView({
                     fontItalic,
                     fontUnderline,
                     onFontStyleChange: updateFontStyle,
-                    onSave: handleSaveSong,
+                    onSave: handleSaveLibraryItem,
                     onFixLyrics: fixLyrics,
                     scrollToSlideIndex: editScrollToSlide,
                     onScrollComplete: () => setEditScrollToSlide(null),
@@ -335,18 +335,18 @@ export function MainView({
                   showsPanelRef={showsPanelRef}
                   scripturePanelRef={scripturePanelRef}
                   showsPanelProps={{
-                    songs: filteredSongs,
-                    isLoading: songsLoading,
+                    libraryItems: filteredLibraryItems,
+                    isLoading: libraryLoading,
                     categories,
-                    selectedSongId,
+                    selectedLibraryId,
                     selectedCategoryId,
                     isInsideService,
                     selectedServiceId,
-                    onSelectSong: setSelectedSongId,
+                    onSelectLibraryItem: setSelectedLibraryId,
                     onSelectCategory: setSelectedCategoryId,
-                    onCreateSong: createNewSong,
-                    onRenameSong: handleRenameSong,
-                    onDeleteSong: deleteSong,
+                    onCreateLibraryItem: createNewLibraryItem,
+                    onRenameLibraryItem: handleRenameLibraryItem,
+                    onDeleteLibraryItem: deleteLibraryItem,
                     onAddToService: handleAddToService,
                     onCreateCategory: createNewCategory,
                     onFixLyrics: fixLyrics,

@@ -1,68 +1,74 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { removeItemsFromAllServices } from "./services";
+import { validateWorkspace } from "./authUtils";
 
-export const listByOrg = query({
-  args: { orgId: v.id("organizations") },
+export const list = query({
+  args: { workspaceId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    return await ctx.db
-      .query("songs")
-      .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
-      .collect();
-  },
-});
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
 
-export const listByCategory = query({
-  args: { categoryId: v.id("categories") },
-  handler: async (ctx, args) => {
-    return await ctx.db
-      .query("songs")
-      .withIndex("by_category", (q) => q.eq("categoryId", args.categoryId))
-      .collect();
-  },
-});
-
-export const get = query({
-  args: { libraryId: v.id("songs") },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.libraryId);
+    if (workspace.type === "personal") {
+      return await ctx.db
+        .query("personalLibraries")
+        .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
+        .collect();
+    } else {
+      return await ctx.db
+        .query("libraries")
+        .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
+        .collect();
+    }
   },
 });
 
 export const create = mutation({
   args: {
-    orgId: v.id("organizations"),
-    categoryId: v.optional(v.id("categories")),
+    workspaceId: v.optional(v.string()),
+    categoryId: v.optional(v.string()),
     title: v.string(),
-    lyrics: v.string(),
+    body: v.string(),
     slides: v.array(
       v.object({
         text: v.string(),
         label: v.optional(v.string()),
         modifier: v.optional(v.string()),
         backgroundId: v.optional(v.string()),
-      }),
+      })
     ),
   },
   handler: async (ctx, args) => {
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
     const now = Date.now();
-    return await ctx.db.insert("songs", {
-      orgId: args.orgId,
-      categoryId: args.categoryId,
-      title: args.title,
-      lyrics: args.lyrics,
-      slides: args.slides,
-      createdAt: now,
-    });
+
+    if (workspace.type === "personal") {
+      return await ctx.db.insert("personalLibraries", {
+        userId: workspace.userId,
+        categoryId: args.categoryId as any,
+        title: args.title,
+        body: args.body,
+        slides: args.slides,
+        createdAt: now,
+      });
+    } else {
+      return await ctx.db.insert("libraries", {
+        orgId: workspace.orgId,
+        categoryId: args.categoryId as any,
+        title: args.title,
+        body: args.body,
+        slides: args.slides,
+        createdAt: now,
+      });
+    }
   },
 });
 
 export const update = mutation({
   args: {
-    libraryId: v.id("songs"),
-    categoryId: v.optional(v.id("categories")),
+    workspaceId: v.optional(v.string()),
+    libraryId: v.string(),
+    categoryId: v.optional(v.string()),
     title: v.optional(v.string()),
-    lyrics: v.optional(v.string()),
+    body: v.optional(v.string()),
     slides: v.optional(
       v.array(
         v.object({
@@ -70,37 +76,60 @@ export const update = mutation({
           label: v.optional(v.string()),
           modifier: v.optional(v.string()),
           backgroundId: v.optional(v.string()),
-        }),
-      ),
+        })
+      )
     ),
   },
   handler: async (ctx, args) => {
-    const library = await ctx.db.get(args.libraryId);
-    if (!library) {
-      throw new Error("Library item not found");
-    }
-    const updates: Record<string, unknown> = { updatedAt: Date.now() };
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    const updates: any = { updatedAt: Date.now() };
     if (args.categoryId !== undefined) updates.categoryId = args.categoryId;
     if (args.title !== undefined) updates.title = args.title;
-    if (args.lyrics !== undefined) updates.lyrics = args.lyrics;
+    if (args.body !== undefined) updates.body = args.body;
     if (args.slides !== undefined) updates.slides = args.slides;
-    await ctx.db.patch(args.libraryId, updates);
-    return args.libraryId;
+
+    if (workspace.type === "personal") {
+      const libraryId = args.libraryId as any;
+      const existing = await ctx.db.get(libraryId);
+      if (!existing || !("userId" in existing) || existing.userId !== workspace.userId) {
+        throw new Error("Library item not found or unauthorized");
+      }
+      await ctx.db.patch(libraryId, updates);
+      return libraryId;
+    } else {
+      const libraryId = args.libraryId as any;
+      const existing = await ctx.db.get(libraryId);
+      if (!existing || !("orgId" in existing) || existing.orgId !== workspace.orgId) {
+        throw new Error("Library item not found or unauthorized");
+      }
+      await ctx.db.patch(libraryId, updates);
+      return libraryId;
+    }
   },
 });
 
 export const remove = mutation({
-  args: { libraryId: v.id("songs") },
+  args: {
+    workspaceId: v.optional(v.string()),
+    libraryId: v.string(),
+  },
   handler: async (ctx, args) => {
-    const library = await ctx.db.get(args.libraryId);
-    if (library) {
-      await removeItemsFromAllServices(
-        ctx,
-        library.orgId,
-        (item) => item.type === "song" && item.refId === args.libraryId,
-      );
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+
+    if (workspace.type === "personal") {
+      const libraryId = args.libraryId as any;
+      const existing = await ctx.db.get(libraryId);
+      if (!existing || !("userId" in existing) || existing.userId !== workspace.userId) {
+        throw new Error("Library item not found or unauthorized");
+      }
+      await ctx.db.delete(libraryId);
+    } else {
+      const libraryId = args.libraryId as any;
+      const existing = await ctx.db.get(libraryId);
+      if (!existing || !("orgId" in existing) || existing.orgId !== workspace.orgId) {
+        throw new Error("Library item not found or unauthorized");
+      }
+      await ctx.db.delete(libraryId);
     }
-    await ctx.db.delete(args.libraryId);
   },
 });
-

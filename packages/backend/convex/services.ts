@@ -1,195 +1,305 @@
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import { validateWorkspace } from "./authUtils";
 
-export const listByOrg = query({
-  args: { orgId: v.id("organizations") },
+export const list = query({
+  args: { workspaceId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const services = await ctx.db
-      .query("services")
-      .withIndex("by_org_order", (q) => q.eq("orgId", args.orgId))
-      .collect();
-    return services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+
+    if (workspace.type === "personal") {
+      const services = await ctx.db
+        .query("personalServices")
+        .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
+        .collect();
+      return services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    } else {
+      const services = await ctx.db
+        .query("services")
+        .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
+        .collect();
+      return services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    }
   },
 });
 
 export const get = query({
-  args: { serviceId: v.id("services") },
+  args: { 
+    workspaceId: v.optional(v.string()),
+    serviceId: v.string() 
+  },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.serviceId);
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    const serviceId = args.serviceId as any;
+
+    if (workspace.type === "personal") {
+      const service = (await ctx.db.get(serviceId as any)) as any;
+      if (!service || service.userId !== workspace.userId) {
+        throw new Error("Service not found or unauthorized");
+      }
+      return service;
+    } else {
+      const service = (await ctx.db.get(serviceId as any)) as any;
+      if (!service || service.orgId !== workspace.orgId) {
+        throw new Error("Service not found or unauthorized");
+      }
+      return service;
+    }
   },
 });
 
 export const create = mutation({
   args: {
-    orgId: v.id("organizations"),
+    workspaceId: v.optional(v.string()),
     name: v.string(),
     date: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
     const now = Date.now();
-    const existing = await ctx.db
-      .query("services")
-      .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
-      .collect();
-    const maxOrder = existing.reduce(
-      (max, s) => Math.max(max, s.order ?? 0),
-      0
-    );
-    return await ctx.db.insert("services", {
-      orgId: args.orgId,
-      name: args.name,
-      date: args.date,
-      order: maxOrder + 1,
-      items: [],
-      createdAt: now,
-    });
+
+    if (workspace.type === "personal") {
+      const existing = await ctx.db
+        .query("personalServices")
+        .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
+        .collect();
+      const maxOrder = existing.reduce((max, s) => Math.max(max, s.order ?? 0), 0);
+      
+      return await ctx.db.insert("personalServices", {
+        userId: workspace.userId,
+        name: args.name,
+        date: args.date,
+        order: maxOrder + 1,
+        items: [],
+        createdAt: now,
+      });
+    } else {
+      const existing = await ctx.db
+        .query("services")
+        .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
+        .collect();
+      const maxOrder = existing.reduce((max, s) => Math.max(max, s.order ?? 0), 0);
+
+      return await ctx.db.insert("services", {
+        orgId: workspace.orgId,
+        name: args.name,
+        date: args.date,
+        order: maxOrder + 1,
+        items: [],
+        createdAt: now,
+      });
+    }
   },
 });
 
 export const addItem = mutation({
   args: {
-    serviceId: v.id("services"),
-    type: v.union(
-      v.literal("song"),
-      v.literal("media"),
-      v.literal("scripture")
-    ),
+    workspaceId: v.optional(v.string()),
+    serviceId: v.string(),
+    type: v.union(v.literal("library"), v.literal("media"), v.literal("scripture")),
     refId: v.string(),
     label: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const service = await ctx.db.get(args.serviceId);
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    const serviceId = args.serviceId as any;
+
+    const service = await ctx.db.get(serviceId);
     if (!service) throw new Error("Service not found");
+
+    // Verify ownership
+    if (workspace.type === "personal" && (service as any).userId !== workspace.userId) throw new Error("Unauthorized");
+    if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) throw new Error("Unauthorized");
+
     const newItem = {
       type: args.type,
       refId: args.refId,
       label: args.label,
       addedAt: Date.now(),
     };
-    await ctx.db.patch(args.serviceId, { items: [...service.items, newItem] });
-    return args.serviceId;
+
+    await ctx.db.patch(serviceId, { items: [...(service as any).items, newItem] });
+    return serviceId;
   },
 });
 
 export const removeItem = mutation({
-  args: { serviceId: v.id("services"), itemIndex: v.number() },
-  handler: async (ctx, args) => {
-    const service = await ctx.db.get(args.serviceId);
-    if (!service) throw new Error("Service not found");
-    const items = [...service.items];
-    items.splice(args.itemIndex, 1);
-    await ctx.db.patch(args.serviceId, { items });
-    return args.serviceId;
+  args: { 
+    workspaceId: v.optional(v.string()),
+    serviceId: v.string(), 
+    itemIndex: v.number() 
   },
-});
+  handler: async (ctx, args) => {
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    const serviceId = args.serviceId as any;
 
-export const reorderItems = mutation({
-  args: {
-    serviceId: v.id("services"),
-    fromIndex: v.number(),
-    toIndex: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const service = await ctx.db.get(args.serviceId);
+    const service = await ctx.db.get(serviceId);
     if (!service) throw new Error("Service not found");
-    const items = [...service.items];
-    const [removed] = items.splice(args.fromIndex, 1);
-    items.splice(args.toIndex, 0, removed);
-    await ctx.db.patch(args.serviceId, { items });
-    return args.serviceId;
+
+    // Verify ownership
+    if (workspace.type === "personal" && (service as any).userId !== workspace.userId) throw new Error("Unauthorized");
+    if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) throw new Error("Unauthorized");
+
+    const items = [...(service as any).items];
+    items.splice(args.itemIndex, 1);
+    await ctx.db.patch(serviceId, { items });
+    return serviceId;
   },
 });
 
 export const update = mutation({
   args: {
-    serviceId: v.id("services"),
+    workspaceId: v.optional(v.string()),
+    serviceId: v.string(),
     name: v.optional(v.string()),
     date: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const service = await ctx.db.get(args.serviceId);
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    const serviceId = args.serviceId as any;
+
+    const service = await ctx.db.get(serviceId);
     if (!service) throw new Error("Service not found");
-    const updates: Record<string, unknown> = {};
+
+    // Verify ownership
+    if (workspace.type === "personal" && (service as any).userId !== workspace.userId) throw new Error("Unauthorized");
+    if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) throw new Error("Unauthorized");
+
+    const updates: any = {};
     if (args.name !== undefined) updates.name = args.name;
     if (args.date !== undefined) updates.date = args.date;
-    await ctx.db.patch(args.serviceId, updates);
-    return args.serviceId;
+
+    await ctx.db.patch(serviceId, updates);
+    return serviceId;
   },
 });
 
-export const rename = mutation({
-  args: { serviceId: v.id("services"), name: v.string() },
+export const reorderItems = mutation({
+  args: {
+    workspaceId: v.optional(v.string()),
+    serviceId: v.string(),
+    fromIndex: v.number(),
+    toIndex: v.number(),
+  },
   handler: async (ctx, args) => {
-    const service = await ctx.db.get(args.serviceId);
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    const serviceId = args.serviceId as any;
+
+    const service = await ctx.db.get(serviceId);
     if (!service) throw new Error("Service not found");
-    await ctx.db.patch(args.serviceId, { name: args.name });
-    return args.serviceId;
+
+    // Verify ownership
+    if (workspace.type === "personal" && (service as any).userId !== workspace.userId) throw new Error("Unauthorized");
+    if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) throw new Error("Unauthorized");
+
+    const items = [...(service as any).items];
+    const [removed] = items.splice(args.fromIndex, 1);
+    items.splice(args.toIndex, 0, removed);
+    await ctx.db.patch(serviceId, { items });
+    return serviceId;
   },
 });
 
 export const remove = mutation({
-  args: { serviceId: v.id("services") },
+  args: { 
+    workspaceId: v.optional(v.string()),
+    serviceId: v.string() 
+  },
   handler: async (ctx, args) => {
-    await ctx.db.delete(args.serviceId);
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    const serviceId = args.serviceId as any;
+
+    const service = await ctx.db.get(serviceId);
+    if (!service) return;
+
+    // Verify ownership
+    if (workspace.type === "personal" && (service as any).userId !== workspace.userId) throw new Error("Unauthorized");
+    if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) throw new Error("Unauthorized");
+
+    await ctx.db.delete(serviceId);
   },
 });
 
 export const reorderServices = mutation({
   args: {
-    orgId: v.id("organizations"),
+    workspaceId: v.optional(v.string()),
     fromIndex: v.number(),
     toIndex: v.number(),
   },
   handler: async (ctx, args) => {
-    const { orgId, fromIndex, toIndex } = args;
-    if (fromIndex === toIndex) return;
-    const services = await ctx.db
-      .query("services")
-      .withIndex("by_org", (q) => q.eq("orgId", orgId))
-      .collect();
-    const sorted = services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    if (fromIndex < 0 || fromIndex >= sorted.length) return;
-    if (toIndex < 0 || toIndex >= sorted.length) return;
-    const [moved] = sorted.splice(fromIndex, 1);
-    sorted.splice(toIndex, 0, moved);
-    await Promise.all(
-      sorted.map((service, index) =>
-        ctx.db.patch(service._id, { order: index })
-      )
-    );
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    if (args.fromIndex === args.toIndex) return;
+
+    if (workspace.type === "personal") {
+      const services = await ctx.db
+        .query("personalServices")
+        .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
+        .collect();
+      const sorted = services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      if (args.fromIndex < 0 || args.fromIndex >= sorted.length) return;
+      if (args.toIndex < 0 || args.toIndex >= sorted.length) return;
+      
+      const [moved] = sorted.splice(args.fromIndex, 1);
+      sorted.splice(args.toIndex, 0, moved);
+      
+      await Promise.all(
+        sorted.map((service, index) => ctx.db.patch(service._id, { order: index }))
+      );
+    } else {
+      const services = await ctx.db
+        .query("services")
+        .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
+        .collect();
+      const sorted = services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      if (args.fromIndex < 0 || args.fromIndex >= sorted.length) return;
+      if (args.toIndex < 0 || args.toIndex >= sorted.length) return;
+
+      const [moved] = sorted.splice(args.fromIndex, 1);
+      sorted.splice(args.toIndex, 0, moved);
+
+      await Promise.all(
+        sorted.map((service, index) => ctx.db.patch(service._id, { order: index }))
+      );
+    }
   },
 });
 
-// Helper function to remove items from all services in an organization
-export async function removeItemsFromAllServices(
-  ctx: MutationCtx,
-  orgId: Id<"organizations">,
-  shouldRemove: (item: any) => boolean
-) {
-  const services = await ctx.db
-    .query("services")
-    .withIndex("by_org", (q) => q.eq("orgId", orgId))
-    .collect();
-
-  for (const service of services) {
-    const newItems = service.items.filter((item) => !shouldRemove(item));
-    if (newItems.length !== service.items.length) {
-      await ctx.db.patch(service._id, { items: newItems });
-    }
-  }
-}
-
 export const removeMediaForFolder = mutation({
-  args: { folderId: v.string(), orgId: v.id("organizations") },
+  args: {
+    workspaceId: v.optional(v.string()),
+    folderId: v.string(),
+  },
   handler: async (ctx, args) => {
-    await removeItemsFromAllServices(
-      ctx,
-      args.orgId,
-      (item) =>
-        item.type === "media" &&
-        (item.refId === args.folderId ||
-          item.refId.startsWith(args.folderId + "-"))
-    );
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+
+    if (workspace.type === "personal") {
+      const services = await ctx.db
+        .query("personalServices")
+        .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
+        .collect();
+
+      for (const service of services) {
+        const remainingItems = service.items.filter(
+          (item) => !(item.type === "media" && item.refId.startsWith(`${args.folderId}:`))
+        );
+        if (remainingItems.length !== service.items.length) {
+          await ctx.db.patch(service._id, { items: remainingItems });
+        }
+      }
+    } else {
+      const services = await ctx.db
+        .query("services")
+        .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
+        .collect();
+
+      for (const service of services) {
+        const remainingItems = service.items.filter(
+          (item) => !(item.type === "media" && item.refId.startsWith(`${args.folderId}:`))
+        );
+        if (remainingItems.length !== service.items.length) {
+          await ctx.db.patch(service._id, { items: remainingItems });
+        }
+      }
+    }
   },
 });

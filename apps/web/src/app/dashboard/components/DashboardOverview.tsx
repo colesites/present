@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, Building2, CalendarRange, Download, Music4 } from "lucide-react";
-import { DashboardOrganization, DashboardSong } from "../types";
+import { ArrowUpRight, Building2, CalendarRange, Download, Library } from "lucide-react";
+import { DashboardOrganization, DashboardLibraryItem } from "../types";
 
 interface DashboardOverviewProps {
   currentOrg: DashboardOrganization | null;
   organizationsCount: number;
-  songs: DashboardSong[];
+  libraryItems: DashboardLibraryItem[];
+  servicesCount: number;
   shouldAutoOpen: boolean;
   onOpenDesktopApp: () => void;
 }
@@ -15,11 +16,12 @@ interface DashboardOverviewProps {
 export function DashboardOverview({
   currentOrg,
   organizationsCount,
-  songs,
+  libraryItems,
+  servicesCount,
   shouldAutoOpen,
   onOpenDesktopApp,
 }: DashboardOverviewProps) {
-  const recentSongs = songs.slice(0, 5);
+  const recentItems = libraryItems.slice(0, 5);
   const hasOrganization = Boolean(currentOrg);
   const summaryItems = [
     {
@@ -29,15 +31,15 @@ export function DashboardOverview({
       icon: Building2,
     },
     {
-      label: "Songs",
-      value: String(songs.length),
-      detail: songs.length > 0 ? "Library content available" : "No songs in this workspace",
-      icon: Music4,
+      label: "Library",
+      value: String(libraryItems.length),
+      detail: libraryItems.length > 0 ? "Library content available" : "No items in this workspace",
+      icon: Library,
     },
     {
       label: "Services",
-      value: "0",
-      detail: "No service plans yet",
+      value: String(servicesCount),
+      detail: servicesCount > 0 ? "Service plans available" : "No service plans yet",
       icon: CalendarRange,
     },
   ] as const;
@@ -130,34 +132,34 @@ export function DashboardOverview({
         <div className="mt-14">
           <div className="flex items-center justify-between gap-4">
             <h3 className="text-[2rem] font-semibold tracking-[-0.04em] text-[#232946]">
-              Recent songs
+              Recent library items
             </h3>
             <span className="rounded-full bg-primary/[0.08] px-4 py-2 text-sm font-medium text-primary">
-              {songs.length} total
+              {libraryItems.length} total
             </span>
           </div>
 
           <div className="mt-4 divide-y divide-[#efefef] border-t border-[#efefef]">
-            {recentSongs.length === 0 ? (
+            {recentItems.length === 0 ? (
               <div className="px-1 py-10 text-[1rem] text-[#8d8d8d]">
-                No songs yet. Your library summary will show up here after songs are added.
+                No library items yet. Your library summary will show up here after items are added.
               </div>
             ) : (
-              recentSongs.map((song) => (
-                <div key={song._id} className="flex items-center gap-5 py-6">
+              recentItems.map((item) => (
+                <div key={item._id} className="flex items-center gap-5 py-6">
                   <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                    <Music4 className="h-6 w-6" />
+                    <Library className="h-6 w-6" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[1.1rem] font-semibold text-[#232946]">
-                      {song.title}
+                      {item.title}
                     </p>
                     <p className="mt-1 text-[1rem] text-[#9b9b9b]">
-                      {song.slides.length} slides
+                      {item.slides.length} slides
                     </p>
                   </div>
                   <p className="text-[1.2rem] font-semibold tracking-[-0.03em] text-[#232946]">
-                    {new Date(song.updatedAt ?? song._creationTime).toLocaleDateString()}
+                    {new Date(item.updatedAt ?? item._creationTime).toLocaleDateString()}
                   </p>
                 </div>
               ))

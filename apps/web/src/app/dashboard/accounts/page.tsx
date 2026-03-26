@@ -4,7 +4,7 @@ export default function AccountsPage() {
   return (
     <DashboardClient
       org={null}
-      songs={[]}
+      libraryItems={[]}
       shouldAutoOpen={false}
       section="accounts"
     />

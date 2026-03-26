@@ -26,8 +26,8 @@ type Props = {
   activeSlideId: string | null;
   selectedIndex: number | null;
 
-  selectedSong: EditorProps["song"] | null;
-  selectedSongId: string | null;
+  selectedLibraryItem: EditorProps["libraryItem"] | null;
+  selectedLibraryId: string | null;
 
   // handlers
   onSelectSlide: ComponentProps<typeof SlidesGrid>["onSelectSlide"];
@@ -74,8 +74,8 @@ export function PresentCenterArea({
   slidesForGrid,
   activeSlideId,
   selectedIndex,
-  selectedSong,
-  selectedSongId,
+  selectedLibraryItem,
+  selectedLibraryId,
   onSelectSlide,
   onEditSlide,
   editorProps,
@@ -98,7 +98,7 @@ export function PresentCenterArea({
     <div className="relative h-full overflow-hidden">
       <Activity mode={viewMode === "show" && bottomTab === "media" ? "visible" : "hidden"}>
         <div className="absolute inset-0 overflow-auto p-4">
-          {showViewMedia && !selectedSongId ? (
+          {showViewMedia && !selectedLibraryId ? (
             <button
               type="button"
               onClick={onOutputPreviewMedia}
@@ -157,11 +157,11 @@ export function PresentCenterArea({
 
       <Activity mode={viewMode === "edit" ? "visible" : "hidden"}>
         <div className="absolute inset-0 overflow-auto p-4">
-          {selectedSong ? (
-            <LyricsEditor song={selectedSong} {...editorProps} />
+          {selectedLibraryItem ? (
+            <LyricsEditor libraryItem={selectedLibraryItem} {...editorProps} />
           ) : (
             <div className="flex h-full items-center justify-center text-muted-foreground">
-              Select a song to edit
+              Select an item to edit
             </div>
           )}
         </div>

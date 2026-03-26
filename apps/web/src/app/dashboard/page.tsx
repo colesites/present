@@ -12,7 +12,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   return (
     <DashboardClient
       org={null}
-      songs={[]}
+      libraryItems={[]}
       shouldAutoOpen={resolvedSearchParams.setup === "1"}
       section="dashboard"
     />

@@ -14,6 +14,7 @@ import {
   usePersistedUIState,
   useGlobalShortcuts,
 } from "./hooks";
+import { useWorkspaceStore } from "../../../packages/shared/src";
 import { useAppSettings } from "./hooks/useAppSettings";
 import { SettingsScreen } from "./features/settings/components/SettingsScreen";
 import { PresentContainer } from "./features/present/PresentContainer";
@@ -144,7 +145,13 @@ export default function Home() {
   }, [isLoading]);
 
   // Organization & auth
-  const { orgId, userId } = useOrganization();
+  const { userId } = useOrganization();
+  const { type: activeWorkspaceType, id: activeWorkspaceId } = useWorkspaceStore();
+  
+  // Enforce explicit workspace data isolation
+  const effectiveOrgId = activeWorkspaceType === "organization" && activeWorkspaceId 
+    ? (activeWorkspaceId as any) 
+    : undefined;
 
   // Root UI state
   const { viewMode, setViewMode, bottomTab, setBottomTab } = usePersistedUIState({
@@ -271,7 +278,7 @@ export default function Home() {
       />
 
       <PresentContainer
-        orgId={orgId}
+        orgId={effectiveOrgId}
         userId={userId}
         viewMode={effectiveViewMode}
         bottomTab={bottomTab}

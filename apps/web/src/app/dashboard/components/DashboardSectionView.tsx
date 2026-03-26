@@ -8,16 +8,16 @@ import {
   LayoutDashboard,
   Library,
   LogOut,
-  Music4,
   Settings,
   ShieldCheck,
 } from "lucide-react";
-import { DashboardOrganization, DashboardSection, DashboardSong } from "../types";
+import { DashboardOrganization, DashboardSection, DashboardLibraryItem } from "../types";
 
 interface DashboardSectionViewProps {
   section: Exclude<DashboardSection, "dashboard">;
   currentOrg: DashboardOrganization | null;
-  songs: DashboardSong[];
+  libraryItems: DashboardLibraryItem[];
+  servicesCount: number;
   isSigningOut: boolean;
   onSignOut: () => void;
 }
@@ -114,7 +114,8 @@ const sectionConfig: Record<
 export function DashboardSectionView({
   section,
   currentOrg,
-  songs,
+  libraryItems,
+  servicesCount,
   isSigningOut,
   onSignOut,
 }: DashboardSectionViewProps) {
@@ -125,7 +126,7 @@ export function DashboardSectionView({
 
   return (
     <div className="flex min-h-full flex-col text-[#232946] xl:items-start xl:flex-row">
-      <section className="min-w-0 flex-1 px-[4.5rem] py-14">
+      <section className="min-w-0 flex-1 px-18 py-14">
         <div className="flex items-start justify-between gap-8">
           <div className="max-w-3xl">
             <p className="text-[0.72rem] font-semibold uppercase tracking-[0.34em] text-primary/65">
@@ -139,7 +140,7 @@ export function DashboardSectionView({
             </p>
           </div>
 
-          <div className="rounded-[24px] border border-primary/10 bg-primary/[0.05] px-6 py-5 text-right">
+          <div className="rounded-[24px] border border-primary/10 bg-primary/5 px-6 py-5 text-right">
             <p className="text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-primary/60">
               Active organization
             </p>
@@ -149,7 +150,7 @@ export function DashboardSectionView({
           </div>
         </div>
 
-        <div className="mt-14 rounded-[34px] border border-primary/10 bg-primary/[0.04] px-8 py-8">
+        <div className="mt-14 rounded-[34px] border border-primary/10 bg-primary/4 px-8 py-8">
           <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
               <p className="text-[0.72rem] font-semibold uppercase tracking-[0.32em] text-primary/65">
@@ -192,24 +193,24 @@ export function DashboardSectionView({
             </div>
             <div className="rounded-[24px] border border-primary/10 bg-white px-5 py-5">
               <p className="text-[0.72rem] font-semibold uppercase tracking-[0.28em] text-primary/60">
-                Songs
+                Library
               </p>
               <p className="mt-4 text-[2.55rem] font-semibold leading-none tracking-[-0.08em] text-[#232946]">
-                {songs.length}
+                {libraryItems.length}
               </p>
               <p className="mt-4 text-[0.95rem] text-[#7f8898]">
-                Total songs available in this organization.
+                Total items available in this organization.
               </p>
             </div>
             <div className="rounded-[24px] border border-primary/10 bg-white px-5 py-5">
               <p className="text-[0.72rem] font-semibold uppercase tracking-[0.28em] text-primary/60">
-                Active module
+                Services
               </p>
-              <p className="mt-4 text-[1.6rem] font-semibold leading-none tracking-[-0.05em] text-[#232946]">
-                {config.title}
+              <p className="mt-4 text-[2.55rem] font-semibold leading-none tracking-[-0.08em] text-[#232946]">
+                {servicesCount}
               </p>
               <p className="mt-4 text-[0.95rem] text-[#7f8898]">
-                Working in the {config.title.toLowerCase()} section.
+                Total services in this workspace.
               </p>
             </div>
           </div>
@@ -220,7 +221,7 @@ export function DashboardSectionView({
             <h3 className="text-[2rem] font-semibold tracking-[-0.04em] text-[#232946]">
               {config.title} priorities
             </h3>
-            <span className="rounded-full bg-primary/[0.08] px-4 py-2 text-sm font-medium text-primary">
+            <span className="rounded-full bg-primary/8 px-4 py-2 text-sm font-medium text-primary">
               {config.summary.length} items
             </span>
           </div>
@@ -274,11 +275,11 @@ export function DashboardSectionView({
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-[16px] bg-primary/10 text-primary">
-                  <Music4 className="h-5 w-5" />
+                   <Library className="h-5 w-5" />
                 </div>
                 <div>
                   <p className="text-[0.72rem] font-semibold uppercase tracking-[0.26em] text-primary/60">
-                    Songs
+                    Library
                   </p>
                   <p className="mt-1 text-[0.98rem] text-[#7f8898]">
                     Content visible in this workspace
@@ -286,7 +287,7 @@ export function DashboardSectionView({
                 </div>
               </div>
               <span className="text-[1.45rem] font-semibold tracking-[-0.05em] text-[#232946]">
-                {songs.length}
+                {libraryItems.length}
               </span>
             </div>
           </div>
@@ -298,7 +299,7 @@ export function DashboardSectionView({
                   <LayoutDashboard className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-[0.72rem] font-semibold uppercase tracking-[0.26em] text-primary/60">
+                  <p className="text-[0.72rem] font-semibold uppercase tracking-[0.28em] text-primary/60">
                     Status
                   </p>
                   <p className="mt-1 text-[0.98rem] text-[#7f8898]">
@@ -341,7 +342,7 @@ export function DashboardSectionView({
                 type="button"
                 onClick={onSignOut}
                 disabled={isSigningOut}
-                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-primary/20 bg-primary/[0.05] px-5 text-sm font-semibold text-primary transition hover:bg-primary/[0.09] disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-5 text-sm font-semibold text-primary transition hover:bg-primary/9 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <LogOut className="h-4 w-4" />
                 {isSigningOut ? "Signing out..." : "Log out"}

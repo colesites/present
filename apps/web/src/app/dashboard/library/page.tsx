@@ -4,7 +4,7 @@ export default function LibraryPage() {
   return (
     <DashboardClient
       org={null}
-      songs={[]}
+      libraryItems={[]}
       shouldAutoOpen={false}
       section="library"
     />

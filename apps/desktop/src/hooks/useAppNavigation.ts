@@ -1,12 +1,12 @@
 import { useEffect } from "react";
-import type { Id } from "@present/backend/convex/_generated/dataModel";
+import type { LibraryItem } from "../types";
 import type { SlideData } from "../features/slides";
 
 interface UseAppNavigationProps {
   viewMode: string;
-  selectedSong: { _id: Id<"songs">; title: string; lyrics: string } | null;
-  selectedSongId: Id<"songs"> | null;
-  selected: { songId: Id<"songs"> | null; index: number } | null;
+  selectedLibraryItem: LibraryItem | null;
+  selectedLibraryId: string | null;
+  selected: { libraryId: string | null; index: number } | null;
   slidesForGrid: SlideData[];
   handleSelectSlide: (slideId: string, text: string, footer?: string) => Promise<void>;
   scriptureSlidesCount: number;
@@ -14,8 +14,8 @@ interface UseAppNavigationProps {
 
 export function useAppNavigation({
   viewMode,
-  selectedSong,
-  selectedSongId,
+  selectedLibraryItem,
+  selectedLibraryId,
   selected,
   slidesForGrid,
   handleSelectSlide,
@@ -28,7 +28,7 @@ export function useAppNavigation({
         (e.metaKey || e.ctrlKey) &&
         e.key === "s" &&
         viewMode === "edit" &&
-        selectedSongId
+        selectedLibraryId
       ) {
         e.preventDefault();
         return;
@@ -37,7 +37,7 @@ export function useAppNavigation({
       // Arrow navigation in show mode
       if (
         viewMode === "show" &&
-        (selectedSong || scriptureSlidesCount > 0) &&
+        (selectedLibraryItem || scriptureSlidesCount > 0) &&
         slidesForGrid.length > 0
       ) {
         const currentIndex = selected?.index ?? 0;
@@ -48,8 +48,8 @@ export function useAppNavigation({
             slidesForGrid.length - 1,
           );
           const nextSlide = slidesForGrid[nextIndex];
-          const slideId = nextSlide.song
-            ? `${nextSlide.song._id}:${nextSlide.index}`
+          const slideId = nextSlide.libraryItem
+            ? `${nextSlide.libraryItem._id}:${nextSlide.index}`
             : `scripture:${nextSlide.index}`;
           handleSelectSlide(
             slideId,
@@ -60,8 +60,8 @@ export function useAppNavigation({
           e.preventDefault();
           const prevIndex = Math.max(currentIndex - 1, 0);
           const prevSlide = slidesForGrid[prevIndex];
-          const slideId = prevSlide.song
-            ? `${prevSlide.song._id}:${prevSlide.index}`
+          const slideId = prevSlide.libraryItem
+            ? `${prevSlide.libraryItem._id}:${prevSlide.index}`
             : `scripture:${prevSlide.index}`;
           handleSelectSlide(
             slideId,
@@ -76,8 +76,8 @@ export function useAppNavigation({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     viewMode,
-    selectedSong,
-    selectedSongId,
+    selectedLibraryItem,
+    selectedLibraryId,
     selected,
     slidesForGrid,
     handleSelectSlide,

@@ -1,12 +1,13 @@
+import type { LibraryItem } from "../../types";
 import type { SlideData } from "../../features/slides";
 
 export function getSlidesForGrid(
-  selectedSong: SlideData["song"] | null | undefined
+  selectedLibraryItem: LibraryItem | null | undefined
 ): SlideData[] {
-  if (!selectedSong) return [];
+  if (!selectedLibraryItem) return [];
 
-  return selectedSong.slides.map((slide, index) => ({
-    song: selectedSong,
+  return selectedLibraryItem.slides.map((slide, index) => ({
+    libraryItem: selectedLibraryItem,
     slide,
     index,
   }));
@@ -14,38 +15,41 @@ export function getSlidesForGrid(
 
 export function getActiveSlideText(
   activeSlideId: string | null | undefined,
-  songs: SlideData["song"][]
+  libraryItems: (LibraryItem | null | undefined)[]
 ): string | null {
-  if (!activeSlideId || songs.length === 0) return null;
+  if (!activeSlideId || libraryItems.length === 0) return null;
 
-  const [songId, indexStr] = activeSlideId.split(":");
+  const [idPart, indexStr] = activeSlideId.split(":");
   const index = Number(indexStr);
 
   if (!Number.isFinite(index)) return null;
 
-  const song = songs.find((s) => s && String(s._id) === songId);
-  return song?.slides[index]?.text ?? null;
+  const item = libraryItems.find((s) => s && String(s._id) === idPart);
+  return item?.slides[index]?.text ?? null;
 }
 
 /**
  * Groups slides by label (unchanged logic)
  */
 export function getSlideGroups(
-  selectedSong: SlideData["song"] | null | undefined
+  selectedLibraryItem: LibraryItem | null | undefined
 ): { label: string; count: number }[] {
-  if (!selectedSong) return [];
+  if (!selectedLibraryItem) return [];
 
   const groups: { label: string; count: number }[] = [];
   let currentLabel = "";
 
-  for (const slide of selectedSong.slides) {
+  for (const slide of selectedLibraryItem.slides) {
     const label = slide.label || "Untitled";
 
     if (label !== currentLabel) {
       groups.push({ label, count: 1 });
       currentLabel = label;
     } else {
-      groups.at(-1)!.count += 1;
+      const lastGroup = groups[groups.length - 1];
+      if (lastGroup) {
+        lastGroup.count += 1;
+      }
     }
   }
 

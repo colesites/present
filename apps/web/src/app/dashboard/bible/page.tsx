@@ -4,7 +4,7 @@ export default function BiblePage() {
   return (
     <DashboardClient
       org={null}
-      songs={[]}
+      libraryItems={[]}
       shouldAutoOpen={false}
       section="bible"
     />

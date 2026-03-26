@@ -1,5 +1,5 @@
 import { mutation, query } from "./_generated/server";
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 
 export const getCurrent = query({
   args: {},
@@ -110,7 +110,7 @@ export const createForCurrent = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
-      throw new Error("Not authenticated");
+      throw new ConvexError("Not authenticated");
     }
 
     // Check for existing by token
@@ -166,7 +166,7 @@ export const ensureCurrent = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
-      throw new Error("Not authenticated");
+      throw new ConvexError("Not authenticated");
     }
 
     // Try by token - use first() to support multiple org associations for the same token
@@ -299,7 +299,7 @@ export const createOrganization = mutation({
     const identity = await ctx.auth.getUserIdentity();
     console.log("createOrganization called by:", identity?.tokenIdentifier);
     if (!identity) {
-      throw new Error("Not authenticated");
+      throw new ConvexError("Not authenticated");
     }
 
     const now = Date.now();
@@ -355,7 +355,7 @@ export const linkAuthOrganization = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
-      throw new Error("Not authenticated");
+      throw new ConvexError("Not authenticated");
     }
 
     // Check if already linked

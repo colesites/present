@@ -6,35 +6,42 @@ import { ChevronDown, Check, LogOut, Plus } from "lucide-react";
 import { DashboardOrganizationListItem, getInitials } from "../types";
 
 interface AccountSwitcherProps {
+  viewerName: string;
+  viewerImage: string | null;
   organizations: DashboardOrganizationListItem[];
-  activeOrganizationId: string | null;
+  activeWorkspaceType: "personal" | "organization";
+  activeWorkspaceId: string | null;
   isOpen: boolean;
   isSwitching: boolean;
   onToggle: () => void;
   onClose: () => void;
   onCreateOrganization: () => void;
-  onSelectOrganization: (organization: DashboardOrganizationListItem) => void;
+  onSwitchContext: (type: "personal" | "organization", id: string | null, authOrgId?: string | null) => void;
   isSigningOut: boolean;
   onSignOut: () => void;
 }
 
 export function AccountSwitcher({
+  viewerName,
+  viewerImage,
   organizations,
-  activeOrganizationId,
+  activeWorkspaceType,
+  activeWorkspaceId,
   isOpen,
   isSwitching,
   onToggle,
   onClose,
   onCreateOrganization,
-  onSelectOrganization,
+  onSwitchContext,
   isSigningOut,
   onSignOut,
 }: AccountSwitcherProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  
   const activeOrganization =
-    organizations.find((organization) => organization.id === activeOrganizationId) ??
-    organizations[0] ??
-    null;
+    activeWorkspaceType === "organization"
+      ? organizations.find((organization) => organization.id === activeWorkspaceId) ?? null
+      : null;
 
   useEffect(() => {
     if (!isOpen) {
@@ -73,7 +80,22 @@ export function AccountSwitcher({
 
       >
         <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[18px] bg-white/10">
-          {activeOrganization?.logo ? (
+          {activeWorkspaceType === "personal" ? (
+            viewerImage ? (
+              <Image
+                src={viewerImage}
+                alt={viewerName}
+                width={48}
+                height={48}
+                className="h-12 w-12 object-cover"
+                unoptimized={viewerImage.startsWith("data:")}
+              />
+            ) : (
+              <span className="text-sm font-semibold text-white">
+                {getInitials(viewerName)}
+              </span>
+            )
+          ) : activeOrganization?.logo ? (
             <Image
               src={activeOrganization.logo}
               alt={activeOrganization.name}
@@ -90,10 +112,10 @@ export function AccountSwitcher({
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-[0.68rem] uppercase tracking-[0.24em] text-white/38">
-            Organization
+            Workspace
           </p>
           <p className="truncate text-[0.98rem] font-semibold text-white">
-            {activeOrganization?.name ?? "No organization"}
+            {activeWorkspaceType === "personal" ? "Personal" : activeOrganization?.name ?? "No organization"}
           </p>
         </div>
         <ChevronDown
@@ -113,6 +135,37 @@ export function AccountSwitcher({
           </div>
 
           <div className="space-y-2">
+            {/* Personal Workspace Button */}
+            <button
+              type="button"
+              onClick={() => {
+                onSwitchContext("personal", null);
+              }}
+              disabled={isSwitching}
+              className={`flex w-full items-center gap-3 rounded-[22px] border px-4 py-3 text-left transition ${
+                activeWorkspaceType === "personal"
+                  ? "border-white/12 bg-white/8 text-white"
+                  : "border-transparent text-white/70 hover:border-white/8 hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[14px] bg-white/10">
+                <span className="text-xs font-semibold text-white">
+                  {getInitials(viewerName)}
+                </span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">Personal Workspace</p>
+                <p className="truncate text-[0.68rem] uppercase tracking-[0.2em] text-white/38">
+                  {viewerName}
+                </p>
+              </div>
+              {activeWorkspaceType === "personal" ? <Check className="h-4 w-4 text-white" /> : null}
+            </button>
+
+            {organizations.length > 0 && (
+              <div className="my-2 h-px w-full bg-white/10" />
+            )}
+
             {organizations.length === 0 ? (
               <div className="rounded-[22px] border border-white/6 bg-white/3 px-4 py-4 text-sm text-white/56">
 
@@ -120,14 +173,14 @@ export function AccountSwitcher({
               </div>
             ) : (
               organizations.map((organization) => {
-                const isActive = organization.id === activeOrganizationId;
+                const isActive = activeWorkspaceType === "organization" && organization.id === activeWorkspaceId;
 
                 return (
                   <button
                     key={organization.id}
                     type="button"
                     onClick={() => {
-                      onSelectOrganization(organization);
+                      onSwitchContext("organization", organization.id, organization.authOrganizationId);
                     }}
                     disabled={isSwitching}
                     className={`flex w-full items-center gap-3 rounded-[22px] border px-4 py-3 text-left transition ${

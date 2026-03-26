@@ -4,7 +4,8 @@ import { useState } from "react";
 import { LogOut, Plus, Building2, Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
-import { authClient } from "../../../../packages/shared/src/auth";
+import { authClient, useWorkspaceStore } from "../../../../packages/shared/src";
+
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,7 +46,10 @@ export function AuthControls() {
   // Get organizations from Convex (source of truth)
   const nativeOrganizations = useQuery(api.users.listMyOrganizations);
 
-  const activeOrganizationId =
+  // Get workspaces from Context store
+  const { type: activeWorkspaceType, id: activeWorkspaceId, setWorkspace } = useWorkspaceStore();
+
+  const activeAuthOrganizationId =
     typeof sessionData?.session?.activeOrganizationId === "string"
       ? sessionData.session.activeOrganizationId
       : null;
@@ -65,14 +69,14 @@ export function AuthControls() {
       ((user as Record<string, unknown>).imageUrl as string)) ||
     null;
 
-  // Find active org from the Convex list
+  // Find active org from the Convex list (used for display name if it's an org)
   const activeOrganization =
-    nativeOrganizations?.find((org) => org.authOrganizationId === activeOrganizationId) ??
-    nativeOrganizations?.[0] ??
-    null;
+    activeWorkspaceType === "organization"
+      ? nativeOrganizations?.find((org) => org.id === activeWorkspaceId) ?? null
+      : null;
 
-  const handleSwitchOrganization = async (authOrgId: string | null) => {
-    if (authOrgId === activeOrganizationId) {
+  const handleSwitchContext = async (type: "personal" | "organization", id: string | null, authOrgId?: string | null) => {
+    if (type === activeWorkspaceType && id === activeWorkspaceId) {
       return;
     }
 
@@ -80,16 +84,24 @@ export function AuthControls() {
     setMenuError(null);
 
     try {
-      const organizationApi = authClient.organization as OrganizationApi;
-      const response = await organizationApi.setActive({
-        organizationId: authOrgId,
-      });
+      // Update global zustand store immediately for snappy UI
+      setWorkspace(type, id);
 
-      if (response.error) {
-        setMenuError(response.error.message || "Unable to switch organization.");
+      // Keep BetterAuth in sync if switching to an organization
+      // Optional, but good for backend helpers if they rely on session.activeOrganizationId
+      if (type === "organization" && authOrgId) {
+        const organizationApi = authClient.organization as OrganizationApi;
+        await organizationApi.setActive({
+          organizationId: authOrgId,
+        });
+      } else if (type === "personal" && activeAuthOrganizationId) {
+        const organizationApi = authClient.organization as OrganizationApi;
+        await organizationApi.setActive({
+          organizationId: null,
+        });
       }
     } catch (error) {
-      setMenuError(getErrorMessage(error, "Unable to switch organization."));
+      console.warn("BetterAuth active org sync failed, but local context switched.", error);
     } finally {
       setIsSwitchingOrganization(false);
     }
@@ -159,6 +171,29 @@ export function AuthControls() {
 
         <DropdownMenuSeparator />
 
+        <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Workspaces
+        </DropdownMenuLabel>
+
+        {/* Personal Workspace */}
+        <DropdownMenuItem
+          onClick={() => {
+            void handleSwitchContext("personal", null);
+          }}
+          disabled={isSwitchingOrganization}
+          className={cn(
+            "flex items-center gap-2",
+            activeWorkspaceType === "personal" && "bg-primary/10 text-primary font-semibold",
+          )}
+        >
+          <div className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary/20 text-[8px] font-bold text-primary shrink-0">
+            {displayName.charAt(0).toUpperCase()}
+          </div>
+          <span className="truncate">Personal Workspace</span>
+          {activeWorkspaceType === "personal" && <span className="ml-auto text-[10px] text-muted-foreground">Active</span>}
+        </DropdownMenuItem>
+
+
         <DropdownMenuItem
           onClick={() => {
             void handleCreateOrganization();
@@ -192,23 +227,21 @@ export function AuthControls() {
           </DropdownMenuItem>
         ) : (
           organizations.map((org) => {
-            const isActive = org.authOrganizationId === activeOrganizationId;
+            const isActive = activeWorkspaceType === "organization" && activeWorkspaceId === org.id;
 
             return (
               <DropdownMenuItem
                 key={org.id}
                 onClick={() => {
-                  if (org.authOrganizationId) {
-                    void handleSwitchOrganization(org.authOrganizationId);
-                  }
+                  void handleSwitchContext("organization", org.id, org.authOrganizationId);
                 }}
-                disabled={isSwitchingOrganization || !org.authOrganizationId}
+                disabled={isSwitchingOrganization}
                 className={cn(
                   "flex items-center gap-2",
                   isActive && "bg-primary/10 text-primary font-semibold",
                 )}
               >
-                {isSwitchingOrganization ? (
+                {isSwitchingOrganization && isActive ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
                 ) : (
                   <Building2 className="h-3.5 w-3.5 shrink-0" />
@@ -220,10 +253,13 @@ export function AuthControls() {
           })
         )}
 
-        {activeOrganization ? (
-          <DropdownMenuLabel className="truncate text-xs font-normal text-muted-foreground">
-            Active: {activeOrganization.name}
-          </DropdownMenuLabel>
+        {activeWorkspaceType === "organization" && activeOrganization ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="truncate text-xs font-normal text-muted-foreground">
+              Active Org: {activeOrganization.name}
+            </DropdownMenuLabel>
+          </>
         ) : null}
 
         {menuError ? (

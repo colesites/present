@@ -1,7 +1,7 @@
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 
 export type SlideRef = {
-  songId: Id<"songs">;
+  libraryId: string;
   index: number;
 };
 
@@ -10,24 +10,25 @@ export type BottomTab = "shows" | "media" | "scripture";
 export type ContentSource = "my-creations" | "community";
 
 export type RenameTarget = {
-  type: "service" | "category" | "song";
+  type: "service" | "category" | "library";
   id: string;
   name: string;
 } | null;
 
 export type DeleteTarget = {
-  type: "service" | "category" | "song";
+  type: "service" | "category" | "library";
   id: string;
   name: string;
 } | null;
 
-export type Song = {
-  _id: Id<"songs">;
+export type LibraryItem = {
+  _id: any;
   _creationTime: number;
-  orgId: Id<"organizations">;
-  categoryId?: Id<"categories">;
+  orgId?: any;
+  userId?: any;
+  categoryId?: any;
   title: string;
-  lyrics: string;
+  body: string;
   slides: Array<{
     text: string;
     label?: string;
@@ -38,14 +39,14 @@ export type Song = {
   updatedAt?: number;
 };
 
-export type ServiceItemType = "song" | "media" | "scripture";
+export type ServiceItemType = "library" | "media" | "scripture";
 
 export interface ServiceItem {
   type: ServiceItemType;
   refId: string;
   label?: string;
   addedAt: number;
-  song: Song | null;
+  libraryItem: LibraryItem | null;
   index: number;
 }
 

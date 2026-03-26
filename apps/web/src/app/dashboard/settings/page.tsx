@@ -4,7 +4,7 @@ export default function SettingsPage() {
   return (
     <DashboardClient
       org={null}
-      songs={[]}
+      libraryItems={[]}
       shouldAutoOpen={false}
       section="settings"
     />

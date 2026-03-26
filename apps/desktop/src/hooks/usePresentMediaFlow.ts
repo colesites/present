@@ -13,7 +13,7 @@ export function usePresentMediaFlow<
   activeMediaItem: TMedia | null;
 
   setServiceItemIndex: (index: number) => void;
-  setSelectedSongId: (id: Id<"songs"> | null) => void;
+  setSelectedLibraryId: (id: string | null) => void;
 
   // ✅ NOW uses your real MediaItem type (TMedia), so no mismatch
   selectMediaForOutput: (item: TMedia | null) => void;
@@ -29,7 +29,7 @@ export function usePresentMediaFlow<
     allMediaItems,
     activeMediaItem,
     setServiceItemIndex,
-    setSelectedSongId,
+    setSelectedLibraryId,
     selectMediaForOutput,
     selectSlide,
     onClearScripture,
@@ -47,10 +47,10 @@ export function usePresentMediaFlow<
 
       setServiceItemIndex(index);
 
-      if (item.type === "song") {
-        const songId = item.song?._id;
-        if (songId) {
-          setSelectedSongId(songId);
+      if (item.type === "library") {
+        const libraryId = item.libraryItem?._id;
+        if (libraryId) {
+          setSelectedLibraryId(libraryId);
           setPreviewMediaItem(null);
           onClearScripture?.();
           return;
@@ -63,7 +63,7 @@ export function usePresentMediaFlow<
 
         const mediaItem = allMediaItems.find((m) => m.id === refId) ?? null;
         setPreviewMediaItem(mediaItem);
-        setSelectedSongId(null);
+        setSelectedLibraryId(null);
         onClearScripture?.();
 
         // Go live immediately for media items
@@ -77,14 +77,14 @@ export function usePresentMediaFlow<
         if (refId && params.onSelectScripture) {
           params.onSelectScripture(refId);
           setPreviewMediaItem(null);
-          setSelectedSongId(null);
+          setSelectedLibraryId(null);
         }
       }
     },
     [
       serviceItems,
       setServiceItemIndex,
-      setSelectedSongId,
+      setSelectedLibraryId,
       allMediaItems,
       onClearScripture,
       selectMediaForOutput,

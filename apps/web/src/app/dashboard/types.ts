@@ -6,7 +6,7 @@ export type DashboardSection =
   | "accounts"
   | "settings";
 
-export interface DashboardSong {
+export interface DashboardLibraryItem {
   _id: string;
   title: string;
   categoryId?: string;
@@ -29,10 +29,18 @@ export interface DashboardOrganizationListItem {
   authOrganizationId?: string;
 }
 
+export interface DashboardServiceItem {
+  _id: string;
+  _creationTime: number;
+  date: number;
+  title: string;
+  order?: number;
+}
+
 
 export interface DashboardClientProps {
   org: DashboardOrganization | null;
-  songs: DashboardSong[];
+  libraryItems: DashboardLibraryItem[];
   shouldAutoOpen: boolean;
   section: DashboardSection;
 }

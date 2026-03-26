@@ -5,7 +5,7 @@ interface UseSpeechAutopilotProps {
   isAutopilotEnabled: boolean;
   viewMode: string;
   slidesForGrid: SlideData[];
-  selected: { songId: any; index: number } | null;
+  selected: { libraryId: any; index: number } | null;
   handleSelectSlide: (slideId: string, text: string, footer?: string) => Promise<void>;
 }
 
@@ -134,8 +134,8 @@ export function useSpeechAutopilot({
       const target = slidesForGrid[nextIndex];
       if (!target) return;
 
-      const slideId = target.song
-        ? `${target.song._id}:${target.index}`
+      const slideId = target.libraryItem
+        ? `${target.libraryItem._id}:${target.index}`
         : `scripture:${target.index}`;
 
       handleSelectSlide(slideId, target.slide.text, target.slide.footer);

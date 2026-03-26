@@ -1,5 +1,3 @@
-"use client";
-
 import { useLiveQuery } from "dexie-react-hooks";
 import { useMemo, useState } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
@@ -10,8 +8,8 @@ import { db } from "../scripture/lib/db";
 import type { ScriptureSlide } from "../scripture/lib/slides";
 import { useServices } from "../services/hooks";
 import type { ShowsPanelRef } from "../shows";
-import { useSongs } from "../songs/hooks";
-import type { Song, ViewMode, BottomTab, ContentSource } from "../../types";
+import { useLibrary } from "../library/hooks";
+import type { LibraryItem, ViewMode, BottomTab, ContentSource } from "../../types";
 import {
   useCategories,
   useOutputBroadcast,
@@ -89,20 +87,20 @@ export function PresentContainer({
   } = usePlayback(orgId);
 
   const {
-    songs,
-    filteredSongs,
-    selectedSong,
-    selectedSongId,
+    libraryItems,
+    filteredItems: filteredLibraryItems,
+    selectedItem: selectedLibraryItem,
+    selectedItemId: selectedLibraryId,
     selectedCategoryId,
     searchQuery,
-    setSelectedSongId,
+    setSelectedItemId: setSelectedLibraryId,
     setSelectedCategoryId,
     setSearchQuery,
-    createNewSong,
-    updateExistingSong,
-    deleteSong,
-    isLoading: songsLoading,
-  } = useSongs({ orgId: orgId ?? null, userId }, contentSource);
+    createNewItem: createNewLibraryItem,
+    updateExistingItem: updateExistingLibraryItem,
+    deleteItem: deleteLibraryItem,
+    isLoading: libraryLoading,
+  } = useLibrary({ orgId: orgId ?? null, userId: userId ?? null }, contentSource);
 
   const {
     services,
@@ -116,14 +114,14 @@ export function PresentContainer({
     createNewService,
     renameExistingService,
     deleteService,
-    addSongToService,
+    addLibraryItemToService: addLibraryToService,
     addMediaToService,
     removeFromService,
     reorderServiceItems,
     reorderServices,
     enterService,
     exitService,
-  } = useServices({ orgId: orgId ?? null, userId }, songs);
+  } = useServices({ orgId: orgId ?? null, userId }, libraryItems);
 
   const { categories, createNewCategory } = useCategories({ orgId: orgId ?? null, userId });
 
@@ -138,7 +136,7 @@ export function PresentContainer({
   const [scriptureSlides, setScriptureSlides] = useState<ScriptureSlide[]>([]);
 
   const [selected, setSelected] = useState<{
-    songId: Id<"songs"> | null;
+    libraryId: string | null;
     index: number;
   } | null>(null);
   const [editScrollToSlide, setEditScrollToSlide] = useState<number | null>(null);
@@ -146,23 +144,23 @@ export function PresentContainer({
 
   // Memos
   const slidesForGrid = useMemo(() => {
-    if (selectedSong) return getSlidesForGrid(selectedSong);
+    if (selectedLibraryItem) return getSlidesForGrid(selectedLibraryItem);
     if (bottomTab === "scripture" && scriptureSlides.length > 0) {
       return scriptureSlides.map((item, i) => ({
         slide: { text: item.content, label: item.label, footer: item.footer },
         index: i,
-        song: null as Song | null,
+        libraryItem: null as LibraryItem | null,
       }));
     }
     return [];
-  }, [bottomTab, selectedSong, scriptureSlides]);
+  }, [bottomTab, selectedLibraryItem, scriptureSlides]);
 
   const isScriptureActive = useMemo(() => {
     if (activeSlideId?.startsWith("scripture:")) return true;
-    if (bottomTab === "scripture" && !selectedSongId) return true;
-    if (scriptureSlides.length > 0 && !selectedSongId) return true;
+    if (bottomTab === "scripture" && !selectedLibraryId) return true;
+    if (scriptureSlides.length > 0 && !selectedLibraryId) return true;
     return false;
-  }, [activeSlideId, bottomTab, selectedSongId, scriptureSlides.length]);
+  }, [activeSlideId, bottomTab, selectedLibraryId, scriptureSlides.length]);
 
   const activeSlideContent = useMemo(() => {
     if (activeSlideId?.startsWith("scripture:")) {
@@ -171,11 +169,11 @@ export function PresentContainer({
       const slide = scriptureSlides[index];
       return slide ? { text: slide.content, footer: slide.footer } : null;
     }
-    const text = getActiveSlideText(activeSlideId, songs);
+    const text = getActiveSlideText(activeSlideId, libraryItems);
     return text ? { text } : null;
-  }, [activeSlideId, songs, scriptureSlides]);
+  }, [activeSlideId, libraryItems, scriptureSlides]);
 
-  const slideGroups = useMemo(() => getSlideGroups(selectedSong), [selectedSong]);
+  const slideGroups = useMemo(() => getSlideGroups(selectedLibraryItem), [selectedLibraryItem]);
 
   const scriptureBackgroundMediaItem = useMemo(
     () =>
@@ -198,25 +196,28 @@ export function PresentContainer({
     handleRemoveFromService,
     handleAddToService,
     handleAddMediaToService,
-    handleSaveSong,
-    handleRenameSong,
+    handleSaveLibraryItem,
+    handleRenameLibraryItem,
     handleScriptureOutput,
     handleSelectScripture,
   } = useAppHandlers({
     setSelected,
     setViewMode: () => { /* No-op in PresentContainer */ }, // Not used in PresentContainer for now, but signature requires it
-    setSelectedSongId,
+    setSelectedLibraryId,
     setScriptureSlides,
     setShowTextInOutput,
     setEditScrollToSlide,
-    selectSlide,
+    selectSlide: (id, text, footer, options) => {
+      // Logic for selecting a slide
+      return selectSlide(id, text, footer, options);
+    },
     removeFromService,
-    addSongToService,
+    addLibraryItemToService: addLibraryToService,
     addMediaToService,
-    updateExistingSong,
-    songs,
+    updateExistingLibraryItem,
+    libraryItems,
     selectedServiceId,
-    selectedSongId,
+    selectedLibraryId,
     isOutputFrozen,
     availableBooks,
     lookupRef,
@@ -233,7 +234,7 @@ export function PresentContainer({
     allMediaItems,
     activeMediaItem,
     setServiceItemIndex,
-    setSelectedSongId,
+    setSelectedLibraryId,
     selectMediaForOutput,
     selectSlide: (slideId: string, text: string) =>
       selectSlide(slideId, text, undefined, {
@@ -243,7 +244,7 @@ export function PresentContainer({
     onSelectScripture: handleSelectScripture,
     onClearScripture: () => {
       setScriptureSlides([]);
-      setSelected({ songId: null, index: -1 });
+      setSelected({ libraryId: null, index: -1 });
     },
   });
 
@@ -253,7 +254,9 @@ export function PresentContainer({
     viewMode,
     slidesForGrid,
     selected,
-    handleSelectSlide,
+    handleSelectSlide: async (id, text, footer) => {
+      handleSelectSlide(id, text, footer);
+    },
   });
 
   const {
@@ -287,7 +290,7 @@ export function PresentContainer({
       fontFamily: settingsScriptureFontFamily,
       textAlign: settingsScriptureTextAlign,
     },
-    songStyle: {
+    libraryStyle: {
       fontFamily,
       fontSize,
       fontBold,
@@ -301,8 +304,8 @@ export function PresentContainer({
 
   useAppNavigation({
     viewMode,
-    selectedSong,
-    selectedSongId,
+    selectedLibraryItem,
+    selectedLibraryId,
     selected,
     slidesForGrid,
     handleSelectSlide,
@@ -341,12 +344,12 @@ export function PresentContainer({
         slidesForGrid,
         activeSlideId,
         selected,
-        selectedSong,
-        selectedSongId,
-        setSelectedSongId,
+        selectedLibraryItem,
+        selectedLibraryId,
+        setSelectedLibraryId,
         handleSelectSlide,
         handleEditSlide,
-        handleSaveSong,
+        handleSaveLibraryItem,
         editScrollToSlide,
         setEditScrollToSlide,
         handleScriptureOutput,
@@ -376,15 +379,15 @@ export function PresentContainer({
         isVideoPlaying,
         videoCurrentTime,
       }}
-      songState={{
-        filteredSongs,
-        songsLoading,
+      libraryState={{
+        filteredLibraryItems,
+        libraryLoading,
         categories,
         selectedCategoryId,
         setSelectedCategoryId,
-        createNewSong: async (title, lyrics, categoryId) => { await createNewSong(title, lyrics, categoryId); },
-        handleRenameSong,
-        deleteSong,
+        createNewLibraryItem: async (title, body, categoryId) => { await createNewLibraryItem(title, body, categoryId); },
+        handleRenameLibraryItem,
+        deleteLibraryItem,
         handleAddToService,
         createNewCategory: async (name) => { await createNewCategory(name); },
         searchQuery,

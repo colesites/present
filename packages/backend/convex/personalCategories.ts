@@ -79,14 +79,14 @@ export const update = mutation({
 export const remove = mutation({
   args: { categoryId: v.id("personalCategories") },
   handler: async (ctx, args) => {
-    // Move songs in this category to uncategorized
-    const songs = await ctx.db
-      .query("personalSongs")
+    // Move items in this category to uncategorized
+    const items = await ctx.db
+      .query("personalLibraries")
       .withIndex("by_category", (q) => q.eq("categoryId", args.categoryId))
       .collect();
 
-    for (const song of songs) {
-      await ctx.db.patch(song._id, { categoryId: undefined });
+    for (const item of items) {
+      await ctx.db.patch(item._id, { categoryId: undefined });
     }
 
     await ctx.db.delete(args.categoryId);

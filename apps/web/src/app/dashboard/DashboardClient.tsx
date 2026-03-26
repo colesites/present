@@ -7,14 +7,17 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../../../packages/backend/convex/_generated/api";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { useWorkspaceStore } from "../../../../../packages/shared/src/store/workspace";
 import { DashboardSidebar } from "./components/DashboardSidebar";
 import { DashboardOverview } from "./components/DashboardOverview";
 import { DashboardSectionView } from "./components/DashboardSectionView";
 import { OrganizationModal } from "./components/OrganizationModal";
 import {
   DashboardClientProps,
+  DashboardLibraryItem,
   DashboardOrganization,
   DashboardOrganizationListItem,
+  DashboardServiceItem,
 } from "./types";
 
 const MAX_LOGO_FILE_SIZE = 4 * 1024 * 1024;
@@ -45,7 +48,7 @@ type OneTimeTokenApi = {
 
 export function DashboardClient({
   org,
-  songs,
+  libraryItems,
   shouldAutoOpen,
   section,
 }: DashboardClientProps) {
@@ -57,11 +60,20 @@ export function DashboardClient({
   const syncOrganization = useMutation(api.users.createOrganization);
   const linkAuthOrg = useMutation(api.users.linkAuthOrganization);
 
+  const { type: activeWorkspaceType, id: activeWorkspaceId, setWorkspace } = useWorkspaceStore();
 
+  const libraryData = useQuery(api.libraries.list, { 
+    workspaceId: activeWorkspaceId ?? undefined 
+  }) as DashboardLibraryItem[] | undefined;
+
+  const activeLibraryData = libraryData ?? libraryItems;
+
+  const servicesData = useQuery(api.services.list, {
+    workspaceId: activeWorkspaceId ?? undefined
+  }) as DashboardServiceItem[] | undefined;
 
   const [currentOrg, setCurrentOrg] = useState<DashboardOrganization | null>(org);
   const [organizations, setOrganizations] = useState<DashboardOrganizationListItem[]>([]);
-  const [activeOrganizationId, setActiveOrganizationId] = useState<string | null>(null);
   const [isOrganizationModalOpen, setIsOrganizationModalOpen] = useState(false);
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
 
@@ -89,22 +101,16 @@ export function DashboardClient({
 
       setOrganizations(list);
 
+      // We don't need to auto-set the active workspace here anymore if it's managed by Zustand,
+      // but if the activeorg is null and we have an organization we could fallback.
+      // For now, respect the Zustand store.
+      const activeOrg = activeWorkspaceType === "organization"
+        ? list.find((org) => org.id === activeWorkspaceId) ?? null
+        : null;
 
-      const sessionActiveOrganizationId =
-        session?.session?.activeOrganizationId &&
-        typeof session.session.activeOrganizationId === "string"
-          ? session.session.activeOrganizationId
-          : null;
-
-      const nextActiveOrganization =
-        list.find((organization) => organization.authOrganizationId === sessionActiveOrganizationId) ??
-        list[0] ??
-        null;
-        
-      setActiveOrganizationId(nextActiveOrganization?.id ?? null);
-      setCurrentOrg(nextActiveOrganization);
+      setCurrentOrg(activeOrg);
     }
-  }, [nativeOrganizations, session]);
+  }, [nativeOrganizations, activeWorkspaceType, activeWorkspaceId]);
 
 
 
@@ -157,12 +163,12 @@ export function DashboardClient({
     setRemoveLogo(false);
   }, [currentOrg]);
 
-  const sortedSongs = useMemo(
+  const sortedLibrary = useMemo(
     () =>
-      [...songs].sort(
+      [...(activeLibraryData ?? [])].sort(
         (a, b) => (b.updatedAt ?? b._creationTime) - (a.updatedAt ?? a._creationTime),
       ),
-    [songs],
+    [activeLibraryData],
   );
 
   useEffect(() => {
@@ -221,10 +227,12 @@ export function DashboardClient({
   };
 
 
-  const handleOrganizationSwitch = async (
-    organization: DashboardOrganizationListItem,
+  const handleSwitchContext = async (
+    type: "personal" | "organization",
+    id: string | null,
+    authOrgId?: string | null,
   ) => {
-    if (organization.id === activeOrganizationId) {
+    if (type === activeWorkspaceType && id === activeWorkspaceId) {
       setIsAccountSwitcherOpen(false);
       return;
     }
@@ -232,22 +240,31 @@ export function DashboardClient({
     setIsSwitchingOrganization(true);
     setFeedback(null);
 
-    const result = await organizationApi.setActiveOrganization({
-      organizationId: organization.id,
-    });
+    // Update global store
+    setWorkspace(type, id);
 
-    setIsSwitchingOrganization(false);
-
-    if (result.error) {
-      setFeedback(result.error.message || "Unable to switch organization.");
-      return;
+    try {
+      if (type === "organization" && authOrgId) {
+        await organizationApi.setActiveOrganization({
+          organizationId: authOrgId,
+        });
+      } else if (type === "personal") {
+        await organizationApi.setActiveOrganization({
+          organizationId: "", // Clear BetterAuth active org
+        });
+      }
+    } catch (err) {
+      console.warn("Failed to sync BetterAuth session, but context changed:", err);
+    } finally {
+      setIsSwitchingOrganization(false);
+      setIsAccountSwitcherOpen(false);
+      
+      const nextActiveOrg = type === "organization" 
+        ? organizations.find((o) => o.id === id) ?? null 
+        : null;
+      
+      setCurrentOrg(nextActiveOrg ? { name: nextActiveOrg.name, logo: nextActiveOrg.logo } : null);
     }
-
-    setActiveOrganizationId(organization.id);
-    setCurrentOrg({
-      name: organization.name,
-      logo: organization.logo,
-    });
     setIsAccountSwitcherOpen(false);
     router.refresh();
   };
@@ -423,7 +440,8 @@ export function DashboardClient({
               viewerEmail={viewerEmail}
               viewerImage={viewerImage}
               organizations={organizations}
-              activeOrganizationId={activeOrganizationId}
+              activeWorkspaceType={activeWorkspaceType}
+              activeWorkspaceId={activeWorkspaceId}
               isAccountSwitcherOpen={isAccountSwitcherOpen}
               isSwitchingOrganization={isSwitchingOrganization}
               onToggleAccountSwitcher={() => {
@@ -433,9 +451,7 @@ export function DashboardClient({
                 setIsAccountSwitcherOpen(false);
               }}
               onCreateOrganization={openCreateOrganizationModal}
-              onSelectOrganization={(organization) => {
-                void handleOrganizationSwitch(organization);
-              }}
+              onSwitchContext={handleSwitchContext}
               isSigningOut={isSigningOut}
               onSignOut={handleSignOut}
 
@@ -445,7 +461,8 @@ export function DashboardClient({
                 <DashboardOverview
                   currentOrg={currentOrg}
                   organizationsCount={organizations.length}
-                  songs={sortedSongs}
+                  libraryItems={sortedLibrary}
+                  servicesCount={servicesData?.length ?? 0}
                   shouldAutoOpen={shouldAutoOpen}
                   onOpenDesktopApp={() => {
                     void openDesktopApp();
@@ -455,10 +472,10 @@ export function DashboardClient({
                 <DashboardSectionView
                   section={section}
                   currentOrg={currentOrg}
-                  songs={sortedSongs}
+                  libraryItems={sortedLibrary}
+                  servicesCount={servicesData?.length ?? 0}
                   isSigningOut={isSigningOut}
                   onSignOut={handleSignOut}
-
                 />
               )}
             </main>

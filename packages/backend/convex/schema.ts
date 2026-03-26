@@ -36,7 +36,7 @@ export default defineSchema({
     .index("by_token", ["tokenIdentifier"])
     .index("by_org", ["orgId"])
     .index("by_email", ["email"]),
-  // Categories for organizing songs (Songs, Flows, Hymns, custom)
+  // Categories for organizing library items (Songs, Flows, Hymns, custom)
   categories: defineTable({
     orgId: v.id("organizations"),
     name: v.string(),
@@ -44,11 +44,11 @@ export default defineSchema({
     order: v.number(),
     createdAt: v.number(),
   }).index("by_org", ["orgId"]),
-  songs: defineTable({
+  libraries: defineTable({
     orgId: v.id("organizations"),
     categoryId: v.optional(v.id("categories")),
     title: v.string(),
-    lyrics: v.string(),
+    body: v.string(),
     slides: v.array(
       v.object({
         text: v.string(),
@@ -71,7 +71,7 @@ export default defineSchema({
     items: v.array(
       v.object({
         type: v.union(
-          v.literal("song"),
+          v.literal("library"),
           v.literal("media"),
           v.literal("scripture")
         ),
@@ -116,11 +116,11 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_user", ["userId"]),
 
-  personalSongs: defineTable({
+  personalLibraries: defineTable({
     userId: v.id("users"),
     categoryId: v.optional(v.id("personalCategories")),
     title: v.string(),
-    lyrics: v.string(),
+    body: v.string(),
     slides: v.array(
       v.object({
         text: v.string(),
@@ -142,7 +142,7 @@ export default defineSchema({
     order: v.optional(v.number()),
     items: v.array(
       v.object({
-        type: v.union(v.literal("song"), v.literal("media"), v.literal("scripture")),
+        type: v.union(v.literal("library"), v.literal("media"), v.literal("scripture")),
         refId: v.string(),
         label: v.optional(v.string()),
         addedAt: v.number(),

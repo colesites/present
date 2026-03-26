@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { Song } from "../types";
+import type { LibraryItem } from "../types";
 import type { ScriptureSlide } from "../features/scripture/lib/slides";
 import { parseReference, type ParsedReference } from "../features/scripture/lib/parser";
 import { generateBibleSlides } from "../features/scripture/lib/slides";
@@ -10,9 +10,9 @@ import type { BibleVerse, BibleBookRecord } from "../features/scripture/lib/db";
 
 interface UseAppHandlersProps {
   // State Setters
-  setSelected: (selected: { songId: Id<"songs"> | null; index: number } | null) => void;
+  setSelected: (selected: { libraryId: string | null; index: number } | null) => void;
   setViewMode: (mode: "show" | "edit" | "settings") => void;
-  setSelectedSongId: (id: Id<"songs"> | null) => void;
+  setSelectedLibraryId: (id: string | null) => void;
   setScriptureSlides: (slides: ScriptureSlide[]) => void;
   setShowTextInOutput: (show: boolean) => void;
   setEditScrollToSlide: (index: number | null) => void;
@@ -25,14 +25,14 @@ interface UseAppHandlersProps {
     options?: { suppressBroadcast?: boolean }
   ) => Promise<void>;
   removeFromService: (serviceId: Id<"services">, index: number) => Promise<void>;
-  addSongToService: (serviceId: Id<"services">, songId: Id<"songs">) => Promise<void>;
+  addLibraryItemToService: (serviceId: Id<"services">, libraryId: string) => Promise<void>;
   addMediaToService: (serviceId: Id<"services">, mediaId: string, mediaName: string) => Promise<void>;
-  updateExistingSong: (id: Id<"songs">, title: string, lyrics: string) => Promise<void>;
+  updateExistingLibraryItem: (id: string, title: string, body: string) => Promise<void>;
   
   // Context/Data
-  songs: Song[];
+  libraryItems: LibraryItem[];
   selectedServiceId: Id<"services"> | null;
-  selectedSongId: Id<"songs"> | null;
+  selectedLibraryId: string | null;
   isOutputFrozen: boolean;
   availableBooks: BibleBookRecord[];
   lookupRef: (parsed: ParsedReference) => Promise<BibleVerse[]>;
@@ -41,18 +41,18 @@ interface UseAppHandlersProps {
 export function useAppHandlers({
   setSelected,
   setViewMode,
-  setSelectedSongId,
+  setSelectedLibraryId,
   setScriptureSlides,
   setShowTextInOutput,
   setEditScrollToSlide,
   selectSlide,
   removeFromService,
-  addSongToService,
+  addLibraryItemToService,
   addMediaToService,
-  updateExistingSong,
-  songs,
+  updateExistingLibraryItem,
+  libraryItems,
   selectedServiceId,
-  selectedSongId,
+  selectedLibraryId,
   isOutputFrozen,
   availableBooks,
   lookupRef,
@@ -69,22 +69,22 @@ export function useAppHandlers({
       const index = Number(indexStr);
 
       if (slideId.startsWith("scripture")) {
-        setSelected({ songId: null, index });
+        setSelected({ libraryId: null, index });
       } else if (slideId.includes(":")) {
-        setSelected({ songId: idPart as Id<"songs">, index });
+        setSelected({ libraryId: idPart, index });
       }
     },
     [selectSlide, isOutputFrozen, setShowTextInOutput, setSelected]
   );
 
   const handleEditSlide = useCallback(
-    (songId: Id<"songs">, slideIndex: number) => {
-      setSelectedSongId(songId);
+    (libraryId: string, slideIndex: number) => {
+      setSelectedLibraryId(libraryId);
       setViewMode("edit");
-      setSelected({ songId, index: slideIndex });
+      setSelected({ libraryId, index: slideIndex });
       setEditScrollToSlide(slideIndex);
     },
-    [setSelectedSongId, setViewMode, setSelected, setEditScrollToSlide]
+    [setSelectedLibraryId, setViewMode, setSelected, setEditScrollToSlide]
   );
 
   const handleRemoveFromService = useCallback(
@@ -96,11 +96,11 @@ export function useAppHandlers({
   );
 
   const handleAddToService = useCallback(
-    async (songId: Id<"songs">) => {
+    async (libraryId: string) => {
       if (!selectedServiceId) return;
-      await addSongToService(selectedServiceId, songId);
+      await addLibraryItemToService(selectedServiceId, libraryId);
     },
-    [selectedServiceId, addSongToService]
+    [selectedServiceId, addLibraryItemToService]
   );
 
   const handleAddMediaToService = useCallback(
@@ -111,27 +111,27 @@ export function useAppHandlers({
     [selectedServiceId, addMediaToService]
   );
 
-  const handleSaveSong = useCallback(
-    async (title: string, lyrics: string) => {
-      if (!selectedSongId) return;
-      await updateExistingSong(selectedSongId, title, lyrics);
+  const handleSaveLibraryItem = useCallback(
+    async (title: string, body: string) => {
+      if (!selectedLibraryId) return;
+      await updateExistingLibraryItem(selectedLibraryId, title, body);
     },
-    [selectedSongId, updateExistingSong]
+    [selectedLibraryId, updateExistingLibraryItem]
   );
 
-  const handleRenameSong = useCallback(
-    async (songId: Id<"songs">, newTitle: string) => {
-      const song = songs.find((s) => s._id === songId);
-      if (!song) return;
-      await updateExistingSong(songId, newTitle, song.lyrics);
+  const handleRenameLibraryItem = useCallback(
+    async (libraryId: string, newTitle: string) => {
+      const item = libraryItems.find((s) => s._id === libraryId);
+      if (!item) return;
+      await updateExistingLibraryItem(libraryId, newTitle, item.body);
     },
-    [songs, updateExistingSong]
+    [libraryItems, updateExistingLibraryItem]
   );
 
   const handleScriptureOutput = useCallback(
     async (slides: ScriptureSlide[]) => {
       setShowTextInOutput(true);
-      setSelectedSongId(null);
+      setSelectedLibraryId(null);
       setScriptureSlides(slides);
 
       if (slides.length > 0) {
@@ -142,7 +142,7 @@ export function useAppHandlers({
         );
       }
     },
-    [handleSelectSlide, setSelectedSongId, setShowTextInOutput, setScriptureSlides]
+    [handleSelectSlide, setSelectedLibraryId, setShowTextInOutput, setScriptureSlides]
   );
 
   const handleSelectScripture = useCallback(
@@ -180,8 +180,8 @@ export function useAppHandlers({
     handleRemoveFromService,
     handleAddToService,
     handleAddMediaToService,
-    handleSaveSong,
-    handleRenameSong,
+    handleSaveLibraryItem,
+    handleRenameLibraryItem,
     handleScriptureOutput,
     handleSelectScripture,
   };

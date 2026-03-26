@@ -1,21 +1,21 @@
 "use client";
 
 import { memo, useState, useCallback, useRef, useEffect } from "react";
-import type { Song } from "../../types";
+import type { LibraryItem } from "../../types";
 import { FontToolbar } from "./FontToolbar";
 import { toast } from "sonner";
 import { useDebouncedCallback } from "use-debounce";
 
 interface LyricsEditorProps {
-  song: Song;
+  libraryItem: LibraryItem;
   fontFamily: string;
   fontSize: number;
   fontBold: boolean;
   fontItalic: boolean;
   fontUnderline: boolean;
   scrollToSlideIndex?: number | null;
-  onSave: (title: string, lyrics: string) => Promise<void>;
-  onFixLyrics: (lyrics: string) => Promise<string>;
+  onSave: (title: string, body: string) => Promise<void>;
+  onFixLyrics: (body: string) => Promise<string>;
   onFontStyleChange: (styles: {
     fontFamily?: string;
     fontSize?: number;
@@ -27,7 +27,7 @@ interface LyricsEditorProps {
 }
 
 export const LyricsEditor = memo(function LyricsEditor({
-  song,
+  libraryItem,
   fontFamily,
   fontSize,
   fontBold,
@@ -39,63 +39,63 @@ export const LyricsEditor = memo(function LyricsEditor({
   onFontStyleChange,
   onScrollComplete,
 }: LyricsEditorProps) {
-  const [editTitle, setEditTitle] = useState(song.title);
-  const [editLyrics, setEditLyrics] = useState(song.lyrics);
+  const [editTitle, setEditTitle] = useState(libraryItem.title);
+  const [editBody, setEditBody] = useState(libraryItem.body);
   const [isSaving, setIsSaving] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Track last known server state to detect external updates vs local edits
-  const lastServerTitle = useRef(song.title);
-  const lastServerLyrics = useRef(song.lyrics);
-  const lastSongId = useRef(song._id);
-  const latestSave = useRef<{ title: string; lyrics: string } | null>(null);
+  const lastServerTitle = useRef(libraryItem.title);
+  const lastServerBody = useRef(libraryItem.body);
+  const lastItemId = useRef(libraryItem._id);
+  const latestSave = useRef<{ title: string; body: string } | null>(null);
 
   // Sync with server state, but preserve local edits if divergent
   useEffect(() => {
-    // If song changed completely, reset everything
-    if (song._id !== lastSongId.current) {
-      setEditTitle(song.title);
-      setEditLyrics(song.lyrics);
-      lastServerTitle.current = song.title;
-      lastServerLyrics.current = song.lyrics;
-      lastSongId.current = song._id;
+    // If item changed completely, reset everything
+    if (libraryItem._id !== lastItemId.current) {
+      setEditTitle(libraryItem.title);
+      setEditBody(libraryItem.body);
+      lastServerTitle.current = libraryItem.title;
+      lastServerBody.current = libraryItem.body;
+      lastItemId.current = libraryItem._id;
       return;
     }
 
     // If server content changed (e.g. external update or save confirmation)
-    if (song.title !== lastServerTitle.current) {
+    if (libraryItem.title !== lastServerTitle.current) {
       // Only update if local matches old server (user hasn't typed)
       // AND the update isn't just our own save coming back
-      const isMySave = latestSave.current?.title === song.title;
+      const isMySave = latestSave.current?.title === libraryItem.title;
       if (!isMySave && editTitle === lastServerTitle.current) {
-        setEditTitle(song.title);
+        setEditTitle(libraryItem.title);
       }
-      lastServerTitle.current = song.title;
+      lastServerTitle.current = libraryItem.title;
     }
 
-    if (song.lyrics !== lastServerLyrics.current) {
+    if (libraryItem.body !== lastServerBody.current) {
       // Only update if local matches old server (user hasn't typed)
       // AND the update isn't just our own save coming back
-      const isMySave = latestSave.current?.lyrics === song.lyrics;
-      if (!isMySave && editLyrics === lastServerLyrics.current) {
-        setEditLyrics(song.lyrics);
+      const isMySave = latestSave.current?.body === libraryItem.body;
+      if (!isMySave && editBody === lastServerBody.current) {
+        setEditBody(libraryItem.body);
       }
-      lastServerLyrics.current = song.lyrics;
+      lastServerBody.current = libraryItem.body;
     }
-  }, [song._id, song.title, song.lyrics, editTitle, editLyrics]);
+  }, [libraryItem._id, libraryItem.title, libraryItem.body, editTitle, editBody]);
 
   const [isBlinking, setIsBlinking] = useState(false);
 
   // Debounced auto-save (silent, no toast)
   const debouncedAutoSave = useDebouncedCallback(
-    async (title: string, lyrics: string) => {
+    async (title: string, body: string) => {
       if (!title.trim()) return;
-      latestSave.current = { title, lyrics };
+      latestSave.current = { title, body };
       try {
-        await onSave(title.trim(), lyrics);
+        await onSave(title.trim(), body);
         lastServerTitle.current = title.trim();
-        lastServerLyrics.current = lyrics;
+        lastServerBody.current = body;
       } catch {
         // Silent fail for auto-save
       }
@@ -103,39 +103,39 @@ export const LyricsEditor = memo(function LyricsEditor({
     1000, // 1 second debounce
   );
 
-  // Trigger auto-save when title or lyrics change
+  // Trigger auto-save when title or body change
   useEffect(() => {
     if (
       editTitle.trim() &&
-      (editTitle !== song.title || editLyrics !== song.lyrics)
+      (editTitle !== libraryItem.title || editBody !== libraryItem.body)
     ) {
-      debouncedAutoSave(editTitle, editLyrics);
+      debouncedAutoSave(editTitle, editBody);
     }
-  }, [editTitle, editLyrics, song.title, song.lyrics, debouncedAutoSave]);
+  }, [editTitle, editBody, libraryItem.title, libraryItem.body, debouncedAutoSave]);
 
   // Scroll to slide position when scrollToSlideIndex changes
   useEffect(() => {
     if (scrollToSlideIndex == null || !textareaRef.current) return;
 
     const textarea = textareaRef.current;
-    const lyrics = song.lyrics;
+    const body = libraryItem.body;
 
-    // Split lyrics into blocks (separated by empty lines)
+    // Split body into blocks (separated by empty lines)
     // Each block corresponds to a slide
     const blocks: { start: number; end: number }[] = [];
     let currentStart = 0;
     let inBlock = false;
     let blockStart = 0;
 
-    for (let i = 0; i <= lyrics.length; i++) {
-      const char = lyrics[i];
-      const isEnd = i === lyrics.length;
+    for (let i = 0; i <= body.length; i++) {
+      const char = body[i];
+      const isEnd = i === body.length;
       const isNewline = char === "\n";
 
       if (isEnd || isNewline) {
         const lineStart = currentStart;
         const lineEnd = i;
-        const line = lyrics.slice(lineStart, lineEnd).trim();
+        const line = body.slice(lineStart, lineEnd).trim();
 
         // Check if this line is a label like [Verse]
         const isLabel = /^\[.+\]$/.test(line);
@@ -161,14 +161,14 @@ export const LyricsEditor = memo(function LyricsEditor({
 
     // Don't forget the last block
     if (inBlock) {
-      blocks.push({ start: blockStart, end: lyrics.length });
+      blocks.push({ start: blockStart, end: body.length });
     }
 
     // Find the target block
     if (scrollToSlideIndex >= blocks.length) {
       // Fallback: just go to end of document
       textarea.focus();
-      textarea.setSelectionRange(lyrics.length, lyrics.length);
+      textarea.setSelectionRange(body.length, body.length);
       onScrollComplete?.();
       return;
     }
@@ -181,7 +181,7 @@ export const LyricsEditor = memo(function LyricsEditor({
     textarea.focus();
 
     // Scroll to position first
-    const textBefore = lyrics.slice(0, startPos);
+    const textBefore = body.slice(0, startPos);
     const lineNumber = textBefore.split("\n").length - 1;
     const lineHeight = 20;
     const scrollTop = Math.max(0, lineNumber * lineHeight - 100);
@@ -203,7 +203,7 @@ export const LyricsEditor = memo(function LyricsEditor({
     return () => {
       clearTimeout(blinkTimeout);
     };
-  }, [scrollToSlideIndex, song.lyrics, onScrollComplete]);
+  }, [scrollToSlideIndex, libraryItem.body, onScrollComplete]);
 
   const handleSave = useCallback(async () => {
     if (!editTitle.trim()) {
@@ -211,32 +211,32 @@ export const LyricsEditor = memo(function LyricsEditor({
       return;
     }
     setIsSaving(true);
-    latestSave.current = { title: editTitle, lyrics: editLyrics };
+    latestSave.current = { title: editTitle, body: editBody };
     try {
-      await onSave(editTitle.trim(), editLyrics);
+      await onSave(editTitle.trim(), editBody);
       lastServerTitle.current = editTitle.trim();
-      lastServerLyrics.current = editLyrics;
+      lastServerBody.current = editBody;
       toast.success("Saved successfully");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setIsSaving(false);
     }
-  }, [editTitle, editLyrics, onSave]);
+  }, [editTitle, editBody, onSave]);
 
   const handleFix = useCallback(async () => {
-    if (!editLyrics.trim()) return;
+    if (!editBody.trim()) return;
     setIsFixing(true);
     try {
-      const fixed = await onFixLyrics(editLyrics);
-      setEditLyrics(fixed);
-      toast.success("Lyrics cleaned up");
+      const fixed = await onFixLyrics(editBody);
+      setEditBody(fixed);
+      toast.success("Content cleaned up");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to fix lyrics");
+      toast.error(err instanceof Error ? err.message : "Failed to clean up");
     } finally {
       setIsFixing(false);
     }
-  }, [editLyrics, onFixLyrics]);
+  }, [editBody, onFixLyrics]);
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -246,7 +246,7 @@ export const LyricsEditor = memo(function LyricsEditor({
           value={editTitle}
           onChange={(e) => setEditTitle(e.target.value)}
           className="flex-1 rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-          placeholder="Song title"
+          placeholder="Title"
         />
         <button
           type="button"
@@ -254,7 +254,7 @@ export const LyricsEditor = memo(function LyricsEditor({
           disabled={isFixing}
           className="rounded-md border border-input px-4 py-2 text-xs font-medium text-foreground transition hover:bg-secondary disabled:opacity-50"
         >
-          {isFixing ? "Fixing..." : "Fix lyrics"}
+          {isFixing ? "Cleaning..." : "Clean up body"}
         </button>
         <button
           type="button"
@@ -283,11 +283,11 @@ export const LyricsEditor = memo(function LyricsEditor({
         }
       />
 
-      {/* Lyrics textarea */}
+      {/* Body textarea */}
       <textarea
         ref={textareaRef}
-        value={editLyrics}
-        onChange={(e) => setEditLyrics(e.target.value)}
+        value={editBody}
+        onChange={(e) => setEditBody(e.target.value)}
         className={`flex-1 resize-none rounded-md border border-input bg-card p-4 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary ${
           isBlinking ? "editor-blink" : ""
         }`}

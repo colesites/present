@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { Song } from "../../types";
+import type { LibraryItem } from "../../types";
 import { stripBracketsForDisplay } from "../../lib/lyrics";
 import { getLabelColor } from "../../types";
 import { cn } from "../../lib/utils";
@@ -21,7 +21,7 @@ const SLIDE_HEIGHT = 160;
 const MIN_SLIDE_WIDTH = 220;
 
 export interface SlideData {
-  song?: Song | null;
+  libraryItem?: LibraryItem | null;
   slide: {
     text: string;
     label?: string;
@@ -38,7 +38,7 @@ interface SlidesGridProps {
   activeSlideId: string | null;
   selectedIndex: number | null;
   onSelectSlide: (slideId: string, text: string, footer?: string) => void;
-  onEditSlide?: (songId: Id<"songs">, index: number) => void;
+  onEditSlide?: (libraryId: string, index: number) => void;
   fontFamily?: string;
   fontSize?: number;
   fontBold?: boolean;
@@ -73,9 +73,9 @@ export const SlidesGrid = memo(function SlidesGrid({
         gridTemplateColumns: `repeat(auto-fill, minmax(${MIN_SLIDE_WIDTH}px, 1fr))`,
       }}
     >
-      {slides.map(({ song, slide, index, id }) => {
+      {slides.map(({ libraryItem, slide, index, id }) => {
         const slideId =
-          id || (song ? `${song._id}:${index}` : `scripture:${index}`);
+          id || (libraryItem ? `${libraryItem._id}:${index}` : `scripture:${index}`);
         const isActive = activeSlideId === slideId;
         const isSelected = selectedIndex === index;
 
@@ -88,11 +88,11 @@ export const SlidesGrid = memo(function SlidesGrid({
             isSelected={isSelected}
             onClick={() => onSelectSlide(slideId, slide.text, slide.footer)}
             onEdit={
-              onEditSlide && song
-                ? () => onEditSlide(song._id, index)
+              onEditSlide && libraryItem
+                ? () => onEditSlide(libraryItem._id, index)
                 : undefined
             }
-            isScripture={!song}
+            isScripture={!libraryItem}
             fontFamily={fontFamily}
             fontSize={fontSize}
             fontBold={fontBold}
@@ -106,7 +106,7 @@ export const SlidesGrid = memo(function SlidesGrid({
 });
 
 interface SlideCardProps {
-  songId?: Id<"songs">;
+  libraryId?: string;
   slide: {
     text: string;
     label?: string;

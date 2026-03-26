@@ -33,7 +33,7 @@ type Params = {
     fontFamily: string;
     textAlign: "left" | "center" | "right";
   };
-  songStyle: {
+  libraryStyle: {
     fontFamily: string;
     fontSize: number;
     fontBold: boolean;
@@ -52,7 +52,7 @@ export function useOutputBroadcast({
   videoCurrentTime,
   isFrozen,
   scriptureStyle,
-  songStyle,
+  libraryStyle,
   activeSlideId,
   slideText,
   slideFooter,
@@ -113,7 +113,7 @@ export function useOutputBroadcast({
       videoCurrentTime,
       shouldSyncTime,
       scriptureStyle,
-      songStyle,
+      libraryStyle,
     });
 
     // Send active slide text
@@ -138,9 +138,9 @@ export function useOutputBroadcast({
     scriptureStyle.fontSize,
     scriptureStyle.fontFamily,
     scriptureStyle.textAlign,
-    songStyle,
-    songStyle.fontFamily,
-    songStyle.fontSize,
+    libraryStyle,
+    libraryStyle.fontFamily,
+    libraryStyle.fontSize,
     activeSlideId,
     slideText,
     slideFooter,

@@ -4,7 +4,7 @@ export default function ServicesPage() {
   return (
     <DashboardClient
       org={null}
-      songs={[]}
+      libraryItems={[]}
       shouldAutoOpen={false}
       section="services"
     />

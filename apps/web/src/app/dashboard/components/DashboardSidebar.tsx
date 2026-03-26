@@ -23,13 +23,14 @@ interface DashboardSidebarProps {
   viewerEmail: string;
   viewerImage: string | null;
   organizations: DashboardOrganizationListItem[];
-  activeOrganizationId: string | null;
+  activeWorkspaceType: "personal" | "organization";
+  activeWorkspaceId: string | null;
   isAccountSwitcherOpen: boolean;
   isSwitchingOrganization: boolean;
   onToggleAccountSwitcher: () => void;
   onCloseAccountSwitcher: () => void;
   onCreateOrganization: () => void;
-  onSelectOrganization: (organization: DashboardOrganizationListItem) => void;
+  onSwitchContext: (type: "personal" | "organization", id: string | null, authOrgId?: string | null) => void;
   isSigningOut: boolean;
   onSignOut: () => void;
 }
@@ -54,13 +55,14 @@ export function DashboardSidebar({
   viewerEmail,
   viewerImage,
   organizations,
-  activeOrganizationId,
+  activeWorkspaceType,
+  activeWorkspaceId,
   isAccountSwitcherOpen,
   isSwitchingOrganization,
   onToggleAccountSwitcher,
   onCloseAccountSwitcher,
   onCreateOrganization,
-  onSelectOrganization,
+  onSwitchContext,
   isSigningOut,
   onSignOut,
 }: DashboardSidebarProps) {
@@ -118,14 +120,17 @@ export function DashboardSidebar({
 
       <div className="mt-auto pt-8">
         <AccountSwitcher
+          viewerName={viewerName}
+          viewerImage={viewerImage}
           organizations={organizations}
-          activeOrganizationId={activeOrganizationId}
+          activeWorkspaceType={activeWorkspaceType}
+          activeWorkspaceId={activeWorkspaceId}
           isOpen={isAccountSwitcherOpen}
           isSwitching={isSwitchingOrganization}
           onToggle={onToggleAccountSwitcher}
           onClose={onCloseAccountSwitcher}
           onCreateOrganization={onCreateOrganization}
-          onSelectOrganization={onSelectOrganization}
+          onSwitchContext={onSwitchContext}
           isSigningOut={isSigningOut}
           onSignOut={onSignOut}
         />

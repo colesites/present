@@ -2,7 +2,7 @@
 
 import { memo, useState } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { Service, Song } from "../../types";
+import type { Service, LibraryItem } from "../../types";
 import { Dialog } from "../../components/Dialog";
 import { Skeleton } from "../../components/ui/skeleton";
 import { cn } from "../../lib/utils";
@@ -14,11 +14,11 @@ import {
 } from "../../components/ui/context-menu";
 
 interface ServiceItem {
-  type: "song" | "media" | "scripture";
+  type: "library" | "media" | "scripture";
   refId: string;
   label?: string;
   addedAt: number;
-  song: Song | null | undefined;
+  libraryItem: LibraryItem | null | undefined;
   index: number;
 }
 
@@ -429,7 +429,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
   if (items.length === 0) {
     return (
       <p className="text-[10px] text-muted-foreground px-2">
-        No items. Add songs or media from below.
+        No items. Add library items or media from below.
       </p>
     );
   }
@@ -441,8 +441,8 @@ const ServiceItemsList = memo(function ServiceItemsList({
         let displayName = item.refId;
         let icon = <MusicIcon />;
 
-        if (item.type === "song") {
-          displayName = item.song?.title ?? item.refId;
+        if (item.type === "library") {
+          displayName = item.libraryItem?.title ?? item.refId;
           icon = <MusicIcon />;
         } else if (item.type === "media") {
           displayName = item.label ?? item.refId;
