@@ -43,13 +43,20 @@ export const updateCurrent = mutation({
       throw new Error("Not authenticated");
     }
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", identity.email ?? ""))
+    const userId = identity.subject as any;
+    const user = await ctx.db.get(userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Get user profile to find their organization
+    const userProfile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
       .first();
 
-    if (!user || !("orgId" in user)) {
-      throw new Error("Current user was not found");
+    if (!userProfile) {
+      throw new Error("User profile not found");
     }
 
     const updates: Record<string, string | undefined> = {};
@@ -64,8 +71,8 @@ export const updateCurrent = mutation({
       updates.logo = args.logo;
     }
 
-    await ctx.db.patch(user.orgId, updates);
-    return user.orgId;
+    await ctx.db.patch(userProfile.orgId, updates);
+    return userProfile.orgId;
   },
 });
 

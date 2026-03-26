@@ -18,17 +18,13 @@ export async function validateWorkspace(
   ctx: GenericQueryCtx<any> | GenericMutationCtx<any>,
   workspaceId?: string | null
 ): Promise<WorkspaceContext> {
-  const userId = await ctx.auth.getUserIdentity();
-  if (!userId) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
     throw new ConvexError("Unauthenticated: User identity not found.");
   }
 
-  // Find the user record in Convex using the userId from Convex Auth
-  const user = await ctx.db
-    .query("users")
-    .filter((q) => q.eq(q.field("_id"), userId.subject as Id<"users">))
-    .first();
-
+  // Get the user from Convex Auth
+  const user = await ctx.db.get(identity.subject as Id<"users">);
   if (!user) {
     throw new ConvexError("User record not found in Convex. Please complete onboarding.");
   }
@@ -41,8 +37,14 @@ export async function validateWorkspace(
     };
   }
 
-  // If a workspaceId is provided, verify it's a valid organization ID and the user belongs to it
-  if (user.orgId !== workspaceId) {
+  // If a workspaceId is provided, verify the user has a profile for that organization
+  const userProfile = await ctx.db
+    .query("userProfiles")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .filter((q) => q.eq(q.field("orgId"), workspaceId as Id<"organizations">))
+    .first();
+
+  if (!userProfile) {
     throw new ConvexError("Unauthorized: You do not have access to this organization workspace.");
   }
 
