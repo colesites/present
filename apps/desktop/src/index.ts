@@ -217,18 +217,14 @@ const discoverBundledBibles = async (): Promise<BundledBibleFile[]> => {
 };
 
 const getWebAppBaseUrl = () => {
-  const configuredAuthUrl = process.env.BETTER_AUTH_URL;
-  if (configuredAuthUrl) {
-    try {
-      return new URL(configuredAuthUrl).origin;
-    } catch (error) {
-      console.warn('Invalid BETTER_AUTH_URL. Falling back to default auth URL.', error);
-    }
+  const configuredWebUrl = process.env.WEB_APP_URL;
+  if (configuredWebUrl) {
+    return configuredWebUrl;
   }
 
   return process.env.NODE_ENV === 'development'
     ? 'http://localhost:3001'
-    : 'https://present.app';
+    : 'https://present-gha.vercel.app';
 };
 
 const getMainRendererUrl = (windowType?: 'settings') => {
