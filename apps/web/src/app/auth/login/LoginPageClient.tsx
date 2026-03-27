@@ -128,13 +128,6 @@ export default function LoginPageClient({ setup = false, nextPath }: LoginPageCl
           )}
           Continue with Google
         </button>
-
-        <p className="text-center text-sm text-muted-foreground mt-8">
-          Don&apos;t have an account?{" "}
-          <Link href={`/auth/signup${authQuery}`} className="text-primary hover:underline font-medium">
-            Sign up
-          </Link>
-        </p>
       </div>
     </div>
   );

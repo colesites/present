@@ -32,27 +32,37 @@ export function DashboardClient({
   const router = useRouter();
   const { isAuthenticated, isLoading: isSessionPending } = useConvexAuth();
   const { signOut } = useAuthActions();
-  const currentUser = useQuery(api.users.getCurrentUser);
+  
+  // Skip queries until authenticated
+  const currentUser = useQuery(
+    api.users.getCurrentUser,
+    isAuthenticated ? {} : "skip"
+  );
   const syncOrganization = useMutation(api.users.createOrganization);
 
   const { type: activeWorkspaceType, id: activeWorkspaceId, setWorkspace } = useWorkspaceStore();
 
-  const libraryData = useQuery(api.libraries.list, { 
-    workspaceId: activeWorkspaceId ?? undefined 
-  }) as DashboardLibraryItem[] | undefined;
+  const libraryData = useQuery(
+    api.libraries.list,
+    isAuthenticated ? { workspaceId: activeWorkspaceId ?? undefined } : "skip"
+  ) as DashboardLibraryItem[] | undefined;
 
   const activeLibraryData = libraryData ?? libraryItems;
 
-  const servicesData = useQuery(api.services.list, {
-    workspaceId: activeWorkspaceId ?? undefined
-  }) as DashboardServiceItem[] | undefined;
+  const servicesData = useQuery(
+    api.services.list,
+    isAuthenticated ? { workspaceId: activeWorkspaceId ?? undefined } : "skip"
+  ) as DashboardServiceItem[] | undefined;
 
   const [currentOrg, setCurrentOrg] = useState<DashboardOrganization | null>(org);
   const [organizations, setOrganizations] = useState<DashboardOrganizationListItem[]>([]);
   const [isOrganizationModalOpen, setIsOrganizationModalOpen] = useState(false);
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
 
-  const nativeOrganizations = useQuery(api.users.listMyOrganizations);
+  const nativeOrganizations = useQuery(
+    api.users.listMyOrganizations,
+    isAuthenticated ? {} : "skip"
+  );
 
   useEffect(() => {
     if (nativeOrganizations) {
