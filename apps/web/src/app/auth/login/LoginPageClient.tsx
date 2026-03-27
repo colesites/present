@@ -38,12 +38,15 @@ export default function LoginPageClient({ setup = false, nextPath }: LoginPageCl
 
   useEffect(() => {
     if (isReturningFromOAuth) {
+      console.log("[AUTH] Returning from OAuth with code");
       setIsLoadingGoogle(true);
     }
   }, [isReturningFromOAuth]);
 
   useEffect(() => {
+    console.log("[AUTH] Auth state:", { isSessionPending, isAuthenticated });
     if (!isSessionPending && isAuthenticated) {
+      console.log("[AUTH] Redirecting to:", destinationPath);
       router.push(destinationPath);
     }
   }, [destinationPath, isSessionPending, router, isAuthenticated]);

@@ -222,3 +222,179 @@ export const createOrganization = mutation({
     return { userId: user._id, orgId, profileId };
   },
 });
+
+// Add a user to an existing organization
+export const addUserToOrganization = mutation({
+  args: {
+    orgId: v.id("organizations"),
+    userEmail: v.string(),
+    role: v.optional(v.string()), // "admin" or "user"
+    userRole: v.optional(v.string()), // functional role like "tech-director"
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("Not authenticated");
+    }
+
+    const currentUser = await ctx.db.get(identity.subject as Id<"users">);
+    if (!currentUser) {
+      throw new ConvexError("User not found");
+    }
+
+    // Check if current user is an admin of this organization
+    const currentUserProfile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", currentUser._id))
+      .filter((q) => q.eq(q.field("orgId"), args.orgId))
+      .first();
+
+    if (!currentUserProfile || currentUserProfile.role !== "admin") {
+      throw new ConvexError("Only organization admins can add users");
+    }
+
+    // Find the user to add by email
+    const userToAdd = await ctx.db
+      .query("users")
+      .filter((q) => q.eq(q.field("email"), args.userEmail))
+      .first();
+
+    if (!userToAdd) {
+      throw new ConvexError(`No user found with email: ${args.userEmail}`);
+    }
+
+    // Check if user is already in the organization
+    const existingProfile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", userToAdd._id))
+      .filter((q) => q.eq(q.field("orgId"), args.orgId))
+      .first();
+
+    if (existingProfile) {
+      throw new ConvexError("User is already a member of this organization");
+    }
+
+    // Add user to organization
+    const profileId = await ctx.db.insert("userProfiles", {
+      userId: userToAdd._id,
+      orgId: args.orgId,
+      role: args.role || "user",
+      userRole: args.userRole ?? undefined,
+      createdAt: Date.now(),
+    });
+
+    return { profileId, userId: userToAdd._id };
+  },
+});
+
+// List all members of an organization
+export const listOrganizationMembers = query({
+  args: {
+    orgId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return [];
+    }
+
+    const currentUser = await ctx.db.get(identity.subject as Id<"users">);
+    if (!currentUser) {
+      return [];
+    }
+
+    // Check if current user is a member of this organization
+    const currentUserProfile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", currentUser._id))
+      .filter((q) => q.eq(q.field("orgId"), args.orgId))
+      .first();
+
+    if (!currentUserProfile) {
+      throw new ConvexError("You are not a member of this organization");
+    }
+
+    // Get all user profiles for this organization
+    const profiles = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
+      .collect();
+
+    // Get user details for each profile
+    const members = await Promise.all(
+      profiles.map(async (profile) => {
+        const user = await ctx.db.get(profile.userId);
+        if (!user) return null;
+
+        return {
+          userId: user._id,
+          name: user.name,
+          email: user.email,
+          image: user.image,
+          role: profile.role,
+          userRole: profile.userRole,
+          joinedAt: profile.createdAt,
+        };
+      })
+    );
+
+    return members.filter((member) => member !== null);
+  },
+});
+
+// Remove a user from an organization
+export const removeUserFromOrganization = mutation({
+  args: {
+    orgId: v.id("organizations"),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("Not authenticated");
+    }
+
+    const currentUser = await ctx.db.get(identity.subject as Id<"users">);
+    if (!currentUser) {
+      throw new ConvexError("User not found");
+    }
+
+    // Check if current user is an admin of this organization
+    const currentUserProfile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", currentUser._id))
+      .filter((q) => q.eq(q.field("orgId"), args.orgId))
+      .first();
+
+    if (!currentUserProfile || currentUserProfile.role !== "admin") {
+      throw new ConvexError("Only organization admins can remove users");
+    }
+
+    // Find the user profile to remove
+    const profileToRemove = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .filter((q) => q.eq(q.field("orgId"), args.orgId))
+      .first();
+
+    if (!profileToRemove) {
+      throw new ConvexError("User is not a member of this organization");
+    }
+
+    // Don't allow removing the last admin
+    if (profileToRemove.role === "admin") {
+      const adminProfiles = await ctx.db
+        .query("userProfiles")
+        .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
+        .filter((q) => q.eq(q.field("role"), "admin"))
+        .collect();
+
+      if (adminProfiles.length <= 1) {
+        throw new ConvexError("Cannot remove the last admin from the organization");
+      }
+    }
+
+    await ctx.db.delete(profileToRemove._id);
+    return { success: true };
+  },
+});
