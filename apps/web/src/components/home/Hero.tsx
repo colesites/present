@@ -127,7 +127,7 @@ export function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 1.34, duration: 0.54, ease: heroEase }}
         >
-          <Link href="/auth/signup" className="inline-flex h-14 items-center justify-center gap-2 rounded-lg bg-white px-8 text-[15px] font-bold text-black shadow-xl transition-all hover:scale-[1.03] active:scale-[0.98]">
+          <Link href="/auth/login" className="inline-flex h-14 items-center justify-center gap-2 rounded-lg bg-white px-8 text-[15px] font-bold text-black shadow-xl transition-all hover:scale-[1.03] active:scale-[0.98]">
             Get started
             <ArrowRight className="h-5 w-5" />
           </Link>
