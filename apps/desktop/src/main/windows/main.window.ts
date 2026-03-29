@@ -9,7 +9,6 @@ declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
 let mainWindow: BrowserWindow | null = null;
 let pendingDeepLink: string | null = null;
-let pendingAuthToken: string | null = null;
 
 /**
  * Get the main window instance
@@ -21,6 +20,7 @@ export const getMainWindow = (): BrowserWindow | null => mainWindow;
  */
 export const handleDeepLink = (urlStr: string): void => {
   pendingDeepLink = urlStr;
+  console.info('[Desktop Auth] deep link received', { url: urlStr.split('?')[0] });
 
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -37,11 +37,9 @@ export const handleDeepLink = (urlStr: string): void => {
       return;
     }
 
-    // Auth callback: the URL contains the session token
-    if (parsedUrl.pathname.includes('auth-callback') || parsedUrl.host === 'auth-callback') { 
+    if (parsedUrl.pathname.includes('auth') || parsedUrl.host === 'auth') {
       const token = parsedUrl.searchParams.get('token');
       if (token) {
-        pendingAuthToken = token;
         setPendingAuthToken(token);
       }
       if (token && mainWindow) {
@@ -63,7 +61,7 @@ export const handleDeepLink = (urlStr: string): void => {
  */
 const getMainRendererUrl = (windowType?: 'settings'): string => {
   let baseUrl: string;
-  
+
   if (isDev()) {
     // In development, use the webpack dev server URL
     baseUrl = MAIN_WINDOW_WEBPACK_ENTRY;
@@ -73,7 +71,7 @@ const getMainRendererUrl = (windowType?: 'settings'): string => {
     baseUrl = 'app://app/main_window';
     console.log('[Main Window] Production mode - using app:// protocol');
   }
-  
+
   if (!windowType) {
     return baseUrl;
   }
@@ -110,7 +108,7 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
 
   const url = getMainRendererUrl();
   console.log('[Main Window] Loading URL:', url);
-  
+
   mainWindow.loadURL(url);
 
   // Allow Clerk authentication iframes to load
@@ -123,7 +121,7 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
           "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev; " +
           "worker-src 'self' blob:; " +
           "connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:* https://present-gha.vercel.app https://present.app https://wary-badger-863.convex.site https://wary-badger-863.convex.cloud wss://wary-badger-863.convex.cloud https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev https://clerk-telemetry.com; " +
-          "img-src 'self' data: local-media: https://*.gravatar.com https://*.wp.com https://lh3.googleusercontent.com https://*.googleusercontent.com https://img.clerk.com; " +
+          "img-src 'self' data: local-media: https://*.convex.cloud https://*.convex.site https://*.gravatar.com https://*.wp.com https://lh3.googleusercontent.com https://*.googleusercontent.com https://img.clerk.com; " +
           "media-src 'self' local-media:; " +
           "font-src 'self' data: https:; " +
           "frame-src https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev;"

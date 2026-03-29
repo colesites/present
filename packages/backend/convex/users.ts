@@ -9,13 +9,59 @@ export const getCurrentUser = query({
     if (!identity) {
       return null;
     }
-    
-    // With Clerk, user data comes from the JWT token
+
+    const userId = identity.subject;
+    const userProfiles = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    const organizations = await Promise.all(
+      userProfiles.map(async (profile) => {
+        const organization = await ctx.db.get(profile.orgId);
+        if (!organization) {
+          return null;
+        }
+        
+        // Handle logo: if it's already a data URL or regular URL, use it as-is
+        // If it's a storageId, convert it to a URL
+        let logoUrl: string | null = null;
+        if (organization.logo) {
+          // Check if it's already a URL (starts with http/https/data:)
+          if (organization.logo.startsWith('http') || organization.logo.startsWith('data:')) {
+            logoUrl = organization.logo;
+          } else {
+            // It's a storageId, convert it
+            logoUrl = await ctx.storage.getUrl(organization.logo);
+          }
+        }
+        
+        return {
+          id: organization._id,
+          name: organization.name,
+          type: "organization" as const,
+          logo: logoUrl,
+        };
+      }),
+    );
+
+    const filteredOrganizations = organizations.filter(
+      (organization) => organization !== null,
+    );
+
+    const allOrganizations = [
+      { id: "personal", name: "Personal", type: "personal" as const },
+      ...filteredOrganizations,
+    ];
+
     return {
-      _id: identity.subject,
-      name: identity.name,
-      email: identity.email,
-      image: identity.pictureUrl,
+      user: {
+        id: userId,
+        name: identity.name ?? "Account",
+        email: identity.email ?? "",
+      },
+      organizations: allOrganizations,
+      currentOrgId: filteredOrganizations[0]?.id ?? "personal",
     };
   },
 });
@@ -27,7 +73,7 @@ export const getCurrent = query({
     if (!identity) {
       return null;
     }
-    
+
     return {
       _id: identity.subject,
       name: identity.name,
@@ -58,15 +104,15 @@ export const getCurrentWithOrg = query({
     }
 
     const org = await ctx.db.get(userProfile.orgId);
-    return { 
+    return {
       user: {
         _id: userId,
         name: identity.name,
         email: identity.email,
         image: identity.pictureUrl,
-      }, 
-      org, 
-      userProfile 
+      },
+      org,
+      userProfile
     };
   },
 });
@@ -91,12 +137,25 @@ export const listMyOrganizations = query({
       userProfiles.map(async (profile) => {
         const org = await ctx.db.get(profile.orgId);
         if (!org) return null;
-        
+
+        // Handle logo: if it's already a data URL or regular URL, use it as-is
+        // If it's a storageId, convert it to a URL
+        let logoUrl: string | null = null;
+        if (org.logo) {
+          // Check if it's already a URL (starts with http/https/data:)
+          if (org.logo.startsWith('http') || org.logo.startsWith('data:')) {
+            logoUrl = org.logo;
+          } else {
+            // It's a storageId, convert it
+            logoUrl = await ctx.storage.getUrl(org.logo);
+          }
+        }
+
         return {
           id: org._id,
           name: org.name,
           slug: org.slug,
-          logo: org.logo ?? null,
+          logo: logoUrl,
           role: profile.role,
           createdAt: org.createdAt,
         };
@@ -127,7 +186,7 @@ export const ensureCurrent = mutation({
       .query("userProfiles")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .first();
-    
+
     if (existingProfile) {
       // Update existing org if metadata provided
       if (args.orgName !== undefined || args.logo !== undefined || args.orgType !== undefined) {
@@ -151,7 +210,7 @@ export const ensureCurrent = mutation({
     // Create new organization and user profile
     const now = Date.now();
     const orgName = args.orgName || identity.name || identity.email || "Untitled Organization";
-    
+
     const slug = orgName
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
@@ -266,6 +325,45 @@ export const addUserToOrganization = mutation({
     });
 
     return { profileId, userId: args.userId };
+  },
+});
+
+export const joinOrganizationById = mutation({
+  args: {
+    orgId: v.id("organizations"),
+    userRole: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("Not authenticated");
+    }
+
+    const userId = identity.subject;
+    const organization = await ctx.db.get(args.orgId);
+    if (!organization) {
+      throw new ConvexError("Organization not found");
+    }
+
+    const existingProfile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("orgId"), args.orgId))
+      .first();
+
+    if (existingProfile) {
+      return { orgId: args.orgId, alreadyMember: true };
+    }
+
+    await ctx.db.insert("userProfiles", {
+      userId,
+      orgId: args.orgId,
+      role: "user",
+      userRole: args.userRole ?? undefined,
+      createdAt: Date.now(),
+    });
+
+    return { orgId: args.orgId, alreadyMember: false };
   },
 });
 

@@ -34,7 +34,6 @@ export const plugins = [
     },
   }),
   new webpack.DefinePlugin({
-    'process.env.CLERK_PUBLISHABLE_KEY': JSON.stringify(process.env.CLERK_PUBLISHABLE_KEY),
     'process.env.CONVEX_URL': JSON.stringify(process.env.CONVEX_URL),
     'process.env.WEB_APP_URL': JSON.stringify(process.env.WEB_APP_URL),
     // Don't define NODE_ENV here - webpack sets it automatically

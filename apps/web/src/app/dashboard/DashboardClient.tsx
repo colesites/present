@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { useConvexAuth } from "convex/react";
-import { useUser } from "@clerk/nextjs";
+import { useClerk, useUser } from "@clerk/nextjs";
 import { api } from "../../../../../packages/backend/convex/_generated/api";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useWorkspaceStore } from "../../../../../packages/shared/src/store/workspace";
 import { DashboardSidebar } from "./components/DashboardSidebar";
 import { DashboardOverview } from "./components/DashboardOverview";
@@ -25,25 +25,30 @@ export function DashboardClient({
   section,
 }: DashboardClientProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const { signOut } = useClerk();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user, isLoaded: isUserLoaded } = useUser();
 
   const {
-    type: activeWorkspaceType,
     id: activeWorkspaceId,
     setWorkspace,
   } = useWorkspaceStore();
 
   const libraryData = useQuery(
     api.libraries.list,
-    isAuthenticated ? { workspaceId: activeWorkspaceId ?? undefined } : "skip"
+    isAuthenticated && activeWorkspaceId
+      ? { workspaceId: activeWorkspaceId }
+      : "skip"
   ) as DashboardLibraryItem[] | undefined;
 
   const activeLibraryData = libraryData ?? libraryItems;
 
   const servicesData = useQuery(
     api.services.list,
-    isAuthenticated ? { workspaceId: activeWorkspaceId ?? undefined } : "skip"
+    isAuthenticated && activeWorkspaceId
+      ? { workspaceId: activeWorkspaceId }
+      : "skip"
   ) as DashboardServiceItem[] | undefined;
 
   const [currentOrg, setCurrentOrg] = useState<DashboardOrganization | null>(
@@ -52,6 +57,9 @@ export function DashboardClient({
   const [organizations, setOrganizations] = useState<
     DashboardOrganizationListItem[]
   >([]);
+  const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
+  const [isSwitchingWorkspace, setIsSwitchingWorkspace] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   const nativeOrganizations = useQuery(
     api.users.listMyOrganizations,
@@ -79,19 +87,31 @@ export function DashboardClient({
 
       setOrganizations(list);
 
-      const activeOrg =
-        activeWorkspaceType === "organization"
-          ? (list.find((org) => org.id === activeWorkspaceId) ?? null)
-          : null;
+      if (!activeWorkspaceId && list[0]?.id) {
+        setWorkspace("organization", list[0].id);
+      }
 
-      setCurrentOrg(activeOrg);
+      if (
+        activeWorkspaceId &&
+        !list.some((workspaceOrganization) => workspaceOrganization.id === activeWorkspaceId)
+      ) {
+        const fallbackOrganizationId = list[0]?.id ?? null;
+        if (fallbackOrganizationId) {
+          setWorkspace("organization", fallbackOrganizationId);
+        }
+      }
+
+      const selectedOrg = list.find((workspaceOrganization) => workspaceOrganization.id === activeWorkspaceId) ??
+          list[0] ??
+          null;
+      
+      setCurrentOrg(selectedOrg);
     }
-  }, [nativeOrganizations, activeWorkspaceType, activeWorkspaceId]);
-
-  const viewerName =
-    user?.fullName || user?.primaryEmailAddress?.emailAddress || "Your account";
-  const viewerEmail = user?.primaryEmailAddress?.emailAddress || "";
-  const viewerImage = user?.imageUrl || null;
+  }, [
+    nativeOrganizations,
+    activeWorkspaceId,
+    setWorkspace,
+  ]);
 
   useEffect(() => {
     setCurrentOrg(org);
@@ -116,9 +136,47 @@ export function DashboardClient({
     }
   }, [isLoading, isUserLoaded, router, user]);
 
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      isLoading ||
+      typeof nativeOrganizations === "undefined"
+    ) {
+      return;
+    }
+    if (nativeOrganizations.length > 0) {
+      return;
+    }
+    if (pathname.startsWith("/dashboard/organization/setup")) {
+      return;
+    }
+    router.replace("/dashboard/organization/setup");
+  }, [isAuthenticated, isLoading, nativeOrganizations, pathname, router]);
+
   const openDesktopApp = useCallback(async () => {
     window.location.href = "present://open";
   }, []);
+
+  const handleSwitchContext = useCallback(
+    (id: string) => {
+      setIsSwitchingWorkspace(true);
+      setWorkspace("organization", id);
+      setIsAccountSwitcherOpen(false);
+      window.setTimeout(() => {
+        setIsSwitchingWorkspace(false);
+      }, 200);
+    },
+    [setWorkspace]
+  );
+
+  const handleSignOut = useCallback(async () => {
+    setIsSigningOut(true);
+    try {
+      await signOut({ redirectUrl: "/sign-in" });
+    } finally {
+      setIsSigningOut(false);
+    }
+  }, [signOut]);
 
   useEffect(() => {
     if (!shouldAutoOpen) {
@@ -150,9 +208,24 @@ export function DashboardClient({
         <div className="flex w-full min-h-0 items-stretch gap-14 overflow-hidden">
           <DashboardSidebar
             currentSection={section}
-            viewerName={viewerName}
-            viewerEmail={viewerEmail}
-            viewerImage={viewerImage}
+            currentOrganization={currentOrg}
+            organizations={organizations}
+            activeWorkspaceId={activeWorkspaceId}
+            isAccountSwitcherOpen={isAccountSwitcherOpen}
+            isSwitchingWorkspace={isSwitchingWorkspace}
+            isSigningOut={isSigningOut}
+            onToggleAccountSwitcher={() =>
+              setIsAccountSwitcherOpen((open) => !open)
+            }
+            onCloseAccountSwitcher={() => setIsAccountSwitcherOpen(false)}
+            onCreateOrganization={() => {
+              setIsAccountSwitcherOpen(false);
+              router.push("/dashboard/organization/setup");
+            }}
+            onSwitchContext={handleSwitchContext}
+            onSignOut={() => {
+              void handleSignOut();
+            }}
           />
           <main className="h-full max-h-full min-h-0 min-w-0 max-w-[1320px] flex-1 self-stretch overflow-y-auto overflow-x-hidden overscroll-contain rounded-[56px] border border-[#e8e8e8] bg-white shadow-[0_28px_76px_rgba(0,0,0,0.08)] [scrollbar-gutter:stable]">
             {section === "dashboard" ? (

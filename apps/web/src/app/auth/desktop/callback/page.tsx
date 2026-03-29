@@ -1,45 +1,36 @@
 import { auth } from "@clerk/nextjs/server";
+import { ConvexHttpClient } from "convex/browser";
 import { redirect } from "next/navigation";
+import { api } from "../../../../../../../packages/backend/convex/_generated/api";
 
-interface DesktopCallbackPageProps {
-  searchParams: Promise<{
-    returnTo?: string;
-  }>;
-}
-
-const getSafeReturnTo = (candidate: string | undefined): string | null => {
-  if (!candidate) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(candidate);
-    const isLocalHost =
-      parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
-    const isHttp = parsed.protocol === "http:";
-    return isLocalHost && isHttp ? parsed.toString() : null;
-  } catch {
-    return null;
-  }
-};
-
-export default async function DesktopCallbackPage({
-  searchParams,
-}: DesktopCallbackPageProps) {
-  const { returnTo } = await searchParams;
-  const safeReturnTo = getSafeReturnTo(returnTo);
-  const nextPath = `/auth/desktop/callback${safeReturnTo ? `?returnTo=${encodeURIComponent(safeReturnTo)}` : ""}`;
+export default async function DesktopCallbackPage() {
+  const nextPath = "/auth/desktop/callback";
   const authState = await auth();
-  const sessionId = authState.sessionId;
+  const sessionToken = await authState.getToken({
+    template: "convex",
+  });
 
-  if (!sessionId || !safeReturnTo) {
+  if (!sessionToken) {
     await authState.redirectToSignIn({
       returnBackUrl: nextPath,
     });
     return;
   }
 
-  const callbackUrl = new URL(safeReturnTo);
-  callbackUrl.searchParams.set("token", sessionId);
-  redirect(callbackUrl.toString());
+  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  if (!convexUrl) {
+    redirect("/dashboard/organization/setup?source=desktop");
+  }
+
+  const convex = new ConvexHttpClient(convexUrl, { auth: sessionToken });
+  const organizations = await convex.query(api.users.listMyOrganizations, {});
+  if (!organizations || organizations.length === 0) {
+    redirect(
+      `/dashboard/organization/setup?source=desktop&token=${encodeURIComponent(
+        sessionToken
+      )}`
+    );
+  }
+
+  redirect(`/auth/desktop/launch?token=${encodeURIComponent(sessionToken)}`);
 }

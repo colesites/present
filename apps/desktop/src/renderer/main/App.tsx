@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { useClerk, useUser } from "@clerk/react";
-import { SignInScreen } from "../../features/auth/SignInScreen";
 import { Loader2 } from "lucide-react";
+import { useQuery } from "convex/react";
 import { AppHeader } from "../../features/header";
 import type { MediaPanelRef } from "../../features/media";
 import { useMediaFolders } from "../../features/media/hooks";
@@ -20,10 +19,48 @@ import { SettingsScreen } from "../../features/settings/components/SettingsScree
 import { PresentContainer } from "../../features/present/PresentContainer";
 import type { ContentSource } from "../../shared/types";
 import type { HeaderSearchScope } from "../../features/header/AppHeader";
+import { useDesktopSessionStore } from "../shared/store/desktopSession";
+import { api } from "@present/backend/convex/_generated/api";
+import { decodeJwtPayload } from "../shared/lib/utils";
+import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvider";
 
 export default function Home() {
-  const { isSignedIn, isLoaded } = useUser();
-  const clerk = useClerk();
+  const token = useDesktopSessionStore((state) => state.token);
+  const authStatus = useDesktopSessionStore((state) => state.authStatus);
+  const setToken = useDesktopSessionStore((state) => state.setToken);
+  const setSessionFromConvex = useDesktopSessionStore(
+    (state) => state.setSessionFromConvex
+  );
+  const setAuthStatus = useDesktopSessionStore((state) => state.setAuthStatus);
+  const setError = useDesktopSessionStore((state) => state.setError);
+  const clearSession = useDesktopSessionStore((state) => state.clearSession);
+  const isConvexAuthReady = useDesktopConvexAuthReady();
+  const currentUser = useQuery(
+    api.users.getCurrentUser,
+    token && isConvexAuthReady ? {} : "skip"
+  ) as
+    | {
+        user: { id: string; name: string; email: string };
+        organizations: Array<{
+          id: string;
+          name: string;
+          type: "personal" | "organization";
+          logo?: string;
+        }>;
+        currentOrgId: string | null;
+      }
+    | null
+    | undefined;
+  const organizationsFallback = useQuery(
+    api.users.listMyOrganizations,
+    token && isConvexAuthReady ? {} : "skip"
+  ) as
+    | Array<{
+        id: string;
+        name: string;
+        logo?: string;
+      }>
+    | undefined;
 
   const isSettingsWindow = useMemo(() => {
     if (typeof window === "undefined") {
@@ -36,22 +73,68 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!isLoaded || !window.electronAPI?.consumePendingAuthToken) {
+    if (!window.electronAPI?.consumePendingAuthToken) {
       return;
     }
 
     let disposed = false;
 
-    const applyToken = async (token: string | null) => {
-      if (!token || disposed) {
+    const applyToken = (nextToken: string | null) => {
+      if (!nextToken || disposed) {
+        return;
+      }
+      const payload = decodeJwtPayload(nextToken);
+      const audClaim = payload?.aud;
+      const issClaim = payload?.iss;
+      const hasConvexAudience = Array.isArray(audClaim)
+        ? audClaim.includes("convex")
+        : audClaim === "convex";
+
+      console.info("[Desktop Auth] token received from deep link", {
+        tokenLength: nextToken.length,
+        hasConvexAudience,
+        issuer: typeof issClaim === "string" ? issClaim : null,
+      });
+      console.info("[Desktop Auth] decoded JWT payload", {
+        aud: audClaim,
+        iss: issClaim,
+        sub: payload?.sub,
+      });
+
+      if (!hasConvexAudience) {
+        console.error("[Desktop Auth] token audience mismatch", {
+          expectedAudience: "convex",
+          actualAudience: audClaim,
+        });
+        clearSession();
+        setAuthStatus("unauthenticated");
+        setError("Invalid sign-in token. Please sign in again.");
         return;
       }
 
-      try {
-        await clerk.setActive({ session: token });
-      } catch (error) {
-        console.error("Failed to activate desktop session", error);
+      if (!issClaim || typeof issClaim !== "string") {
+        console.error("[Desktop Auth] token issuer missing");
+        clearSession();
+        setAuthStatus("unauthenticated");
+        setError("Invalid sign-in token. Please sign in again.");
+        return;
       }
+
+      if (!issClaim.includes("clerk")) {
+        console.error("[Desktop Auth] token issuer is not Clerk", {
+          issuer: issClaim,
+        });
+        clearSession();
+        setAuthStatus("unauthenticated");
+        setError("Invalid sign-in token. Please sign in again.");
+        return;
+      }
+
+      console.info("[Desktop Auth] token received from Clerk", {
+        issuer: issClaim,
+      });
+      setToken(nextToken);
+      setAuthStatus("loading");
     };
 
     void window.electronAPI.consumePendingAuthToken().then(applyToken);
@@ -62,24 +145,105 @@ export default function Home() {
     return () => {
       disposed = true;
     };
-  }, [clerk, isLoaded]);
+  }, [clearSession, setAuthStatus, setError, setToken]);
 
-  // Show loading while Clerk is initializing
-  if (!isLoaded) {
+  useEffect(() => {
+    console.info("[Desktop Auth] desktop runtime config", {
+      convexUrl: process.env.CONVEX_URL ?? null,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!token) {
+      setAuthStatus("unauthenticated");
+      return;
+    }
+
+    if (!isConvexAuthReady) {
+      setAuthStatus("loading");
+      return;
+    }
+
+    if (typeof currentUser === "undefined") {
+      setAuthStatus("loading");
+      return;
+    }
+
+    console.info("[Desktop Auth] Convex current user response", {
+      hasPayload: Boolean(currentUser),
+      organizationsCount: currentUser?.organizations?.length ?? 0,
+    });
+
+    if (!currentUser || !currentUser.user) {
+      if (
+        currentUser &&
+        "_id" in currentUser &&
+        typeof currentUser._id === "string"
+      ) {
+        if (typeof organizationsFallback === "undefined") {
+          setAuthStatus("loading");
+          return;
+        }
+
+        const normalizedOrganizations = [
+          { id: "personal", name: "Personal", type: "personal" as const },
+          ...organizationsFallback.map((organization) => ({
+            id: organization.id,
+            name: organization.name,
+            type: "organization" as const,
+            logo: organization.logo,
+          })),
+        ];
+        const legacyName = (currentUser as { name?: unknown }).name;
+        const legacyEmail = (currentUser as { email?: unknown }).email;
+
+        setSessionFromConvex({
+          user: {
+            id: currentUser._id,
+            name: typeof legacyName === "string" ? legacyName : "Account",
+            email: typeof legacyEmail === "string" ? legacyEmail : "",
+          },
+          organizations: normalizedOrganizations,
+          currentOrgId: normalizedOrganizations[0]?.id ?? "personal",
+        });
+        setAuthStatus("authenticated");
+        setError(null);
+        return;
+      }
+
+      clearSession();
+      console.error("[Desktop Auth] Convex rejected token");
+      setError("Session expired. Please sign in again.");
+      return;
+    }
+
+    setSessionFromConvex({
+      user: currentUser.user,
+      organizations: currentUser.organizations,
+      currentOrgId: currentUser.currentOrgId,
+    });
+    setAuthStatus("authenticated");
+    setError(null);
+  }, [
+    clearSession,
+    currentUser,
+    isConvexAuthReady,
+    organizationsFallback,
+    setAuthStatus,
+    setError,
+    setSessionFromConvex,
+    token,
+  ]);
+
+  if (authStatus === "loading") {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-background p-6 text-center">
         <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
-        <p className="mt-3 text-sm text-muted-foreground">Loading...</p>
+        <p className="mt-3 text-sm text-muted-foreground">Syncing account...</p>
       </div>
     );
   }
 
-  // Show sign in screen if not signed in
-  if (!isSignedIn) {
-    return <SignInScreen />;
-  }
-
-  // User is signed in
   return <AuthenticatedApp isSettingsWindow={isSettingsWindow} />;
 }
 

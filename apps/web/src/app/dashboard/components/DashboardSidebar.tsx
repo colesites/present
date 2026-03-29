@@ -10,17 +10,26 @@ import {
   Settings,
   UserRoundCog,
 } from "lucide-react";
-import { OrganizationSwitcher } from "@clerk/nextjs";
 import {
   DashboardSection,
+  DashboardOrganizationListItem,
   getInitials,
 } from "../types";
+import { AccountSwitcher } from "./AccountSwitcher";
 
 interface DashboardSidebarProps {
   currentSection: DashboardSection;
-  viewerName: string;
-  viewerEmail: string;
-  viewerImage: string | null;
+  currentOrganization: { id: string; name: string; logo?: string } | null;
+  organizations: DashboardOrganizationListItem[];
+  activeWorkspaceId: string | null;
+  isAccountSwitcherOpen: boolean;
+  isSwitchingWorkspace: boolean;
+  isSigningOut: boolean;
+  onToggleAccountSwitcher: () => void;
+  onCloseAccountSwitcher: () => void;
+  onCreateOrganization: () => void;
+  onSwitchContext: (id: string) => void;
+  onSignOut: () => void;
 }
 
 const navItems = [
@@ -39,40 +48,50 @@ const navItems = [
 
 export function DashboardSidebar({
   currentSection,
-  viewerName,
-  viewerEmail,
-  viewerImage,
+  currentOrganization,
+  organizations,
+  activeWorkspaceId,
+  isAccountSwitcherOpen,
+  isSwitchingWorkspace,
+  isSigningOut,
+  onToggleAccountSwitcher,
+  onCloseAccountSwitcher,
+  onCreateOrganization,
+  onSwitchContext,
+  onSignOut,
 }: DashboardSidebarProps) {
   return (
     <aside className="flex h-full w-[320px] flex-none flex-col overflow-hidden px-8 py-14 text-white">
       <div>
-        <div className="inline-flex">
+        <button
+          type="button"
+          onClick={onToggleAccountSwitcher}
+          className="inline-flex transition hover:opacity-80"
+        >
           <div className="flex h-[78px] w-[78px] items-center justify-center overflow-hidden rounded-[18px] bg-white/10">
-            {viewerImage ? (
-              <Image
-                src={viewerImage}
-                alt={viewerName}
-                width={78}
-                height={78}
-                className="h-[78px] w-[78px] object-cover"
-                unoptimized={viewerImage.startsWith("data:")}
-              />
+            {currentOrganization?.logo ? (
+              currentOrganization.logo.startsWith("data:") ? (
+                <img
+                  src={currentOrganization.logo}
+                  alt={currentOrganization.name}
+                  className="h-[78px] w-[78px] object-cover"
+                />
+              ) : (
+                <Image
+                  src={currentOrganization.logo}
+                  alt={currentOrganization.name}
+                  width={78}
+                  height={78}
+                  className="h-[78px] w-[78px] object-cover"
+                />
+              )
             ) : (
               <span className="text-[1.55rem] font-semibold text-white">
-                {getInitials(viewerName)}
+                {getInitials(currentOrganization?.name ?? "Org")}
               </span>
             )}
           </div>
-        </div>
-
-        <div className="mt-6 space-y-5">
-          <h2 className="text-[4rem] font-semibold leading-[0.9] tracking-[-0.09em] text-white">
-            {viewerName}
-          </h2>
-          <p className="text-[0.88rem] font-medium tracking-[-0.01em] text-white/36">
-            {viewerEmail}
-          </p>
-        </div>
+        </button>
       </div>
 
       <div className="mt-24 flex-1">
@@ -96,40 +115,19 @@ export function DashboardSidebar({
       </div>
 
       <div className="mt-auto pt-8">
-        {/* Clerk Organization Switcher */}
-        <div className="rounded-lg bg-white/5 p-3">
-          <OrganizationSwitcher
-            appearance={{
-              elements: {
-                rootBox: "w-full",
-                organizationSwitcherTrigger: "w-full justify-start text-white hover:bg-white/10",
-                organizationSwitcherTriggerIcon: "text-white",
-                userPreviewTextContainer: "text-white",
-                organizationPreviewTextContainer: "text-white",
-                userPreviewMainIdentifier: "text-white",
-                organizationPreviewMainIdentifier: "text-white",
-                userPreviewSecondaryIdentifier: "text-white/60",
-                organizationPreviewSecondaryIdentifier: "text-white/60",
-                organizationSwitcherPopoverCard: "bg-[#1a1a1a] border-white/10",
-                organizationSwitcherPopoverActionButton: "text-white hover:bg-white/10",
-                organizationSwitcherPopoverActionButtonText: "text-white !important",
-                organizationSwitcherPopoverActionButtonIcon: "text-white",
-                organizationSwitcherPopoverActions: "text-white",
-              },
-              variables: {
-                colorBackground: "#1a1a1a",
-                colorText: "#ffffff",
-                colorTextSecondary: "rgba(255, 255, 255, 0.6)",
-                colorInputBackground: "#2a2a2a",
-                colorInputText: "#ffffff",
-                colorPrimary: "#ffffff",
-              },
-            }}
-            afterCreateOrganizationUrl="/dashboard/organization/setup"
-            afterSelectOrganizationUrl="/dashboard"
-            afterSelectPersonalUrl="/dashboard"
-          />
-        </div>
+        <AccountSwitcher
+          currentOrganization={currentOrganization}
+          organizations={organizations}
+          activeWorkspaceId={activeWorkspaceId}
+          isOpen={isAccountSwitcherOpen}
+          isSwitching={isSwitchingWorkspace}
+          onToggle={onToggleAccountSwitcher}
+          onClose={onCloseAccountSwitcher}
+          onCreateOrganization={onCreateOrganization}
+          onSwitchContext={onSwitchContext}
+          isSigningOut={isSigningOut}
+          onSignOut={onSignOut}
+        />
       </div>
     </aside>
   );

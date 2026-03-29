@@ -1,29 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@present/backend/convex/_generated/api";
-import type { Id } from "@present/backend/convex/_generated/dataModel";
+import { useEffect, useMemo, useState } from "react";
 import { parseLyricsToSlides } from "../../../renderer/shared/lib/lyrics";
 import type { LibraryItem, ContentSource } from "../../../shared/types";
+import {
+  createLocalLibraryItem,
+  enqueueSyncOperation,
+  readOrgLibraryItems,
+  removeLibraryItemLocal,
+  upsertLibraryItem,
+} from "../../../renderer/shared/offline/localData";
 
 export function useLibrary(
   input: { orgId: string | null; userId: string | null },
   contentSource: ContentSource,
 ) {
-  const { orgId } = input;
-  // Use unified library API which handles workspace routing and authorization
-  const libraryItems = useQuery(
-    api.libraries.list,
-    { workspaceId: orgId ?? undefined }
-  ) as
-    | LibraryItem[]
-    | undefined;
-
-  const createLibraryItem = useMutation(api.libraries.create);
-  const ensureCurrentUser = useMutation(api.users.ensureCurrent);
-  const updateLibraryItem = useMutation(api.libraries.update);
-  const removeLibraryItem = useMutation(api.libraries.remove);
+  const workspaceId = input.orgId ?? "personal";
+  const [libraryItems, setLibraryItems] = useState<LibraryItem[]>(() =>
+    readOrgLibraryItems(workspaceId)
+  );
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(
     null,
@@ -32,25 +27,25 @@ export function useLibrary(
     useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const [prevItems, setPrevItems] = useState(libraryItems);
-  if (libraryItems !== prevItems) {
-    setPrevItems(libraryItems);
-    if (libraryItems && selectedItemId) {
+  useEffect(() => {
+    setLibraryItems(readOrgLibraryItems(workspaceId));
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (selectedItemId) {
       const exists = libraryItems.some((s) => s._id === selectedItemId);
       if (!exists) {
         setSelectedItemId(null);
       }
     }
-  }
+  }, [libraryItems, selectedItemId]);
 
   const selectedItem = useMemo(() => {
-    if (!selectedItemId || !libraryItems) return null;
+    if (!selectedItemId) return null;
     return libraryItems.find((s) => s._id === selectedItemId) ?? null;
   }, [selectedItemId, libraryItems]);
 
   const filteredItems = useMemo(() => {
-    if (!libraryItems) return [];
-
     let result = libraryItems;
 
     // Filter by category
@@ -83,23 +78,18 @@ export function useLibrary(
     categoryId?: string,
   ) => {
     if (!title.trim()) return null;
-    let effectiveUserId = input.userId;
-    if (!orgId && !effectiveUserId) {
-      const ensured = await ensureCurrentUser({});
-      effectiveUserId = (ensured as { userId?: string } | null)?.userId ?? null;
-    }
-    if (!orgId && !effectiveUserId) {
-      throw new Error("Account not ready yet. Please wait a moment and try again.");
-    }
     const slides = parseLyricsToSlides(body);
-    const id = await createLibraryItem({
-      workspaceId: orgId ?? undefined,
+    const nextItem = createLocalLibraryItem(workspaceId, {
       title: title.trim(),
       body,
       slides,
-      categoryId: categoryId as any,
+      categoryId: categoryId as LibraryItem["categoryId"],
+      userId: input.userId ?? undefined,
+      createdAt: Date.now(),
     });
-    return id;
+    setLibraryItems(readOrgLibraryItems(workspaceId));
+    enqueueSyncOperation(workspaceId, "library", String(nextItem._id), "create", nextItem);
+    return nextItem._id;
   };
 
   const updateExistingItem = async (
@@ -108,28 +98,33 @@ export function useLibrary(
     body: string,
   ) => {
     const slides = parseLyricsToSlides(body);
-    await updateLibraryItem({ 
-      workspaceId: orgId ?? undefined,
-      libraryId: itemId, 
-      title, 
-      body, 
-      slides 
+    const existing = libraryItems.find((item) => item._id === itemId);
+    if (!existing) {
+      return;
+    }
+    const nextItem = upsertLibraryItem(workspaceId, {
+      ...existing,
+      title,
+      body,
+      slides,
+      updatedAt: Date.now(),
     });
+    setLibraryItems(readOrgLibraryItems(workspaceId));
+    enqueueSyncOperation(workspaceId, "library", itemId, "update", nextItem);
   };
 
   const deleteItem = async (itemId: string) => {
-    await removeLibraryItem({ 
-      workspaceId: orgId ?? undefined,
-      libraryId: itemId 
-    });
+    removeLibraryItemLocal(workspaceId, itemId);
+    setLibraryItems(readOrgLibraryItems(workspaceId));
+    enqueueSyncOperation(workspaceId, "library", itemId, "delete", { id: itemId });
     if (selectedItemId === itemId) {
       setSelectedItemId(null);
     }
   };
 
   return {
-    libraryItems: (libraryItems ?? []) as any,
-    isLoading: Boolean(orgId) && libraryItems === undefined,
+    libraryItems: libraryItems as any,
+    isLoading: false,
     filteredItems,
     selectedItem,
     selectedItemId,

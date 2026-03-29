@@ -13,7 +13,7 @@ export default function SignUpPage() {
           Get started with Present for your worship services.
         </p>
       </div>
-      <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" forceRedirectUrl="/dashboard" />
+      <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" forceRedirectUrl="/dashboard/organization/setup" />
     </div>
   );
 }

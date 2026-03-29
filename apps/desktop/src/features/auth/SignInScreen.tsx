@@ -2,7 +2,11 @@ import { useState } from "react";
 import { Loader2, MonitorPlay } from "lucide-react";
 import { Button } from "../../renderer/shared/components/ui/button";
 
-export function SignInScreen() {
+interface SignInScreenProps {
+  externalError?: string | null;
+}
+
+export function SignInScreen({ externalError = null }: SignInScreenProps) {
   const [isOpening, setIsOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,9 +44,9 @@ export function SignInScreen() {
         </p>
 
         <div className="w-full px-6">
-          {error ? (
+          {error || externalError ? (
             <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {error}
+              {error ?? externalError}
             </p>
           ) : null}
           <Button

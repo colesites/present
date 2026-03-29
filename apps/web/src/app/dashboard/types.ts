@@ -16,6 +16,7 @@ export interface DashboardLibraryItem {
 }
 
 export interface DashboardOrganization {
+  id: string;
   name: string;
   logo?: string;
 }

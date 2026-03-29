@@ -1,10 +1,16 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { LibraryItem, Service } from "../../../shared/types";
+import {
+  createLocalService,
+  enqueueSyncOperation,
+  readOrgServices,
+  removeServiceLocal,
+  replaceOrgServices,
+  upsertService,
+} from "../../../renderer/shared/offline/localData";
 
 export type ServiceItemType = "library" | "media" | "scripture";
 
@@ -39,20 +45,10 @@ export function useServices(
   input: { orgId: Id<"organizations"> | null; userId: string | null },
   libraryItems: LibraryItem[],
 ) {
-  const { orgId } = input;
-  // Use unified service API which handles workspace routing and authorization
-  const services = useQuery(
-    api.services.list,
-    { workspaceId: orgId ?? undefined }
-  ) as Service[] | undefined;
-
-  const createService = useMutation(api.services.create);
-  const renameService = useMutation(api.services.update); // Unified update handles rename
-  const removeService = useMutation(api.services.remove);
-  const addItemToService = useMutation(api.services.addItem);
-  const removeItemFromService = useMutation(api.services.removeItem);
-  const reorderItemsMutation = useMutation(api.services.reorderItems);
-  const reorderServicesMutation = useMutation(api.services.reorderServices);
+  const workspaceId = (input.orgId as string | null) ?? "personal";
+  const [services, setServices] = useState<Service[]>(() =>
+    readOrgServices(workspaceId)
+  );
 
   const [initialState] = useState(() => loadServiceState());
 
@@ -66,6 +62,10 @@ export function useServices(
     () => initialState?.serviceItemIndex ?? null
   );
 
+  useEffect(() => {
+    setServices(readOrgServices(workspaceId));
+  }, [workspaceId]);
+
   // Persist state changes
   useEffect(() => {
     saveServiceState({
@@ -77,10 +77,9 @@ export function useServices(
 
   // Validate restored service still exists
   useEffect(() => {
-    if (services && selectedServiceId) {
+    if (selectedServiceId) {
       const exists = services.some((s) => s._id === selectedServiceId);
       if (!exists) {
-        // Run asynchronously to avoid state update strictly during the effect commit phase
         setTimeout(() => {
           setSelectedServiceId(null);
           setIsInsideService(false);
@@ -88,16 +87,16 @@ export function useServices(
         }, 0);
       }
     }
-  }, [services, selectedServiceId]);
+  }, [services, selectedServiceId, workspaceId]);
 
   const selectedService = useMemo(() => {
-    if (!selectedServiceId || !services) return null;
+    if (!selectedServiceId) return null;
     return services.find((s) => s._id === selectedServiceId) ?? null;
   }, [selectedServiceId, services]);
 
   // Service items with resolved library items
   const serviceItems = useMemo(() => {
-    if (!selectedService || !libraryItems) return [];
+    if (!selectedService) return [];
     return selectedService.items.map(
       (
         item: {
@@ -119,29 +118,52 @@ export function useServices(
 
   const createNewService = async (name: string) => {
     if (!name.trim()) return null;
-    const id = await createService({
-      workspaceId: orgId ?? undefined,
+    const nextService = createLocalService(workspaceId, {
       name: name.trim(),
-    } as any);
-    return id;
+      date: undefined,
+      items: [],
+      createdAt: Date.now(),
+    });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(
+      workspaceId,
+      "service",
+      String(nextService._id),
+      "create",
+      nextService
+    );
+    return nextService._id;
   };
 
   const renameExistingService = async (
     serviceId: Id<"services">,
     name: string
   ) => {
-    await renameService({ 
-      workspaceId: orgId ?? undefined,
-      serviceId: serviceId as any, 
-      name 
-    } as any);
+    const service = services.find((item) => item._id === serviceId);
+    if (!service) {
+      return;
+    }
+    const nextService = upsertService(workspaceId, { ...service, name });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(
+      workspaceId,
+      "service",
+      String(serviceId),
+      "update",
+      nextService
+    );
   };
 
   const deleteService = async (serviceId: Id<"services">) => {
-    await removeService({ 
-      workspaceId: orgId ?? undefined,
-      serviceId: serviceId as any 
-    } as any);
+    removeServiceLocal(workspaceId, String(serviceId));
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(
+      workspaceId,
+      "service",
+      String(serviceId),
+      "delete",
+      { id: serviceId }
+    );
     if (selectedServiceId === serviceId) {
       setSelectedServiceId(null);
       setIsInsideService(false);
@@ -152,12 +174,16 @@ export function useServices(
     serviceId: Id<"services">,
     libraryItemId: string
   ) => {
-    await addItemToService({ 
-      workspaceId: orgId ?? undefined,
-      serviceId: serviceId as any, 
-      type: "library", 
-      refId: libraryItemId 
-    } as any);
+    const service = services.find((item) => item._id === serviceId);
+    if (!service) {
+      return;
+    }
+    const nextService = upsertService(workspaceId, {
+      ...service,
+      items: [...service.items, { type: "library", refId: libraryItemId, addedAt: Date.now() }],
+    });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
   };
 
   const addMediaToService = async (
@@ -165,13 +191,19 @@ export function useServices(
     mediaId: string,
     mediaName: string
   ) => {
-    await addItemToService({
-      workspaceId: orgId ?? undefined,
-      serviceId: serviceId as any,
-      type: "media",
-      refId: mediaId,
-      label: mediaName,
-    } as any);
+    const service = services.find((item) => item._id === serviceId);
+    if (!service) {
+      return;
+    }
+    const nextService = upsertService(workspaceId, {
+      ...service,
+      items: [
+        ...service.items,
+        { type: "media", refId: mediaId, label: mediaName, addedAt: Date.now() },
+      ],
+    });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
   };
 
   const addScriptureToService = async (
@@ -179,24 +211,33 @@ export function useServices(
     ref: string,
     text: string,
   ) => {
-    await addItemToService({
-      workspaceId: orgId ?? undefined,
-      serviceId: serviceId as any,
-      type: "scripture",
-      refId: ref,
-      label: text,
-    } as any);
+    const service = services.find((item) => item._id === serviceId);
+    if (!service) {
+      return;
+    }
+    const nextService = upsertService(workspaceId, {
+      ...service,
+      items: [
+        ...service.items,
+        { type: "scripture", refId: ref, label: text, addedAt: Date.now() },
+      ],
+    });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
   };
 
   const removeFromService = async (
     serviceId: Id<"services">,
     index: number
   ) => {
-    await removeItemFromService({ 
-      workspaceId: orgId ?? undefined,
-      serviceId: serviceId as any, 
-      itemIndex: index 
-    } as any);
+    const service = services.find((item) => item._id === serviceId);
+    if (!service) {
+      return;
+    }
+    const nextItems = service.items.filter((_, itemIndex) => itemIndex !== index);
+    const nextService = upsertService(workspaceId, { ...service, items: nextItems });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
   };
 
   const enterService = (serviceId: Id<"services">) => {
@@ -216,26 +257,37 @@ export function useServices(
     toIndex: number
   ) => {
     if (fromIndex === toIndex) return;
-    await reorderItemsMutation({ 
-      workspaceId: orgId ?? undefined,
-      serviceId: serviceId as any, 
-      fromIndex, 
-      toIndex 
-    } as any);
+    const service = services.find((item) => item._id === serviceId);
+    if (!service) {
+      return;
+    }
+    const reordered = [...service.items];
+    const [moved] = reordered.splice(fromIndex, 1);
+    if (!moved) {
+      return;
+    }
+    reordered.splice(toIndex, 0, moved);
+    const nextService = upsertService(workspaceId, { ...service, items: reordered });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(workspaceId, "service", String(serviceId), "reorder", nextService);
   };
 
   const reorderServices = async (fromIndex: number, toIndex: number) => {
     if (fromIndex === toIndex) return;
-    await reorderServicesMutation({ 
-      workspaceId: orgId ?? undefined,
-      fromIndex, 
-      toIndex 
-    } as any);
+    const reordered = [...services];
+    const [moved] = reordered.splice(fromIndex, 1);
+    if (!moved) {
+      return;
+    }
+    reordered.splice(toIndex, 0, moved);
+    replaceOrgServices(workspaceId, reordered);
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(workspaceId, "service", "services", "reorder", reordered);
   };
 
   return {
-    services: (services ?? []) as any,
-    isLoading: Boolean(orgId) && services === undefined,
+    services: services as any,
+    isLoading: false,
     selectedService,
     selectedServiceId,
     isInsideService,

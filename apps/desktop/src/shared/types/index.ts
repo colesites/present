@@ -24,9 +24,11 @@ export type DeleteTarget = {
 export type LibraryItem = {
   _id: any;
   _creationTime: number;
-  orgId?: any;
+  orgId: any;
   userId?: any;
   categoryId?: any;
+  type?: "song" | "scripture" | "slide" | "note";
+  content?: Record<string, unknown>;
   title: string;
   body: string;
   slides: Array<{
@@ -36,7 +38,9 @@ export type LibraryItem = {
     backgroundId?: string;
   }>;
   createdAt: number;
-  updatedAt?: number;
+  updatedAt: number;
+  version: number;
+  deleted: boolean;
 };
 
 export type ServiceItemType = "library" | "media" | "scripture";
@@ -53,7 +57,7 @@ export interface ServiceItem {
 export type Service = {
   _id: Id<"services">;
   _creationTime: number;
-  orgId: Id<"organizations">;
+  orgId: Id<"organizations"> | string;
   name: string;
   date?: string;
   items: Array<{
@@ -63,6 +67,9 @@ export type Service = {
     addedAt: number;
   }>;
   createdAt: number;
+  updatedAt: number;
+  version: number;
+  deleted: boolean;
 };
 
 export type Category = {
