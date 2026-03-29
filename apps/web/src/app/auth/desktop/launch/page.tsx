@@ -3,6 +3,9 @@
 import { useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+// Force dynamic rendering for this page
+export const dynamic = 'force-dynamic';
+
 export default function DesktopLaunchPage() {
   const router = useRouter();
   const searchParams = useSearchParams();

@@ -3,6 +3,9 @@ import { ConvexHttpClient } from "convex/browser";
 import { redirect } from "next/navigation";
 import { api } from "../../../../../../../packages/backend/convex/_generated/api";
 
+// Force dynamic rendering for this page
+export const dynamic = 'force-dynamic';
+
 export default async function DesktopCallbackPage() {
   const nextPath = "/auth/desktop/callback";
   const authState = await auth();
