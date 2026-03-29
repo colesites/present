@@ -4,15 +4,19 @@ import { useState } from "react";
 import { useOrganization } from "@clerk/nextjs";
 import { useMutation } from "convex/react";
 import { api } from "../../../../../../../packages/backend/convex/_generated/api";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Building2, MapPin, Users } from "lucide-react";
 
-export default function OrganizationSetupClient() {
+interface OrganizationSetupClientProps {
+  clerkOrgIdFromQuery?: string | null;
+}
+
+export default function OrganizationSetupClient({
+  clerkOrgIdFromQuery,
+}: OrganizationSetupClientProps) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { organization } = useOrganization();
   const updateOrganizationMetadata = useMutation(api.organizations.updateMetadata);
-  const clerkOrgIdFromQuery = searchParams.get("clerkOrgId");
   const effectiveClerkOrgId = organization?.id ?? clerkOrgIdFromQuery;
   const effectiveOrgName = organization?.name ?? "your organization";
 
