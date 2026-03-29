@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-// Force dynamic rendering for this page
-export const dynamic = 'force-dynamic';
-
-export default function DesktopLaunchPage() {
+function DesktopLaunchContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = useMemo(() => searchParams.get("token"), [searchParams]);
@@ -38,5 +35,19 @@ export default function DesktopLaunchPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function DesktopLaunchPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-background p-6">
+        <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 text-center">
+          <h1 className="text-lg font-semibold">Loading...</h1>
+        </div>
+      </div>
+    }>
+      <DesktopLaunchContent />
+    </Suspense>
   );
 }
