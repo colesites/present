@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { useUser } from "@clerk/react";
+import { useClerk, useUser } from "@clerk/react";
 import { SignInScreen } from "../../features/auth/SignInScreen";
 import { Loader2 } from "lucide-react";
 import { AppHeader } from "../../features/header";
@@ -23,23 +23,53 @@ import type { HeaderSearchScope } from "../../features/header/AppHeader";
 
 export default function Home() {
   const { isSignedIn, isLoaded } = useUser();
-  
+  const clerk = useClerk();
+
   const isSettingsWindow = useMemo(() => {
     if (typeof window === "undefined") {
       return false;
     }
 
-    return new URLSearchParams(window.location.search).get("window") === "settings";
+    return (
+      new URLSearchParams(window.location.search).get("window") === "settings"
+    );
   }, []);
+
+  useEffect(() => {
+    if (!isLoaded || !window.electronAPI?.consumePendingAuthToken) {
+      return;
+    }
+
+    let disposed = false;
+
+    const applyToken = async (token: string | null) => {
+      if (!token || disposed) {
+        return;
+      }
+
+      try {
+        await clerk.setActive({ session: token });
+      } catch {
+        void 0;
+      }
+    };
+
+    void window.electronAPI.consumePendingAuthToken().then(applyToken);
+    window.electronAPI.onAuthCallback((token) => {
+      void applyToken(token);
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [clerk, isLoaded]);
 
   // Show loading while Clerk is initializing
   if (!isLoaded) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-background p-6 text-center">
         <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
-        <p className="mt-3 text-sm text-muted-foreground">
-          Loading...
-        </p>
+        <p className="mt-3 text-sm text-muted-foreground">Loading...</p>
       </div>
     );
   }
@@ -56,20 +86,26 @@ export default function Home() {
 function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
   // Organization & auth
   const { userId } = useOrganization();
-  const { type: activeWorkspaceType, id: activeWorkspaceId } = useWorkspaceStore();
-  
+  const { type: activeWorkspaceType, id: activeWorkspaceId } =
+    useWorkspaceStore();
+
   // Enforce explicit workspace data isolation
-  const effectiveOrgId = activeWorkspaceType === "organization" && activeWorkspaceId 
-    ? (activeWorkspaceId as any) 
-    : undefined;
+  const effectiveOrgId =
+    activeWorkspaceType === "organization" && activeWorkspaceId
+      ? (activeWorkspaceId as any)
+      : undefined;
 
   // Root UI state
-  const { viewMode, setViewMode, bottomTab, setBottomTab } = usePersistedUIState({
-    viewMode: isSettingsWindow ? "settings" : "show",
-    bottomTab: "media",
-  }, {
-    restoreStored: isSettingsWindow,
-  });
+  const { viewMode, setViewMode, bottomTab, setBottomTab } =
+    usePersistedUIState(
+      {
+        viewMode: isSettingsWindow ? "settings" : "show",
+        bottomTab: "media",
+      },
+      {
+        restoreStored: isSettingsWindow,
+      }
+    );
 
   useEffect(() => {
     if (isSettingsWindow) {
@@ -78,7 +114,7 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
     setViewMode("show");
     setBottomTab("media");
   }, [isSettingsWindow, setBottomTab, setViewMode]);
-  
+
   const effectiveViewMode = isSettingsWindow
     ? "settings"
     : viewMode === "settings"
@@ -86,8 +122,10 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
       : viewMode;
   const contentSource: ContentSource = "my-creations";
   const isAutopilotEnabled = false;
-  const isBibleActive = effectiveViewMode === "show" && bottomTab === "scripture";
-  const isLibrariesActive = effectiveViewMode === "show" && bottomTab === "shows";
+  const isBibleActive =
+    effectiveViewMode === "show" && bottomTab === "scripture";
+  const isLibrariesActive =
+    effectiveViewMode === "show" && bottomTab === "shows";
   const headerSearchScope: HeaderSearchScope = isLibrariesActive
     ? "libraries"
     : isBibleActive

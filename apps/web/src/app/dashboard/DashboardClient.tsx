@@ -26,9 +26,13 @@ export function DashboardClient({
 }: DashboardClientProps) {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const { user } = useUser();
+  const { user, isLoaded: isUserLoaded } = useUser();
 
-  const { type: activeWorkspaceType, id: activeWorkspaceId, setWorkspace } = useWorkspaceStore();
+  const {
+    type: activeWorkspaceType,
+    id: activeWorkspaceId,
+    setWorkspace,
+  } = useWorkspaceStore();
 
   const libraryData = useQuery(
     api.libraries.list,
@@ -42,8 +46,12 @@ export function DashboardClient({
     isAuthenticated ? { workspaceId: activeWorkspaceId ?? undefined } : "skip"
   ) as DashboardServiceItem[] | undefined;
 
-  const [currentOrg, setCurrentOrg] = useState<DashboardOrganization | null>(org);
-  const [organizations, setOrganizations] = useState<DashboardOrganizationListItem[]>([]);
+  const [currentOrg, setCurrentOrg] = useState<DashboardOrganization | null>(
+    org
+  );
+  const [organizations, setOrganizations] = useState<
+    DashboardOrganizationListItem[]
+  >([]);
 
   const nativeOrganizations = useQuery(
     api.users.listMyOrganizations,
@@ -52,14 +60,16 @@ export function DashboardClient({
 
   useEffect(() => {
     if (nativeOrganizations) {
-      const list: DashboardOrganizationListItem[] = (nativeOrganizations as Array<{
-        id: string;
-        name: string;
-        slug: string;
-        logo?: string | null;
-        role: string;
-        createdAt: number;
-      }>).map((org) => ({
+      const list: DashboardOrganizationListItem[] = (
+        nativeOrganizations as Array<{
+          id: string;
+          name: string;
+          slug: string;
+          logo?: string | null;
+          role: string;
+          createdAt: number;
+        }>
+      ).map((org) => ({
         id: org.id,
         name: org.name,
         slug: org.slug,
@@ -69,15 +79,17 @@ export function DashboardClient({
 
       setOrganizations(list);
 
-      const activeOrg = activeWorkspaceType === "organization"
-        ? list.find((org) => org.id === activeWorkspaceId) ?? null
-        : null;
+      const activeOrg =
+        activeWorkspaceType === "organization"
+          ? (list.find((org) => org.id === activeWorkspaceId) ?? null)
+          : null;
 
       setCurrentOrg(activeOrg);
     }
   }, [nativeOrganizations, activeWorkspaceType, activeWorkspaceId]);
 
-  const viewerName = user?.fullName || user?.primaryEmailAddress?.emailAddress || "Your account";
+  const viewerName =
+    user?.fullName || user?.primaryEmailAddress?.emailAddress || "Your account";
   const viewerEmail = user?.primaryEmailAddress?.emailAddress || "";
   const viewerImage = user?.imageUrl || null;
 
@@ -88,20 +100,21 @@ export function DashboardClient({
   const sortedLibrary = useMemo(
     () =>
       [...(activeLibraryData ?? [])].sort(
-        (a, b) => (b.updatedAt ?? b._creationTime) - (a.updatedAt ?? a._creationTime),
+        (a, b) =>
+          (b.updatedAt ?? b._creationTime) - (a.updatedAt ?? a._creationTime)
       ),
-    [activeLibraryData],
+    [activeLibraryData]
   );
 
   useEffect(() => {
-    if (isLoading) {
+    if (!isUserLoaded || isLoading) {
       return;
     }
 
-    if (!isAuthenticated) {
+    if (!user) {
       router.replace("/sign-in");
     }
-  }, [isLoading, router, isAuthenticated]);
+  }, [isLoading, isUserLoaded, router, user]);
 
   const openDesktopApp = useCallback(async () => {
     window.location.href = "present://open";
@@ -119,7 +132,7 @@ export function DashboardClient({
     return () => window.clearTimeout(timeout);
   }, [openDesktopApp, shouldAutoOpen]);
 
-  if (isLoading) {
+  if (!isUserLoaded || isLoading) {
     return (
       <div className="fixed inset-0 box-border overflow-hidden bg-[#111111] px-6 py-8 text-white">
         <div className="flex h-full items-center justify-center rounded-[36px] bg-[#191919]">

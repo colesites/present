@@ -6,13 +6,21 @@ interface SignInPageProps {
     source?: string;
     client?: string;
     flow?: string;
+    next?: string | string[];
   }>;
 }
 
 export default async function SignInPage({ searchParams }: SignInPageProps) {
   const resolvedSearchParams = await searchParams;
   const isDesktopFlow =
-    resolvedSearchParams.source === "desktop" || resolvedSearchParams.client === "electron";
+    resolvedSearchParams.source === "desktop" ||
+    resolvedSearchParams.client === "electron";
+  const nextParam = resolvedSearchParams.next;
+  const requestedNext = Array.isArray(nextParam) ? nextParam[0] : nextParam;
+  const safeRedirectPath =
+    typeof requestedNext === "string" && requestedNext.startsWith("/")
+      ? requestedNext
+      : "/dashboard";
 
   return (
     <div className="w-full max-w-lg">
@@ -27,7 +35,12 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             : "Sign in to your Present account to continue."}
         </p>
       </div>
-      <SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" forceRedirectUrl="/dashboard" />
+      <SignIn
+        routing="path"
+        path="/sign-in"
+        signUpUrl="/sign-up"
+        forceRedirectUrl={safeRedirectPath}
+      />
     </div>
   );
 }

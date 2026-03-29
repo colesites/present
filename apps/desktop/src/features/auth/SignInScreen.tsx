@@ -1,32 +1,23 @@
-import { useMemo, useState } from "react";
-import { ExternalLink, Loader2, MonitorPlay } from "lucide-react";
+import { useState } from "react";
+import { Loader2, MonitorPlay } from "lucide-react";
 import { Button } from "../../renderer/shared/components/ui/button";
 
 export function SignInScreen() {
   const [isOpening, setIsOpening] = useState(false);
-
-  const signInUrl = useMemo(() => {
-    const baseUrl =
-      process.env.WEB_APP_URL ||
-      (process.env.NODE_ENV === "development"
-        ? "http://localhost:3001"
-        : "https://present-gha.vercel.app");
-
-    const url = new URL("/sign-in", baseUrl);
-    url.searchParams.set("source", "desktop");
-    url.searchParams.set("client", "electron");
-    url.searchParams.set("flow", "external-browser");
-    return url.toString();
-  }, []);
+  const [error, setError] = useState<string | null>(null);
 
   const openSignIn = async () => {
-    if (!window.electronAPI?.openExternalBrowser || isOpening) {
+    if (!window.electronAPI?.beginAuthFlow || isOpening) {
       return;
     }
 
     setIsOpening(true);
+    setError(null);
     try {
-      await window.electronAPI.openExternalBrowser(signInUrl);
+      const result = await window.electronAPI.beginAuthFlow();
+      if (!result.ok) {
+        setError(result.error ?? "Unable to start sign-in.");
+      }
     } finally {
       setIsOpening(false);
     }
@@ -49,6 +40,11 @@ export function SignInScreen() {
         </p>
 
         <div className="w-full px-6">
+          {error ? (
+            <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
           <Button
             type="button"
             size="lg"
@@ -56,11 +52,7 @@ export function SignInScreen() {
             onClick={() => void openSignIn()}
             disabled={isOpening}
           >
-            {isOpening ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ExternalLink className="h-4 w-4" />
-            )}
+            {isOpening ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             Continue in browser
           </Button>
           <p className="mt-3 text-xs text-muted-foreground">
