@@ -23,20 +23,20 @@ import {
   ArrowUp,
   ArrowDown,
 } from "lucide-react";
-import { Input } from "../../components/ui/input";
+import { Input } from "../../renderer/shared/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
-} from "../../components/ui/dropdown-menu";
+} from "../../renderer/shared/components/ui/dropdown-menu";
 import type { MediaState, MediaItem, MediaFolder } from "./hooks";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
 import { toast } from "sonner";
-import { cn } from "../../lib/utils";
+import { cn } from "../../renderer/shared/lib/utils";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,18 +46,18 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "../../components/ui/alert-dialog";
+} from "../../renderer/shared/components/ui/alert-dialog";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from "../../components/ui/context-menu";
+} from "../../renderer/shared/components/ui/context-menu";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
-} from "../../components/ui/resizable";
+} from "../../renderer/shared/components/ui/resizable";
 
 type MediaFilter = "all" | "images" | "videos";
 

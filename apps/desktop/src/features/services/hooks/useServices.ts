@@ -4,7 +4,7 @@ import { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { LibraryItem, Service } from "../../../types";
+import type { LibraryItem, Service } from "../../../shared/types";
 
 export type ServiceItemType = "library" | "media" | "scripture";
 
@@ -36,7 +36,7 @@ function saveServiceState(state: {
 }
 
 export function useServices(
-  input: { orgId: Id<"organizations"> | null; userId: Id<"users"> | null },
+  input: { orgId: Id<"organizations"> | null; userId: string | null },
   libraryItems: LibraryItem[],
 ) {
   const { orgId } = input;

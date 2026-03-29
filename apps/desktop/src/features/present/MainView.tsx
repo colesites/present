@@ -1,26 +1,35 @@
 "use client";
 
 import * as React from "react";
-import { 
-  ResizableHandle, 
-  ResizablePanel, 
-  ResizablePanelGroup 
-} from "../../components";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "../../renderer/shared/components";
 import { PresentServicesSidebar } from "./PresentServicesSidebar";
 import { PresentCenterArea } from "./PresentCenterArea";
 import { PresentOutputSidebar } from "./PresentOutputSidebar";
-import { Kbd } from "../../components/ui/kbd";
+import { Kbd } from "../../renderer/shared/components/ui/kbd";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { SlideData } from "../../features/slides";
-import { 
-  MediaItem, 
-  VideoSettings, 
+import {
+  MediaItem,
+  VideoSettings,
   MediaFilters,
-  MediaState
+  MediaState,
 } from "../../features/media/hooks/useMediaFolders";
 import { MediaPanel } from "../media";
-import type { ViewMode, BottomTab, LibraryItem, Category, Service, PlaybackState, ServiceItem, ContentSource } from "../../types/index";
-import { fixLyrics } from "../../lib/lyrics";
+import type {
+  ViewMode,
+  BottomTab,
+  LibraryItem,
+  Category,
+  Service,
+  PlaybackState,
+  ServiceItem,
+  ContentSource,
+} from "../../shared/types/index";
+import { fixLyrics } from "../../renderer/shared/lib/lyrics";
 import { ScriptureSlide } from "../../features/scripture/lib/slides";
 import type { MediaPanelRef } from "../media/MediaPanel";
 import type { ScripturePanelRef } from "../scripture/components/ScripturePanel";
@@ -33,7 +42,11 @@ export interface MainViewPresentState {
   selectedLibraryItem: LibraryItem | null;
   selectedLibraryId: string | null;
   setSelectedLibraryId: (id: string | null) => void;
-  handleSelectSlide: (slideId: string, text: string, footer?: string) => Promise<void>;
+  handleSelectSlide: (
+    slideId: string,
+    text: string,
+    footer?: string
+  ) => Promise<void>;
   handleEditSlide: (libraryId: string, slideIndex: number) => void;
   handleSaveLibraryItem: (title: string, body: string) => Promise<void>;
   editScrollToSlide: number | null;
@@ -55,7 +68,10 @@ export interface MainViewMediaState {
   handleVideoEnded: () => void;
   handleVideoSeeked: (e: React.SyntheticEvent<HTMLVideoElement, Event>) => void;
   handleMediaPanelSelect: (item: MediaItem | null) => void;
-  handleAddMediaToService: (mediaId: string, mediaName: string) => Promise<void>;
+  handleAddMediaToService: (
+    mediaId: string,
+    mediaName: string
+  ) => Promise<void>;
   updateVideoSettings: (s: Partial<VideoSettings>) => void | Promise<void>;
   showMediaInOutput: boolean;
   setShowMediaInOutput: (show: boolean) => void;
@@ -73,8 +89,15 @@ export interface MainViewLibraryState {
   categories: Category[];
   selectedCategoryId: string | null;
   setSelectedCategoryId: (id: string | null) => void;
-  createNewLibraryItem: (title: string, body: string, categoryId?: string) => Promise<void>;
-  handleRenameLibraryItem: (libraryId: string, newTitle: string) => Promise<void>;
+  createNewLibraryItem: (
+    title: string,
+    body: string,
+    categoryId?: string
+  ) => Promise<void>;
+  handleRenameLibraryItem: (
+    libraryId: string,
+    newTitle: string
+  ) => Promise<void>;
   deleteLibraryItem: (libraryId: string) => Promise<void>;
   handleAddToService: (libraryId: string) => Promise<void>;
   createNewCategory: (name: string) => Promise<void>;
@@ -92,6 +115,17 @@ export interface MainViewStyleState {
   scriptureFontFamily: string;
   scriptureFontSize: number;
   scriptureTextAlign: "left" | "center" | "right";
+  timerLayout: {
+    xPercent: number;
+    yPercent: number;
+    clockFontPx: number;
+    nameFontPx: number;
+    clockColor: string;
+    nameColor: string;
+    nameBannerEnabled: boolean;
+    nameBannerColor: string;
+    titlePosition: "top" | "bottom";
+  };
   updateFontStyle: (style: Partial<PlaybackState>) => void;
 }
 
@@ -108,13 +142,12 @@ export interface MainViewOutputState {
   setShowTextInOutput: (show: boolean) => void;
 }
 
-
 interface MainViewProps {
   viewMode: ViewMode;
   bottomTab: BottomTab;
   orgId: Id<"organizations"> | undefined;
-  userId: Id<"users"> | null;
-  
+  userId: string | null;
+
   servicesSidebarProps: {
     services: Service[];
     isLoading: boolean;
@@ -129,7 +162,10 @@ interface MainViewProps {
     onDoubleClickServiceItem: (index: number) => void;
     onRemoveFromService: (index: number) => Promise<void>;
     onCreateService: (name: string) => Promise<void>;
-    onRenameService: (serviceId: Id<"services">, newName: string) => Promise<void>;
+    onRenameService: (
+      serviceId: Id<"services">,
+      newName: string
+    ) => Promise<void>;
     onDeleteService: (serviceId: Id<"services">) => Promise<void>;
     onReorderServiceItems: (from: number, to: number) => Promise<void>;
     onReorderServices: (from: number, to: number) => Promise<void>;
@@ -228,6 +264,7 @@ export function MainView({
     scriptureFontFamily,
     scriptureFontSize,
     scriptureTextAlign,
+    timerLayout,
     updateFontStyle,
   } = styleState;
 
@@ -251,11 +288,7 @@ export function MainView({
     onReorderServices: reorderServices,
   } = servicesSidebarProps;
 
-  const {
-    showsPanelRef,
-    mediaPanelRef,
-    scripturePanelRef,
-  } = panelRefs;
+  const { showsPanelRef, mediaPanelRef, scripturePanelRef } = panelRefs;
 
   return (
     <ResizablePanelGroup
@@ -275,7 +308,12 @@ export function MainView({
               className="h-full w-full"
               autoSaveId="present-main-top-layout-v11"
             >
-              <ResizablePanel defaultSize="24" minSize="16" maxSize="32" order={1}>
+              <ResizablePanel
+                defaultSize="24"
+                minSize="16"
+                maxSize="32"
+                order={1}
+              >
                 <PresentServicesSidebar
                   servicesSidebarProps={{
                     services,
@@ -289,7 +327,8 @@ export function MainView({
                     onExitService: exitService,
                     onSelectServiceItem: handleSelectServiceItem,
                     onDoubleClickServiceItem: handleDoubleClickServiceItem,
-                    onRemoveFromService: (index: number) => handleRemoveFromService(index),
+                    onRemoveFromService: (index: number) =>
+                      handleRemoveFromService(index),
                     onCreateService: createNewService,
                     onRenameService: renameExistingService,
                     onDeleteService: deleteService,
@@ -301,7 +340,12 @@ export function MainView({
 
               <ResizableHandle withHandle />
 
-              <ResizablePanel defaultSize="76" minSize="56" maxSize="84" order={2}>
+              <ResizablePanel
+                defaultSize="76"
+                minSize="56"
+                maxSize="84"
+                order={2}
+              >
                 <PresentCenterArea
                   viewMode={viewMode}
                   bottomTab={bottomTab}
@@ -392,7 +436,7 @@ export function MainView({
 
       <ResizableHandle withHandle />
 
-      <ResizablePanel defaultSize="22" minSize="16" maxSize="28" order={2}>
+      <ResizablePanel defaultSize="22" minSize="22" maxSize="32" order={2}>
         <PresentOutputSidebar
           outputPreviewProps={{
             text: activeSlideContent?.text ?? null,
@@ -421,6 +465,7 @@ export function MainView({
             videoCurrentTime,
             isFrozen: isOutputFrozen,
             onToggleFreeze,
+            timerLayout,
           }}
         />
       </ResizablePanel>

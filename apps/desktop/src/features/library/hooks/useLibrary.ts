@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import { parseLyricsToSlides } from "../../../lib/lyrics";
-import type { LibraryItem, ContentSource } from "../../../types";
+import { parseLyricsToSlides } from "../../../renderer/shared/lib/lyrics";
+import type { LibraryItem, ContentSource } from "../../../shared/types";
 
 export function useLibrary(
   input: { orgId: string | null; userId: string | null },

@@ -6,9 +6,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../components/ui/dropdown-menu";
-import { cn } from "../../lib/utils";
-import type { ContentSource } from "../../types";
+} from "../../renderer/shared/components/ui/dropdown-menu";
+import { cn } from "../../renderer/shared/lib/utils";
+import type { ContentSource } from "../../shared/types";
 
 interface CommunityMenuProps {
   source: ContentSource;

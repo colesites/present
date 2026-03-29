@@ -9,12 +9,12 @@ import {
   BookOpenText,
   LibraryBig,
 } from "lucide-react";
-import { AuthControls } from "../../components/AuthControls";
-import { ProjectButton } from "../../components/ProjectButton";
-import { cn } from "../../lib/utils";
-import { Dialog } from "../../components/Dialog";
-import { Input } from "../../components/ui/input";
-import type { ViewMode } from "../../types";
+import { AuthControls } from "../../renderer/shared/components/AuthControls";
+import { ProjectButton } from "../../renderer/shared/components/ProjectButton";
+import { cn } from "../../renderer/shared/lib/utils";
+import { Dialog } from "../../renderer/shared/components/Dialog";
+import { Input } from "../../renderer/shared/components/ui/input";
+import type { ViewMode } from "../../shared/types";
 
 export type HeaderSearchScope = "services" | "libraries" | "bible";
 

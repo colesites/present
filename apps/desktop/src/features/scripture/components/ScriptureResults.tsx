@@ -8,7 +8,7 @@ import {
   type ScriptureSlide,
 } from "../lib/slides";
 import { type ParsedReference } from "../lib/parser";
-import { Button } from "../../../components/ui/button";
+import { Button } from "../../../renderer/shared/components/ui/button";
 import { Monitor, Plus, Settings2 } from "lucide-react";
 import { type BibleVerse } from "../lib/db";
 

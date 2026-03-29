@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useScripture } from "../hooks/useScripture";
-import { Button } from "../../../components/ui/button";
+import { Button } from "../../../renderer/shared/components/ui/button";
 import { Download, Trash2, FileUp, Loader2 } from "lucide-react";
 
 export function ScriptureDownloader() {

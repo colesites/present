@@ -8,14 +8,14 @@ import {
   forwardRef,
   useImperativeHandle,
 } from "react";
-import { Input } from "../../../components/ui/input";
+import { Input } from "../../../renderer/shared/components/ui/input";
 import { 
   getSuggestions, 
   getSmartTransform, 
   type Suggestion 
 } from "../lib/autocomplete";
 import { parseReference } from "../lib/parser";
-import { cn } from "../../../lib/utils";
+import { cn } from "../../../renderer/shared/lib/utils";
 import { Search, X } from "lucide-react";
 
 import { type BibleBookRecord, type BibleVersion } from "../lib/db";

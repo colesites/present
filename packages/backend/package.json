@@ -7,10 +7,10 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^1.1.0",
-    "@auth/core": "^0.37.0",
-    "@convex-dev/auth": "^0.0.91",
+    "@clerk/clerk-react": "^5.61.3",
     "ai": "^4.1.0",
     "convex": "^1.13.0",
+    "convex-helpers": "^0.1.114",
     "zod": "^3.23.0"
   },
   "devDependencies": {

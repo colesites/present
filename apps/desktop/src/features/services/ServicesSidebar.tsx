@@ -2,16 +2,16 @@
 
 import { memo, useState } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { Service, LibraryItem } from "../../types";
-import { Dialog } from "../../components/Dialog";
-import { Skeleton } from "../../components/ui/skeleton";
-import { cn } from "../../lib/utils";
+import type { Service, LibraryItem } from "../../shared/types";
+import { Dialog } from "../../renderer/shared/components/Dialog";
+import { Skeleton } from "../../renderer/shared/components/ui/skeleton";
+import { cn } from "../../renderer/shared/lib/utils";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from "../../components/ui/context-menu";
+} from "../../renderer/shared/components/ui/context-menu";
 
 interface ServiceItem {
   type: "library" | "media" | "scripture";

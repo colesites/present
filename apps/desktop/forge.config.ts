@@ -45,20 +45,20 @@ const config: ForgeConfig = {
         config: rendererConfig,
         entryPoints: [
           {
-            html: './src/index.html',
-            js: './src/renderer.ts',
+            html: './src/renderer/main/index.html',
+            js: './src/renderer/main/main-renderer.ts',
             name: 'main_window',
             preload: {
-              js: './src/preload.ts',
+              js: './src/main/preload.ts',
               config: preloadConfig,
             },
           },
           {
-            html: './src/output.html',
-            js: './src/output-renderer.tsx',
+            html: './src/renderer/output/output.html',
+            js: './src/renderer/output/output-renderer.tsx',
             name: 'output_window',
             preload: {
-              js: './src/preload.ts',
+              js: './src/main/preload.ts',
               config: preloadConfig,
             },
           },
@@ -66,11 +66,12 @@ const config: ForgeConfig = {
       },
       devContentSecurityPolicy:
         "default-src 'self' 'unsafe-inline' data: local-media:; " +
-        "script-src 'self' 'unsafe-eval' 'unsafe-inline'; " +
-        "connect-src 'self' http://localhost:3000 http://localhost:3001 http://127.0.0.1:3001 ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:* https://present-gha.vercel.app https://present.app https://wary-badger-863.convex.site https://wary-badger-863.convex.cloud wss://wary-badger-863.convex.cloud; " +
-        "img-src 'self' data: local-media: https://*.gravatar.com https://*.wp.com https://lh3.googleusercontent.com https://*.googleusercontent.com; " +
+        "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev; " +
+        "connect-src 'self' http://localhost:3000 http://localhost:3001 http://127.0.0.1:3001 ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:* https://present-gha.vercel.app https://present.app https://wary-badger-863.convex.site https://wary-badger-863.convex.cloud wss://wary-badger-863.convex.cloud https://*.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev; " +
+        "img-src 'self' data: local-media: https://*.gravatar.com https://*.wp.com https://lh3.googleusercontent.com https://*.googleusercontent.com https://img.clerk.com; " +
         "media-src 'self' local-media:; " +
-        "font-src 'self' data: https:;",
+        "font-src 'self' data: https:; " +
+        "frame-src https://*.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev;",
     }),
     // Fuses are used to enable/disable various Electron functionality
     // at package time, before code signing the application

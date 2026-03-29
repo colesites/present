@@ -1,6 +1,6 @@
 "use client";
 
-import { ResizablePanel } from "../../components";
+import { ResizablePanel } from "../../renderer/shared/components";
 import { OutputPreview } from "../../features/slides";
 import type { ComponentProps } from "react";
 

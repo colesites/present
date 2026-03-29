@@ -1,9 +1,9 @@
 "use client";
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { cn } from "../../lib/utils";
-import { AutoFitText } from "../../components/AutoFitText";
-import { stripBracketsForDisplay } from "../../lib/lyrics";
+import { cn } from "../../renderer/shared/lib/utils";
+import { AutoFitText } from "../../renderer/shared/components/AutoFitText";
+import { stripBracketsForDisplay } from "../../renderer/shared/lib/lyrics";
 import {
   ChevronDown,
   Clock3,
@@ -26,6 +26,7 @@ import {
   Type,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 import { IoSnow } from "react-icons/io5";
 import type {
@@ -35,13 +36,13 @@ import type {
 } from "../../features/media/hooks";
 import { DEFAULT_FILTERS, filtersToCSS } from "../../features/media/hooks";
 
-const OUTPUT_WIDTH = 240;
-const OUTPUT_HEIGHT = 135;
-
 interface SlideGroup {
   label: string;
   count: number;
 }
+
+const OUTPUT_BASE_WIDTH = 1280;
+const OUTPUT_BASE_HEIGHT = 720;
 
 interface OutputPreviewProps {
   text: string | null;
@@ -70,6 +71,17 @@ interface OutputPreviewProps {
   videoCurrentTime: number;
   isFrozen?: boolean;
   onToggleFreeze?: () => void;
+  timerLayout: {
+    xPercent: number;
+    yPercent: number;
+    clockFontPx: number;
+    nameFontPx: number;
+    clockColor: string;
+    nameColor: string;
+    nameBannerEnabled: boolean;
+    nameBannerColor: string;
+    titlePosition: "top" | "bottom";
+  };
 }
 
 type TimerType = "countdown" | "countdownToTime" | "elapsed";
@@ -99,24 +111,26 @@ function parseDurationToSeconds(value: string) {
 
   if (parts.length === 3) {
     const [hours, minutes, seconds] = parts;
-    return (hours * 3600) + (minutes * 60) + seconds;
+    return hours * 3600 + minutes * 60 + seconds;
   }
 
   if (parts.length === 2) {
     const [minutes, seconds] = parts;
-    return (minutes * 60) + seconds;
+    return minutes * 60 + seconds;
   }
 
   return 300;
 }
 
 function parseTimeToMinutes(value: string) {
-  const [hours, minutes] = value.split(":").map((part) => Number.parseInt(part, 10));
+  const [hours, minutes] = value
+    .split(":")
+    .map((part) => Number.parseInt(part, 10));
   if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
     return null;
   }
 
-  return (hours * 60) + minutes;
+  return hours * 60 + minutes;
 }
 
 function formatSecondsToClock(totalSeconds: number) {
@@ -128,7 +142,11 @@ function formatSecondsToClock(totalSeconds: number) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-function getCountdownToTimeSeconds(hour: number, minute: number, meridiem: "AM" | "PM") {
+function getCountdownToTimeSeconds(
+  hour: number,
+  minute: number,
+  meridiem: "AM" | "PM"
+) {
   const now = new Date();
   const target = new Date(now);
   const normalizedHour = hour % 12;
@@ -218,7 +236,7 @@ const FilterSlider = memo(function FilterSlider({
       <span
         className={cn(
           "w-6 shrink-0 text-right text-[9px]",
-          isDefault ? "text-muted-foreground" : "text-primary",
+          isDefault ? "text-muted-foreground" : "text-primary"
         )}
       >
         {value}
@@ -264,9 +282,13 @@ export const OutputPreview = memo(function OutputPreview({
   videoCurrentTime,
   isFrozen,
   onToggleFreeze,
+  timerLayout,
 }: OutputPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const outputFrameRef = useRef<HTMLDivElement>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [isTimerLayerEnabled, setIsTimerLayerEnabled] = useState(true);
+  const [previewScale, setPreviewScale] = useState(0.7);
   const [timers, setTimers] = useState<TimerItem[]>(() => {
     const defaults: TimerConfig[] = [
       {
@@ -311,7 +333,7 @@ export const OutputPreview = memo(function OutputPreview({
     }));
   });
   const [expandedTimerId, setExpandedTimerId] = useState<string | null>(
-    "pre-service",
+    "pre-service"
   );
 
   const hasActiveFilters =
@@ -322,14 +344,80 @@ export const OutputPreview = memo(function OutputPreview({
     () =>
       expandedTimerId && timers.some((timer) => timer.id === expandedTimerId)
         ? expandedTimerId
-        : timers[0]?.id ?? null,
-    [expandedTimerId, timers],
+        : (timers[0]?.id ?? null),
+    [expandedTimerId, timers]
   );
 
   const activeTimer = useMemo(
     () => timers.find((timer) => timer.id === activeTimerId) ?? null,
-    [timers, activeTimerId],
+    [timers, activeTimerId]
   );
+  const activeTimerDisplay = useMemo(
+    () => (activeTimer ? getTimerDisplay(activeTimer) : null),
+    [activeTimer]
+  );
+  const timerLabelForOutput = activeTimer?.name ?? "Timer Name";
+  const timerTextForOutput = activeTimerDisplay ?? "00:00:00";
+  const timerClockFontPx = useMemo(
+    () =>
+      Math.max(
+        6,
+        Math.round(
+          Math.min(Math.max(timerLayout.clockFontPx, 12), 400) * previewScale
+        )
+      ),
+    [timerLayout.clockFontPx, previewScale]
+  );
+  const timerTitleFontPx = useMemo(
+    () =>
+      Math.max(
+        5,
+        Math.round(
+          Math.min(Math.max(timerLayout.nameFontPx, 8), 220) * previewScale
+        )
+      ),
+    [timerLayout.nameFontPx, previewScale]
+  );
+
+  useEffect(() => {
+    const frame = outputFrameRef.current;
+    if (!frame) {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+      const relativeScale = Math.min(
+        entry.contentRect.width / OUTPUT_BASE_WIDTH,
+        entry.contentRect.height / OUTPUT_BASE_HEIGHT,
+        1
+      );
+      const nextScale = Math.pow(Math.max(relativeScale, 0), 0.82);
+      setPreviewScale(Math.max(nextScale, 0.28));
+    });
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) {
+      return;
+    }
+    window.electronAPI.sendToOutput({
+      type: "timer-update",
+      timerLabel: timerLabelForOutput,
+      timerText: timerTextForOutput,
+      timerRunning: activeTimer?.isRunning ?? false,
+      timerVisible: isTimerLayerEnabled,
+    });
+  }, [
+    activeTimer?.isRunning,
+    isTimerLayerEnabled,
+    timerLabelForOutput,
+    timerTextForOutput,
+  ]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -369,7 +457,7 @@ export const OutputPreview = memo(function OutputPreview({
             const remaining = getCountdownToTimeSeconds(
               timer.hour,
               timer.minute,
-              timer.meridiem,
+              timer.meridiem
             );
             if (remaining <= 0) {
               return { ...timer, isRunning: false, secondsValue: 0 };
@@ -397,7 +485,7 @@ export const OutputPreview = memo(function OutputPreview({
             isRunning: nextRemaining > 0,
             secondsValue: nextRemaining,
           };
-        }),
+        })
       );
     }, 1000);
 
@@ -438,7 +526,7 @@ export const OutputPreview = memo(function OutputPreview({
 
         const nextTimer = { ...timer, ...patch };
         const shouldResetRuntime = timerAffectsClockFields.some(
-          (field) => field in patch,
+          (field) => field in patch
         );
 
         if (!shouldResetRuntime) {
@@ -450,7 +538,7 @@ export const OutputPreview = memo(function OutputPreview({
           isRunning: false,
           secondsValue: getInitialTimerValue(nextTimer),
         };
-      }),
+      })
     );
   };
 
@@ -472,7 +560,7 @@ export const OutputPreview = memo(function OutputPreview({
             secondsValue: getCountdownToTimeSeconds(
               timer.hour,
               timer.minute,
-              timer.meridiem,
+              timer.meridiem
             ),
           };
         }
@@ -494,7 +582,7 @@ export const OutputPreview = memo(function OutputPreview({
               ? timer.secondsValue
               : getInitialTimerValue(timer),
         };
-      }),
+      })
     );
   };
 
@@ -507,14 +595,14 @@ export const OutputPreview = memo(function OutputPreview({
               isRunning: false,
               secondsValue: getInitialTimerValue(timer),
             }
-          : timer,
-      ),
+          : timer
+      )
     );
   };
 
   const stopAllTimers = () => {
     setTimers((previous) =>
-      previous.map((timer) => ({ ...timer, isRunning: false })),
+      previous.map((timer) => ({ ...timer, isRunning: false }))
     );
   };
 
@@ -531,14 +619,16 @@ export const OutputPreview = memo(function OutputPreview({
           return {
             ...timer,
             secondsValue:
-              targetSeconds > 0 ? Math.min(nextValue, targetSeconds) : nextValue,
+              targetSeconds > 0
+                ? Math.min(nextValue, targetSeconds)
+                : nextValue,
             isRunning: false,
           };
         }
 
         const nextValue = Math.max(timer.secondsValue + delta, 0);
         return { ...timer, secondsValue: nextValue, isRunning: false };
-      }),
+      })
     );
   };
 
@@ -557,7 +647,7 @@ export const OutputPreview = memo(function OutputPreview({
               ? isFrozen
                 ? "bg-sky-400"
                 : "bg-green-500"
-              : "bg-primary",
+              : "bg-primary"
           )}
         />
         <p className="text-xs font-medium text-muted-foreground">
@@ -570,151 +660,211 @@ export const OutputPreview = memo(function OutputPreview({
         </p>
       </div>
 
-      <div className="flex shrink-0 justify-center px-3">
-        <div
-          style={{ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT }}
-          className="relative shrink-0 overflow-hidden rounded-lg bg-black"
-        >
-          {showMedia &&
-            activeMediaItem &&
-            (activeMediaItem.type === "image" ? (
-              <img
-                src={activeMediaItem.url}
-                alt={activeMediaItem.name}
-                className="absolute inset-0 h-full w-full object-cover"
-                style={{ filter: filterStyle }}
-              />
-            ) : (
-              <video
-                ref={videoRef}
-                src={activeMediaItem.url}
-                className="absolute inset-0 h-full w-full object-cover"
-                style={{ filter: filterStyle }}
-                loop={videoSettings.loop}
-                muted
-                playsInline
-              />
-            ))}
-
-          {showText && text && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
-              <div className="flex min-h-0 w-full flex-1 items-center justify-center">
-                <AutoFitText
-                  text={stripBracketsForDisplay(text)}
-                  className={cn(
-                    "pointer-events-none select-none leading-relaxed text-white",
-                    !isScriptureSlide && fontBold && "font-bold",
-                    !isScriptureSlide && fontItalic && "italic",
-                    !isScriptureSlide && fontUnderline && "underline",
-                    "drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]",
-                  )}
-                  style={{
-                    fontFamily: isScriptureSlide
-                      ? scriptureFontFamily || fontFamily
-                      : fontFamily,
-                  }}
-                  align={isScriptureSlide ? scriptureTextAlign : "center"}
-                  maxFontSize={
-                    isScriptureSlide
-                      ? Math.max(24, (scriptureFontSize ?? 72) * 0.3)
-                      : fontSize
-                        ? fontSize * 0.18
-                        : 24
-                  }
-                  minScale={isScriptureSlide ? 0.45 : 0.4}
+      <div className="shrink-0">
+        <div className="flex items-stretch gap-2">
+          <div
+            ref={outputFrameRef}
+            className="relative min-w-0 flex-1 aspect-video overflow-hidden rounded-sm border border-border/60 bg-black"
+          >
+            {showMedia &&
+              activeMediaItem &&
+              (activeMediaItem.type === "image" ? (
+                <img
+                  src={activeMediaItem.url}
+                  alt={activeMediaItem.name}
+                  className="absolute inset-0 h-full w-full object-cover"
+                  style={{ filter: filterStyle }}
                 />
-              </div>
-              {footer && (
-                <div className="mt-2 text-[8px] font-semibold uppercase tracking-wide text-white/90 drop-shadow-md sm:text-[10px]">
-                  {footer}
+              ) : (
+                <video
+                  ref={videoRef}
+                  src={activeMediaItem.url}
+                  className="absolute inset-0 h-full w-full object-cover"
+                  style={{ filter: filterStyle }}
+                  loop={videoSettings.loop}
+                  muted
+                  playsInline
+                />
+              ))}
+
+            {showText && text && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
+                <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+                  <AutoFitText
+                    text={stripBracketsForDisplay(text)}
+                    className={cn(
+                      "pointer-events-none select-none leading-relaxed text-white",
+                      !isScriptureSlide && fontBold && "font-bold",
+                      !isScriptureSlide && fontItalic && "italic",
+                      !isScriptureSlide && fontUnderline && "underline",
+                      "drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
+                    )}
+                    style={{
+                      fontFamily: isScriptureSlide
+                        ? scriptureFontFamily || fontFamily
+                        : fontFamily,
+                    }}
+                    align={isScriptureSlide ? scriptureTextAlign : "center"}
+                    maxFontSize={
+                      isScriptureSlide
+                        ? Math.max(24, (scriptureFontSize ?? 72) * 0.3)
+                        : fontSize
+                          ? fontSize * 0.18
+                          : 24
+                    }
+                    minScale={isScriptureSlide ? 0.45 : 0.4}
+                  />
                 </div>
+                {footer && (
+                  <div className="mt-2 text-[8px] font-semibold uppercase tracking-wide text-white/90 drop-shadow-md sm:text-[10px]">
+                    {footer}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isTimerLayerEnabled &&
+            timerLabelForOutput &&
+            timerLayout.nameBannerEnabled ? (
+              <div
+                style={{
+                  fontSize: `${timerTitleFontPx}px`,
+                  color: timerLayout.nameColor,
+                  backgroundColor: timerLayout.nameBannerColor,
+                }}
+                className="absolute inset-x-0 top-0 z-20 px-2 py-1 text-center font-medium uppercase tracking-wider"
+              >
+                {timerLabelForOutput}
+              </div>
+            ) : null}
+
+            {isTimerLayerEnabled && timerTextForOutput && (
+              <div
+                style={{
+                  left: `${timerLayout.xPercent}%`,
+                  top: `${timerLayout.yPercent}%`,
+                  transform: "translate(-50%, -50%)",
+                }}
+                className="absolute z-20 box-border rounded-md bg-black/65 px-2 py-0 text-[9px] font-semibold tracking-wide text-white"
+              >
+                {timerLabelForOutput &&
+                !timerLayout.nameBannerEnabled &&
+                timerLayout.titlePosition === "top" ? (
+                  <div
+                    style={{
+                      fontSize: `${timerTitleFontPx}px`,
+                      color: timerLayout.nameColor,
+                    }}
+                    className="whitespace-nowrap overflow-hidden text-ellipsis font-medium uppercase tracking-wider"
+                  >
+                    {timerLabelForOutput}
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    fontSize: `${timerClockFontPx}px`,
+                    color: timerLayout.clockColor,
+                  }}
+                >
+                  {timerTextForOutput}
+                </div>
+                {timerLabelForOutput &&
+                !timerLayout.nameBannerEnabled &&
+                timerLayout.titlePosition !== "top" ? (
+                  <div
+                    style={{
+                      fontSize: `${timerTitleFontPx}px`,
+                      color: timerLayout.nameColor,
+                    }}
+                    className="whitespace-nowrap overflow-hidden text-ellipsis font-medium uppercase tracking-wider"
+                  >
+                    {timerLabelForOutput}
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {!text && !activeMediaItem && !isTimerLayerEnabled && (
+              <div className="absolute inset-0 z-0 flex h-full items-center justify-center">
+                <p className="text-xs text-zinc-600">No content</p>
+              </div>
+            )}
+          </div>
+
+          <div className="grid w-24 shrink-0 grid-cols-[2.8rem_1fr] text-muted-foreground">
+            <div className="flex items-center justify-center border-r border-border/70">
+              <button
+                type="button"
+                onClick={() => {
+                  if (showText) {
+                    onToggleText();
+                  }
+                  onClearMedia();
+                }}
+                className="inline-flex h-10 w-10 items-center justify-center transition hover:text-foreground"
+                title="Clear text and media"
+              >
+                <X className="h-7 w-7" />
+              </button>
+            </div>
+            <div className="flex flex-col items-center justify-between py-1">
+              <button
+                type="button"
+                onClick={onToggleText}
+                className={cn(
+                  "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
+                  showText ? "text-primary" : "text-muted-foreground"
+                )}
+                title={showText ? "Hide text layer" : "Show text layer"}
+              >
+                <Type className="h-6 w-6" />
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground"
+                title="Message layer"
+              >
+                <MessageSquare className="h-6 w-6" />
+              </button>
+              <button
+                type="button"
+                onClick={onClearMedia}
+                className="inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground"
+                title="Clear media"
+              >
+                <Image className="h-6 w-6" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowFilters((previous) => !previous)}
+                className={cn(
+                  "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
+                  showFilters || hasActiveFilters
+                    ? "text-primary"
+                    : "text-muted-foreground"
+                )}
+                title="Media filters"
+              >
+                <SlidersHorizontal className="h-6 w-6" />
+              </button>
+              {onToggleFreeze && (
+                <button
+                  type="button"
+                  onClick={onToggleFreeze}
+                  className={cn(
+                    "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
+                    isFrozen ? "text-sky-400" : "text-muted-foreground"
+                  )}
+                  title={
+                    isFrozen ? "Unfreeze main output" : "Freeze main output"
+                  }
+                >
+                  <IoSnow className="h-6 w-6" />
+                </button>
               )}
             </div>
-          )}
-
-          {!text && !activeMediaItem && (
-            <div className="flex h-full items-center justify-center">
-              <p className="text-xs text-zinc-600">No content</p>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
-
-      <div className="mt-3 shrink-0 px-3">
-        <div className="grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (showText) {
-                onToggleText();
-              }
-            }}
-            className={cn(
-              "flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-medium transition",
-              showText
-                ? "border-primary/50 bg-primary/15 text-primary"
-                : "border-border bg-secondary/40 text-muted-foreground",
-            )}
-            title="Clear text from output"
-          >
-            <Music2 className="h-3.5 w-3.5" />
-            Text
-          </button>
-          <button
-            type="button"
-            disabled
-            className="flex items-center justify-center gap-1.5 rounded-md border border-border bg-secondary/25 px-2 py-1.5 text-[11px] font-medium text-muted-foreground/70"
-            title="Message layer is coming soon"
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            Message
-          </button>
-          <button
-            type="button"
-            onClick={onClearMedia}
-            className="flex items-center justify-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/15 px-2 py-1.5 text-[11px] font-medium text-destructive transition hover:bg-destructive/25"
-            title="Clear media from output"
-          >
-            <Image className="h-3.5 w-3.5" />
-            Media
-          </button>
-        </div>
-
-        <div className="mt-2 grid grid-cols-1 gap-2">
-          {onToggleFreeze && (
-            <button
-              type="button"
-              onClick={onToggleFreeze}
-              className={cn(
-                "flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-medium transition",
-                isFrozen
-                  ? "border-sky-500/50 bg-sky-500/20 text-sky-300"
-                  : "border-border bg-secondary/35 text-muted-foreground hover:text-foreground",
-              )}
-              title={isFrozen ? "Unfreeze main output" : "Freeze main output"}
-            >
-              <IoSnow className="h-4 w-4" />
-              {isFrozen ? "Frozen" : "Freeze"}
-            </button>
-          )}
-        </div>
-
-        {activeMediaItem ? (
-          <button
-            type="button"
-            onClick={() => setShowFilters((previous) => !previous)}
-            className={cn(
-              "mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-medium transition",
-              showFilters || hasActiveFilters
-                ? "border-primary/50 bg-primary/15 text-primary"
-                : "border-border bg-secondary/35 text-muted-foreground hover:text-foreground",
-            )}
-            title="Media filters"
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            Media Settings
-          </button>
-        ) : null}
       </div>
 
       {activeMediaItem?.type === "video" && (
@@ -726,7 +876,7 @@ export const OutputPreview = memo(function OutputPreview({
               "flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition",
               videoSettings.loop
                 ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-muted-foreground hover:text-foreground",
+                : "bg-secondary text-muted-foreground hover:text-foreground"
             )}
             title={videoSettings.loop ? "Disable loop" : "Enable loop"}
           >
@@ -742,7 +892,7 @@ export const OutputPreview = memo(function OutputPreview({
               "flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition",
               videoSettings.muted
                 ? "bg-destructive/20 text-destructive"
-                : "bg-secondary text-muted-foreground hover:text-foreground",
+                : "bg-secondary text-muted-foreground hover:text-foreground"
             )}
             title={videoSettings.muted ? "Unmute" : "Mute"}
           >
@@ -759,7 +909,9 @@ export const OutputPreview = memo(function OutputPreview({
             step="0.1"
             value={videoSettings.volume}
             onChange={(event) =>
-              onVideoSettingsChange({ volume: Number.parseFloat(event.target.value) })
+              onVideoSettingsChange({
+                volume: Number.parseFloat(event.target.value),
+              })
             }
             className="h-1 w-16 accent-primary"
             title={`Volume: ${Math.round(videoSettings.volume * 100)}%`}
@@ -767,78 +919,90 @@ export const OutputPreview = memo(function OutputPreview({
         </div>
       )}
 
-      {activeMediaItem && showFilters && (
+      {showFilters && (
         <div className="mx-3 mt-2 shrink-0 space-y-1.5 rounded-lg border border-border bg-card/50 p-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Filters
-            </span>
-            <button
-              type="button"
-              onClick={onResetFilters}
-              className="flex items-center gap-0.5 text-[9px] text-muted-foreground transition hover:text-foreground"
-              title="Reset all filters"
-            >
-              <RotateCcw className="h-2.5 w-2.5" />
-              Reset
-            </button>
-          </div>
-          <FilterSlider
-            label="Bright"
-            value={mediaFilters.brightness}
-            min={0}
-            max={200}
-            defaultValue={100}
-            onChange={(value) => onMediaFiltersChange({ brightness: value })}
-          />
-          <FilterSlider
-            label="Contrast"
-            value={mediaFilters.contrast}
-            min={0}
-            max={200}
-            defaultValue={100}
-            onChange={(value) => onMediaFiltersChange({ contrast: value })}
-          />
-          <FilterSlider
-            label="Saturate"
-            value={mediaFilters.saturation}
-            min={0}
-            max={200}
-            defaultValue={100}
-            onChange={(value) => onMediaFiltersChange({ saturation: value })}
-          />
-          <FilterSlider
-            label="Blur"
-            value={mediaFilters.blur}
-            min={0}
-            max={20}
-            defaultValue={0}
-            onChange={(value) => onMediaFiltersChange({ blur: value })}
-          />
-          <FilterSlider
-            label="Gray"
-            value={mediaFilters.grayscale}
-            min={0}
-            max={100}
-            defaultValue={0}
-            onChange={(value) => onMediaFiltersChange({ grayscale: value })}
-          />
-          <FilterSlider
-            label="Sepia"
-            value={mediaFilters.sepia}
-            min={0}
-            max={100}
-            defaultValue={0}
-            onChange={(value) => onMediaFiltersChange({ sepia: value })}
-          />
-          <FilterSlider
-            label="Hue"
-            value={mediaFilters.hueRotate}
-            min={0}
-            max={360}
-            defaultValue={0}
-            onChange={(value) => onMediaFiltersChange({ hueRotate: value })}
-          />
+          {activeMediaItem ? (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Filters
+                </span>
+                <button
+                  type="button"
+                  onClick={onResetFilters}
+                  className="flex items-center gap-0.5 text-[9px] text-muted-foreground transition hover:text-foreground"
+                  title="Reset all filters"
+                >
+                  <RotateCcw className="h-2.5 w-2.5" />
+                  Reset
+                </button>
+              </div>
+              <FilterSlider
+                label="Bright"
+                value={mediaFilters.brightness}
+                min={0}
+                max={200}
+                defaultValue={100}
+                onChange={(value) =>
+                  onMediaFiltersChange({ brightness: value })
+                }
+              />
+              <FilterSlider
+                label="Contrast"
+                value={mediaFilters.contrast}
+                min={0}
+                max={200}
+                defaultValue={100}
+                onChange={(value) => onMediaFiltersChange({ contrast: value })}
+              />
+              <FilterSlider
+                label="Saturate"
+                value={mediaFilters.saturation}
+                min={0}
+                max={200}
+                defaultValue={100}
+                onChange={(value) =>
+                  onMediaFiltersChange({ saturation: value })
+                }
+              />
+              <FilterSlider
+                label="Blur"
+                value={mediaFilters.blur}
+                min={0}
+                max={20}
+                defaultValue={0}
+                onChange={(value) => onMediaFiltersChange({ blur: value })}
+              />
+              <FilterSlider
+                label="Gray"
+                value={mediaFilters.grayscale}
+                min={0}
+                max={100}
+                defaultValue={0}
+                onChange={(value) => onMediaFiltersChange({ grayscale: value })}
+              />
+              <FilterSlider
+                label="Sepia"
+                value={mediaFilters.sepia}
+                min={0}
+                max={100}
+                defaultValue={0}
+                onChange={(value) => onMediaFiltersChange({ sepia: value })}
+              />
+              <FilterSlider
+                label="Hue"
+                value={mediaFilters.hueRotate}
+                min={0}
+                max={360}
+                defaultValue={0}
+                onChange={(value) => onMediaFiltersChange({ hueRotate: value })}
+              />
+            </>
+          ) : (
+            <p className="text-[10px] text-muted-foreground">
+              Select media to edit brightness and other filters.
+            </p>
+          )}
         </div>
       )}
 
@@ -969,7 +1133,13 @@ export const OutputPreview = memo(function OutputPreview({
           </button>
           <button
             type="button"
-            className="inline-flex h-7 items-center justify-center border-r border-border/70 bg-destructive/70 text-white"
+            onClick={() => setIsTimerLayerEnabled((previous) => !previous)}
+            className={cn(
+              "inline-flex h-7 items-center justify-center border-r border-border/70 transition",
+              isTimerLayerEnabled
+                ? "bg-destructive/70 text-white"
+                : "text-muted-foreground hover:text-foreground"
+            )}
             title="Timers"
           >
             <Clock3 className="h-3.5 w-3.5" />
@@ -1025,7 +1195,7 @@ export const OutputPreview = memo(function OutputPreview({
                     type="button"
                     onClick={() =>
                       setExpandedTimerId((current) =>
-                        current === timer.id ? null : timer.id,
+                        current === timer.id ? null : timer.id
                       )
                     }
                     className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border/70 bg-background/40 text-muted-foreground"
@@ -1034,7 +1204,7 @@ export const OutputPreview = memo(function OutputPreview({
                     <ChevronDown
                       className={cn(
                         "h-3.5 w-3.5 transition-transform",
-                        isExpanded ? "rotate-180" : "-rotate-90",
+                        isExpanded ? "rotate-180" : "-rotate-90"
                       )}
                     />
                   </button>
@@ -1064,7 +1234,7 @@ export const OutputPreview = memo(function OutputPreview({
                         "inline-flex h-6 w-6 items-center justify-center rounded border transition",
                         timer.isRunning
                           ? "border-primary/60 bg-primary/20 text-primary"
-                          : "border-border bg-background/50 text-muted-foreground hover:text-foreground",
+                          : "border-border bg-background/50 text-muted-foreground hover:text-foreground"
                       )}
                       title={timer.isRunning ? "Pause timer" : "Play timer"}
                     >
@@ -1106,7 +1276,9 @@ export const OutputPreview = memo(function OutputPreview({
                         className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
                       >
                         <option value="countdown">Countdown Timer</option>
-                        <option value="countdownToTime">Countdown to Time</option>
+                        <option value="countdownToTime">
+                          Countdown to Time
+                        </option>
                         <option value="elapsed">Elapsed Time</option>
                       </select>
                       <p className="text-[10px] text-muted-foreground">
@@ -1122,7 +1294,9 @@ export const OutputPreview = memo(function OutputPreview({
                         <input
                           value={timer.duration}
                           onChange={(event) =>
-                            updateTimer(timer.id, { duration: event.target.value })
+                            updateTimer(timer.id, {
+                              duration: event.target.value,
+                            })
                           }
                           className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
                         />
@@ -1144,13 +1318,14 @@ export const OutputPreview = memo(function OutputPreview({
                             }
                             className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
                           >
-                            {Array.from({ length: 12 }, (_, index) => index + 1).map(
-                              (hourValue) => (
-                                <option key={hourValue} value={hourValue}>
-                                  {hourValue}
-                                </option>
-                              ),
-                            )}
+                            {Array.from(
+                              { length: 12 },
+                              (_, index) => index + 1
+                            ).map((hourValue) => (
+                              <option key={hourValue} value={hourValue}>
+                                {hourValue}
+                              </option>
+                            ))}
                           </select>
                         </div>
                         <div className="space-y-1">
@@ -1166,13 +1341,14 @@ export const OutputPreview = memo(function OutputPreview({
                             }
                             className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
                           >
-                            {Array.from({ length: 60 }, (_, index) => index).map(
-                              (minuteValue) => (
-                                <option key={minuteValue} value={minuteValue}>
-                                  {String(minuteValue).padStart(2, "0")}
-                                </option>
-                              ),
-                            )}
+                            {Array.from(
+                              { length: 60 },
+                              (_, index) => index
+                            ).map((minuteValue) => (
+                              <option key={minuteValue} value={minuteValue}>
+                                {String(minuteValue).padStart(2, "0")}
+                              </option>
+                            ))}
                           </select>
                         </div>
                         <div className="space-y-1">

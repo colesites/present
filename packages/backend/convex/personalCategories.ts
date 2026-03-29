@@ -2,7 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
 export const listByUser = query({
-  args: { userId: v.id("users") },
+  args: { userId: v.string() },
   handler: async (ctx, args) => {
     return await ctx.db
       .query("personalCategories")
@@ -12,7 +12,7 @@ export const listByUser = query({
 });
 
 export const ensureDefaults = mutation({
-  args: { userId: v.id("users") },
+  args: { userId: v.string() },
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("personalCategories")
@@ -45,7 +45,7 @@ export const ensureDefaults = mutation({
 
 export const create = mutation({
   args: {
-    userId: v.id("users"),
+    userId: v.string(),
     name: v.string(),
   },
   handler: async (ctx, args) => {

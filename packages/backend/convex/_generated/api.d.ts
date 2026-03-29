@@ -8,7 +8,6 @@
  * @module
  */
 
-import type * as auth from "../auth.js";
 import type * as authUtils from "../authUtils.js";
 import type * as categories from "../categories.js";
 import type * as debug from "../debug.js";
@@ -16,6 +15,7 @@ import type * as http from "../http.js";
 import type * as libraries from "../libraries.js";
 import type * as lyrics from "../lyrics.js";
 import type * as orgScopes from "../orgScopes.js";
+import type * as organizations from "../organizations.js";
 import type * as personalCategories from "../personalCategories.js";
 import type * as playback from "../playback.js";
 import type * as playlists from "../playlists.js";
@@ -30,7 +30,6 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  auth: typeof auth;
   authUtils: typeof authUtils;
   categories: typeof categories;
   debug: typeof debug;
@@ -38,6 +37,7 @@ declare const fullApi: ApiFromModules<{
   libraries: typeof libraries;
   lyrics: typeof lyrics;
   orgScopes: typeof orgScopes;
+  organizations: typeof organizations;
   personalCategories: typeof personalCategories;
   playback: typeof playback;
   playlists: typeof playlists;

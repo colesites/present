@@ -4,6 +4,15 @@ export type Settings = {
   scriptureFontSize: number;
   scriptureFontFamily: string;
   scriptureTextAlign: "left" | "center" | "right";
+  timerXPercent: number;
+  timerYPercent: number;
+  timerClockFontPx: number;
+  timerNameFontPx: number;
+  timerClockColor: string;
+  timerNameColor: string;
+  timerNameBannerEnabled: boolean;
+  timerNameBannerColor: string;
+  timerTitlePosition: "top" | "bottom";
 };
 
 export const SETTINGS_STORAGE_KEY = "present-settings";

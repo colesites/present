@@ -9,33 +9,38 @@ import type { ScriptureSlide } from "../scripture/lib/slides";
 import { useServices } from "../services/hooks";
 import type { ShowsPanelRef } from "../shows";
 import { useLibrary } from "../library/hooks";
-import type { LibraryItem, ViewMode, BottomTab, ContentSource } from "../../types";
+import type {
+  LibraryItem,
+  ViewMode,
+  BottomTab,
+  ContentSource,
+} from "../../shared/types";
 import {
   useCategories,
   useOutputBroadcast,
   usePlayback,
   usePresentMediaFlow,
   useShowVideoSync,
-} from "../../hooks";
+} from "../../renderer/shared/hooks";
 import { MediaState, MediaItem } from "../media/hooks/useMediaFolders";
 import {
   getActiveSlideText,
   getSlideGroups,
   getSlidesForGrid,
-} from "../../lib/present/selectors";
-import { useSpeechAutopilot } from "../../hooks/useSpeechAutopilot";
-import { useAppNavigation } from "../../hooks/useAppNavigation";
-import { useAppHandlers } from "../../hooks/useAppHandlers";
+} from "../../renderer/shared/lib/present/selectors";
+import { useSpeechAutopilot } from "../../renderer/shared/hooks/useSpeechAutopilot";
+import { useAppNavigation } from "../../renderer/shared/hooks/useAppNavigation";
+import { useAppHandlers } from "../../renderer/shared/hooks/useAppHandlers";
 import { MainView } from "./MainView";
 
 interface PresentContainerProps {
   orgId: Id<"organizations"> | undefined;
-  userId: Id<"users"> | null;
+  userId: string | null;
   viewMode: ViewMode;
   bottomTab: BottomTab;
   contentSource: ContentSource;
-  mediaState: MediaState; 
-  settings: any;   
+  mediaState: MediaState;
+  settings: any;
   showsPanelRef: React.RefObject<ShowsPanelRef>;
   mediaPanelRef: React.RefObject<MediaPanelRef>;
   scripturePanelRef: React.RefObject<ScripturePanelRef>;
@@ -72,6 +77,15 @@ export function PresentContainer({
     settingsScriptureFontFamily,
     settingsScriptureTextAlign,
     settingsScriptureBackgroundId,
+    settingsTimerXPercent,
+    settingsTimerYPercent,
+    settingsTimerClockFontPx,
+    settingsTimerNameFontPx,
+    settingsTimerClockColor,
+    settingsTimerNameColor,
+    settingsTimerNameBannerEnabled,
+    settingsTimerNameBannerColor,
+    settingsTimerTitlePosition,
   } = settings;
 
   // Data hooks
@@ -100,7 +114,10 @@ export function PresentContainer({
     updateExistingItem: updateExistingLibraryItem,
     deleteItem: deleteLibraryItem,
     isLoading: libraryLoading,
-  } = useLibrary({ orgId: orgId ?? null, userId: userId ?? null }, contentSource);
+  } = useLibrary(
+    { orgId: orgId ?? null, userId: userId ?? null },
+    contentSource
+  );
 
   const {
     services,
@@ -123,7 +140,10 @@ export function PresentContainer({
     exitService,
   } = useServices({ orgId: orgId ?? null, userId }, libraryItems);
 
-  const { categories, createNewCategory } = useCategories({ orgId: orgId ?? null, userId });
+  const { categories, createNewCategory } = useCategories({
+    orgId: orgId ?? null,
+    userId,
+  });
 
   // Output visibility toggles
   const [showTextInOutput, setShowTextInOutput] = useState(true);
@@ -139,7 +159,9 @@ export function PresentContainer({
     libraryId: string | null;
     index: number;
   } | null>(null);
-  const [editScrollToSlide, setEditScrollToSlide] = useState<number | null>(null);
+  const [editScrollToSlide, setEditScrollToSlide] = useState<number | null>(
+    null
+  );
   const [isOutputFrozen, setIsOutputFrozen] = useState(false);
 
   // Memos
@@ -173,14 +195,20 @@ export function PresentContainer({
     return text ? { text } : null;
   }, [activeSlideId, libraryItems, scriptureSlides]);
 
-  const slideGroups = useMemo(() => getSlideGroups(selectedLibraryItem), [selectedLibraryItem]);
+  const slideGroups = useMemo(
+    () => getSlideGroups(selectedLibraryItem),
+    [selectedLibraryItem]
+  );
 
   const scriptureBackgroundMediaItem = useMemo(
     () =>
       settingsScriptureBackgroundId
-        ? activeMediaItem && activeMediaItem.id === settingsScriptureBackgroundId
+        ? activeMediaItem &&
+          activeMediaItem.id === settingsScriptureBackgroundId
           ? activeMediaItem
-          : allMediaItems.find((item: MediaItem) => item.id === settingsScriptureBackgroundId) ?? null
+          : (allMediaItems.find(
+              (item: MediaItem) => item.id === settingsScriptureBackgroundId
+            ) ?? null)
         : null,
     [activeMediaItem, allMediaItems, settingsScriptureBackgroundId]
   );
@@ -202,7 +230,9 @@ export function PresentContainer({
     handleSelectScripture,
   } = useAppHandlers({
     setSelected,
-    setViewMode: () => { /* No-op in PresentContainer */ }, // Not used in PresentContainer for now, but signature requires it
+    setViewMode: () => {
+      /* No-op in PresentContainer */
+    }, // Not used in PresentContainer for now, but signature requires it
     setSelectedLibraryId,
     setScriptureSlides,
     setShowTextInOutput,
@@ -282,7 +312,10 @@ export function PresentContainer({
     showMedia: showMediaInOutput,
     videoSettings,
     mediaFilterCSS,
-    isVideoPlaying: (isScriptureActive && effectiveActiveMediaItem?.type === "video") ? true : isVideoPlaying,
+    isVideoPlaying:
+      isScriptureActive && effectiveActiveMediaItem?.type === "video"
+        ? true
+        : isVideoPlaying,
     videoCurrentTime,
     isFrozen: isOutputFrozen,
     scriptureStyle: {
@@ -296,6 +329,17 @@ export function PresentContainer({
       fontBold,
       fontItalic,
       fontUnderline,
+    },
+    timerLayout: {
+      xPercent: settingsTimerXPercent,
+      yPercent: settingsTimerYPercent,
+      clockFontPx: settingsTimerClockFontPx,
+      nameFontPx: settingsTimerNameFontPx,
+      clockColor: settingsTimerClockColor,
+      nameColor: settingsTimerNameColor,
+      nameBannerEnabled: settingsTimerNameBannerEnabled,
+      nameBannerColor: settingsTimerNameBannerColor,
+      titlePosition: settingsTimerTitlePosition,
     },
     activeSlideId,
     slideText: activeSlideContent?.text ?? null,
@@ -332,11 +376,14 @@ export function PresentContainer({
         onSelectServiceItem: handleSelectServiceItem,
         onDoubleClickServiceItem: handleDoubleClickServiceItem,
         onRemoveFromService: handleRemoveFromService,
-        onCreateService: async (name) => { await createNewService(name); },
+        onCreateService: async (name) => {
+          await createNewService(name);
+        },
         onRenameService: renameExistingService,
         onDeleteService: deleteService,
         onReorderServiceItems: selectedServiceId
-          ? (from: number, to: number) => reorderServiceItems(selectedServiceId, from, to)
+          ? (from: number, to: number) =>
+              reorderServiceItems(selectedServiceId, from, to)
           : () => Promise.resolve(),
         onReorderServices: reorderServices,
       }}
@@ -385,11 +432,15 @@ export function PresentContainer({
         categories,
         selectedCategoryId,
         setSelectedCategoryId,
-        createNewLibraryItem: async (title, body, categoryId) => { await createNewLibraryItem(title, body, categoryId); },
+        createNewLibraryItem: async (title, body, categoryId) => {
+          await createNewLibraryItem(title, body, categoryId);
+        },
         handleRenameLibraryItem,
         deleteLibraryItem,
         handleAddToService,
-        createNewCategory: async (name) => { await createNewCategory(name); },
+        createNewCategory: async (name) => {
+          await createNewCategory(name);
+        },
         searchQuery,
         setSearchQuery,
         contentSource,
@@ -403,6 +454,17 @@ export function PresentContainer({
         scriptureFontFamily: settingsScriptureFontFamily,
         scriptureFontSize: settingsScriptureFontSize,
         scriptureTextAlign: settingsScriptureTextAlign,
+        timerLayout: {
+          xPercent: settingsTimerXPercent,
+          yPercent: settingsTimerYPercent,
+          clockFontPx: settingsTimerClockFontPx,
+          nameFontPx: settingsTimerNameFontPx,
+          clockColor: settingsTimerClockColor,
+          nameColor: settingsTimerNameColor,
+          nameBannerEnabled: settingsTimerNameBannerEnabled,
+          nameBannerColor: settingsTimerNameBannerColor,
+          titlePosition: settingsTimerTitlePosition,
+        },
         updateFontStyle,
       }}
       panelRefs={{

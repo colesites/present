@@ -171,4 +171,11 @@
     stroke-linejoin: round;
     filter: drop-shadow(0 0 8px rgb(80 95 255 / 0.42));
   }
+
+  /* Clerk Organization Switcher - Force white text on "Create organization" button */
+  .cl-organizationSwitcherPopoverActionButton,
+  .cl-organizationSwitcherPopoverActionButton__organizationSwitcher,
+  .cl-organizationSwitcherPopoverActionButtonText {
+    color: #ffffff !important;
+  }
 }

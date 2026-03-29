@@ -14,7 +14,7 @@ import {
 import { parseReference, type ParsedReference } from "../lib/parser";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
-import { cn } from "../../../lib/utils";
+import { cn } from "../../../renderer/shared/lib/utils";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { useServices } from "../../../features/services/hooks";
 import { useScripture, type HostedBibleVersion } from "../hooks/useScripture";
@@ -41,12 +41,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../../components/ui/dropdown-menu";
+} from "../../../renderer/shared/components/ui/dropdown-menu";
 
 interface ScripturePanelProps {
   onSendToOutput: (slides: ScriptureSlide[]) => void;
   orgId: Id<"organizations"> | null;
-  userId: Id<"users"> | null;
+  userId: string | null;
 }
 
 export interface ScripturePanelRef {

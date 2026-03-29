@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState, useCallback, useRef, useEffect } from "react";
-import type { LibraryItem } from "../../types";
+import type { LibraryItem } from "../../shared/types";
 import { FontToolbar } from "./FontToolbar";
 import { toast } from "sonner";
 import { useDebouncedCallback } from "use-debounce";

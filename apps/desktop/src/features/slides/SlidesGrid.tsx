@@ -1,24 +1,23 @@
 "use client";
 
-import { memo } from "react";
-import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { LibraryItem } from "../../types";
-import { stripBracketsForDisplay } from "../../lib/lyrics";
-import { getLabelColor } from "../../types";
-import { cn } from "../../lib/utils";
-import { AutoFitText } from "../../components/AutoFitText";
+import { memo, useMemo, useState } from "react";
+import type { LibraryItem } from "../../shared/types";
+import { stripBracketsForDisplay } from "../../renderer/shared/lib/lyrics";
+import { getLabelColor } from "../../shared/types";
+import { cn } from "../../renderer/shared/lib/utils";
+import { AutoFitText } from "../../renderer/shared/components/AutoFitText";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from "../../components/ui/context-menu";
+} from "../../renderer/shared/components/ui/context-menu";
 import { Pencil } from "lucide-react";
 
 // Fixed slide box height
-const SLIDE_HEIGHT = 160;
+const BASE_SLIDE_HEIGHT = 160;
 // Minimum width for each slide (controls when columns reduce)
-const MIN_SLIDE_WIDTH = 220;
+const BASE_MIN_SLIDE_WIDTH = 220;
 
 export interface SlideData {
   libraryItem?: LibraryItem | null;
@@ -58,6 +57,21 @@ export const SlidesGrid = memo(function SlidesGrid({
   fontItalic,
   fontUnderline,
 }: SlidesGridProps) {
+  const [itemScalePercent, setItemScalePercent] = useState(60);
+  const scaleFactor = itemScalePercent / 60;
+  const slideHeight = useMemo(
+    () => Math.round(BASE_SLIDE_HEIGHT * scaleFactor),
+    [scaleFactor]
+  );
+  const minSlideWidth = useMemo(
+    () => Math.round(BASE_MIN_SLIDE_WIDTH * scaleFactor),
+    [scaleFactor]
+  );
+  const gridGap = useMemo(
+    () => Math.max(8, Math.round(16 * scaleFactor)),
+    [scaleFactor]
+  );
+
   if (slides.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -67,40 +81,60 @@ export const SlidesGrid = memo(function SlidesGrid({
   }
 
   return (
-    <div
-      className="grid gap-4 pb-4"
-      style={{
-        gridTemplateColumns: `repeat(auto-fill, minmax(${MIN_SLIDE_WIDTH}px, 1fr))`,
-      }}
-    >
-      {slides.map(({ libraryItem, slide, index, id }) => {
-        const slideId =
-          id || (libraryItem ? `${libraryItem._id}:${index}` : `scripture:${index}`);
-        const isActive = activeSlideId === slideId;
-        const isSelected = selectedIndex === index;
+    <div className="relative pb-8">
+      <div
+        className="grid pb-4"
+        style={{
+          gap: `${gridGap}px`,
+          gridTemplateColumns: `repeat(auto-fill, minmax(${minSlideWidth}px, 1fr))`,
+        }}
+      >
+        {slides.map(({ libraryItem, slide, index, id }) => {
+          const slideId =
+            id ||
+            (libraryItem
+              ? `${libraryItem._id}:${index}`
+              : `scripture:${index}`);
+          const isActive = activeSlideId === slideId;
+          const isSelected = selectedIndex === index;
 
-        return (
-          <SlideCard
-            key={slideId}
-            slide={slide}
-            index={index}
-            isActive={isActive}
-            isSelected={isSelected}
-            onClick={() => onSelectSlide(slideId, slide.text, slide.footer)}
-            onEdit={
-              onEditSlide && libraryItem
-                ? () => onEditSlide(libraryItem._id, index)
-                : undefined
-            }
-            isScripture={!libraryItem}
-            fontFamily={fontFamily}
-            fontSize={fontSize}
-            fontBold={fontBold}
-            fontItalic={fontItalic}
-            fontUnderline={fontUnderline}
-          />
-        );
-      })}
+          return (
+            <SlideCard
+              key={slideId}
+              slide={slide}
+              index={index}
+              isActive={isActive}
+              isSelected={isSelected}
+              onClick={() => onSelectSlide(slideId, slide.text, slide.footer)}
+              onEdit={
+                onEditSlide && libraryItem
+                  ? () => onEditSlide(libraryItem._id, index)
+                  : undefined
+              }
+              isScripture={!libraryItem}
+              fontFamily={fontFamily}
+              fontSize={fontSize}
+              fontBold={fontBold}
+              fontItalic={fontItalic}
+              fontUnderline={fontUnderline}
+              slideHeight={slideHeight}
+            />
+          );
+        })}
+      </div>
+      <div className="pointer-events-none absolute bottom-0 left-0 right-0 flex justify-center">
+        <input
+          type="range"
+          min={30}
+          max={110}
+          value={itemScalePercent}
+          onChange={(event) =>
+            setItemScalePercent(Number.parseInt(event.target.value, 10))
+          }
+          className="pointer-events-auto h-1.5 w-56 accent-primary"
+          aria-label="Slide item size"
+        />
+      </div>
     </div>
   );
 });
@@ -124,6 +158,7 @@ interface SlideCardProps {
   fontBold?: boolean;
   fontItalic?: boolean;
   fontUnderline?: boolean;
+  slideHeight: number;
 }
 
 const SlideCard = memo(function SlideCard({
@@ -139,6 +174,7 @@ const SlideCard = memo(function SlideCard({
   fontBold,
   fontItalic,
   fontUnderline,
+  slideHeight,
 }: SlideCardProps) {
   return (
     <ContextMenu>
@@ -146,14 +182,14 @@ const SlideCard = memo(function SlideCard({
         <button
           type="button"
           onClick={onClick}
-          style={{ height: SLIDE_HEIGHT }}
+          style={{ height: slideHeight }}
           className={cn(
             "group relative flex w-full flex-col overflow-hidden rounded-lg border text-left transition",
             isActive
               ? "border-primary ring-2 ring-primary"
               : isSelected
                 ? "border-primary/50"
-                : "border-border hover:border-primary/50",
+                : "border-border hover:border-primary/50"
           )}
         >
           {/* Slide preview - black background like main output */}
@@ -164,7 +200,7 @@ const SlideCard = memo(function SlideCard({
                 "pointer-events-none select-none text-white",
                 fontBold && "font-bold",
                 fontItalic && "italic",
-                fontUnderline && "underline",
+                fontUnderline && "underline"
               )}
               style={{
                 fontFamily,
@@ -181,7 +217,7 @@ const SlideCard = memo(function SlideCard({
           <div
             className={cn(
               "flex shrink-0 items-center justify-between px-3 py-1.5 text-xs font-medium",
-              getLabelColor(slide.label),
+              getLabelColor(slide.label)
             )}
           >
             <span>{index + 1}</span>

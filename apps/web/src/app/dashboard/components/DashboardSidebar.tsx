@@ -10,29 +10,17 @@ import {
   Settings,
   UserRoundCog,
 } from "lucide-react";
+import { OrganizationSwitcher } from "@clerk/nextjs";
 import {
-  DashboardOrganizationListItem,
   DashboardSection,
   getInitials,
 } from "../types";
-import { AccountSwitcher } from "./AccountSwitcher";
 
 interface DashboardSidebarProps {
   currentSection: DashboardSection;
   viewerName: string;
   viewerEmail: string;
   viewerImage: string | null;
-  organizations: DashboardOrganizationListItem[];
-  activeWorkspaceType: "personal" | "organization";
-  activeWorkspaceId: string | null;
-  isAccountSwitcherOpen: boolean;
-  isSwitchingOrganization: boolean;
-  onToggleAccountSwitcher: () => void;
-  onCloseAccountSwitcher: () => void;
-  onCreateOrganization: () => void;
-  onSwitchContext: (type: "personal" | "organization", id: string | null) => void;
-  isSigningOut: boolean;
-  onSignOut: () => void;
 }
 
 const navItems = [
@@ -54,17 +42,6 @@ export function DashboardSidebar({
   viewerName,
   viewerEmail,
   viewerImage,
-  organizations,
-  activeWorkspaceType,
-  activeWorkspaceId,
-  isAccountSwitcherOpen,
-  isSwitchingOrganization,
-  onToggleAccountSwitcher,
-  onCloseAccountSwitcher,
-  onCreateOrganization,
-  onSwitchContext,
-  isSigningOut,
-  onSignOut,
 }: DashboardSidebarProps) {
   return (
     <aside className="flex h-full w-[320px] flex-none flex-col overflow-hidden px-8 py-14 text-white">
@@ -119,21 +96,40 @@ export function DashboardSidebar({
       </div>
 
       <div className="mt-auto pt-8">
-        <AccountSwitcher
-          viewerName={viewerName}
-          viewerImage={viewerImage}
-          organizations={organizations}
-          activeWorkspaceType={activeWorkspaceType}
-          activeWorkspaceId={activeWorkspaceId}
-          isOpen={isAccountSwitcherOpen}
-          isSwitching={isSwitchingOrganization}
-          onToggle={onToggleAccountSwitcher}
-          onClose={onCloseAccountSwitcher}
-          onCreateOrganization={onCreateOrganization}
-          onSwitchContext={onSwitchContext}
-          isSigningOut={isSigningOut}
-          onSignOut={onSignOut}
-        />
+        {/* Clerk Organization Switcher */}
+        <div className="rounded-lg bg-white/5 p-3">
+          <OrganizationSwitcher
+            appearance={{
+              elements: {
+                rootBox: "w-full",
+                organizationSwitcherTrigger: "w-full justify-start text-white hover:bg-white/10",
+                organizationSwitcherTriggerIcon: "text-white",
+                userPreviewTextContainer: "text-white",
+                organizationPreviewTextContainer: "text-white",
+                userPreviewMainIdentifier: "text-white",
+                organizationPreviewMainIdentifier: "text-white",
+                userPreviewSecondaryIdentifier: "text-white/60",
+                organizationPreviewSecondaryIdentifier: "text-white/60",
+                organizationSwitcherPopoverCard: "bg-[#1a1a1a] border-white/10",
+                organizationSwitcherPopoverActionButton: "text-white hover:bg-white/10",
+                organizationSwitcherPopoverActionButtonText: "text-white !important",
+                organizationSwitcherPopoverActionButtonIcon: "text-white",
+                organizationSwitcherPopoverActions: "text-white",
+              },
+              variables: {
+                colorBackground: "#1a1a1a",
+                colorText: "#ffffff",
+                colorTextSecondary: "rgba(255, 255, 255, 0.6)",
+                colorInputBackground: "#2a2a2a",
+                colorInputText: "#ffffff",
+                colorPrimary: "#ffffff",
+              },
+            }}
+            afterCreateOrganizationUrl="/dashboard/organization/setup"
+            afterSelectOrganizationUrl="/dashboard"
+            afterSelectPersonalUrl="/dashboard"
+          />
+        </div>
       </div>
     </aside>
   );

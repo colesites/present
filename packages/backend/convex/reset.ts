@@ -24,17 +24,17 @@ export const wipeAllOrganizations = mutation({
       await ctx.db.delete(org._id);
     }
 
-    // Delete all users associated with these organizations
-    const allUsers = await ctx.db.query("users").collect();
-    for (const user of allUsers) {
-      await ctx.db.delete(user._id);
+    // Delete all user profiles associated with these organizations
+    const allUserProfiles = await ctx.db.query("userProfiles").collect();
+    for (const profile of allUserProfiles) {
+      await ctx.db.delete(profile._id);
     }
 
     return { 
       message: "Organization system wiped successfully", 
       deleted: {
         nativeOrgs: nativeOrgs.length,
-        users: allUsers.length
+        userProfiles: allUserProfiles.length
       } 
     };
   },

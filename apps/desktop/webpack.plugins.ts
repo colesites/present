@@ -33,12 +33,9 @@ export const plugins = [
     },
   }),
   new webpack.DefinePlugin({
-    'process.env.AUTH0_DOMAIN': JSON.stringify(process.env.AUTH0_DOMAIN),
-    'process.env.AUTH0_CLIENT_ID': JSON.stringify(process.env.AUTH0_CLIENT_ID),
+    'process.env.CLERK_PUBLISHABLE_KEY': JSON.stringify(process.env.CLERK_PUBLISHABLE_KEY),
     'process.env.CONVEX_URL': JSON.stringify(process.env.CONVEX_URL),
-    'process.env.CONVEX_DEPLOYMENT': JSON.stringify(process.env.CONVEX_DEPLOYMENT),
-    'process.env.AI_GATEWAY_API_KEY': JSON.stringify(process.env.AI_GATEWAY_API_KEY),
-    'process.env.BETTER_AUTH_URL': JSON.stringify(process.env.BETTER_AUTH_URL),
-    'process.env.CONVEX_SITE_URL': JSON.stringify(process.env.CONVEX_SITE_URL),
+    'process.env.WEB_APP_URL': JSON.stringify(process.env.WEB_APP_URL),
+    // Don't define NODE_ENV here - webpack sets it automatically
   }),
 ];

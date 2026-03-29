@@ -1,8 +1,6 @@
 "use client";
 
-import {
-  ResizablePanel,
-} from "../../components";
+import { ResizablePanel } from "../../renderer/shared/components";
 import { ServicesSidebar } from "../../features/services";
 import type { ComponentProps } from "react";
 

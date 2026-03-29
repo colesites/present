@@ -49,11 +49,11 @@ export function Navbar() {
           >
             Download <Download className="w-3.5 h-3.5" />
           </Link>
-          <Link href="/auth/login" className="flex items-center gap-1.5 text-[13px] font-medium text-white/70 hover:text-white transition-colors border-l border-white/10 pl-6 ml-2 sm:ml-0">
+          <Link href="/sign-in" className="flex items-center gap-1.5 text-[13px] font-medium text-white/70 hover:text-white transition-colors border-l border-white/10 pl-6 ml-2 sm:ml-0">
             Account <User className="w-3.5 h-3.5" />
           </Link>
           <Link 
-            href="/auth/login" 
+            href="/sign-in" 
             className="hidden md:flex bg-white text-black text-[13px] font-bold px-5 py-2.5 rounded hover:bg-white/90 transition-all hover:scale-[1.02] active:scale-[0.98]"
           >
             Get started

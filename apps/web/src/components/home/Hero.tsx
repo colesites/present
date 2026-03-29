@@ -5,19 +5,14 @@ import Image from "next/image";
 import { ArrowRight, Download } from "lucide-react";
 import { motion } from "framer-motion";
 import { desktopDownloadPath } from "@/lib/download";
-
-const heroEase = [0.22, 1, 0.36, 1] as const;
+import { heroEase } from "@/utils/constants";
+import RadialGlow from "@/components/ui/radial-glow";
 
 export function Hero() {
   return (
     <section className="relative overflow-hidden pt-32 pb-20 lg:pt-48 px-6 lg:px-12 flex flex-col items-center justify-center text-center">
       {/* Massive radial glow using primary blue on black background */}
-      <motion.div
-        className="absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-[1200px] aspect-square bg-primary/20 rounded-full blur-[160px] opacity-70 pointer-events-none"
-        initial={{ opacity: 0, scale: 0.92 }}
-        animate={{ opacity: 0.7, scale: 1 }}
-        transition={{ duration: 1, ease: heroEase, delay: 0.04 }}
-      />
+      <RadialGlow />
       
       <div className="container mx-auto relative z-10 flex flex-col items-center max-w-4xl mb-16">
         <motion.h1
@@ -127,7 +122,7 @@ export function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 1.34, duration: 0.54, ease: heroEase }}
         >
-          <Link href="/auth/login" className="inline-flex h-14 items-center justify-center gap-2 rounded-lg bg-white px-8 text-[15px] font-bold text-black shadow-xl transition-all hover:scale-[1.03] active:scale-[0.98]">
+          <Link href="/sign-in" className="inline-flex h-14 items-center justify-center gap-2 rounded-lg bg-white px-8 text-[15px] font-bold text-black shadow-xl transition-all hover:scale-[1.03] active:scale-[0.98]">
             Get started
             <ArrowRight className="h-5 w-5" />
           </Link>

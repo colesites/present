@@ -18,8 +18,6 @@ interface DashboardSectionViewProps {
   currentOrg: DashboardOrganization | null;
   libraryItems: DashboardLibraryItem[];
   servicesCount: number;
-  isSigningOut: boolean;
-  onSignOut: () => void;
 }
 
 const sectionConfig: Record<
@@ -116,13 +114,10 @@ export function DashboardSectionView({
   currentOrg,
   libraryItems,
   servicesCount,
-  isSigningOut,
-  onSignOut,
 }: DashboardSectionViewProps) {
   const config = sectionConfig[section];
   const Icon = config.icon;
   const hasOrganization = Boolean(currentOrg);
-  const requiresSignOutAction = section === "accounts" || section === "settings";
 
   return (
     <div className="flex min-h-full flex-col text-[#232946] xl:items-start xl:flex-row">
@@ -337,17 +332,6 @@ export function DashboardSectionView({
               Back to dashboard
               <ArrowUpRight className="h-4 w-4" />
             </Link>
-            {requiresSignOutAction ? (
-              <button
-                type="button"
-                onClick={onSignOut}
-                disabled={isSigningOut}
-                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-5 text-sm font-semibold text-primary transition hover:bg-primary/9 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <LogOut className="h-4 w-4" />
-                {isSigningOut ? "Signing out..." : "Log out"}
-              </button>
-            ) : null}
           </div>
         </div>
       </aside>

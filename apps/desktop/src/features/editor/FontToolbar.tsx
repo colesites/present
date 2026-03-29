@@ -1,8 +1,8 @@
 "use client";
 
 import { memo, useState, useEffect, useCallback } from "react";
-import { cn } from "../../lib/utils";
-import { FontSizeInput, FontFamilySelect } from "../../components"; // Assumes exported from components/index.ts
+import { cn } from "../../renderer/shared/lib/utils";
+import { FontSizeInput, FontFamilySelect } from "../../renderer/shared/components"; // Assumes exported from components/index.ts
 
 // Common font size presets
 

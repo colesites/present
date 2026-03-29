@@ -1,19 +1,24 @@
 "use client";
 
-import { ReactNode, useMemo } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { ConvexReactClient } from "convex/react";
-import { ConvexAuthProvider } from "@convex-dev/auth/react";
+import { ConvexProviderWithClerk } from "convex/react-clerk";
+import type { ReactNode } from "react";
 
-export default function ConvexClientProvider({ children }: { children: ReactNode }) {
-  // Create a new client instance on each mount to avoid stale token issues
-  const convex = useMemo(
-    () => new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!),
-    []
-  );
+if (!process.env.NEXT_PUBLIC_CONVEX_URL) {
+  throw new Error("Missing NEXT_PUBLIC_CONVEX_URL in your .env file");
+}
 
+const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL);
+
+export default function ConvexClientProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   return (
-    <ConvexAuthProvider client={convex} storageNamespace="convex-auth-v2">
+    <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
       {children}
-    </ConvexAuthProvider>
+    </ConvexProviderWithClerk>
   );
 }

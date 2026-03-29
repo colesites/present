@@ -10,12 +10,12 @@ import {
   type ChangeEvent,
 } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { LibraryItem, Category, ContentSource } from "../../types";
-import { Dialog } from "../../components/Dialog";
-import { Input } from "../../components/ui/input";
-import { Spinner } from "../../components/ui/spinner";
-import { Skeleton } from "../../components/ui/skeleton";
-import { cn } from "../../lib/utils";
+import type { LibraryItem, Category, ContentSource } from "../../shared/types";
+import { Dialog } from "../../renderer/shared/components/Dialog";
+import { Input } from "../../renderer/shared/components/ui/input";
+import { Spinner } from "../../renderer/shared/components/ui/spinner";
+import { Skeleton } from "../../renderer/shared/components/ui/skeleton";
+import { cn } from "../../renderer/shared/lib/utils";
 import {
   Search,
   ArrowUpDown,
@@ -24,6 +24,8 @@ import {
   ArrowDown,
   Download,
   Upload,
+  LayoutGrid,
+  List,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -31,7 +33,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
-} from "../../components/ui/dropdown-menu";
+} from "../../renderer/shared/components/ui/dropdown-menu";
 
 interface ShowsPanelProps {
   libraryItems: LibraryItem[];
@@ -99,6 +101,7 @@ export const ShowsPanel = memo(
 
     const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+    const [layoutMode, setLayoutMode] = useState<"grid" | "list">("list");
 
     const searchInputRef = useRef<HTMLInputElement>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
@@ -320,6 +323,31 @@ export const ShowsPanel = memo(
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            <div className="flex items-center rounded-md border border-input bg-background p-0.5">
+              <button
+                type="button"
+                onClick={() => setLayoutMode("list")}
+                className={cn(
+                  "inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition",
+                  layoutMode === "list" && "bg-primary/10 text-primary",
+                )}
+                title="List view"
+              >
+                <List className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setLayoutMode("grid")}
+                className={cn(
+                  "inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition",
+                  layoutMode === "grid" && "bg-primary/10 text-primary",
+                )}
+                title="Grid view"
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -338,25 +366,47 @@ export const ShowsPanel = memo(
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
-              <NewLibraryItemButton onClick={() => setShowNewLibraryItemDialog(true)} />
-              {filteredItems.map((item) => (
-                <LibraryItemCard
-                  key={item._id}
-                  item={item}
-                  isSelected={selectedLibraryId === item._id}
-                  showAddToService={isInsideService && !!selectedServiceId}
-                  onSelect={() => onSelectLibraryItem(item._id)}
-                  onRename={() =>
-                    setRenameTarget({ id: item._id, title: item.title })
-                  }
-                  onDelete={() =>
-                    setDeleteTarget({ id: item._id, title: item.title })
-                  }
-                  onAddToService={() => onAddToService(item._id)}
-                />
-              ))}
-            </div>
+            layoutMode === "grid" ? (
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
+                <NewLibraryItemButton onClick={() => setShowNewLibraryItemDialog(true)} />
+                {filteredItems.map((item) => (
+                  <LibraryItemCard
+                    key={item._id}
+                    item={item}
+                    isSelected={selectedLibraryId === item._id}
+                    showAddToService={isInsideService && !!selectedServiceId}
+                    onSelect={() => onSelectLibraryItem(item._id)}
+                    onRename={() =>
+                      setRenameTarget({ id: item._id, title: item.title })
+                    }
+                    onDelete={() =>
+                      setDeleteTarget({ id: item._id, title: item.title })
+                    }
+                    onAddToService={() => onAddToService(item._id)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <NewLibraryItemRowButton onClick={() => setShowNewLibraryItemDialog(true)} />
+                {filteredItems.map((item) => (
+                  <LibraryItemRow
+                    key={item._id}
+                    item={item}
+                    isSelected={selectedLibraryId === item._id}
+                    showAddToService={isInsideService && !!selectedServiceId}
+                    onSelect={() => onSelectLibraryItem(item._id)}
+                    onRename={() =>
+                      setRenameTarget({ id: item._id, title: item.title })
+                    }
+                    onDelete={() =>
+                      setDeleteTarget({ id: item._id, title: item.title })
+                    }
+                    onAddToService={() => onAddToService(item._id)}
+                  />
+                ))}
+              </div>
+            )
           )}
         </div>
 
@@ -494,6 +544,82 @@ function NewLibraryItemButton({ onClick }: { onClick: () => void }) {
     </button>
   );
 }
+
+function NewLibraryItemRowButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-2 rounded-md border border-dashed border-border bg-card px-3 py-2 text-[11px] text-muted-foreground transition hover:border-primary hover:text-primary"
+    >
+      <svg
+        aria-hidden="true"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        viewBox="0 0 24 24"
+      >
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+      New library item
+    </button>
+  );
+}
+
+const LibraryItemRow = memo(function LibraryItemRow({
+  item,
+  isSelected,
+  showAddToService,
+  onSelect,
+  onRename,
+  onDelete,
+  onAddToService,
+}: LibraryItemCardProps) {
+  return (
+    <div
+      className={cn(
+        "group flex items-center gap-3 rounded-md border bg-card px-3 py-2 text-left transition",
+        isSelected
+          ? "border-primary bg-primary/8"
+          : "border-border hover:border-primary/35",
+      )}
+    >
+      <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left">
+        <p className="truncate text-sm font-medium text-foreground">{item.title}</p>
+        <p className="text-[11px] text-muted-foreground">{item.slides.length} slides</p>
+      </button>
+      {showAddToService ? (
+        <button
+          type="button"
+          onClick={onAddToService}
+          className="rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground transition hover:border-primary hover:text-primary"
+        >
+          Add to service
+        </button>
+      ) : null}
+      <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+        <button
+          type="button"
+          aria-label="Rename library item"
+          onClick={onRename}
+          className="p-1 text-muted-foreground hover:text-foreground"
+        >
+          <EditIcon />
+        </button>
+        <button
+          type="button"
+          aria-label="Delete library item"
+          onClick={onDelete}
+          className="p-1 text-muted-foreground hover:text-destructive"
+        >
+          <TrashIcon />
+        </button>
+      </div>
+    </div>
+  );
+});
 
 // Dialog components
 function NewLibraryItemDialog({

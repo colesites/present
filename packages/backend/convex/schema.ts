@@ -1,30 +1,32 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { authTables } from "@convex-dev/auth/server";
 
 export default defineSchema({
-  ...authTables,
-
   // Organization-specific user profile data
+  // userId is the Clerk user ID (string)
   userProfiles: defineTable({
-    userId: v.id("users"), // References Convex Auth's users table
+    userId: v.string(), // Clerk user ID
     orgId: v.id("organizations"),
     role: v.string(), // "admin", "user", or custom roles like "pastor"
     userRole: v.optional(v.string()), // The specific functional role like "tech-director"
     createdAt: v.number(),
   })
     .index("by_user", ["userId"])
-    .index("by_org", ["orgId"]),
+    .index("by_org", ["orgId"])
+    .index("by_user_org", ["userId", "orgId"]),
 
   organizations: defineTable({
     name: v.string(),
     slug: v.string(),
+    clerkOrgId: v.optional(v.string()), // Clerk organization ID
     logo: v.optional(v.string()),
     orgType: v.optional(v.string()), // e.g. "church", "school", "business"
     createdAt: v.number(),
   })
     .index("by_name", ["name"])
-    .index("by_slug", ["slug"]),
+    .index("by_slug", ["slug"])
+    .index("by_clerk_org", ["clerkOrgId"]),
+
   // Categories for organizing library items (Songs, Flows, Hymns, custom)
   categories: defineTable({
     orgId: v.id("organizations"),
@@ -33,6 +35,7 @@ export default defineSchema({
     order: v.number(),
     createdAt: v.number(),
   }).index("by_org", ["orgId"]),
+
   libraries: defineTable({
     orgId: v.id("organizations"),
     categoryId: v.optional(v.id("categories")),
@@ -51,6 +54,7 @@ export default defineSchema({
   })
     .index("by_org", ["orgId"])
     .index("by_category", ["categoryId"]),
+
   // Services (folders for worship services)
   services: defineTable({
     orgId: v.id("organizations"),
@@ -73,6 +77,7 @@ export default defineSchema({
   })
     .index("by_org", ["orgId"])
     .index("by_org_order", ["orgId", "order"]),
+
   // Keep playlists for backward compat
   playlists: defineTable({
     orgId: v.id("organizations"),
@@ -80,6 +85,7 @@ export default defineSchema({
     itemIds: v.array(v.string()),
     createdAt: v.number(),
   }).index("by_org", ["orgId"]),
+
   playbackState: defineTable({
     orgId: v.id("organizations"),
     activeSlideId: v.optional(v.string()),
@@ -98,7 +104,7 @@ export default defineSchema({
   // Personal (user-scoped) data
   // -------------------------
   personalCategories: defineTable({
-    userId: v.id("users"),
+    userId: v.string(), // Clerk user ID
     name: v.string(),
     isDefault: v.boolean(),
     order: v.number(),
@@ -106,7 +112,7 @@ export default defineSchema({
   }).index("by_user", ["userId"]),
 
   personalLibraries: defineTable({
-    userId: v.id("users"),
+    userId: v.string(), // Clerk user ID
     categoryId: v.optional(v.id("personalCategories")),
     title: v.string(),
     body: v.string(),
@@ -125,7 +131,7 @@ export default defineSchema({
     .index("by_category", ["categoryId"]),
 
   personalServices: defineTable({
-    userId: v.id("users"),
+    userId: v.string(), // Clerk user ID
     name: v.string(),
     date: v.optional(v.string()),
     order: v.optional(v.number()),

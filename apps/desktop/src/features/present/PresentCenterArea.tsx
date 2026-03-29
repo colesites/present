@@ -2,7 +2,7 @@
 
 import { Activity } from "react";
 import type { ComponentProps } from "react";
-import type { BottomTab, ViewMode } from "../../types";
+import type { BottomTab, ViewMode } from "../../shared/types";
 import type { SlideData } from "../../features/slides";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 
@@ -65,7 +65,7 @@ type Props = {
 
   onSendScripture: (slides: ScriptureSlide[]) => void;
   orgId: Id<"organizations"> | null;
-  userId: Id<"users"> | null;
+  userId: string | null;
 };
 
 export function PresentCenterArea({
