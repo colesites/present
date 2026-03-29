@@ -6,8 +6,9 @@ const ForkTsCheckerWebpackPlugin: typeof IForkTsCheckerWebpackPlugin = require('
 import * as webpack from 'webpack';
 import * as dotenv from 'dotenv';
 
-const isProductionBuild = process.env.NODE_ENV === 'production';
-const preferredEnvFile = isProductionBuild ? '.env.production' : '.env.local';
+const lifecycleEvent = process.env.npm_lifecycle_event;
+const isDevStart = lifecycleEvent === 'start' || process.env.NODE_ENV === 'development';
+const preferredEnvFile = isDevStart ? '.env.local' : '.env.production';
 const preferredEnvPath = path.resolve(__dirname, preferredEnvFile);
 const fallbackEnvPath = path.resolve(__dirname, '.env');
 
