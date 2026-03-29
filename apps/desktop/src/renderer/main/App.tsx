@@ -49,8 +49,8 @@ export default function Home() {
 
       try {
         await clerk.setActive({ session: token });
-      } catch {
-        void 0;
+      } catch (error) {
+        console.error("Failed to activate desktop session", error);
       }
     };
 

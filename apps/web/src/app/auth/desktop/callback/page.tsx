@@ -14,7 +14,8 @@ const getSafeReturnTo = (candidate: string | undefined): string | null => {
 
   try {
     const parsed = new URL(candidate);
-    const isLocalHost = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+    const isLocalHost =
+      parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
     const isHttp = parsed.protocol === "http:";
     return isLocalHost && isHttp ? parsed.toString() : null;
   } catch {
@@ -32,7 +33,10 @@ export default async function DesktopCallbackPage({
   const sessionId = authState.sessionId;
 
   if (!sessionId || !safeReturnTo) {
-    redirect(`/sign-in?source=desktop&client=electron&flow=external-browser&next=${encodeURIComponent(nextPath)}`);
+    await authState.redirectToSignIn({
+      returnBackUrl: nextPath,
+    });
+    return;
   }
 
   const callbackUrl = new URL(safeReturnTo);
