@@ -123,7 +123,7 @@ export function Hero() {
         {/* ── Heading ── */}
         <h1
           ref={h1Ref}
-          className="text-6xl lg:text-[7rem] font-bold tracking-tight leading-none mb-6 text-white font-outfit flex flex-col items-center"
+          className="text-5xl md:text-6xl lg:text-[7rem] font-bold tracking-tight leading-none mb-4 lg:mb-6 text-white font-outfit flex flex-col items-center"
         >
           <span className="flex flex-wrap items-center justify-center">
             {/* "Pro" (struck-through legacy fragment) */}
@@ -181,7 +181,7 @@ export function Hero() {
           {/* "like a pro" */}
           <span
             ref={likeProRef}
-            className="mt-2 text-3xl md:text-5xl lg:text-7xl font-medium tracking-tight text-white/72"
+            className="mt-2 text-2xl md:text-4xl lg:text-7xl font-medium tracking-tight text-white/72"
             style={{ opacity: 0 }}
           >
             like a pro
@@ -206,35 +206,45 @@ export function Hero() {
         </p>
 
         {/* ── CTA buttons ── */}
-        <div ref={ctaRef} className="flex flex-wrap items-center justify-center gap-5" style={{ opacity: 0 }}>
+        <div ref={ctaRef} className="flex items-center justify-center gap-3 md:gap-5 w-full max-w-sm md:max-w-none px-2 md:px-0" style={{ opacity: 0 }}>
           <Link
             href="/sign-in"
-            className="inline-flex h-14 items-center justify-center gap-2 rounded-lg bg-white px-8 text-[15px] font-bold text-black shadow-xl transition-all hover:scale-[1.03] active:scale-[0.98]"
+            className="flex-1 md:flex-none inline-flex h-12 md:h-14 items-center justify-center gap-2 rounded-lg bg-white px-2 md:px-8 text-[13px] md:text-[15px] font-bold text-black shadow-xl transition-all hover:scale-[1.03] active:scale-[0.98] whitespace-nowrap"
           >
             Get started
-            <ArrowRight className="h-5 w-5" />
+            <ArrowRight className="h-4 w-4 md:h-5 md:w-5 shrink-0" />
           </Link>
           <Link
             href={desktopDownloadPath}
-            className="inline-flex h-14 items-center justify-center gap-2 rounded-lg border border-white/20 px-8 text-[15px] font-semibold text-white transition-all hover:border-white/35 hover:bg-white/5"
+            className="flex-1 md:flex-none inline-flex h-12 md:h-14 items-center justify-center gap-2 rounded-lg border border-white/20 px-2 md:px-8 text-[13px] md:text-[15px] font-semibold text-white transition-all hover:border-white/35 hover:bg-white/5 whitespace-nowrap"
           >
             Download
-            <Download className="h-4 w-4" />
+            <Download className="h-4 w-4 shrink-0" />
           </Link>
         </div>
       </div>
 
-      {/* ── Hero image — smaller centered card (ProPresenter-style) ── */}
+      {/* ── Hero image — responsive layouts ── */}
       <div ref={imgContainerRef} className="hero-img-card" style={{ opacity: 0 }}>
-        <div className="hero-img-inner">
-          <Image
-            src="/present-hero-img.png"
-            alt="Present worship presentation software — live lyrics and Bible display"
-            fill
-            className="object-cover transition-transform duration-700 group-hover:scale-[1.02]"
-            priority
-          />
-          <div className="absolute inset-0 bg-linear-to-t from-black/30 via-transparent to-transparent" />
+        <div className="hero-img-inner bg-black md:bg-transparent">
+          
+          {/* Base image wrapper — blurred and dimmed on mobile for atmospheric effect */}
+          <div className="absolute inset-0 opacity-30 md:opacity-100 blur-[4px] md:blur-none transition-all">
+            <Image
+              src="/present-hero-img.png"
+              alt="Present worship presentation software — live lyrics and Bible display"
+              fill
+              className="object-cover object-top md:object-center transition-transform duration-700 md:group-hover:scale-[1.02]"
+              priority
+            />
+          </div>
+
+          {/* Desktop overlay */}
+          <div className="hidden md:block absolute inset-0 bg-linear-to-t from-black/40 via-transparent to-transparent pointer-events-none" />
+
+          {/* Mobile overlays: solid black fade from top for text readability, and primary color glow bleeding upward */}
+          <div className="block md:hidden absolute inset-0 bg-linear-to-b from-black via-black via-65% to-transparent pointer-events-none" />
+          <div className="block md:hidden absolute inset-x-0 bottom-0 h-[35%] bg-linear-to-t from-primary/80 via-primary/20 to-transparent mix-blend-screen pointer-events-none" />
         </div>
       </div>
     </section>

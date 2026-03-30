@@ -202,7 +202,7 @@ function FeatureRow({ num, label, description, image, reverse, tag }: FeatureRow
             </span>
           )}
         </div>
-        <h3 className="text-4xl lg:text-5xl font-bold text-white mb-5 leading-tight">
+        <h3 className="text-3xl lg:text-5xl font-bold text-white mb-4 lg:mb-5 leading-tight">
           {label.split(" ").map((word, i) => (
             <span key={i} className="line-clip">
               <span className="line-inner">{word} </span>
@@ -210,7 +210,7 @@ function FeatureRow({ num, label, description, image, reverse, tag }: FeatureRow
           ))}
         </h3>
         <p className="line-clip">
-          <span className="line-inner text-lg text-white/45 leading-relaxed">{description}</span>
+          <span className="line-inner text-base lg:text-lg text-white/45 leading-relaxed">{description}</span>
         </p>
       </div>
 
@@ -337,40 +337,44 @@ function HorizontalCarousel() {
     };
   }, []);
 
-  const headingText = "EVERYTHING YOUR TEAM NEEDS";
+  const headingLines = ["EVERYTHING", "YOUR TEAM", "NEEDS"];
 
   return (
-    <div ref={sectionRef} className="py-32">
+    <div ref={sectionRef} className="py-24 lg:py-32">
       {/* Giant stretch heading */}
-      <div className="px-6 lg:px-12 mb-6">
+      <div className="px-6 lg:px-12 mb-8 lg:mb-12">
         <div
-          className="font-stretch text-white leading-none"
-          style={{ fontSize: "clamp(2.6rem, 7vw, 7rem)", letterSpacing: "-0.02em" }}
-          aria-label={headingText}
+          className="font-stretch text-white leading-none flex flex-col items-start gap-1 lg:gap-3"
+          style={{ fontSize: "clamp(2rem, 8vw, 6.5rem)", letterSpacing: "-0.02em" }}
+          aria-label="EVERYTHING YOUR TEAM NEEDS"
         >
-          {headingText.split("").map((char, i) =>
-            char === " " ? (
-              <span key={i} className="inline-block" style={{ width: "0.3em" }} />
-            ) : (
-              <span
-                key={i}
-                className="hscroll-letter inline-block cursor-default hover:text-primary transition-colors duration-150"
-                style={{ opacity: 0, transformOrigin: "bottom center" }}
-                onMouseEnter={(e) =>
-                  gsap.to(e.currentTarget, { scaleY: 1.35, scaleX: 0.88, duration: 0.18, ease: "power2.out" })
-                }
-                onMouseLeave={(e) =>
-                  gsap.to(e.currentTarget, { scaleY: 1, scaleX: 1, duration: 0.4, ease: "elastic.out(1.4, 0.4)" })
-                }
-              >
-                {char}
-              </span>
-            )
-          )}
+          {headingLines.map((line, lineIdx) => (
+            <div key={lineIdx} className="flex flex-wrap">
+              {line.split("").map((char, i) =>
+                char === " " ? (
+                  <span key={i} className="inline-block" style={{ width: "0.3em" }} />
+                ) : (
+                  <span
+                    key={`${lineIdx}-${i}`}
+                    className="hscroll-letter inline-block cursor-default hover:text-primary transition-colors duration-150"
+                    style={{ opacity: 0, transformOrigin: "bottom center" }}
+                    onMouseEnter={(e) =>
+                      gsap.to(e.currentTarget, { scaleY: 1.35, scaleX: 0.88, duration: 0.18, ease: "power2.out" })
+                    }
+                    onMouseLeave={(e) =>
+                      gsap.to(e.currentTarget, { scaleY: 1, scaleX: 1, duration: 0.4, ease: "elastic.out(1.4, 0.4)" })
+                    }
+                  >
+                    {char}
+                  </span>
+                )
+              )}
+            </div>
+          ))}
         </div>
-        <div ref={headingRef} className="mt-3">
+        <div ref={headingRef} className="mt-6">
           <span className="line-clip">
-            <span className="line-inner text-white/35 text-lg font-medium">
+            <span className="line-inner text-white/35 text-base lg:text-lg font-medium">
               in one place — drag to explore
             </span>
           </span>
@@ -423,14 +427,14 @@ function SectionIntro() {
   useLineReveal(ref as React.RefObject<HTMLElement>);
 
   return (
-    <div ref={ref} className="max-w-3xl mb-24">
+    <div ref={ref} className="max-w-3xl mb-16 lg:mb-24">
       <p className="line-clip mb-4">
         <span className="line-inner text-xs font-bold tracking-[0.24em] uppercase text-primary/70">
           Features
         </span>
       </p>
       <h2
-        className="text-5xl lg:text-7xl font-bold text-white leading-[1.05] mb-6"
+        className="text-4xl md:text-5xl lg:text-7xl font-bold text-white leading-[1.05] mb-6"
         style={{ letterSpacing: "-0.03em" }}
       >
         <span className="line-clip block">
