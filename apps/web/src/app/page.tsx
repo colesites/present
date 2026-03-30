@@ -1,5 +1,6 @@
 import { Hero } from "@/components/home/Hero";
 import { Features } from "@/components/home/Features";
+import { Testimonials } from "@/components/home/Testimonials";
 import { CallToAction } from "@/components/home/CallToAction";
 import { Navbar, Footer } from "@/components/home/Layout";
 import { MessageSquare } from "lucide-react";
@@ -12,6 +13,7 @@ export default function Home() {
       <main className="flex flex-col">
         <Hero />
         <Features />
+        <Testimonials />
         <CallToAction />
       </main>
 

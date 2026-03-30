@@ -243,25 +243,42 @@ const hCards: HCardProps[] = [
   { num: 8, label: "Auto Save", description: "Every edit saved continuously, versioned in the cloud. Never lose your work again.", image: IMAGES.autoSave },
 ];
 
-function HorizontalCarousel() {
-  const sectionRef = useRef<HTMLDivElement>(null);
+function ScrollStackInteractive() {
+  const containerRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
-  const headingRef = useRef<HTMLDivElement>(null);
-  const isDragging = useRef(false);
-  const startX = useRef(0);
-  const scrollLeft = useRef(0);
 
-  useLineReveal(headingRef as React.RefObject<HTMLElement>);
+  const headingLines = ["EVERYTHING", "YOUR TEAM", "NEEDS"];
 
   useEffect(() => {
     const ctx = gsap.context(() => {
-      // Heading stretch letters animate in
-      const letters = gsap.utils.toArray<HTMLSpanElement>(
-        ".hscroll-letter",
-        sectionRef.current
-      );
-      gsap.fromTo(
-        letters,
+      const cards = gsap.utils.toArray<HTMLElement>(".stack-card");
+      const textEls = gsap.utils.toArray<HTMLElement>(".stack-card-content");
+      const imgEls = gsap.utils.toArray<HTMLElement>(".stack-card-img");
+      const overlayEls = gsap.utils.toArray<HTMLElement>(".stack-card-overlay");
+
+      // 1. Clean, inline absolute stacking setup
+      gsap.set(cards, {
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        xPercent: -50,
+        yPercent: -50,
+        width: "clamp(280px, 30vw, 360px)",
+        height: "clamp(380px, 45vw, 480px)",
+        borderRadius: "1.5rem",
+        x: () => window.innerWidth + 400, // all offscreen right
+        y: 0,
+        rotationZ: 0, // Keep perfectly flat, no messy tilts
+        // Card 0 must be on TOP so when it bursts it covers the lower cards!
+        zIndex: (i) => cards.length - i 
+      });
+
+      gsap.set(textEls, { opacity: 0, y: 40 });
+      gsap.set(overlayEls, { opacity: 0 });
+
+      // Title letters reveal
+      const letters = gsap.utils.toArray<HTMLSpanElement>(".hscroll-letter");
+      gsap.fromTo(letters,
         { scaleY: 0, opacity: 0, transformOrigin: "bottom center" },
         {
           scaleY: 1,
@@ -270,86 +287,106 @@ function HorizontalCarousel() {
           ease: "elastic.out(1, 0.5)",
           stagger: 0.035,
           scrollTrigger: {
-            trigger: sectionRef.current,
-            start: "top 80%",
-            toggleActions: "play none none none",
-          },
+            trigger: containerRef.current,
+            start: "top 75%",
+            toggleActions: "play none none none"
+          }
         }
       );
 
-      // Cards stagger in on scroll
-      const cards = gsap.utils.toArray<HTMLElement>(".h-scroll-card", trackRef.current);
-      gsap.fromTo(
-        cards,
-        { opacity: 0, y: 48 },
-        {
-          opacity: 1,
+      // The Master ScrollStack Timeline
+      const masterTl = gsap.timeline({
+        scrollTrigger: {
+          trigger: containerRef.current,
+          start: "top top",
+          end: `+=${cards.length * 1200 + 1000}`, // Long, leisurely scroll
+          scrub: 1,
+          pin: true,
+          anticipatePin: 1
+        }
+      });
+
+      // Phase 1: cards elegantly slide in from right to form a tight, overlapping row
+      masterTl.to(cards, {
+        x: (i) => i * 40, // Subtle horizontal stack
+        duration: 1.5,
+        stagger: 0.05,
+        ease: "power3.out"
+      }, "enter");
+
+      masterTl.add("deckReady", "+=0.2");
+
+      // Phase 2: Sequential bursting and shuffling
+      cards.forEach((card, i) => {
+        masterTl.add(`card${i}Start`);
+
+        // Explode card to full viewport (covers the deck behind it!)
+        masterTl.to(card, {
+          width: "100%",
+          height: "100%",
+          x: 0, // perfectly center it
           y: 0,
-          duration: 0.7,
-          ease: "power3.out",
-          stagger: 0.08,
-          scrollTrigger: {
-            trigger: trackRef.current,
-            start: "top 88%",
-            toggleActions: "play none none none",
-          },
+          borderRadius: 0,
+          duration: 1.2,
+          ease: "expo.inOut" // Apple cinematic pop
+        }, `card${i}Start`);
+
+        // Subtle image zoom effect during expansion
+        masterTl.fromTo(imgEls[i], 
+          { scale: 1.15 }, 
+          { scale: 1, duration: 1.2, ease: "expo.inOut" },
+          `card${i}Start`
+        );
+
+        // Dark overlay and text entrance
+        masterTl.to(overlayEls[i], { opacity: 1, duration: 0.8 }, `card${i}Start+=0.4`);
+        masterTl.to(textEls[i], { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, `card${i}Start+=0.5`);
+
+        // Hold full-screen card strictly so user reads it
+        masterTl.to({}, { duration: 1.5 });
+
+        // Phase out this card to the LEFT as the new top card becomes visible
+        if (i < cards.length - 1) {
+          const exitLabel = `card${i}End`;
+          masterTl.add(exitLabel);
+          
+          masterTl.to(textEls[i], { opacity: 0, y: -20, duration: 0.4 }, exitLabel);
+          
+          // Current card scales down slightly and swooshes off-screen left
+          masterTl.to(card, { 
+             x: -window.innerWidth - 200,
+             scale: 0.9,
+             opacity: 0, 
+             duration: 1.2, 
+             ease: "power3.inOut" 
+          }, exitLabel);
+
+          // The remaining cards in the deck shift left gracefully to take the pole position
+          masterTl.to(cards.slice(i + 1), {
+             x: (index) => index * 40, // index 0 is the immediate next card, so it moves to x: 0
+             duration: 1,
+             ease: "power2.inOut"
+          }, `${exitLabel}+=0.3`);
         }
-      );
-    }, sectionRef);
+      });
+      
+    }, containerRef);
 
-    // Drag to scroll
-    const track = trackRef.current;
-    if (!track) return;
-
-    const onMouseDown = (e: MouseEvent) => {
-      isDragging.current = true;
-      startX.current = e.pageX - track.offsetLeft;
-      scrollLeft.current = track.scrollLeft;
-      track.style.cursor = "grabbing";
-    };
-    const onMouseLeave = () => {
-      isDragging.current = false;
-      track.style.cursor = "grab";
-    };
-    const onMouseUp = () => {
-      isDragging.current = false;
-      track.style.cursor = "grab";
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      e.preventDefault();
-      const x = e.pageX - track.offsetLeft;
-      const walk = (x - startX.current) * 1.5;
-      track.scrollLeft = scrollLeft.current - walk;
-    };
-
-    track.addEventListener("mousedown", onMouseDown);
-    track.addEventListener("mouseleave", onMouseLeave);
-    track.addEventListener("mouseup", onMouseUp);
-    track.addEventListener("mousemove", onMouseMove);
-
-    return () => {
-      ctx.revert();
-      track.removeEventListener("mousedown", onMouseDown);
-      track.removeEventListener("mouseleave", onMouseLeave);
-      track.removeEventListener("mouseup", onMouseUp);
-      track.removeEventListener("mousemove", onMouseMove);
-    };
+    return () => ctx.revert();
   }, []);
 
-  const headingLines = ["EVERYTHING", "YOUR TEAM", "NEEDS"];
-
   return (
-    <div ref={sectionRef} className="py-24 lg:py-32">
-      {/* Giant stretch heading */}
-      <div className="px-6 lg:px-12 mb-8 lg:mb-12">
+    <div ref={containerRef} className="relative w-full h-screen bg-black overflow-hidden flex flex-col justify-center">
+      
+      {/* Background Section Title */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full text-center z-0 opacity-[0.85] pointer-events-auto drop-shadow-2xl">
         <div
-          className="font-stretch text-white leading-none flex flex-col items-start gap-1 lg:gap-3"
+          className="font-stretch text-white leading-none flex flex-col items-center gap-1 md:gap-3 px-6"
           style={{ fontSize: "clamp(2rem, 8vw, 6.5rem)", letterSpacing: "-0.02em" }}
           aria-label="EVERYTHING YOUR TEAM NEEDS"
         >
           {headingLines.map((line, lineIdx) => (
-            <div key={lineIdx} className="flex flex-wrap">
+            <div key={lineIdx} className="flex flex-wrap justify-center">
               {line.split("").map((char, i) =>
                 char === " " ? (
                   <span key={i} className="inline-block" style={{ width: "0.3em" }} />
@@ -372,50 +409,41 @@ function HorizontalCarousel() {
             </div>
           ))}
         </div>
-        <div ref={headingRef} className="mt-6">
-          <span className="line-clip">
-            <span className="line-inner text-white/35 text-base lg:text-lg font-medium">
-              in one place — drag to explore
-            </span>
-          </span>
-        </div>
       </div>
 
-      {/* Drag scroll track */}
-      <div
-        ref={trackRef}
-        className="h-scroll-track overflow-x-auto pl-6 lg:pl-12 pr-6 pb-8 scrollbar-hide"
-        style={{ scrollbarWidth: "none" }}
-      >
+      {/* Embedded 3D Cards Track */}
+      <div ref={trackRef} className="relative w-full h-full z-10 pointer-events-none">
         {hCards.map((card) => (
-          <div key={card.num} className="h-scroll-card" style={{ opacity: 0 }}>
-            {/* Image */}
-            <div className="relative w-full" style={{ aspectRatio: "4/3" }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={card.image}
-                alt={card.label}
-                className="w-full h-full object-cover"
-                draggable={false}
-                loading="lazy"
-              />
-              <div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent" />
-              <span
-                className="absolute top-4 left-4 font-stretch text-white/20 leading-none select-none"
-                style={{ fontSize: "clamp(3rem, 6vw, 4.5rem)" }}
-              >
+          <div 
+            key={card.num} 
+            className="stack-card overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.8)] border border-white/5 relative bg-black will-change-transform"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img 
+              src={card.image} 
+              alt={card.label} 
+              className="stack-card-img w-full h-full object-cover" 
+            />
+            {/* High-contrast mobile-friendly gradients */}
+            <div className="stack-card-overlay absolute inset-0 bg-linear-to-t from-black via-black/50 to-transparent mix-blend-multiply" />
+            <div className="stack-card-overlay absolute inset-x-0 bottom-0 h-2/3 bg-linear-to-t from-black via-black/80 to-transparent" />
+            
+            {/* Cinematic Text Reveal */}
+            <div className="stack-card-content absolute inset-0 flex flex-col justify-end items-start p-8 md:p-24 pb-16 md:pb-32 text-left pointer-events-auto">
+              <span className="font-stretch text-[8rem] md:text-[24rem] leading-none absolute top-4 md:top-12 left-4 md:left-12 opacity-[0.03] select-none text-white pointer-events-none tracking-tighter">
                 0{card.num}
               </span>
-            </div>
-            {/* Text */}
-            <div className="p-6">
-              <h4 className="text-xl font-bold text-white mb-2">{card.label}</h4>
-              <p className="text-sm text-white/45 leading-relaxed">{card.description}</p>
+              <div className="max-w-4xl relative z-10 drop-shadow-2xl">
+                <h4 className="text-3xl md:text-7xl font-bold text-white mb-4 lg:mb-6 leading-tight select-none">
+                  {card.label}
+                </h4>
+                <p className="text-lg md:text-3xl text-white/70 leading-relaxed font-medium select-none">
+                  {card.description}
+                </p>
+              </div>
             </div>
           </div>
         ))}
-        {/* End spacer */}
-        <div className="shrink-0 w-6" />
       </div>
     </div>
   );
@@ -497,7 +525,7 @@ const featureRows = [
 
 export function Features() {
   return (
-    <section className="relative bg-background overflow-hidden">
+    <section id="features" className="relative bg-background overflow-hidden">
       <div className="absolute inset-0 features-grid-bg pointer-events-none" aria-hidden="true" />
 
       {/* ── Feature rows ── */}
@@ -512,9 +540,9 @@ export function Features() {
         </div>
       </div>
 
-      {/* ── Horizontal carousel ── */}
+      {/* ── Scroll Stack ── */}
       <div className="relative z-10">
-        <HorizontalCarousel />
+        <ScrollStackInteractive />
       </div>
     </section>
   );
