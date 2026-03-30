@@ -26,7 +26,7 @@ if (preferredEnvConfig.error) {
   console.log(`[Webpack Config] Loaded environment file: ${preferredEnvPath}`);
 }
 
-export const plugins = [
+export const createWebpackPlugins = (): webpack.WebpackPluginInstance[] => [
   new ForkTsCheckerWebpackPlugin({
     logger: 'webpack-infrastructure',
     typescript: {

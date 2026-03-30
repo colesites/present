@@ -1,8 +1,10 @@
 import type { Configuration } from 'webpack';
 import path from 'path';
 
-import { rules } from './webpack.rules';
-import { plugins } from './webpack.plugins';
+import { createWebpackRules } from './webpack.rules';
+import { createWebpackPlugins } from './webpack.plugins';
+
+const rules = createWebpackRules();
 
 rules.push({
   test: /\.css$/,
@@ -13,7 +15,7 @@ export const rendererConfig: Configuration = {
   module: {
     rules,
   },
-  plugins,
+  plugins: createWebpackPlugins(),
   resolve: {
     extensions: ['.js', '.ts', '.jsx', '.tsx', '.css'],
     conditionNames: ['import', 'module', 'browser', 'require', 'style'],
