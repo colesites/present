@@ -512,13 +512,12 @@ export const StaggeredMenu: React.FC<StaggeredMenuProps> = ({
         <aside
           id="staggered-menu-panel"
           ref={panelRef}
-          className="staggered-menu-panel absolute top-0 right-0 h-full bg-black/90 flex flex-col p-[6em_2em_2em_2em] overflow-y-auto z-10 backdrop-blur-md pointer-events-auto"
-          style={{ WebkitBackdropFilter: 'blur(12px)' }}
+          className="staggered-menu-panel pointer-events-auto"
           aria-hidden={!open}
         >
-          <div className="sm-panel-inner flex-1 flex flex-col gap-5">
+          <div className="sm-panel-inner">
             <ul
-              className="sm-panel-list list-none m-0 p-0 flex flex-col gap-2"
+              className="sm-panel-list"
               role="list"
               data-numbering={displayItemNumbering || undefined}
             >
@@ -526,7 +525,7 @@ export const StaggeredMenu: React.FC<StaggeredMenuProps> = ({
                 items.map((it, idx) => (
                   <li className="sm-panel-itemWrap relative overflow-hidden leading-none" key={it.label + idx}>
                     <a
-                      className="sm-panel-item relative text-white font-semibold text-[4rem] cursor-pointer leading-none tracking-[-2px] uppercase transition-[background,color] duration-150 ease-linear inline-block no-underline pr-[1.4em]"
+                      className="sm-panel-item"
                       href={it.link}
                       aria-label={it.ariaLabel}
                       data-index={idx + 1}
@@ -541,8 +540,8 @@ export const StaggeredMenu: React.FC<StaggeredMenuProps> = ({
                   </li>
                 ))
               ) : (
-                <li className="sm-panel-itemWrap relative overflow-hidden leading-none" aria-hidden="true">
-                  <span className="sm-panel-item relative text-white font-semibold text-[4rem] cursor-pointer leading-none tracking-[-2px] uppercase transition-[background,color] duration-150 ease-linear inline-block no-underline pr-[1.4em]">
+                <li className="sm-panel-itemWrap" aria-hidden="true">
+                  <span className="sm-panel-item">
                     <span className="sm-panel-itemLabel inline-block origin-[50%_100%] will-change-transform">
                       No items
                     </span>
@@ -618,18 +617,24 @@ export const StaggeredMenu: React.FC<StaggeredMenuProps> = ({
 .sm-scope .sm-panel-list[data-numbering] { counter-reset: none; }
 .sm-scope .sm-item-number { position: absolute; transform: translateY(0.5em); }
 @media (max-width: 1024px) {
-  .sm-scope .staggered-menu-panel { width: 100%; left: 0; right: 0; }
+  .sm-scope .staggered-menu-panel { width: 100%; left: 0; right: 0; padding: 5em 1.5em 1.5em 1.5em; background: #0a0a10; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .sm-scope .sm-prelayers { width: 100%; }
   .sm-scope .staggered-menu-wrapper[data-open] .sm-logo-img { filter: invert(100%); }
-  .sm-scope .staggered-menu-header { backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); background: rgba(0, 0, 0, 0.25); }
   .sm-scope .sm-panel-item { font-size: 2.4rem; letter-spacing: -1px; }
   .sm-scope .sm-toggle { font-size: 0.85rem; }
+  .sm-scope .sm-panel-list { margin-top: 2rem; }
+  .sm-scope .sm-socials { margin-top: auto; padding-top: 2rem; }
 }
 @media (max-width: 640px) {
-  .sm-scope .staggered-menu-panel { width: 100%; left: 0; right: 0; }
+  .sm-scope .staggered-menu-header { padding: 1.2em 1.2em; }
+  .sm-scope .staggered-menu-panel { width: 100%; left: 0; right: 0; padding: 3.5em 1.2em 1.2em 1.2em; background: #0a0a10; backdrop-filter: none; -webkit-backdrop-filter: none; }
   .sm-scope .staggered-menu-wrapper[data-open] .sm-logo-img { filter: invert(100%); }
+  .sm-scope .sm-panel-inner { gap: 0.5rem; }
+  .sm-scope .sm-panel-list { gap: 0.15rem; margin-top: 2.5rem; }
   .sm-scope .sm-panel-item { font-size: 2rem; letter-spacing: -0.5px; padding-right: 1.2em; }
   .sm-scope .sm-toggle { font-size: 0.8rem; }
   .sm-scope .sm-item-number { font-size: 0.75rem; }
+  .sm-scope .sm-socials { margin-top: auto; padding-top: 1.5rem; gap: 0.6rem; }
   .sm-scope .sm-socials-link { font-size: 0.95rem; }
 }
       `}</style>
