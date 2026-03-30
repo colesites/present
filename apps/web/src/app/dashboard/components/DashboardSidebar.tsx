@@ -71,10 +71,13 @@ export function DashboardSidebar({
           <div className="flex h-[78px] w-[78px] items-center justify-center overflow-hidden rounded-[18px] bg-white/10">
             {currentOrganization?.logo ? (
               currentOrganization.logo.startsWith("data:") ? (
-                <img
+                <Image
                   src={currentOrganization.logo}
                   alt={currentOrganization.name}
+                  width={78}
+                  height={78}
                   className="h-[78px] w-[78px] object-cover"
+                  unoptimized
                 />
               ) : (
                 <Image

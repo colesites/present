@@ -1,19 +1,30 @@
+import { Metadata } from "next";
 import { Hero } from "@/components/home/Hero";
+import { LogosWithBlurFlip } from "@/components/home/LogosWithBlurFlip";
 import { Features } from "@/components/home/Features";
 import { Testimonials } from "@/components/home/Testimonials";
+import { Pricing } from "@/components/home/Pricing";
 import { CallToAction } from "@/components/home/CallToAction";
 import { Navbar, Footer } from "@/components/home/Layout";
 import { MessageSquare } from "lucide-react";
 
+export const metadata: Metadata = {
+  title: "Present | Cinematic Church Presentation & Stage Display",
+  description: "Experience the next generation of church worship software. Dynamic lyrics, cloud synchronization, and stunning motion graphics for ministries like RCCG, Global Harvest, and elevation.",
+  keywords: ["church software", "worship presentation", "lyrics projection", "stage display", "presenter software", "RCCG tech", "GHL present", "church tech Nigeria", "christian visuals"],
+};
+
 export default function Home() {
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/30">
+    <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/30 scroll-smooth">
       <Navbar />
 
       <main className="flex flex-col">
         <Hero />
+        <LogosWithBlurFlip />
         <Features />
         <Testimonials />
+        <Pricing />
         <CallToAction />
       </main>
 

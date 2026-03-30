@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
+import Image from "next/image";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -215,9 +216,14 @@ function FeatureRow({ num, label, description, image, reverse, tag }: FeatureRow
       </div>
 
       {/* Image */}
-      <div ref={imgRef} className="feature-img aspect-[4/3] lg:aspect-[3/2]" style={{ opacity: 0 }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={image} alt={label} loading="lazy" />
+      <div ref={imgRef} className="feature-img aspect-[4/3] lg:aspect-[3/2] relative overflow-hidden rounded-2xl md:rounded-3xl" style={{ opacity: 0 }}>
+        <Image 
+          src={image} 
+          alt={label} 
+          fill 
+          className="object-cover"
+          sizes="(max-width: 768px) 100vw, 50vw"
+        />
         <div className="absolute inset-0 bg-linear-to-t from-black/40 via-transparent to-transparent rounded-[inherit]" />
       </div>
     </div>
@@ -418,11 +424,12 @@ function ScrollStackInteractive() {
             key={card.num} 
             className="stack-card overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.8)] border border-white/5 relative bg-black will-change-transform"
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img 
+            <Image 
               src={card.image} 
               alt={card.label} 
-              className="stack-card-img w-full h-full object-cover" 
+              fill
+              className="stack-card-img object-cover" 
+              sizes="(max-width: 768px) 100vw, 33vw"
             />
             {/* High-contrast mobile-friendly gradients */}
             <div className="stack-card-overlay absolute inset-0 bg-linear-to-t from-black via-black/50 to-transparent mix-blend-multiply" />

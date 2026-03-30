@@ -7,7 +7,6 @@ import {
   CalendarRange,
   LayoutDashboard,
   Library,
-  LogOut,
   Settings,
   ShieldCheck,
 } from "lucide-react";

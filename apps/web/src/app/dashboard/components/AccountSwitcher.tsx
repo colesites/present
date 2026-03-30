@@ -73,10 +73,13 @@ export function AccountSwitcher({
         <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[18px] bg-white/10">
           {currentOrganization?.logo ? (
             currentOrganization.logo.startsWith("data:") ? (
-              <img
+              <Image
                 src={currentOrganization.logo}
                 alt={currentOrganization.name}
+                width={48}
+                height={48}
                 className="h-12 w-12 object-cover"
+                unoptimized
               />
             ) : (
               <Image
@@ -145,10 +148,13 @@ export function AccountSwitcher({
                     <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[14px] bg-white/10">
                       {organization.logo ? (
                         organization.logo.startsWith("data:") ? (
-                          <img
+                          <Image
                             src={organization.logo}
                             alt={organization.name}
+                            width={40}
+                            height={40}
                             className="h-10 w-10 object-cover"
+                            unoptimized
                           />
                         ) : (
                           <Image

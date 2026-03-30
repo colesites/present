@@ -4,11 +4,11 @@ import { desktopDownloadPath } from "@/lib/download";
 import { StaggeredMenu } from "@/components/StaggeredMenu";
 
 const Logo = () => (
-  <Link href="/" className="flex items-center gap-2 group pointer-events-auto">
-    <div className="h-7 w-7 rounded bg-primary flex items-center justify-center font-bold text-white text-base rounded-tl-lg rounded-br-lg shadow-[0_0_15px_rgba(var(--primary),0.5)] transition-transform group-hover:scale-105">
+  <Link href="/" className="flex items-center gap-3 group pointer-events-auto">
+    <div className="h-10 w-10 rounded bg-primary flex items-center justify-center font-bold text-white text-xl rounded-tl-xl rounded-br-xl shadow-[0_0_20px_rgba(var(--primary),0.5)] transition-transform group-hover:scale-105">
       P
     </div>
-    <span className="text-lg font-bold tracking-tight text-white group-hover:text-primary transition-colors">Present</span>
+    <span className="text-2xl font-bold tracking-tight text-white group-hover:text-primary transition-colors">Present</span>
   </Link>
 );
 
@@ -16,9 +16,10 @@ export function Navbar() {
   const menuItems = [
     { label: "Home", ariaLabel: "Home", link: "/" },
     { label: "Features", ariaLabel: "Features", link: "#features" },
+    { label: "Testimonials", ariaLabel: "Testimonials", link: "#testimonials" },
     { label: "Pricing", ariaLabel: "Pricing", link: "#pricing" },
     { label: "Download", ariaLabel: "Download", link: desktopDownloadPath },
-    { label: "Account", ariaLabel: "Account", link: "/sign-in" },
+    { label: "Sign in", ariaLabel: "Sign in", link: "/sign-in" },
   ];
 
   const socialItems = [

@@ -197,7 +197,7 @@ export function Testimonials() {
   }, []);
 
   return (
-    <section ref={containerRef} className="relative w-full bg-black py-48 overflow-hidden min-h-[1200px] flex items-center justify-center">
+    <section id="testimonials" ref={containerRef} className="relative w-full bg-black py-48 overflow-hidden min-h-[1200px] flex items-center justify-center">
       {/* Subtle aceternity dotted background layout */}
       <div 
          className="absolute inset-0 opacity-20 select-none pointer-events-none" 
