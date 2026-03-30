@@ -81,7 +81,7 @@ function TestimonialCard({ t, cardRef }: { t: typeof TESTIMONIALS[0]; cardRef: R
   return (
     <div 
       ref={cardRef}
-      className={`absolute w-full max-w-[320px] md:max-w-[400px] p-6 md:p-8 rounded-2xl md:rounded-3xl border border-white/5 bg-[#18181b] shadow-2xl z-0 opacity-0`} // Start invisible
+      className={`absolute w-full max-w-[360px] md:max-w-[440px] p-6 md:p-8 rounded-2xl md:rounded-3xl border border-white/5 bg-[#18181b] shadow-2xl z-0 opacity-0`} // Start invisible
       style={{
         transform: "translate(-50%, -50%)", // Center on the exact coord
       }}
@@ -117,9 +117,9 @@ export function Testimonials() {
     if (!cards.length) return;
 
     // A helper to softly clamp positions so they don't visually clip off-screen heavily
-    const getLeftPos = (percent: string) => `clamp(180px, ${percent}, calc(100vw - 180px))`;
+    const getLeftPos = (percent: string) => `clamp(220px, ${percent}, calc(100vw - 220px))`;
     
-    const ACTIVE_POS = { top: "15%", left: "50%" };
+    const ACTIVE_POS = { top: "18%", left: "50%" };
 
     const ctx = gsap.context(() => {
       // 1. Initial State Initialization

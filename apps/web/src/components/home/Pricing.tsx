@@ -77,19 +77,19 @@ export function Pricing() {
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-[120px] pointer-events-none" />
       
       <div className="container mx-auto px-6 relative z-10">
-        <div className="max-w-3xl mx-auto text-center mb-20">
+        <div className="max-w-3xl mx-auto text-center mb-24">
           <p className="text-xs font-bold tracking-[0.24em] uppercase text-primary/70 mb-4">Pricing</p>
-          <h2 className="text-4xl md:text-6xl lg:text-7xl font-bold text-white mb-6">Built for every stage</h2>
-          <p className="text-lg text-white/40 leading-relaxed">
+          <h2 className="text-5xl md:text-7xl lg:text-8xl font-bold text-white mb-8 tracking-tighter leading-none">Built for every stage</h2>
+          <p className="text-xl text-white/40 leading-relaxed max-w-2xl mx-auto">
             Choose the plan that fits your congregation. From local small groups to global cathedrals.
           </p>
         </div>
 
-        <div ref={cardsRef} className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
+        <div ref={cardsRef} className="grid md:grid-cols-2 gap-10 max-w-6xl mx-auto">
           {PLANS.map((plan, i) => (
             <div 
               key={i} 
-              className={`pricing-card relative p-8 lg:p-12 rounded-3xl border transition-all duration-500 overflow-hidden group ${
+              className={`pricing-card relative p-10 lg:p-16 rounded-[40px] border transition-all duration-500 overflow-hidden group ${
                 plan.recommended 
                   ? "bg-primary/5 border-primary/20 shadow-[0_0_80px_rgba(var(--primary),0.05)]" 
                   : "bg-white/2 border-white/5"

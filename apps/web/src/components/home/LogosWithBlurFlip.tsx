@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import Image from "next/image";
@@ -15,16 +15,23 @@ const LOGO_DATA = [
   { name: "Bethel", src: "/bethel.svg" },
 ];
 
+/** Fisher-Yates shuffle → always returns exactly 4 unique logos */
+function getRandomFour(): typeof LOGO_DATA {
+  const arr = [...LOGO_DATA];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.slice(0, 4);
+}
+
 export function LogosWithBlurFlip() {
   const [mounted, setMounted] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
-  const [activeLogos, setActiveLogos] = useState(LOGO_DATA.slice(0, 4));
+  const [activeLogos, setActiveLogos] = useState(() => getRandomFour());
   const logoRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const currentIndexRef = useRef(0);
 
-  // Fix cascading render by pushing the mount update to the next animation frame.
-  // This allows React to commit the initial "false" state before the next update.
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       setMounted(true);
@@ -36,12 +43,10 @@ export function LogosWithBlurFlip() {
   useGSAP(() => {
     if (!mounted || !titleRef.current) return;
 
-    // Target ONLY the marked 'C' characters for the cinematic effect
     const chars = titleRef.current.querySelectorAll('.animate-stretch');
     const tl = gsap.timeline({ repeat: -1 });
 
     chars.forEach((char) => {
-      // Extremely slow, cinematic stretch as requested
       tl.to(char, {
         scaleX: 2.8,
         paddingRight: "0.9em",
@@ -53,59 +58,49 @@ export function LogosWithBlurFlip() {
         paddingRight: "0em",
         duration: 1.2,
         ease: "power2.inOut",
-      }, "+=0.3"); // Long hold for dramatic effect
+      }, "+=0.3");
     });
   }, { dependencies: [mounted], scope: titleRef });
 
-  // 2. Logo Cycling and Entrance Animation
-  useGSAP(() => {
+  // 2. Logo Cycling — uses stable index keys so DOM elements are always reused
+  useLayoutEffect(() => {
     if (!mounted) return;
 
-    const cycle = () => {
-      const tl = gsap.timeline({
-        onComplete: () => {
-          // Increment base index for strictly circular cycling
-          currentIndexRef.current = (currentIndexRef.current + 4) % LOGO_DATA.length;
-          
-          // Construct exactly 4 logos using a simple circular pointer
-          const nextLogos = [];
-          for (let i = 0; i < 4; i++) {
-            nextLogos.push(LOGO_DATA[(currentIndexRef.current + i) % LOGO_DATA.length]);
-          }
-          
-          setActiveLogos(nextLogos);
-        }
-      });
+    const slots = logoRefs.current.filter(Boolean) as HTMLDivElement[];
+    if (slots.length !== 4) return;
 
-      // Staggered Exit
-      tl.to(logoRefs.current, {
-        opacity: 0,
-        filter: "blur(12px)",
-        rotateX: -90,
-        duration: 0.7,
-        stagger: 0.12,
-        ease: "power2.in",
-      }, "+=4"); // Hold for 4s
+    // Force initial hidden state before paint
+    gsap.set(slots, { opacity: 0, filter: "blur(12px)", rotateX: 90 });
 
-      return tl;
+    // Entrance animation
+    gsap.to(slots, {
+      opacity: 1,
+      filter: "blur(0px)",
+      rotateX: 0,
+      duration: 0.9,
+      stagger: 0.12,
+      ease: "power3.out",
+    });
+
+    // Schedule exit → then swap logos
+    const exitTl = gsap.timeline();
+    exitTl.to(slots, {
+      opacity: 0,
+      filter: "blur(12px)",
+      rotateX: -90,
+      duration: 0.7,
+      stagger: 0.12,
+      ease: "power2.in",
+    }, "+=4"); // Hold visible for 4s
+
+    exitTl.call(() => {
+      setActiveLogos(getRandomFour());
+    });
+
+    return () => {
+      exitTl.kill();
     };
-
-    // Entrance Animation for new logos
-    gsap.fromTo(logoRefs.current, 
-      { opacity: 0, filter: "blur(12px)", rotateX: 90 },
-      { 
-        opacity: 1, 
-        filter: "blur(0px)", 
-        rotateX: 0, 
-        duration: 0.9, 
-        stagger: 0.12, 
-        ease: "power3.out" 
-      }
-    );
-
-    const master = cycle();
-    return () => { master.kill(); };
-  }, { dependencies: [activeLogos, mounted], scope: containerRef });
+  }, [activeLogos, mounted]);
 
   const line1 = "Trusted by the best";
   const line2 = "churches";
@@ -154,17 +149,18 @@ export function LogosWithBlurFlip() {
           Powering the world&apos;s most innovative ministries with cinematic speed and precision.
         </p>
 
-        {/* Locked 4-Logo Staggered Grid */}
+        {/* Locked 4-Logo Grid — stable index keys guarantee 4 elements always exist */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-16 md:gap-24 lg:gap-32 w-full max-w-7xl mx-auto items-center justify-center min-h-[120px]">
-          {activeLogos.map((logo, i) => (
+          {[0, 1, 2, 3].map((i) => (
             <div
-              key={logo.name + i}
+              key={i}
               ref={(el) => { logoRefs.current[i] = el; }}
               className="flex items-center justify-center perspective-[1000px] select-none"
+              style={{ opacity: 0 }}
             >
               <Image
-                src={logo.src}
-                alt={logo.name}
+                src={activeLogos[i].src}
+                alt={activeLogos[i].name}
                 width={320}
                 height={128}
                 className="h-16 md:h-20 lg:h-24 w-auto object-contain transition-all duration-500"

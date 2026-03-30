@@ -203,7 +203,7 @@ function FeatureRow({ num, label, description, image, reverse, tag }: FeatureRow
             </span>
           )}
         </div>
-        <h3 className="text-3xl lg:text-5xl font-bold text-white mb-4 lg:mb-5 leading-tight">
+        <h3 className="text-4xl lg:text-6xl font-bold text-white mb-4 lg:mb-6 leading-none tracking-tight">
           {label.split(" ").map((word, i) => (
             <span key={i} className="line-clip">
               <span className="line-inner">{word} </span>
@@ -269,8 +269,8 @@ function ScrollStackInteractive() {
         top: "50%",
         xPercent: -50,
         yPercent: -50,
-        width: "clamp(280px, 30vw, 360px)",
-        height: "clamp(380px, 45vw, 480px)",
+        width: "clamp(320px, 40vw, 480px)",
+        height: "clamp(460px, 55vw, 640px)",
         borderRadius: "1.5rem",
         x: () => window.innerWidth + 400, // all offscreen right
         y: 0,
@@ -387,8 +387,8 @@ function ScrollStackInteractive() {
       {/* Background Section Title */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full text-center z-0 opacity-[0.85] pointer-events-auto drop-shadow-2xl">
         <div
-          className="font-stretch text-white leading-none flex flex-col items-center gap-1 md:gap-3 px-6"
-          style={{ fontSize: "clamp(2rem, 8vw, 6.5rem)", letterSpacing: "-0.02em" }}
+          className="font-stretch text-white leading-[0.85] flex flex-col items-center gap-2 md:gap-5 px-6 select-none"
+          style={{ fontSize: "clamp(3.5rem, 15vw, 14rem)", letterSpacing: "-0.04em" }}
           aria-label="EVERYTHING YOUR TEAM NEEDS"
         >
           {headingLines.map((line, lineIdx) => (
@@ -441,10 +441,10 @@ function ScrollStackInteractive() {
                 0{card.num}
               </span>
               <div className="max-w-4xl relative z-10 drop-shadow-2xl">
-                <h4 className="text-3xl md:text-7xl font-bold text-white mb-4 lg:mb-6 leading-tight select-none">
+                <h3 className="text-3xl md:text-4xl font-bold text-white mb-4 tracking-tight leading-none">
                   {card.label}
-                </h4>
-                <p className="text-lg md:text-3xl text-white/70 leading-relaxed font-medium select-none">
+                </h3>
+                <p className="text-white/50 text-base md:text-lg leading-relaxed max-w-sm">
                   {card.description}
                 </p>
               </div>
@@ -469,7 +469,7 @@ function SectionIntro() {
         </span>
       </p>
       <h2
-        className="text-4xl md:text-5xl lg:text-7xl font-bold text-white leading-[1.05] mb-6"
+        className="text-5xl md:text-7xl lg:text-8xl font-bold text-white leading-[0.95] mb-8"
         style={{ letterSpacing: "-0.03em" }}
       >
         <span className="line-clip block">
