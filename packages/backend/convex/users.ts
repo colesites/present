@@ -49,19 +49,14 @@ export const getCurrentUser = query({
       (organization) => organization !== null,
     );
 
-    const allOrganizations = [
-      { id: "personal", name: "Personal", type: "personal" as const },
-      ...filteredOrganizations,
-    ];
-
     return {
       user: {
         id: userId,
         name: identity.name ?? "Account",
         email: identity.email ?? "",
       },
-      organizations: allOrganizations,
-      currentOrgId: filteredOrganizations[0]?.id ?? "personal",
+      organizations: filteredOrganizations,
+      currentOrgId: filteredOrganizations[0]?.id ?? null,
     };
   },
 });
