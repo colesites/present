@@ -1,3 +1,4 @@
+import path from 'path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
@@ -11,10 +12,20 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { mainConfig } from './webpack.main.config';
 import { rendererConfig } from './webpack.renderer.config';
 import { preloadConfig } from './webpack.preload.config';
+import { buildDesktopContentSecurityPolicy } from './csp';
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    extraResource: [path.resolve(__dirname, 'bible')],
+    extendInfo: {
+      NSMicrophoneUsageDescription:
+        "Present uses the microphone for voice scripture search and speech controls.",
+    },
+    extendHelperInfo: {
+      NSMicrophoneUsageDescription:
+        "Present uses the microphone for voice scripture search and speech controls.",
+    },
     protocols: [
       {
         name: 'Present',
@@ -66,14 +77,7 @@ const config: ForgeConfig = {
           },
         ],
       },
-      devContentSecurityPolicy:
-        "default-src 'self' 'unsafe-inline' data: local-media:; " +
-        "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev; " +
-        "connect-src 'self' http://localhost:3000 http://localhost:3001 http://127.0.0.1:3001 ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:* https://present-gha.vercel.app https://present.app https://wary-badger-863.convex.site https://wary-badger-863.convex.cloud wss://wary-badger-863.convex.cloud https://*.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev; " +
-        "img-src 'self' data: local-media: https://*.gravatar.com https://*.wp.com https://lh3.googleusercontent.com https://*.googleusercontent.com https://img.clerk.com; " +
-        "media-src 'self' local-media:; " +
-        "font-src 'self' data: https:; " +
-        "frame-src https://*.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev;",
+      devContentSecurityPolicy: buildDesktopContentSecurityPolicy(),
     }),
     // Fuses are used to enable/disable various Electron functionality
     // at package time, before code signing the application

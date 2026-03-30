@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readBundledBible: (filePath: string) => ipcRenderer.invoke('read-bundled-bible', filePath),
   fetchHostedBibleCatalog: (catalogUrl: string) =>
     ipcRenderer.invoke('fetch-hosted-bible-catalog', catalogUrl),
+  requestAssemblyAiToken: (authToken: string) =>
+    ipcRenderer.invoke('request-assemblyai-token', authToken),
+  requestMicrophoneAccess: () => ipcRenderer.invoke('request-microphone-access'),
 
   // Output window IPC - send state from main window to output window
   sendToOutput: (data: unknown) => ipcRenderer.send('send-to-output', data),

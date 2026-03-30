@@ -2,6 +2,8 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import { isDev } from '../utils/app.utils';
 import { setPendingAuthToken } from '../services/auth.service';
+import { buildDesktopContentSecurityPolicy } from '../../../csp';
+import { configureMediaPermissions } from '../services/media-permissions.service';
 
 // Webpack entry points (declared globally by Forge)
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
@@ -109,6 +111,7 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
   const url = getMainRendererUrl();
   console.log('[Main Window] Loading URL:', url);
 
+  configureMediaPermissions(mainWindow.webContents.session);
   mainWindow.loadURL(url);
 
   // Allow Clerk authentication iframes to load
@@ -116,16 +119,7 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' data: local-media: app:; " +
-          "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev; " +
-          "worker-src 'self' blob:; " +
-          "connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:* https://present-gha.vercel.app https://present.app https://wary-badger-863.convex.site https://wary-badger-863.convex.cloud wss://wary-badger-863.convex.cloud https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev https://clerk-telemetry.com; " +
-          "img-src 'self' data: local-media: https://*.convex.cloud https://*.convex.site https://*.gravatar.com https://*.wp.com https://lh3.googleusercontent.com https://*.googleusercontent.com https://img.clerk.com; " +
-          "media-src 'self' local-media:; " +
-          "font-src 'self' data: https:; " +
-          "frame-src https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev;"
-        ]
+        'Content-Security-Policy': [buildDesktopContentSecurityPolicy()],
       }
     });
   });

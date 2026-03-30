@@ -16,19 +16,94 @@ export interface HostedBibleVersion {
   description?: string;
 }
 
+type SearchPoolEntry = {
+  verse: BibleVerse;
+  lowerText: string;
+  normalizedText: string;
+};
+
+const SEARCH_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "can",
+  "for",
+  "from",
+  "i",
+  "in",
+  "is",
+  "it",
+  "me",
+  "my",
+  "of",
+  "on",
+  "or",
+  "show",
+  "that",
+  "the",
+  "their",
+  "them",
+  "there",
+  "these",
+  "this",
+  "those",
+  "to",
+  "us",
+  "was",
+  "we",
+  "what",
+  "where",
+  "which",
+  "who",
+  "with",
+  "you",
+  "your",
+]);
+
+const normalizeSearchText = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const tokenizeSearchText = (value: string): string[] => {
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+
+  for (const token of normalizeSearchText(value).split(" ")) {
+    if (token.length < 3 || SEARCH_STOP_WORDS.has(token) || seen.has(token)) {
+      continue;
+    }
+    seen.add(token);
+    tokens.push(token);
+  }
+
+  return tokens;
+};
+
 const getCatalogUrlFromRuntime = (): string => {
   const runtimeEnv =
     typeof process !== "undefined" && process.env
       ? process.env
       : undefined;
 
-  return (
+  const configuredCatalogUrl =
     runtimeEnv?.NEXT_PUBLIC_SCRIPTURE_CATALOG_URL
-    ?? runtimeEnv?.SCRIPTURE_CATALOG_URL
-    ?? runtimeEnv?.WEB_APP_URL
-      ? `${runtimeEnv.WEB_APP_URL}/bibles/catalog.json`
-      : "https://present-gha.vercel.app/bibles/catalog.json"
-  );
+    ?? runtimeEnv?.SCRIPTURE_CATALOG_URL;
+  if (configuredCatalogUrl) {
+    return configuredCatalogUrl;
+  }
+
+  if (runtimeEnv?.WEB_APP_URL) {
+    return `${runtimeEnv.WEB_APP_URL}/bibles/catalog.json`;
+  }
+
+  return "https://present-gha.vercel.app/bibles/catalog.json";
 };
 
 const DEFAULT_CATALOG_URL = getCatalogUrlFromRuntime();
@@ -130,9 +205,7 @@ export function useScripture() {
   const [hostedVersions, setHostedVersions] = useState<HostedBibleVersion[]>([]);
   const [isHostedCatalogLoading, setIsHostedCatalogLoading] = useState(false);
   const [hostedCatalogError, setHostedCatalogError] = useState<string | null>(null);
-  const verseSearchPoolCacheRef = useRef<
-    Map<string, Array<{ verse: BibleVerse; lowerText: string }>>
-  >(new Map());
+  const verseSearchPoolCacheRef = useRef<Map<string, SearchPoolEntry[]>>(new Map());
 
   const clearVerseSearchCache = useCallback(() => {
     verseSearchPoolCacheRef.current.clear();
@@ -332,6 +405,7 @@ export function useScripture() {
     const normalizedPool = pool.map((verse) => ({
       verse,
       lowerText: verse.text.toLowerCase(),
+      normalizedText: normalizeSearchText(verse.text),
     }));
     verseSearchPoolCacheRef.current.set(versionId, normalizedPool);
     return normalizedPool;
@@ -375,6 +449,78 @@ export function useScripture() {
     [getSearchPool, resolveVersion],
   );
 
+  const identifyVerseFromText = useCallback(
+    async (input: {
+      query: string;
+      versionCode?: string | null;
+    }): Promise<BibleVerse | null> => {
+      const normalizedQuery = normalizeSearchText(input.query);
+      if (normalizedQuery.length < 3) {
+        return null;
+      }
+
+      const targetVersion = resolveVersion(input.versionCode ?? null);
+      if (!targetVersion) {
+        return null;
+      }
+
+      const queryTokens = tokenizeSearchText(input.query);
+      const pool = await getSearchPool(targetVersion.id);
+
+      let bestMatch: { verse: BibleVerse; score: number } | null = null;
+
+      for (const candidate of pool) {
+        let score = 0;
+        const exactIndex = candidate.normalizedText.indexOf(normalizedQuery);
+
+        if (exactIndex !== -1) {
+          score += 500 - Math.min(exactIndex, 240);
+        }
+
+        let matchedTokens = 0;
+        for (const token of queryTokens) {
+          if (!candidate.normalizedText.includes(token)) {
+            continue;
+          }
+          matchedTokens += 1;
+          score += 35 + Math.min(token.length, 8);
+        }
+
+        if (queryTokens.length > 0) {
+          const coverage = matchedTokens / queryTokens.length;
+          if (coverage < 0.5 && exactIndex === -1) {
+            continue;
+          }
+          score += Math.round(coverage * 160);
+        } else if (exactIndex === -1) {
+          continue;
+        }
+
+        if (candidate.normalizedText.startsWith(normalizedQuery)) {
+          score += 80;
+        }
+
+        if (score <= 0) {
+          continue;
+        }
+
+        if (
+          !bestMatch
+          || score > bestMatch.score
+          || (score === bestMatch.score && candidate.verse.pk < bestMatch.verse.pk)
+        ) {
+          bestMatch = {
+            verse: candidate.verse,
+            score,
+          };
+        }
+      }
+
+      return bestMatch?.verse ?? null;
+    },
+    [getSearchPool, resolveVersion],
+  );
+
   const prewarmSearchPool = useCallback(
     async (versionCode?: string | null) => {
       const targetVersion = resolveVersion(versionCode ?? null);
@@ -398,6 +544,7 @@ export function useScripture() {
     uninstallVersion,
     lookupRef,
     searchVersesByText,
+    identifyVerseFromText,
     prewarmSearchPool,
   };
 }

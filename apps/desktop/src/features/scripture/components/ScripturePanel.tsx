@@ -36,6 +36,7 @@ import {
 import { ScriptureInput, type ScriptureInputRef } from "./ScriptureInput";
 import type { BibleVerse } from "../lib/db";
 import { ScriptureResults } from "./ScriptureResults";
+import { useDesktopSessionStore } from "../../../renderer/shared/store/desktopSession";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +54,27 @@ export interface ScripturePanelRef {
   focusSearch: () => void;
 }
 
+const DEFAULT_SPEECH_LANGUAGE = "en-US";
+
+const readInitialSpeechLanguage = (): string => {
+  if (typeof window === "undefined") {
+    return DEFAULT_SPEECH_LANGUAGE;
+  }
+
+  try {
+    const raw = localStorage.getItem("present-settings");
+    if (!raw) {
+      return DEFAULT_SPEECH_LANGUAGE;
+    }
+
+    const parsed = JSON.parse(raw) as { scriptureSpeechLang?: string };
+    return parsed.scriptureSpeechLang || DEFAULT_SPEECH_LANGUAGE;
+  } catch (err) {
+    console.error("Failed to load settings:", err);
+    return DEFAULT_SPEECH_LANGUAGE;
+  }
+};
+
 export const ScripturePanel = memo(
   forwardRef<ScripturePanelRef, ScripturePanelProps>(function ScripturePanel(
     { onSendToOutput, orgId, userId },
@@ -61,6 +83,7 @@ export const ScripturePanel = memo(
     const inputRef = useRef<ScriptureInputRef>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
     const identifyTimeoutRef = useRef<number | null>(null);
+    const identifyRequestRef = useRef(0);
     const textSearchRequestRef = useRef(0);
     const [downloadingHostedId, setDownloadingHostedId] = useState<string | null>(null);
     const [removingVersionId, setRemovingVersionId] = useState<string | null>(null);
@@ -75,6 +98,7 @@ export const ScripturePanel = memo(
     const availableBooks = useMemo(() => liveBooks ?? [], [liveBooks]);
     const liveVersions = useLiveQuery(() => db.versions.toArray());
     const availableVersions = useMemo(() => liveVersions ?? [], [liveVersions]);
+    const authToken = useDesktopSessionStore((state) => state.token);
 
     const { addScriptureToService, selectedServiceId } = useServices({ orgId, userId }, []);
 
@@ -84,6 +108,7 @@ export const ScripturePanel = memo(
       uninstallVersion,
       lookupRef,
       searchVersesByText,
+      identifyVerseFromText,
       prewarmSearchPool,
       downloadVersion,
       hostedVersions,
@@ -105,59 +130,196 @@ export const ScripturePanel = memo(
     const [suggestion, setSuggestion] = useState<string | null>(null);
     const [isIdentifying, setIsIdentifying] = useState(false);
     const [liveTranscript, setLiveTranscript] = useState("");
-    const [speechLang, setSpeechLang] = useState("en-US");
+    const [speechLang] = useState(readInitialSpeechLanguage);
     const [textSearchQuery, setTextSearchQuery] = useState("");
     const [textSearchResults, setTextSearchResults] = useState<BibleVerse[]>([]);
     const [isTextSearching, setIsTextSearching] = useState(false);
 
-    const identifyScripture = useCallback(async (transcript: string) => {
-      if (!transcript.trim()) return;
-      setIsIdentifying(true);
-      try {
-        const res = await fetch("/api/scripture/identify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transcript }),
-        });
-        const data = (await res.json()) as { suggestion?: { reference: string } };
-        if (data.suggestion?.reference) {
-          setSuggestion(data.suggestion.reference);
+    const effectiveSelectedVersionCode = useMemo(() => {
+      if (parsedRef.versionCode) {
+        const matchedVersion = availableVersions.find(
+          (version) => version.code.toUpperCase() === parsedRef.versionCode?.toUpperCase(),
+        );
+        if (matchedVersion) {
+          return matchedVersion.code;
         }
-      } catch (err: unknown) {
-        console.error("Failed to identify scripture:", err);
-      } finally {
-        setIsIdentifying(false);
       }
+
+      if (selectedVersionCode) {
+        return selectedVersionCode;
+      }
+
+      const nkjv = availableVersions.find((version) => version.code.toUpperCase() === "NKJV");
+      return nkjv?.code ?? availableVersions[0]?.code ?? null;
+    }, [availableVersions, parsedRef.versionCode, selectedVersionCode]);
+
+    const resolveVersionCode = useCallback(
+      (versionId: string) => {
+        return (
+          availableVersions.find((version) => version.id === versionId)?.code
+          ?? effectiveSelectedVersionCode
+          ?? "NKJV"
+        );
+      },
+      [availableVersions, effectiveSelectedVersionCode],
+    );
+
+    const formatReference = useCallback(
+      (input: {
+        bookName: string;
+        chapter: number;
+        verseStart?: number | null;
+        verseEnd?: number | null;
+        versionCode?: string | null;
+      }) => {
+        let reference = `${input.bookName} ${input.chapter}`;
+        if (input.verseStart) {
+          reference += `:${input.verseStart}`;
+          if (input.verseEnd) {
+            reference += `-${input.verseEnd}`;
+          }
+        }
+        if (input.versionCode) {
+          reference += ` ${input.versionCode}`;
+        }
+        return reference;
+      },
+      [],
+    );
+
+    const syncLookupFromReference = useCallback(
+      (reference: string) => {
+        inputRef.current?.setValue(reference);
+
+        const parsed = parseReference(reference, availableBooks);
+        if (parsed.book && parsed.chapter) {
+          setParsedRef(parsed);
+        }
+      },
+      [availableBooks],
+    );
+
+    const applySuggestedReference = useCallback(
+      (reference: string) => {
+        setSuggestion(reference);
+        syncLookupFromReference(reference);
+      },
+      [syncLookupFromReference],
+    );
+
+    const identifyScripture = useCallback(
+      async (transcript: string) => {
+        const trimmedTranscript = transcript.trim();
+        if (!trimmedTranscript) {
+          setSuggestion(null);
+          return;
+        }
+
+        const requestId = identifyRequestRef.current + 1;
+        identifyRequestRef.current = requestId;
+        setIsIdentifying(true);
+
+        let matchedVerse: BibleVerse | null = null;
+
+        try {
+          matchedVerse = await identifyVerseFromText({
+            query: trimmedTranscript,
+            versionCode: effectiveSelectedVersionCode,
+          });
+        } catch (err: unknown) {
+          console.error("Failed to identify scripture:", err);
+        }
+
+        if (identifyRequestRef.current !== requestId) {
+          return;
+        }
+
+        setIsIdentifying(false);
+
+        if (!matchedVerse) {
+          setSuggestion(null);
+          return;
+        }
+
+        const reference = formatReference({
+          bookName: matchedVerse.bookName,
+          chapter: matchedVerse.chapter,
+          verseStart: matchedVerse.verse,
+          versionCode: resolveVersionCode(matchedVerse.version),
+        });
+
+        applySuggestedReference(reference);
+      },
+      [
+        applySuggestedReference,
+        effectiveSelectedVersionCode,
+        formatReference,
+        identifyVerseFromText,
+        resolveVersionCode,
+      ],
+    );
+
+    const handleAiQueryChange = useCallback(
+      (value: string) => {
+        setLiveTranscript(value);
+
+        const text = value.trim();
+        if (!text) {
+          setSuggestion(null);
+          setIsIdentifying(false);
+          return;
+        }
+
+        const quickParsed = parseReference(text, availableBooks);
+        if (!quickParsed.book || !quickParsed.chapter) {
+          return;
+        }
+
+        applySuggestedReference(
+          formatReference({
+            bookName: quickParsed.book.name,
+            chapter: quickParsed.chapter,
+            verseStart: quickParsed.verseStart,
+            verseEnd: quickParsed.verseEnd,
+            versionCode: quickParsed.versionCode || effectiveSelectedVersionCode,
+          }),
+        );
+        setIsIdentifying(false);
+      },
+      [
+        applySuggestedReference,
+        availableBooks,
+        effectiveSelectedVersionCode,
+        formatReference,
+      ],
+    );
+
+    const handleTextSearchQueryChange = useCallback((value: string) => {
+      setTextSearchQuery(value);
+      if (!value.trim()) {
+        setTextSearchResults([]);
+        setIsTextSearching(false);
+        return;
+      }
+      setIsTextSearching(true);
     }, []);
 
     const onSpeechResult = useCallback((result: { transcript: string; isFinal: boolean }) => {
       if (!result.transcript) return;
-      setLiveTranscript(result.transcript);
-    }, []);
+      handleAiQueryChange(result.transcript);
+    }, [handleAiQueryChange]);
 
     const onSpeechFinal = useCallback((text: string) => {
-      setLiveTranscript(text);
-    }, []);
+      handleAiQueryChange(text);
+    }, [handleAiQueryChange]);
 
-    const { isListening, isSupported, startListening, stopListening } =
+    const { isListening, isSupported, startListening, stopListening, error: speechError } =
       useSpeechRecognition({
         onResult: onSpeechResult,
         onFinalResult: onSpeechFinal,
         lang: speechLang,
+        authToken,
       });
-
-    useEffect(() => {
-      try {
-        const raw = localStorage.getItem("present-settings");
-        if (!raw) return;
-        const parsed = JSON.parse(raw) as { scriptureSpeechLang?: string };
-        if (parsed.scriptureSpeechLang) {
-          setSpeechLang(parsed.scriptureSpeechLang);
-        }
-      } catch (err) {
-        console.error("Failed to load settings:", err);
-      }
-    }, []);
 
     useEffect(() => {
       if (identifyTimeoutRef.current !== null) {
@@ -172,17 +334,7 @@ export const ScripturePanel = memo(
 
       const quickParsed = parseReference(text, availableBooks);
       if (quickParsed.book && quickParsed.chapter) {
-        let quickRef = `${quickParsed.book.name} ${quickParsed.chapter}`;
-        if (quickParsed.verseStart) {
-          quickRef += `:${quickParsed.verseStart}`;
-          if (quickParsed.verseEnd) {
-            quickRef += `-${quickParsed.verseEnd}`;
-          }
-        }
-        if (quickParsed.versionCode) {
-          quickRef += ` ${quickParsed.versionCode}`;
-        }
-        setSuggestion(quickRef);
+        return;
       }
 
       identifyTimeoutRef.current = window.setTimeout(() => {
@@ -195,34 +347,19 @@ export const ScripturePanel = memo(
           identifyTimeoutRef.current = null;
         }
       };
-    }, [liveTranscript, identifyScripture, availableBooks, isListening]);
+    }, [
+      liveTranscript,
+      identifyScripture,
+      availableBooks,
+      isListening,
+    ]);
 
     useEffect(() => {
-      if (parsedRef.versionCode) {
-        const matched = availableVersions.find(
-          (version) => version.code.toUpperCase() === parsedRef.versionCode?.toUpperCase(),
-        );
-        if (matched && matched.code !== selectedVersionCode) {
-          setSelectedVersionCode(matched.code);
-        }
-      }
-    }, [parsedRef.versionCode, availableVersions, selectedVersionCode]);
-
-    useEffect(() => {
-      if (!selectedVersionCode && availableVersions.length > 0) {
-        const nkjv = availableVersions.find(
-          (version) => version.code.toUpperCase() === "NKJV",
-        );
-        setSelectedVersionCode(nkjv ? nkjv.code : availableVersions[0].code);
-      }
-    }, [availableVersions, selectedVersionCode]);
-
-    useEffect(() => {
-      if (!selectedVersionCode) {
+      if (!effectiveSelectedVersionCode) {
         return;
       }
-      void prewarmSearchPool(selectedVersionCode);
-    }, [prewarmSearchPool, selectedVersionCode]);
+      void prewarmSearchPool(effectiveSelectedVersionCode);
+    }, [effectiveSelectedVersionCode, prewarmSearchPool]);
 
     const handleRefChange = useCallback((nextRef: ParsedReference) => {
       setParsedRef(nextRef);
@@ -231,20 +368,9 @@ export const ScripturePanel = memo(
     const mergedRef = useMemo(
       () => ({
         ...parsedRef,
-        versionCode: parsedRef.versionCode || selectedVersionCode,
+        versionCode: parsedRef.versionCode || effectiveSelectedVersionCode,
       }),
-      [parsedRef, selectedVersionCode],
-    );
-
-    const resolveVersionCode = useCallback(
-      (versionId: string) => {
-        return (
-          availableVersions.find((version) => version.id === versionId)?.code
-          ?? selectedVersionCode
-          ?? "NKJV"
-        );
-      },
-      [availableVersions, selectedVersionCode],
+      [effectiveSelectedVersionCode, parsedRef],
     );
 
     const handleEnter = useCallback(
@@ -256,7 +382,7 @@ export const ScripturePanel = memo(
 
         if (!activeParsed.book || !activeParsed.chapter) return;
 
-        const version = activeParsed.versionCode || selectedVersionCode || "NKJV";
+        const version = activeParsed.versionCode || effectiveSelectedVersionCode || "NKJV";
         let refText = `${activeParsed.book.name} ${activeParsed.chapter}`;
         if (activeParsed.verseStart) {
           refText += `:${activeParsed.verseStart}`;
@@ -288,7 +414,7 @@ export const ScripturePanel = memo(
       [
         parsedRef,
         availableBooks,
-        selectedVersionCode,
+        effectiveSelectedVersionCode,
         lookupRef,
         onSendToOutput,
         selectedServiceId,
@@ -299,10 +425,11 @@ export const ScripturePanel = memo(
     const handleAcceptSuggestion = useCallback(
       async (reference: string) => {
         setSuggestion(null);
+        syncLookupFromReference(reference);
         const parsed = parseReference(reference, availableBooks);
         if (!parsed.book || !parsed.chapter) return;
 
-        const version = parsed.versionCode || selectedVersionCode || "NKJV";
+        const version = parsed.versionCode || effectiveSelectedVersionCode || "NKJV";
         const verses = await lookupRef({ ...parsed, versionCode: version });
         if (verses.length === 0) return;
 
@@ -320,30 +447,28 @@ export const ScripturePanel = memo(
       },
       [
         availableBooks,
-        selectedVersionCode,
+        effectiveSelectedVersionCode,
         lookupRef,
         onSendToOutput,
         selectedServiceId,
         addScriptureToService,
+        syncLookupFromReference,
       ],
     );
 
     useEffect(() => {
       const query = textSearchQuery.trim();
       if (!query) {
-        setTextSearchResults([]);
-        setIsTextSearching(false);
         return;
       }
 
       const requestId = textSearchRequestRef.current + 1;
       textSearchRequestRef.current = requestId;
-      setIsTextSearching(true);
 
       const timeoutId = window.setTimeout(async () => {
         const results = await searchVersesByText({
           query,
-          versionCode: selectedVersionCode,
+          versionCode: effectiveSelectedVersionCode,
           limit: 60,
         });
 
@@ -357,7 +482,7 @@ export const ScripturePanel = memo(
       return () => {
         window.clearTimeout(timeoutId);
       };
-    }, [textSearchQuery, searchVersesByText, selectedVersionCode]);
+    }, [textSearchQuery, searchVersesByText, effectiveSelectedVersionCode]);
 
     const handleSendTextVerse = useCallback(
       async (verse: BibleVerse) => {
@@ -401,11 +526,8 @@ export const ScripturePanel = memo(
     const handleDownloadHostedVersion = useCallback(
       async (version: HostedBibleVersion) => {
         setDownloadingHostedId(version.id);
-        try {
-          await downloadVersion(version);
-        } finally {
-          setDownloadingHostedId(null);
-        }
+        await downloadVersion(version);
+        setDownloadingHostedId(null);
       },
       [downloadVersion],
     );
@@ -413,11 +535,8 @@ export const ScripturePanel = memo(
     const handleUninstallVersion = useCallback(
       async (versionId: string) => {
         setRemovingVersionId(versionId);
-        try {
-          await uninstallVersion(versionId);
-        } finally {
-          setRemovingVersionId(null);
-        }
+        await uninstallVersion(versionId);
+        setRemovingVersionId(null);
       },
       [uninstallVersion],
     );
@@ -431,7 +550,7 @@ export const ScripturePanel = memo(
                 Bible
               </h2>
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Bring your own Bible file or download a hosted version directly into the app database.
+                Bring your own Bible file or download a Bible directly into the app database.
               </p>
             </div>
 
@@ -461,7 +580,7 @@ export const ScripturePanel = memo(
                     className="inline-flex h-8 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-semibold text-foreground transition hover:bg-accent/40"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    Download Ours
+                    Download Bible
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-72">
@@ -542,7 +661,7 @@ export const ScripturePanel = memo(
                   key={version.id}
                   className={cn(
                     "inline-flex items-center gap-1 rounded-md border pr-1",
-                    selectedVersionCode === version.code
+                    effectiveSelectedVersionCode === version.code
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border bg-background text-muted-foreground",
                   )}
@@ -586,8 +705,8 @@ export const ScripturePanel = memo(
                 availableBooks={availableBooks}
                 availableVersions={availableVersions}
                 placeholder={
-                  selectedVersionCode
-                    ? `Lookup in ${selectedVersionCode} (e.g. John 3:16)`
+                  effectiveSelectedVersionCode
+                    ? `Lookup in ${effectiveSelectedVersionCode} (e.g. John 3:16)`
                     : "Lookup scripture reference"
                 }
                 onEnter={handleEnter}
@@ -602,7 +721,7 @@ export const ScripturePanel = memo(
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <input
                   value={textSearchQuery}
-                  onChange={(event) => setTextSearchQuery(event.target.value)}
+                  onChange={(event) => handleTextSearchQueryChange(event.target.value)}
                   placeholder="Type words to find matching verses"
                   className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-3 text-xs text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary/60"
                 />
@@ -619,7 +738,14 @@ export const ScripturePanel = memo(
               <div className="flex items-center gap-1.5">
                 {isSupported ? (
                   <button
-                    onClick={isListening ? stopListening : startListening}
+                    onClick={() => {
+                      if (isListening) {
+                        stopListening();
+                        return;
+                      }
+                      handleAiQueryChange("");
+                      void startListening();
+                    }}
                     title={isListening ? "Stop listening" : "Listen for scripture"}
                     className={cn(
                       "relative inline-flex h-9 w-9 items-center justify-center rounded-md border transition-all",
@@ -643,7 +769,7 @@ export const ScripturePanel = memo(
                 <div className="relative flex-1">
                   <input
                     value={liveTranscript}
-                    onChange={(event) => setLiveTranscript(event.target.value)}
+                    onChange={(event) => handleAiQueryChange(event.target.value)}
                     placeholder="Speak or type what you remember"
                     className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary/60"
                   />
@@ -652,6 +778,13 @@ export const ScripturePanel = memo(
                   ) : null}
                 </div>
               </div>
+              {!isSupported ? (
+                <p className="text-[10px] text-muted-foreground">
+                  Voice input is unavailable in this runtime. Type the verse text instead.
+                </p>
+              ) : speechError ? (
+                <p className="text-[10px] text-destructive">{speechError}</p>
+              ) : null}
             </div>
           </div>
         </div>

@@ -15,6 +15,11 @@ interface BundledBibleFile {
   sizeBytes: number;
 }
 
+interface MediaAccessResult {
+  granted: boolean;
+  status: string;
+}
+
 interface ElectronAPI {
   openOutputWindow: () => Promise<boolean>;
   closeOutputWindow: () => Promise<boolean>;
@@ -25,6 +30,8 @@ interface ElectronAPI {
   listBundledBibles: () => Promise<BundledBibleFile[]>;
   readBundledBible: (filePath: string) => Promise<Uint8Array | null>;
   fetchHostedBibleCatalog: (catalogUrl: string) => Promise<unknown | null>;
+  requestAssemblyAiToken: (authToken: string) => Promise<unknown | null>;
+  requestMicrophoneAccess: () => Promise<MediaAccessResult>;
 
   // Output window IPC
   sendToOutput: (data: unknown) => void;
