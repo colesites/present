@@ -35,13 +35,25 @@ const config: ForgeConfig = {
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      // Squirrel uses this as the NuGet package id, so it cannot contain the
+      // slash from the workspace package name "@present/desktop".
+      name: 'present',
+    }),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({
-      mimeType: ['x-scheme-handler/present'],
+      options: {
+        mimeType: ['x-scheme-handler/present'],
+        name: 'present',
+        productName: 'Present',
+      },
     }),
     new MakerDeb({
-      mimeType: ['x-scheme-handler/present'],
+      options: {
+        mimeType: ['x-scheme-handler/present'],
+        name: 'present',
+        productName: 'Present',
+      },
     }),
   ],
   plugins: [

@@ -41,7 +41,7 @@ jobs:
 
       - name: Build Present for Windows
         env:
-          DEBUG: electron-forge:*
+          DEBUG: electron-forge:*,electron-windows-installer*
         run: pnpm --filter @present/desktop run make:windows
 
       - name: Upload Windows artifacts
