@@ -58,6 +58,38 @@ async function fetchAssemblyAiToken(authToken: string, maxRedirects = 5): Promis
   throw new Error('Too many redirects');
 }
 
+async function fetchBrowserSuggestions(query: string, maxRedirects = 5): Promise<unknown> {
+  let currentUrl = new URL('/api/browser/suggestions', getWebAppBaseUrl()).toString();
+  currentUrl = `${currentUrl}?q=${encodeURIComponent(query)}`;
+
+  for (let i = 0; i <= maxRedirects; i += 1) {
+    const response = await net.fetch(currentUrl, {
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location) {
+        throw new Error(`Redirect without location header (${response.status})`);
+      }
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '');
+      throw new Error(message || `Request failed (${response.status})`);
+    }
+
+    return await response.json();
+  }
+
+  throw new Error('Too many redirects');
+}
+
 /**
  * Register network-related IPC handlers
  */
@@ -85,6 +117,19 @@ export const registerNetworkIPC = (): void => {
     } catch (error) {
       console.error('Failed to request AssemblyAI token', error);
       return null;
+    }
+  });
+
+  ipcMain.handle('fetch-browser-suggestions', async (_, query: string) => {
+    try {
+      if (typeof query !== 'string' || query.trim().length === 0) {
+        return { suggestions: [] };
+      }
+
+      return await fetchBrowserSuggestions(query.trim());
+    } catch (error) {
+      console.error('Failed to fetch browser suggestions', error);
+      return { suggestions: [] };
     }
   });
 };

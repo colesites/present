@@ -7,13 +7,19 @@ function DesktopLaunchContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = useMemo(() => searchParams.get("token"), [searchParams]);
+  const refreshToken = useMemo(
+    () => searchParams.get("refreshToken"),
+    [searchParams]
+  );
 
   useEffect(() => {
-    if (!token) {
+    if (!token || !refreshToken) {
       router.replace("/dashboard");
       return;
     }
-    window.location.href = `present://auth?token=${encodeURIComponent(token)}`;
+    window.location.href = `present://auth?token=${encodeURIComponent(
+      token
+    )}&refreshToken=${encodeURIComponent(refreshToken)}`;
     const closeTimeout = window.setTimeout(() => {
       window.close();
     }, 350);
@@ -24,7 +30,7 @@ function DesktopLaunchContent() {
       window.clearTimeout(closeTimeout);
       window.clearTimeout(fallbackTimeout);
     };
-  }, [router, token]);
+  }, [refreshToken, router, token]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-6">

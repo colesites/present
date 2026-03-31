@@ -41,15 +41,23 @@ export const handleDeepLink = (urlStr: string): void => {
 
     if (parsedUrl.pathname.includes('auth') || parsedUrl.host === 'auth') {
       const token = parsedUrl.searchParams.get('token');
+      const refreshToken = parsedUrl.searchParams.get('refreshToken');
       if (token) {
-        setPendingAuthToken(token);
+        const payload = {
+          refreshToken,
+          token,
+        };
+        setPendingAuthToken(payload);
       }
       if (token && mainWindow) {
         if (mainWindow.webContents.isLoading()) {
           pendingDeepLink = urlStr;
           return;
         }
-        mainWindow.webContents.send('auth-callback', token);
+        mainWindow.webContents.send('auth-callback', {
+          refreshToken,
+          token,
+        });
         pendingDeepLink = null;
       }
     }

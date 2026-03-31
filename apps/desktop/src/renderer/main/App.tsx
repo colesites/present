@@ -29,7 +29,7 @@ import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvi
 export default function Home() {
   const token = useDesktopSessionStore((state) => state.token);
   const authStatus = useDesktopSessionStore((state) => state.authStatus);
-  const setToken = useDesktopSessionStore((state) => state.setToken);
+  const setAuthTokens = useDesktopSessionStore((state) => state.setAuthTokens);
   const setSessionFromConvex = useDesktopSessionStore(
     (state) => state.setSessionFromConvex
   );
@@ -81,26 +81,27 @@ export default function Home() {
 
     let disposed = false;
 
-    const applyToken = (nextToken: string | null) => {
-      if (!nextToken || disposed) {
+    const applyAuthPayload = (payload: DesktopAuthPayload | null) => {
+      if (!payload?.token || disposed) {
         return;
       }
-      const payload = decodeJwtPayload(nextToken);
-      const audClaim = payload?.aud;
-      const issClaim = payload?.iss;
+      const decodedPayload = decodeJwtPayload(payload.token);
+      const audClaim = decodedPayload?.aud;
+      const issClaim = decodedPayload?.iss;
       const hasConvexAudience = Array.isArray(audClaim)
         ? audClaim.includes("convex")
         : audClaim === "convex";
 
       console.info("[Desktop Auth] token received from deep link", {
-        tokenLength: nextToken.length,
+        hasRefreshToken: Boolean(payload.refreshToken),
+        tokenLength: payload.token.length,
         hasConvexAudience,
         issuer: typeof issClaim === "string" ? issClaim : null,
       });
       console.info("[Desktop Auth] decoded JWT payload", {
         aud: audClaim,
         iss: issClaim,
-        sub: payload?.sub,
+        sub: decodedPayload?.sub,
       });
 
       if (!hasConvexAudience) {
@@ -135,19 +136,19 @@ export default function Home() {
       console.info("[Desktop Auth] token received from Clerk", {
         issuer: issClaim,
       });
-      setToken(nextToken);
+      setAuthTokens(payload);
       setAuthStatus("loading");
     };
 
-    void window.electronAPI.consumePendingAuthToken().then(applyToken);
-    window.electronAPI.onAuthCallback((token) => {
-      void applyToken(token);
+    void window.electronAPI.consumePendingAuthToken().then(applyAuthPayload);
+    window.electronAPI.onAuthCallback((payload) => {
+      void applyAuthPayload(payload);
     });
 
     return () => {
       disposed = true;
     };
-  }, [clearSession, setAuthStatus, setError, setToken]);
+  }, [clearSession, setAuthStatus, setAuthTokens, setError]);
 
   useEffect(() => {
     console.info("[Desktop Auth] desktop runtime config", {

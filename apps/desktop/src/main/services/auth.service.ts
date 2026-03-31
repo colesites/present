@@ -1,28 +1,35 @@
 import { shell } from 'electron';
 import { getWebAppBaseUrl } from '../utils/app.utils';
 
-let pendingAuthToken: string | null = null;
+export type DesktopAuthPayload = {
+  refreshToken: string | null;
+  token: string;
+};
+
+let pendingAuthPayload: DesktopAuthPayload | null = null;
 
 /**
  * Get pending auth token and clear it
  */
-export const consumePendingAuthToken = (): string | null => {
-  const token = pendingAuthToken;
-  pendingAuthToken = null;
+export const consumePendingAuthToken = (): DesktopAuthPayload | null => {
+  const payload = pendingAuthPayload;
+  pendingAuthPayload = null;
   console.info('[Desktop Auth] token consumed in main process', {
-    hasToken: Boolean(token),
-    tokenLength: token?.length ?? 0,
+    hasRefreshToken: Boolean(payload?.refreshToken),
+    hasToken: Boolean(payload?.token),
+    tokenLength: payload?.token.length ?? 0,
   });
-  return token;
+  return payload;
 };
 
 /**
  * Set pending auth token (used by deep link handler)
  */
-export const setPendingAuthToken = (token: string): void => {
-  pendingAuthToken = token;
+export const setPendingAuthToken = (payload: DesktopAuthPayload): void => {
+  pendingAuthPayload = payload;
   console.info('[Desktop Auth] token received in main process', {
-    tokenLength: token.length,
+    hasRefreshToken: Boolean(payload.refreshToken),
+    tokenLength: payload.token.length,
   });
 };
 
@@ -50,15 +57,20 @@ export const clearLoopbackAuthFlow = (): void => {
 /**
  * Send auth token to renderer via deep link
  */
-export const sendAuthTokenToRenderer = (token: string, handleDeepLink: (url: string) => void): void => {
-  const deepLink = `present://auth?token=${encodeURIComponent(token)}`;
+export const sendAuthTokenToRenderer = (
+  payload: DesktopAuthPayload,
+  handleDeepLink: (url: string) => void,
+): void => {
+  const deepLink = `present://auth?token=${encodeURIComponent(payload.token)}${
+    payload.refreshToken ? `&refreshToken=${encodeURIComponent(payload.refreshToken)}` : ''
+  }`;
   handleDeepLink(deepLink);
 };
 
 /**
  * Begin the desktop auth flow using loopback server
  */
-export const beginAuthFlow = async (_handleDeepLink: (url: string) => void): Promise<{ ok: boolean; error?: string }> => {
+export const beginAuthFlow = async (): Promise<{ ok: boolean; error?: string }> => {
   try {
     const authUrl = buildDesktopAuthLoginUrl();
     await shell.openExternal(authUrl);

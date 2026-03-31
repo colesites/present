@@ -1,6 +1,5 @@
 import { ipcMain, shell } from 'electron';
 import { beginAuthFlow, consumePendingAuthToken } from '../services/auth.service';
-import { handleDeepLink } from '../windows/main.window';
 
 /**
  * Register auth-related IPC handlers
@@ -8,7 +7,7 @@ import { handleDeepLink } from '../windows/main.window';
 export const registerAuthIPC = (): void => {
   // Begin desktop auth flow
   ipcMain.handle('begin-auth-flow', async () => {
-    return await beginAuthFlow(handleDeepLink);
+    return await beginAuthFlow();
   });
 
   // Consume pending auth token

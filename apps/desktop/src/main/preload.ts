@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readBundledBible: (filePath: string) => ipcRenderer.invoke('read-bundled-bible', filePath),
   fetchHostedBibleCatalog: (catalogUrl: string) =>
     ipcRenderer.invoke('fetch-hosted-bible-catalog', catalogUrl),
+  fetchBrowserSuggestions: (query: string) =>
+    ipcRenderer.invoke('fetch-browser-suggestions', query),
   requestAssemblyAiToken: (authToken: string) =>
     ipcRenderer.invoke('request-assemblyai-token', authToken),
   requestMicrophoneAccess: () => ipcRenderer.invoke('request-microphone-access'),
@@ -32,8 +34,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   beginAuthFlow: () => ipcRenderer.invoke('begin-auth-flow'),
   consumePendingAuthToken: () => ipcRenderer.invoke('consume-pending-auth-token'),
   openExternalBrowser: (url: string) => ipcRenderer.invoke('open-external-browser', url),
-  onAuthCallback: (callback: (token: string) => void) => {
-    ipcRenderer.on('auth-callback', (_event, token) => callback(token));
+  onAuthCallback: (callback: (payload: DesktopAuthPayload) => void) => {
+    ipcRenderer.on('auth-callback', (_event, payload) => callback(payload));
   },
   onOpenSettingsFromMenu: (callback: () => void) => {
     ipcRenderer.on('open-settings', () => callback());

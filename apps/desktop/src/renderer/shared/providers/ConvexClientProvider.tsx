@@ -11,6 +11,7 @@ import {
 } from "react";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import {
+  ensureFreshDesktopAccessToken,
   getStoredDesktopToken,
   useDesktopSessionStore,
 } from "../store/desktopSession";
@@ -24,23 +25,26 @@ const convex = new ConvexReactClient(convexUrl);
 const DesktopConvexAuthReadyContext = createContext(false);
 
 function useDesktopConvexAuth() {
+  const refreshToken = useDesktopSessionStore((state) => state.refreshToken);
   const token = useDesktopSessionStore((state) => state.token);
 
   const fetchAccessToken = useCallback(async () => {
+    const nextToken = await ensureFreshDesktopAccessToken();
     console.info("[Desktop Auth] token attached to Convex", {
-      hasToken: Boolean(token),
-      tokenLength: token?.length ?? 0,
+      hasRefreshToken: Boolean(refreshToken),
+      hasToken: Boolean(nextToken),
+      tokenLength: nextToken?.length ?? 0,
     });
-    return token;
-  }, [token]);
+    return nextToken;
+  }, [refreshToken]);
 
   return useMemo(
     () => ({
       isLoading: false,
-      isAuthenticated: Boolean(token),
+      isAuthenticated: Boolean(token || refreshToken),
       fetchAccessToken,
     }),
-    [fetchAccessToken, token]
+    [fetchAccessToken, refreshToken, token]
   );
 }
 
@@ -56,7 +60,8 @@ export default function ConvexClientProvider({
     setIsAuthReady(false);
     convex.setAuth(async () => {
       const storedToken = await getStoredDesktopToken();
-      const resolvedToken = storedToken ?? token ?? null;
+      const resolvedToken =
+        (await ensureFreshDesktopAccessToken()) ?? storedToken ?? token ?? null;
       console.info("[Convex Auth Debug] token being sent:", {
         exists: Boolean(resolvedToken),
         length: resolvedToken?.length ?? 0,

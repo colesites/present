@@ -20,6 +20,15 @@ interface MediaAccessResult {
   status: string;
 }
 
+interface DesktopAuthPayload {
+  token: string;
+  refreshToken: string | null;
+}
+
+interface BrowserSuggestionsResponse {
+  suggestions: string[];
+}
+
 interface BrowserModeState {
   url: string;
   title: string;
@@ -42,6 +51,7 @@ interface ElectronAPI {
   listBundledBibles: () => Promise<BundledBibleFile[]>;
   readBundledBible: (filePath: string) => Promise<Uint8Array | null>;
   fetchHostedBibleCatalog: (catalogUrl: string) => Promise<unknown | null>;
+  fetchBrowserSuggestions: (query: string) => Promise<BrowserSuggestionsResponse | null>;
   requestAssemblyAiToken: (authToken: string) => Promise<unknown | null>;
   requestMicrophoneAccess: () => Promise<MediaAccessResult>;
 
@@ -53,9 +63,9 @@ interface ElectronAPI {
 
   // Auth & System URLs
   beginAuthFlow: () => Promise<{ ok: boolean; error?: string }>;
-  consumePendingAuthToken: () => Promise<string | null>;
+  consumePendingAuthToken: () => Promise<DesktopAuthPayload | null>;
   openExternalBrowser: (url: string) => Promise<boolean>;
-  onAuthCallback: (callback: (token: string) => void) => void;
+  onAuthCallback: (callback: (payload: DesktopAuthPayload) => void) => void;
   onOpenSettingsFromMenu: (callback: () => void) => void;
 
   setBrowserModeEnabled: (enabled: boolean) => Promise<BrowserModeState>;
