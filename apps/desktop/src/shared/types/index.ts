@@ -5,7 +5,7 @@ export type SlideRef = {
   index: number;
 };
 
-export type ViewMode = "show" | "edit" | "stage" | "settings";
+export type ViewMode = "show" | "edit" | "stage" | "settings" | "browser";
 export type BottomTab = "shows" | "media" | "scripture";
 export type ContentSource = "my-creations" | "community";
 

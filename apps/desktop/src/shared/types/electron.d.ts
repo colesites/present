@@ -20,6 +20,18 @@ interface MediaAccessResult {
   status: string;
 }
 
+interface BrowserModeState {
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  isLoading: boolean;
+  projectionTarget: "preview" | "main-output";
+  scrollX: number;
+  scrollY: number;
+  previewDataUrl: string | null;
+}
+
 interface ElectronAPI {
   openOutputWindow: () => Promise<boolean>;
   closeOutputWindow: () => Promise<boolean>;
@@ -45,6 +57,24 @@ interface ElectronAPI {
   openExternalBrowser: (url: string) => Promise<boolean>;
   onAuthCallback: (callback: (token: string) => void) => void;
   onOpenSettingsFromMenu: (callback: () => void) => void;
+
+  setBrowserModeEnabled: (enabled: boolean) => Promise<BrowserModeState>;
+  setBrowserModeBounds: (bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }) => Promise<BrowserModeState>;
+  browserNavigate: (input: string) => Promise<BrowserModeState>;
+  browserBack: () => Promise<BrowserModeState>;
+  browserForward: () => Promise<BrowserModeState>;
+  browserReload: () => Promise<BrowserModeState>;
+  setBrowserProjectionTarget: (
+    target: "preview" | "main-output",
+  ) => Promise<BrowserModeState>;
+  getBrowserModeState: () => Promise<BrowserModeState>;
+  onBrowserModeStateChanged: (callback: (state: BrowserModeState) => void) => () => void;
+  onBrowserFocusAddress: (callback: () => void) => () => void;
 }
 
 interface Window {

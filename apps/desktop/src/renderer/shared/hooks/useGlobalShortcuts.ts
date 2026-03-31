@@ -1,7 +1,7 @@
 // src/hooks/useGlobalShortcuts.ts
 import { useEffect } from "react";
 import type { BottomTab } from "../../../shared/types";
-import type { ShowsPanelRef } from "../../../features/shows";
+import type { LibrariesPanelRef } from "../../../features/shows";
 import type { MediaPanelRef } from "../../../features/media";
 import type { ScripturePanelRef } from "../../../features/scripture";
 import type { RefObject } from "react";
@@ -9,7 +9,7 @@ import type { RefObject } from "react";
 type Params = {
   enabled?: boolean;
   setBottomTab: (tab: BottomTab) => void;
-  showsPanelRef: RefObject<ShowsPanelRef | null>;
+  showsPanelRef: RefObject<LibrariesPanelRef | null>;
   mediaPanelRef: RefObject<MediaPanelRef | null>;
   scripturePanelRef: RefObject<ScripturePanelRef | null>;
 };

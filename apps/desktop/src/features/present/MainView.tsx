@@ -33,7 +33,7 @@ import { fixLyrics } from "../../renderer/shared/lib/lyrics";
 import { ScriptureSlide } from "../../features/scripture/lib/slides";
 import type { MediaPanelRef } from "../media/MediaPanel";
 import type { ScripturePanelRef } from "../scripture/components/ScripturePanel";
-import type { ShowsPanelRef } from "../shows/ShowsPanel";
+import type { LibrariesPanelRef } from "../shows/LibrariesPanel";
 
 export interface MainViewPresentState {
   slidesForGrid: SlideData[];
@@ -130,7 +130,7 @@ export interface MainViewStyleState {
 }
 
 export interface MainViewPanelRefs {
-  showsPanelRef: React.RefObject<ShowsPanelRef | null>;
+  showsPanelRef: React.RefObject<LibrariesPanelRef | null>;
   mediaPanelRef: React.RefObject<MediaPanelRef | null>;
   scripturePanelRef: React.RefObject<ScripturePanelRef | null>;
 }

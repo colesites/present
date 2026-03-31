@@ -8,7 +8,7 @@ import type { Id } from "@present/backend/convex/_generated/dataModel";
 
 import { SlidesGrid } from "../../features/slides";
 import { LyricsEditor } from "../../features/editor";
-import { ShowsPanel, type ShowsPanelRef } from "../../features/shows";
+import { LibrariesPanel, type LibrariesPanelRef } from "../../features/shows";
 import { ScripturePanel, type ScripturePanelRef } from "../../features/scripture";
 import type { ScriptureSlide } from "../../features/scripture/lib/slides";
 import { MediaItem, VideoSettings } from "../media/hooks/useMediaFolders";
@@ -16,7 +16,7 @@ import { MediaItem, VideoSettings } from "../media/hooks/useMediaFolders";
 /* ---------------- TYPES (DERIVED, NOT INVENTED) ---------------- */
 
 type EditorProps = ComponentProps<typeof LyricsEditor>;
-type ShowsProps = ComponentProps<typeof ShowsPanel>;
+type ShowsProps = ComponentProps<typeof LibrariesPanel>;
 
 type Props = {
   viewMode: ViewMode;
@@ -59,7 +59,7 @@ type Props = {
   onVideoSeeked: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
 
   // top panels
-  showsPanelRef: React.RefObject<ShowsPanelRef | null>;
+  showsPanelRef: React.RefObject<LibrariesPanelRef | null>;
   scripturePanelRef: React.RefObject<ScripturePanelRef | null>;
   showsPanelProps: ShowsProps;
 
@@ -140,7 +140,7 @@ export function PresentCenterArea({
 
       <Activity mode={viewMode === "show" && bottomTab === "shows" ? "visible" : "hidden"}>
         <div className="absolute inset-0 overflow-hidden">
-          <ShowsPanel ref={showsPanelRef} {...showsPanelProps} />
+          <LibrariesPanel ref={showsPanelRef} {...showsPanelProps} />
         </div>
       </Activity>
 

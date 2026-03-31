@@ -8,6 +8,7 @@ import { registerBibleIPC } from './bible.ipc';
 import { registerAuthIPC } from './auth.ipc';
 import { registerNetworkIPC } from './network.ipc';
 import { registerPermissionsIPC } from './permissions.ipc';
+import { registerBrowserIPC } from './browser.ipc';
 
 /**
  * Register all IPC handlers
@@ -19,4 +20,5 @@ export const registerAllIPC = (): void => {
   registerAuthIPC();
   registerNetworkIPC();
   registerPermissionsIPC();
+  registerBrowserIPC();
 };

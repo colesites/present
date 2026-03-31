@@ -8,6 +8,7 @@ import {
   PencilLine,
   BookOpenText,
   LibraryBig,
+  Globe,
 } from "lucide-react";
 import { AuthControls } from "../../renderer/shared/components/AuthControls";
 import { ProjectButton } from "../../renderer/shared/components/ProjectButton";
@@ -27,6 +28,7 @@ interface AppHeaderProps {
   onOpenShow: () => void;
   onOpenLibraries: () => void;
   onOpenBible: () => void;
+  onOpenBrowser: () => void;
 }
 
 export const AppHeader = memo(function AppHeader({
@@ -38,6 +40,7 @@ export const AppHeader = memo(function AppHeader({
   onOpenShow,
   onOpenLibraries,
   onOpenBible,
+  onOpenBrowser,
 }: AppHeaderProps) {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -154,6 +157,19 @@ export const AppHeader = memo(function AppHeader({
             >
               <BookOpenText className="h-3.5 w-3.5" />
               Bible
+            </button>
+            <button
+              type="button"
+              onClick={onOpenBrowser}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] font-medium transition",
+                viewMode === "browser"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Globe className="h-3.5 w-3.5" />
+              Browser
             </button>
           </div>
         </div>

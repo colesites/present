@@ -7,7 +7,7 @@ import { AppHeader } from "../../features/header";
 import type { MediaPanelRef } from "../../features/media";
 import { useMediaFolders } from "../../features/media/hooks";
 import type { ScripturePanelRef } from "../../features/scripture";
-import type { ShowsPanelRef } from "../../features/shows";
+import type { LibrariesPanelRef } from "../../features/shows";
 import {
   useOrganization,
   usePersistedUIState,
@@ -17,6 +17,8 @@ import { useWorkspaceStore } from "../../../../../packages/shared/src";
 import { useAppSettings } from "../shared/hooks/useAppSettings";
 import { SettingsScreen } from "../../features/settings/components/SettingsScreen";
 import { PresentContainer } from "../../features/present/PresentContainer";
+import { BrowserModePanel } from "../../features/browser/BrowserModePanel";
+import { BrowserPreviewSidebar } from "../../features/browser/BrowserPreviewSidebar";
 import type { ContentSource } from "../../shared/types";
 import type { HeaderSearchScope } from "../../features/header/AppHeader";
 import { useDesktopSessionStore } from "../shared/store/desktopSession";
@@ -301,12 +303,12 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
   const { folders, allMediaItems, selectMediaForOutput } = mediaState;
   const settings = useAppSettings({ folders, allMediaItems });
 
-  const showsPanelRef = useRef<ShowsPanelRef>(null);
+  const showsPanelRef = useRef<LibrariesPanelRef>(null);
   const mediaPanelRef = useRef<MediaPanelRef>(null);
   const scripturePanelRef = useRef<ScripturePanelRef>(null);
 
   useGlobalShortcuts({
-    enabled: !isSettingsWindow,
+    enabled: !isSettingsWindow && effectiveViewMode !== "browser",
     setBottomTab,
     showsPanelRef,
     mediaPanelRef,
@@ -346,21 +348,33 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
           setBottomTab("scripture");
           setViewMode("show");
         }}
+        onOpenBrowser={() => {
+          setViewMode("browser");
+        }}
       />
 
-      <PresentContainer
-        orgId={effectiveOrgId}
-        userId={userId as any}
-        viewMode={effectiveViewMode}
-        bottomTab={bottomTab}
-        contentSource={contentSource}
-        mediaState={mediaState}
-        settings={settings}
-        showsPanelRef={showsPanelRef}
-        mediaPanelRef={mediaPanelRef}
-        scripturePanelRef={scripturePanelRef}
-        isAutopilotEnabled={isAutopilotEnabled}
-      />
+      {effectiveViewMode === "browser" ? (
+        <div className="flex min-h-0 flex-1">
+          <div className="min-w-0 flex-1">
+            <BrowserModePanel />
+          </div>
+          <BrowserPreviewSidebar />
+        </div>
+      ) : (
+        <PresentContainer
+          orgId={effectiveOrgId}
+          userId={userId as any}
+          viewMode={effectiveViewMode}
+          bottomTab={bottomTab}
+          contentSource={contentSource}
+          mediaState={mediaState}
+          settings={settings}
+          showsPanelRef={showsPanelRef}
+          mediaPanelRef={mediaPanelRef}
+          scripturePanelRef={scripturePanelRef}
+          isAutopilotEnabled={isAutopilotEnabled}
+        />
+      )}
     </div>
   );
 }

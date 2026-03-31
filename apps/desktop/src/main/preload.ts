@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   openOutputWindow: () => ipcRenderer.invoke('open-output-window'),
@@ -37,5 +37,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onOpenSettingsFromMenu: (callback: () => void) => {
     ipcRenderer.on('open-settings', () => callback());
+  },
+  setBrowserModeEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke('browser-mode:set-enabled', enabled),
+  setBrowserModeBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.invoke('browser-mode:set-bounds', bounds),
+  browserNavigate: (input: string) => ipcRenderer.invoke('browser-mode:navigate', input),
+  browserBack: () => ipcRenderer.invoke('browser-mode:back'),
+  browserForward: () => ipcRenderer.invoke('browser-mode:forward'),
+  browserReload: () => ipcRenderer.invoke('browser-mode:reload'),
+  setBrowserProjectionTarget: (target: 'preview' | 'main-output') =>
+    ipcRenderer.invoke('browser-mode:set-projection', target),
+  getBrowserModeState: () => ipcRenderer.invoke('browser-mode:get-state'),
+  onBrowserModeStateChanged: (
+    callback: (state: {
+      url: string;
+      title: string;
+      canGoBack: boolean;
+      canGoForward: boolean;
+      isLoading: boolean;
+      projectionTarget: 'preview' | 'main-output';
+      scrollX: number;
+      scrollY: number;
+      previewDataUrl: string | null;
+    }) => void,
+  ) => {
+    const listener = (_event: IpcRendererEvent, state: Parameters<typeof callback>[0]) =>
+      callback(state);
+    ipcRenderer.on('browser-state-changed', listener);
+    return () => {
+      ipcRenderer.removeListener('browser-state-changed', listener);
+    };
+  },
+  onBrowserFocusAddress: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('browser-focus-address', listener);
+    return () => {
+      ipcRenderer.removeListener('browser-focus-address', listener);
+    };
   },
 });

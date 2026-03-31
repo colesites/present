@@ -733,7 +733,7 @@ export const ScripturePanel = memo(
 
             <div className="space-y-1">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                AI Search
+                Speak to Search
               </p>
               <div className="flex items-center gap-1.5">
                 {isSupported ? (

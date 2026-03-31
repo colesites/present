@@ -7,7 +7,7 @@ import { useScripture } from "../scripture/hooks/useScripture";
 import { db } from "../scripture/lib/db";
 import type { ScriptureSlide } from "../scripture/lib/slides";
 import { useServices } from "../services/hooks";
-import type { ShowsPanelRef } from "../shows";
+import type { LibrariesPanelRef } from "../shows";
 import { useLibrary } from "../library/hooks";
 import type {
   LibraryItem,
@@ -41,7 +41,7 @@ interface PresentContainerProps {
   contentSource: ContentSource;
   mediaState: MediaState;
   settings: any;
-  showsPanelRef: React.RefObject<ShowsPanelRef>;
+  showsPanelRef: React.RefObject<LibrariesPanelRef>;
   mediaPanelRef: React.RefObject<MediaPanelRef>;
   scripturePanelRef: React.RefObject<ScripturePanelRef>;
   isAutopilotEnabled: boolean;

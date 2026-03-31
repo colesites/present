@@ -16,6 +16,8 @@ import { Input } from "../../renderer/shared/components/ui/input";
 import { Spinner } from "../../renderer/shared/components/ui/spinner";
 import { Skeleton } from "../../renderer/shared/components/ui/skeleton";
 import { cn } from "../../renderer/shared/lib/utils";
+import { useDesktopSessionStore } from "../../renderer/shared/store/desktopSession";
+import { useSpeechRecognition } from "../scripture/hooks/useSpeechRecognition";
 import {
   Search,
   ArrowUpDown,
@@ -26,6 +28,8 @@ import {
   Upload,
   LayoutGrid,
   List,
+  Mic,
+  MicOff,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -34,8 +38,13 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "../../renderer/shared/components/ui/dropdown-menu";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "../../renderer/shared/components/ui/resizable";
 
-interface ShowsPanelProps {
+interface LibrariesPanelProps {
   libraryItems: LibraryItem[];
   categories: Category[];
   selectedLibraryId: string | null;
@@ -60,12 +69,12 @@ interface ShowsPanelProps {
   contentSource: ContentSource;
 }
 
-export interface ShowsPanelRef {
+export interface LibrariesPanelRef {
   focusSearch: () => void;
 }
 
-export const ShowsPanel = memo(
-  forwardRef<ShowsPanelRef, ShowsPanelProps>(function ShowsPanel(
+export const LibrariesPanel = memo(
+  forwardRef<LibrariesPanelRef, LibrariesPanelProps>(function LibrariesPanel(
     {
       libraryItems,
       categories,
@@ -85,7 +94,7 @@ export const ShowsPanel = memo(
       searchQuery,
       onSearchChange,
       contentSource,
-    }: ShowsPanelProps,
+    }: LibrariesPanelProps,
     ref,
   ) {
     const [showNewLibraryItemDialog, setShowNewLibraryItemDialog] = useState(false);
@@ -105,6 +114,24 @@ export const ShowsPanel = memo(
 
     const searchInputRef = useRef<HTMLInputElement>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
+    const authToken = useDesktopSessionStore((state) => state.token);
+
+    const {
+      isListening: isSpeechListening,
+      isSupported: isSpeechSupported,
+      error: speechError,
+      startListening,
+      stopListening,
+    } = useSpeechRecognition({
+      authToken,
+      lang: "en-US",
+      onResult: ({ transcript }) => {
+        onSearchChange(transcript);
+      },
+      onFinalResult: (transcript) => {
+        onSearchChange(transcript);
+      },
+    });
 
     useImperativeHandle(ref, () => ({
       focusSearch: () => searchInputRef.current?.focus(),
@@ -116,22 +143,46 @@ export const ShowsPanel = memo(
         ? libraryItems.filter((s) => s.categoryId === selectedCategoryId)
         : libraryItems;
 
-      // Sorting
-      result = [...result].sort((a, b) => {
-        if (sortBy === "name") {
-          return sortOrder === "asc"
-            ? a.title.localeCompare(b.title)
-            : b.title.localeCompare(a.title);
-        } else {
-          // Recent
+      if (!searchQuery.trim()) {
+        result = [...result].sort((a, b) => {
+          if (sortBy === "name") {
+            return sortOrder === "asc"
+              ? a.title.localeCompare(b.title)
+              : b.title.localeCompare(a.title);
+          }
+
           return sortOrder === "asc"
             ? a._creationTime - b._creationTime
             : b._creationTime - a._creationTime;
-        }
-      });
+        });
+      }
 
       return result;
-    }, [libraryItems, selectedCategoryId, sortBy, sortOrder]);
+    }, [libraryItems, searchQuery, selectedCategoryId, sortBy, sortOrder]);
+
+    const selectedCategoryName = useMemo(() => {
+      if (!selectedCategoryId) {
+        return "All libraries";
+      }
+
+      return categories.find((category) => category._id === selectedCategoryId)?.name
+        ?? "All libraries";
+    }, [categories, selectedCategoryId]);
+
+    const visibleItemLabel = `${filteredItems.length} ${filteredItems.length === 1 ? "item" : "items"}`;
+    const hasActiveSearch = searchQuery.trim().length > 0;
+
+    const handleSpeechToggle = () => {
+      searchInputRef.current?.focus();
+
+      if (isSpeechListening) {
+        stopListening();
+        return;
+      }
+
+      onSearchChange("");
+      void startListening();
+    };
 
     const handleExportLibraries = () => {
       const payload = {
@@ -157,10 +208,19 @@ export const ShowsPanel = memo(
     };
 
     const handleImportLibraries = async (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
+      const input = event.target;
+      const file = input.files?.[0];
       if (!file) {
         return;
       }
+
+      let items: Array<{
+        title?: string;
+        body?: string;
+        lyrics?: string;
+        categoryId?: Id<"categories"> | null;
+      }> = [];
+      let parsedItems: unknown;
 
       try {
         const text = await file.text();
@@ -172,201 +232,292 @@ export const ShowsPanel = memo(
             categoryId?: Id<"categories"> | null;
           }>;
         };
-
-        const items = Array.isArray(parsed.items) ? parsed.items : [];
-        for (const item of items) {
-          const title = typeof item.title === "string" ? item.title.trim() : "";
-          const body = typeof item.body === "string" ? item.body : (typeof item.lyrics === "string" ? item.lyrics : "");
-          if (!title) {
-            continue;
-          }
-          await onCreateLibraryItem(title, body, item.categoryId ?? undefined);
-        }
+        parsedItems = parsed.items;
       } catch (error) {
         console.error("Failed to import libraries:", error);
-      } finally {
-        event.target.value = "";
+        input.value = "";
+        return;
       }
+
+      if (Array.isArray(parsedItems)) {
+        items = parsedItems;
+      }
+
+      for (const item of items) {
+        const title = typeof item.title === "string" ? item.title.trim() : "";
+        const body = typeof item.body === "string"
+          ? item.body
+          : (typeof item.lyrics === "string" ? item.lyrics : "");
+        if (!title) {
+          continue;
+        }
+        await onCreateLibraryItem(title, body, item.categoryId ?? undefined);
+      }
+
+      input.value = "";
     };
 
     return (
-      <div className="flex h-full flex-col">
-        {/* Library bar and Search */}
-        <div className="flex items-center justify-between border-b border-border px-2 py-1 gap-2">
-          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1">
-            <p className="text-[10px] text-muted-foreground mr-2 shrink-0">
-              Libraries:
+      <>
+        <ResizablePanelGroup direction="horizontal" className="flex h-full min-h-0 overflow-hidden bg-background">
+        <ResizablePanel defaultSize={20} minSize={15} maxSize={30} className="flex shrink-0 flex-col border-r border-border/70 bg-card/40">
+          <div className="border-b border-border/70 px-3 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              Libraries
             </p>
+            <button
+              type="button"
+              onClick={() => setShowNewCategoryDialog(true)}
+              className="mt-3 flex w-full items-center justify-between rounded-xl border border-dashed border-border/80 px-3 py-2 text-[11px] font-medium text-muted-foreground transition hover:border-primary/50 hover:text-primary"
+            >
+              New library
+              <span className="text-sm leading-none">+</span>
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
             <button
               type="button"
               onClick={() => onSelectCategory(null)}
               className={cn(
-                "px-2 py-1 rounded text-[10px] transition",
+                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
                 !selectedCategoryId
-                  ? "bg-primary/20 text-primary"
-                  : "text-muted-foreground hover:text-foreground",
+                  ? "bg-primary text-primary-foreground"
+                  : "text-foreground hover:bg-secondary"
               )}
             >
-              All
-            </button>
-            {categories.map((cat) => (
-              <button
-                key={cat._id}
-                type="button"
-                onClick={() => onSelectCategory(cat._id)}
-                className={cn(
-                  "px-2 py-1 rounded text-[10px] transition",
-                  selectedCategoryId === cat._id
-                    ? "bg-primary/20 text-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {cat.name}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => setShowNewCategoryDialog(true)}
-              className="px-2 py-1 text-[10px] text-muted-foreground hover:text-primary"
-            >
-              +
-            </button>
-          </div>
-
-          {/* Search and Sort */}
-          <div className="flex items-center gap-1 shrink-0">
-            <div className="relative w-32 xl:w-40">
-              <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                ref={searchInputRef}
-                value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                placeholder={
-                  selectedCategoryId
-                    ? `Search ${categories.find((c) => c._id === selectedCategoryId)?.name}...`
-                    : "Search..."
-                }
-                className="h-7 w-full pl-7 text-[10px]"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={handleExportLibraries}
-              className="h-7 w-7 flex items-center justify-center rounded-md border border-input hover:bg-secondary text-muted-foreground"
-              title="Export libraries"
-            >
-              <Download className="h-3 w-3" />
+              <span className="min-w-0 flex-1 truncate">All Libraries</span>
+              <span className="shrink-0 text-[10px] opacity-70">
+                {libraryItems.length}
+              </span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => importInputRef.current?.click()}
-              className="h-7 w-7 flex items-center justify-center rounded-md border border-input hover:bg-secondary text-muted-foreground"
-              title="Import libraries"
-            >
-              <Upload className="h-3 w-3" />
-            </button>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={(event) => {
-                void handleImportLibraries(event);
-              }}
-            />
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="h-7 w-7 flex items-center justify-center rounded-md border border-input hover:bg-secondary text-muted-foreground">
-                  <ArrowUpDown className="h-3 w-3" />
+            {categories.map((cat) => {
+              const count = libraryItems.filter(item => item.categoryId === cat._id).length;
+              return (
+                <button
+                  key={cat._id}
+                  type="button"
+                  onClick={() => onSelectCategory(cat._id)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
+                    selectedCategoryId === cat._id
+                      ? "bg-primary text-primary-foreground"
+                      : "text-foreground hover:bg-secondary"
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{cat.name}</span>
+                  {count > 0 && (
+                    <span className="shrink-0 text-[10px] opacity-70">
+                      {count}
+                    </span>
+                  )}
                 </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuItem onClick={() => setSortBy("recent")}>
-                  <Check
-                    className={cn(
-                      "mr-2 h-3 w-3",
-                      sortBy === "recent" ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  Recent
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSortBy("name")}>
-                  <Check
-                    className={cn(
-                      "mr-2 h-3 w-3",
-                      sortBy === "name" ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  Name
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setSortOrder("asc")}>
-                  <ArrowUp
-                    className={cn(
-                      "mr-2 h-3 w-3",
-                      sortOrder === "asc" ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  Ascending
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSortOrder("desc")}>
-                  <ArrowDown
-                    className={cn(
-                      "mr-2 h-3 w-3",
-                      sortOrder === "desc" ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  Descending
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              );
+            })}
+          </div>
+        </ResizablePanel>
 
-            <div className="flex items-center rounded-md border border-input bg-background p-0.5">
-              <button
-                type="button"
-                onClick={() => setLayoutMode("list")}
-                className={cn(
-                  "inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition",
-                  layoutMode === "list" && "bg-primary/10 text-primary",
-                )}
-                title="List view"
-              >
-                <List className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setLayoutMode("grid")}
-                className={cn(
-                  "inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition",
-                  layoutMode === "grid" && "bg-primary/10 text-primary",
-                )}
-                title="Grid view"
-              >
-                <LayoutGrid className="h-3.5 w-3.5" />
-              </button>
+        <ResizableHandle withHandle />
+
+        <ResizablePanel defaultSize={80} className="flex min-w-0 flex-col">
+          <div className="border-b border-border/70 bg-card/30 px-4 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-[240px] flex-1">
+                <div className="flex max-w-xl items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      ref={searchInputRef}
+                      value={searchQuery}
+                      onChange={(e) => onSearchChange(e.target.value)}
+                      placeholder="Search title or lyrics..."
+                      className="h-10 w-full rounded-xl border-border/80 bg-background/90 pl-9 pr-3 text-xs shadow-sm"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSpeechToggle}
+                    disabled={!isSpeechSupported}
+                    className={cn(
+                      "h-10 w-10 shrink-0 rounded-xl border transition-colors",
+                      isSpeechListening
+                        ? "border-red-600 bg-red-500 text-white"
+                        : "border-input bg-background text-muted-foreground hover:bg-secondary",
+                      !isSpeechSupported && "cursor-not-allowed opacity-40",
+                    )}
+                    title={
+                      isSpeechListening
+                        ? "Stop listening"
+                        : "Speak to search libraries"
+                    }
+                  >
+                    {isSpeechListening ? (
+                      <Mic className="mx-auto h-4 w-4 animate-pulse" />
+                    ) : (
+                      <MicOff className="mx-auto h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+
+                {speechError ? (
+                  <p className="mt-2 text-[10px] text-destructive">
+                    {speechError}
+                  </p>
+                ) : isSpeechListening ? (
+                  <p className="mt-2 text-[10px] text-primary">
+                    Listening for song title or lyrics...
+                  </p>
+                ) : !isSpeechSupported ? (
+                  <p className="mt-2 text-[10px] text-muted-foreground">
+                    Voice search is unavailable in this runtime.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleExportLibraries}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-input bg-background text-muted-foreground shadow-sm transition hover:bg-secondary"
+                  title="Export libraries"
+                >
+                  <Download className="h-4 w-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => importInputRef.current?.click()}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-input bg-background text-muted-foreground shadow-sm transition hover:bg-secondary"
+                  title="Import libraries"
+                >
+                  <Upload className="h-4 w-4" />
+                </button>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={(event) => {
+                    void handleImportLibraries(event);
+                  }}
+                />
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="flex h-10 w-10 items-center justify-center rounded-xl border border-input bg-background text-muted-foreground shadow-sm transition hover:bg-secondary">
+                      <ArrowUpDown className="h-4 w-4" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem onClick={() => setSortBy("recent")}>
+                      <Check
+                        className={cn(
+                          "mr-2 h-3 w-3",
+                          sortBy === "recent" ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      Recent
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setSortBy("name")}>
+                      <Check
+                        className={cn(
+                          "mr-2 h-3 w-3",
+                          sortBy === "name" ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      Name
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setSortOrder("asc")}>
+                      <ArrowUp
+                        className={cn(
+                          "mr-2 h-3 w-3",
+                          sortOrder === "asc" ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      Ascending
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setSortOrder("desc")}>
+                      <ArrowDown
+                        className={cn(
+                          "mr-2 h-3 w-3",
+                          sortOrder === "desc" ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      Descending
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <div className="flex h-10 items-center rounded-xl border border-input bg-background p-1 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => setLayoutMode("list")}
+                    className={cn(
+                      "inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition",
+                      layoutMode === "list" && "bg-primary/10 text-primary",
+                    )}
+                    title="List view"
+                  >
+                    <List className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLayoutMode("grid")}
+                    className={cn(
+                      "inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition",
+                      layoutMode === "grid" && "bg-primary/10 text-primary",
+                    )}
+                    title="Grid view"
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Library items grid */}
-        <div className="flex-1 overflow-auto p-2">
-          {isLoading ? (
-            <ShowsGridSkeleton />
-          ) : contentSource === "community" ? (
-            <div className="flex h-full flex-col items-center justify-center space-y-2 text-center">
-              <div className="rounded-full bg-primary/10 p-4">
-                <Search className="h-8 w-8 text-primary" />
+          <div className="min-h-0 flex-1 overflow-auto p-3">
+            {isLoading ? (
+              <ShowsGridSkeleton />
+            ) : contentSource === "community" ? (
+              <div className="flex h-full flex-col items-center justify-center space-y-2 text-center">
+                <div className="rounded-full bg-primary/10 p-4">
+                  <Search className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="text-lg font-semibold">Community Content</h3>
+                <p className="max-w-[250px] text-sm text-muted-foreground">
+                  The community library is growing! Public shows and templates will appear here soon.
+                </p>
               </div>
-              <h3 className="text-lg font-semibold">Community Content</h3>
-              <p className="max-w-[250px] text-sm text-muted-foreground">
-                The community library is growing! Public shows and templates will appear here soon.
-              </p>
-            </div>
-          ) : (
-            layoutMode === "grid" ? (
+            ) : filteredItems.length === 0 ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="max-w-sm rounded-2xl border border-dashed border-border/80 bg-card/40 px-6 py-8 text-center shadow-sm">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                    <Search className="h-5 w-5 text-primary" />
+                  </div>
+                  <h3 className="mt-4 text-sm font-semibold text-foreground">
+                    {hasActiveSearch ? "No matching items" : "Library is ready for content"}
+                  </h3>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    {hasActiveSearch
+                      ? "Try another lyric fragment or title phrase to refine the search."
+                      : "Create a new library item or import an existing catalog to start building your service flow."}
+                  </p>
+                  {!hasActiveSearch ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowNewLibraryItemDialog(true)}
+                      className="mt-4 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90"
+                    >
+                      New library item
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : layoutMode === "grid" ? (
               <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
                 <NewLibraryItemButton onClick={() => setShowNewLibraryItemDialog(true)} />
                 {filteredItems.map((item) => (
@@ -406,11 +557,12 @@ export const ShowsPanel = memo(
                   />
                 ))}
               </div>
-            )
-          )}
-        </div>
+            )}
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
 
-        {/* Dialogs */}
+      {/* Dialogs */}
         {showNewLibraryItemDialog && (
           <NewLibraryItemDialog
             onClose={() => setShowNewLibraryItemDialog(false)}
@@ -449,7 +601,7 @@ export const ShowsPanel = memo(
             }}
           />
         )}
-      </div>
+      </>
     );
   }),
 );
@@ -655,31 +807,45 @@ function NewLibraryItemDialog({
       setError("Title is required");
       return;
     }
+
     setIsCreating(true);
+
+    let shouldClose = false;
+    const nextCategoryId = targetCategoryId || undefined;
     try {
       await onCreate(
         title.trim(),
         body,
-        targetCategoryId || undefined,
+        nextCategoryId,
       );
-      onClose();
+      shouldClose = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create");
-    } finally {
-      setIsCreating(false);
+    }
+
+    setIsCreating(false);
+    if (shouldClose) {
+      onClose();
     }
   };
 
   const handleFix = async () => {
-    if (!body.trim()) return;
+    if (!body.trim()) {
+      return;
+    }
+
     setIsFixing(true);
+
+    let fixedBody: string | null = null;
     try {
-      const fixed = await onFixLyrics(body);
-      setBody(fixed);
+      fixedBody = await onFixLyrics(body);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fix");
-    } finally {
-      setIsFixing(false);
+    }
+
+    setIsFixing(false);
+    if (fixedBody !== null) {
+      setBody(fixedBody);
     }
   };
 
@@ -857,11 +1023,14 @@ function DeleteLibraryItemDialog({
 
   const handleDelete = async () => {
     setIsDeleting(true);
+
     try {
       await onDelete();
-    } finally {
-      setIsDeleting(false);
+    } catch (error) {
+      console.error("Failed to delete library item:", error);
     }
+
+    setIsDeleting(false);
   };
 
   return (

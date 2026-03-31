@@ -11,6 +11,77 @@ import {
   upsertLibraryItem,
 } from "../../../renderer/shared/offline/localData";
 
+const normalizeSearchText = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const scoreLibrarySearchMatch = (
+  item: Pick<LibraryItem, "title" | "body" | "_creationTime">,
+  rawQuery: string,
+): number => {
+  const query = normalizeSearchText(rawQuery);
+  if (!query) {
+    return 0;
+  }
+
+  const title = normalizeSearchText(item.title);
+  const body = normalizeSearchText(item.body);
+  const combined = `${title} ${body}`.trim();
+
+  if (!combined) {
+    return 0;
+  }
+
+  if (title === query) {
+    return 1200;
+  }
+
+  if (title.includes(query)) {
+    return 900 + query.length;
+  }
+
+  if (combined.includes(query)) {
+    return 700 + query.length;
+  }
+
+  const tokens = query.split(" ").filter((token) => token.length >= 2);
+  if (tokens.length === 0) {
+    return 0;
+  }
+
+  let matchedTokens = 0;
+  let score = 0;
+
+  for (const token of tokens) {
+    if (title.includes(token)) {
+      matchedTokens += 1;
+      score += 6;
+      continue;
+    }
+
+    if (body.includes(token)) {
+      matchedTokens += 1;
+      score += 3;
+    }
+  }
+
+  const requiredMatches =
+    tokens.length === 1
+      ? 1
+      : tokens.length <= 3
+        ? 2
+        : Math.max(2, Math.ceil(tokens.length * 0.4));
+
+  if (matchedTokens < requiredMatches) {
+    return 0;
+  }
+
+  return score + matchedTokens;
+};
+
 export function useLibrary(
   input: { orgId: string | null; userId: string | null },
   contentSource: ContentSource,
@@ -55,12 +126,18 @@ export function useLibrary(
 
     // Filter by search query
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase().trim();
-      result = result.filter(
-        (s) =>
-          s.title.toLowerCase().includes(query) ||
-          s.body.toLowerCase().includes(query),
-      );
+      result = result
+        .map((item) => ({
+          item,
+          score: scoreLibrarySearchMatch(item, searchQuery),
+        }))
+        .filter((entry) => entry.score > 0)
+        .sort(
+          (left, right) =>
+            right.score - left.score ||
+            right.item._creationTime - left.item._creationTime,
+        )
+        .map((entry) => entry.item);
     }
 
     // Filter by content source
