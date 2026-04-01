@@ -4,6 +4,7 @@ import { isDev } from '../utils/app.utils';
 import { setPendingAuthToken } from '../services/auth.service';
 import { buildDesktopContentSecurityPolicy } from '../../../csp';
 import { configureMediaPermissions } from '../services/media-permissions.service';
+import { getDesktopAppIcon } from '../services/icon.service';
 
 // Webpack entry points (declared globally by Forge)
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
@@ -101,8 +102,11 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
     return;
   }
 
+  const appIcon = getDesktopAppIcon();
+
   mainWindow = new BrowserWindow({
     height: 980,
+    icon: appIcon,
     width: 1560,
     minWidth: 1180,
     minHeight: 760,

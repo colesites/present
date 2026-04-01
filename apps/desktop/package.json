@@ -9,7 +9,7 @@
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
-    "make:mac": "electron-forge make --platform=darwin --arch=x64",
+    "make:mac": "electron-forge make --platform=darwin --arch=universal",
     "make:windows": "electron-forge make --platform=win32 --arch=x64",
     "make:linux": "electron-forge make --platform=linux --arch=x64",
     "publish": "electron-forge publish",

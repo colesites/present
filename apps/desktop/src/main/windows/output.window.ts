@@ -1,6 +1,7 @@
 import { BrowserWindow, screen } from 'electron';
 import { isDev } from '../utils/app.utils';
 import { getPreferredOutputDisplay, moveOutputWindowToDisplay } from '../services/display.service';
+import { getDesktopAppIcon } from '../services/icon.service';
 
 // Webpack entry points (declared globally by Forge)
 declare const OUTPUT_WINDOW_WEBPACK_ENTRY: string;
@@ -25,6 +26,7 @@ export const createOutputWindow = (mainWindow: BrowserWindow | null): boolean =>
 
   const preferredDisplay = getPreferredOutputDisplay();
   const isPrimary = preferredDisplay.id === screen.getPrimaryDisplay().id;
+  const appIcon = getDesktopAppIcon();
 
   outputWindow = new BrowserWindow({
     x: preferredDisplay.bounds.x,
@@ -32,6 +34,7 @@ export const createOutputWindow = (mainWindow: BrowserWindow | null): boolean =>
     width: preferredDisplay.bounds.width || 1280,
     height: preferredDisplay.bounds.height || 720,
     fullscreen: !isPrimary,
+    icon: appIcon,
     autoHideMenuBar: true,
     webPreferences: {
       preload: OUTPUT_WINDOW_PRELOAD_WEBPACK_ENTRY,

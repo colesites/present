@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { isDev } from '../utils/app.utils';
+import { getDesktopAppIcon } from '../services/icon.service';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -24,6 +25,7 @@ export const createSettingsWindow = (): void => {
   settingsWindow = new BrowserWindow({
     width: 1100,
     height: 760,
+    icon: getDesktopAppIcon(),
     minWidth: 900,
     minHeight: 620,
     show: false,

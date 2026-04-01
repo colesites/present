@@ -6,7 +6,7 @@ import {
 const FALLBACK_FILE_NAMES = {
   linux: "Present-linux.deb",
   mac: "Present-mac.zip",
-  windows: "Present-windows.exe",
+  windows: "Present-windows-setup.exe",
 } as const;
 
 const getFileNameFromUrl = (source: string, fallback: string): string => {

@@ -23,6 +23,7 @@ import {
 import { openSettingsFromMenu } from './windows/settings.window';
 import { setupMenu } from './menu/app.menu';
 import { registerAllIPC } from './ipc';
+import { applyDesktopDockIcon } from './services/icon.service';
 
 // Handle Squirrel startup events on Windows
 if (require('electron-squirrel-startup')) {
@@ -44,6 +45,8 @@ app.on('open-url', (event, url) => {
 
 // App ready - initialize everything
 app.on('ready', () => {
+  applyDesktopDockIcon();
+
   // Register protocol handlers
   registerProtocolHandlers();
 

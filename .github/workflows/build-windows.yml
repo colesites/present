@@ -44,6 +44,49 @@ jobs:
           DEBUG: electron-forge:*,electron-windows-installer*
         run: pnpm --filter @present/desktop run make:windows
 
+      - name: Upload Windows release files to Cloudflare R2
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        run: |
+          aws --version
+
+          setup_exe="$(find apps/desktop/out/make/squirrel.windows -type f -name '*Setup.exe' | head -n 1)"
+          releases_file="$(find apps/desktop/out/make/squirrel.windows -type f -name 'RELEASES' | head -n 1)"
+
+          if [ -z "$setup_exe" ]; then
+            echo "Windows setup executable not found"
+            exit 1
+          fi
+
+          setup_basename="$(basename "$setup_exe")"
+          aws s3 cp "$setup_exe" "s3://$R2_BUCKET/desktop/windows/$setup_basename" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "no-store" \
+            --content-type "application/octet-stream"
+          aws s3 cp "$setup_exe" "s3://$R2_BUCKET/desktop/windows/Present-windows-setup.exe" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "no-store" \
+            --content-type "application/octet-stream"
+
+          if [ -n "$releases_file" ]; then
+            aws s3 cp "$releases_file" "s3://$R2_BUCKET/desktop/windows/RELEASES" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "no-store" \
+              --content-type "text/plain; charset=utf-8"
+          fi
+
+          find apps/desktop/out/make/squirrel.windows -type f -name '*.nupkg' -print0 | while IFS= read -r -d '' file; do
+            aws s3 cp "$file" "s3://$R2_BUCKET/desktop/windows/$(basename "$file")" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "no-store" \
+              --content-type "application/octet-stream"
+          done
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v6
         with:

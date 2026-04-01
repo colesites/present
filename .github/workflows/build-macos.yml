@@ -1,0 +1,78 @@
+name: Build macOS Desktop
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/desktop/**"
+      - "packages/backend/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/build-macos.yml"
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Present for macOS
+        run: pnpm --filter @present/desktop run make:mac
+
+      - name: Upload macOS release files to Cloudflare R2
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        run: |
+          aws --version
+
+          zip_file="$(find apps/desktop/out/make -type f -name '*.zip' | head -n 1)"
+
+          if [ -z "$zip_file" ]; then
+            echo "macOS zip package not found"
+            exit 1
+          fi
+
+          zip_basename="$(basename "$zip_file")"
+          aws s3 cp "$zip_file" "s3://$R2_BUCKET/desktop/mac/$zip_basename" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "no-store" \
+            --content-type "application/zip"
+          aws s3 cp "$zip_file" "s3://$R2_BUCKET/desktop/mac/Present-mac.zip" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "no-store" \
+            --content-type "application/zip"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: present-macos-universal
+          path: apps/desktop/out/make/**/*.zip
+          if-no-files-found: error

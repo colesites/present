@@ -47,6 +47,49 @@ jobs:
       - name: Build Present for Linux
         run: pnpm --filter @present/desktop run make:linux
 
+      - name: Upload Linux release files to Cloudflare R2
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        run: |
+          aws --version
+
+          deb_file="$(find apps/desktop/out/make -type f -name '*.deb' | head -n 1)"
+          rpm_file="$(find apps/desktop/out/make -type f -name '*.rpm' | head -n 1)"
+
+          if [ -z "$deb_file" ] && [ -z "$rpm_file" ]; then
+            echo "Linux packages were not found"
+            exit 1
+          fi
+
+          if [ -n "$deb_file" ]; then
+            deb_basename="$(basename "$deb_file")"
+            aws s3 cp "$deb_file" "s3://$R2_BUCKET/desktop/linux/$deb_basename" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "no-store" \
+              --content-type "application/vnd.debian.binary-package"
+            aws s3 cp "$deb_file" "s3://$R2_BUCKET/desktop/linux/Present-linux.deb" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "no-store" \
+              --content-type "application/vnd.debian.binary-package"
+          fi
+
+          if [ -n "$rpm_file" ]; then
+            rpm_basename="$(basename "$rpm_file")"
+            aws s3 cp "$rpm_file" "s3://$R2_BUCKET/desktop/linux/$rpm_basename" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "no-store" \
+              --content-type "application/x-rpm"
+            aws s3 cp "$rpm_file" "s3://$R2_BUCKET/desktop/linux/Present-linux.rpm" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "no-store" \
+              --content-type "application/x-rpm"
+          fi
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v6
         with:

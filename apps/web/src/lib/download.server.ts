@@ -27,17 +27,17 @@ const DOWNLOAD_TARGET_COPY: Record<
   mac: {
     description: "Current desktop release for macOS.",
     label: "macOS",
-    note: "Already live in your current Cloudflare storage flow.",
+    note: "Published from GitHub Actions to Cloudflare R2.",
   },
   windows: {
-    description: "Windows installer built from GitHub Actions.",
+    description: "Windows installer published from GitHub Actions.",
     label: "Windows",
-    note: "Expected artifact: Squirrel installer (.exe).",
+    note: "Primary download: Squirrel installer (.exe).",
   },
   linux: {
-    description: "Primary Linux package for desktop installs.",
+    description: "Primary Linux package published from GitHub Actions.",
     label: "Linux",
-    note: "Expected artifact: Debian package (.deb).",
+    note: "Primary download: Debian package (.deb).",
   },
 };
 

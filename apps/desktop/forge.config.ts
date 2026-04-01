@@ -14,10 +14,17 @@ import { rendererConfig } from './webpack.renderer.config';
 import { preloadConfig } from './webpack.preload.config';
 import { buildDesktopContentSecurityPolicy } from './csp';
 
+const iconBasePath = path.resolve(__dirname, 'assets/icons/present');
+const linuxIconPath = path.resolve(__dirname, 'assets/icons/present.png');
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    extraResource: [path.resolve(__dirname, 'bible')],
+    extraResource: [
+      path.resolve(__dirname, 'bible'),
+      path.resolve(__dirname, 'assets/icons'),
+    ],
+    icon: iconBasePath,
     extendInfo: {
       NSMicrophoneUsageDescription:
         "Present uses the microphone for voice scripture search and speech controls.",
@@ -43,6 +50,7 @@ const config: ForgeConfig = {
     new MakerZIP({}, ['darwin']),
     new MakerRpm({
       options: {
+        icon: linuxIconPath,
         mimeType: ['x-scheme-handler/present'],
         name: 'present',
         productName: 'Present',
@@ -50,6 +58,7 @@ const config: ForgeConfig = {
     }),
     new MakerDeb({
       options: {
+        icon: linuxIconPath,
         mimeType: ['x-scheme-handler/present'],
         name: 'present',
         productName: 'Present',
