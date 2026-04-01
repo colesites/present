@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 
 function WindowsMark() {
   return (
-    <div className="grid h-9 w-9 grid-cols-2 gap-[2px]">
+    <div className="grid h-8 w-8 grid-cols-2 gap-[2px] sm:h-9 sm:w-9">
       <span className="bg-[#f25022]" />
       <span className="bg-[#7fba00]" />
       <span className="bg-[#00a4ef]" />
@@ -35,12 +35,12 @@ function DownloadRow({ variant }: { variant: DesktopDownloadVariant }) {
   return (
     <a
       href={variant.downloadPath}
-      className="flex items-center justify-between gap-4 px-7 py-6 text-left transition-colors duration-200 hover:bg-black/[0.035]"
+      className="flex items-center justify-between gap-4 px-5 py-4 text-left transition-colors duration-200 hover:bg-black/[0.035] sm:px-7 sm:py-6"
     >
-      <span className="text-[1.05rem] font-medium tracking-tight text-black/62">
+      <span className="pr-3 text-[0.98rem] font-medium tracking-tight text-black/62 sm:text-[1.05rem]">
         {variant.label}
       </span>
-      <ArrowDownToLine className="h-6 w-6 shrink-0 text-black/58" />
+      <ArrowDownToLine className="h-5 w-5 shrink-0 text-black/58 sm:h-6 sm:w-6" />
     </a>
   );
 }
@@ -51,10 +51,10 @@ function DownloadPlatformCard({ target }: { target: DesktopDownloadTarget }) {
 
   if (!isAvailable) {
     return (
-      <div className="w-full max-w-[29rem] overflow-hidden rounded-[26px] border border-black/10 bg-white opacity-50 shadow-[0_30px_80px_rgba(0,0,0,0.12)]">
-        <div className="flex items-center gap-5 px-7 py-9">
-          <Icon className="h-10 w-10 shrink-0 text-black" />
-          <h2 className="text-[2.3rem] font-semibold tracking-tight text-black">
+      <div className="w-full overflow-hidden rounded-[22px] border border-black/10 bg-white opacity-50 shadow-[0_24px_60px_rgba(0,0,0,0.1)] sm:max-w-[29rem] sm:rounded-[26px] sm:shadow-[0_30px_80px_rgba(0,0,0,0.12)]">
+        <div className="flex items-center gap-4 px-5 py-6 sm:gap-5 sm:px-7 sm:py-9">
+          <Icon className="h-8 w-8 shrink-0 text-black sm:h-10 sm:w-10" />
+          <h2 className="text-[1.9rem] font-semibold tracking-tight text-black sm:text-[2.3rem]">
             {target.label}
           </h2>
         </div>
@@ -63,10 +63,10 @@ function DownloadPlatformCard({ target }: { target: DesktopDownloadTarget }) {
   }
 
   return (
-    <div className="w-full max-w-[29rem] overflow-hidden rounded-[26px] border border-black/10 bg-white shadow-[0_30px_80px_rgba(0,0,0,0.12)]">
-      <div className="flex items-center gap-5 px-7 py-9">
-        <Icon className="h-10 w-10 shrink-0 text-black" />
-        <h2 className="text-[2.3rem] font-semibold tracking-tight text-black">
+    <div className="w-full overflow-hidden rounded-[22px] border border-black/10 bg-white shadow-[0_24px_60px_rgba(0,0,0,0.1)] sm:max-w-[29rem] sm:rounded-[26px] sm:shadow-[0_30px_80px_rgba(0,0,0,0.12)]">
+      <div className="flex items-center gap-4 px-5 py-6 sm:gap-5 sm:px-7 sm:py-9">
+        <Icon className="h-8 w-8 shrink-0 text-black sm:h-10 sm:w-10" />
+        <h2 className="text-[1.9rem] font-semibold tracking-tight text-black sm:text-[2.3rem]">
           {target.label}
         </h2>
       </div>
@@ -92,26 +92,26 @@ export default function DownloadPage() {
     <div className="min-h-screen bg-[#000000] text-foreground selection:bg-[#5865F2]/30">
       <Navbar />
 
-      <main className="overflow-hidden min-h-screen flex items-center justify-center pt-24 pb-12">
-        <section className="relative w-full px-6 lg:px-12">
+      <main className="min-h-screen overflow-x-hidden pt-20 pb-12 sm:pt-24">
+        <section className="relative w-full px-4 sm:px-6 lg:px-12">
           {/* subtle background styling avoiding over-cluttering */}
-          <div className="pointer-events-none absolute left-1/2 top-24 h-[32rem] w-[32rem] -translate-x-1/2 rounded-full bg-white/5 blur-[120px]" />
+          <div className="pointer-events-none absolute left-1/2 top-16 h-[20rem] w-[20rem] -translate-x-1/2 rounded-full bg-white/5 blur-[90px] sm:top-24 sm:h-[32rem] sm:w-[32rem] sm:blur-[120px]" />
 
-          <div className="container relative z-10 mx-auto flex flex-col items-center justify-center text-center max-w-[85rem]">
+          <div className="container relative z-10 mx-auto flex max-w-[94rem] flex-col items-center text-center">
             
             {/* Main Content */}
-            <div className="w-full max-w-4xl pt-10 flex flex-col items-center">
-              <h1 className="font-stretch text-[3.8rem] leading-[0.95] font-black tracking-tight text-white sm:text-[5rem] lg:text-[6.5rem] uppercase text-center">
+            <div className="flex w-full flex-col items-center pt-8 sm:pt-10">
+              <h1 className="font-stretch text-[2.6rem] leading-[0.95] font-black tracking-tight text-white sm:text-[5rem] lg:text-[6.5rem] uppercase text-center">
                 Download
                 <br />
                 for Desktop
               </h1>
 
-              <p className="mt-8 max-w-[36rem] text-lg leading-relaxed text-white sm:text-[1.3rem] font-medium text-center">
+              <p className="mt-6 max-w-[34rem] px-2 text-[0.98rem] leading-relaxed text-white/88 sm:mt-8 sm:text-[1.3rem] sm:text-white font-medium text-center">
                 Present keeps worship teams fast under pressure with cloud-synced libraries, instant scripture search, browser output, and a clean confidence view built for live services.
               </p>
 
-              <div className="mt-14 grid w-full max-w-[94rem] gap-6 lg:grid-cols-3">
+              <div className="mt-10 grid w-full gap-4 sm:mt-14 sm:gap-6 lg:grid-cols-3">
                 {targets.map((target) => (
                   <DownloadPlatformCard
                     key={target.platform}
