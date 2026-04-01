@@ -1,13 +1,8 @@
 import {
+  getDesktopDownloadFallbackFileName,
   getDesktopDownloadUrl,
-  isDesktopDownloadPlatform,
+  isDesktopDownloadSlug,
 } from "@/lib/download.server";
-
-const FALLBACK_FILE_NAMES = {
-  linux: "Present-linux.deb",
-  mac: "Present-mac.zip",
-  windows: "Present-windows-setup.exe",
-} as const;
 
 const getFileNameFromUrl = (source: string, fallback: string): string => {
   try {
@@ -29,7 +24,7 @@ export async function GET(
 ) {
   const { platform } = await context.params;
 
-  if (!isDesktopDownloadPlatform(platform)) {
+  if (!isDesktopDownloadSlug(platform)) {
     return new Response("Download target not found.", {
       status: 404,
     });
@@ -58,7 +53,7 @@ export async function GET(
     "Cache-Control": "no-store",
     "Content-Disposition": `attachment; filename="${getFileNameFromUrl(
       desktopDownloadUrl,
-      FALLBACK_FILE_NAMES[platform]
+      getDesktopDownloadFallbackFileName(platform)
     )}"`,
     "Content-Type":
       upstream.headers.get("content-type") ?? "application/octet-stream",

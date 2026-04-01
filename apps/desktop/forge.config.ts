@@ -20,6 +20,7 @@ const linuxIconPath = path.resolve(__dirname, 'assets/icons/present.png');
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    executableName: 'Present',
     extraResource: [
       path.resolve(__dirname, 'bible'),
       path.resolve(__dirname, 'assets/icons'),
@@ -50,6 +51,7 @@ const config: ForgeConfig = {
     new MakerZIP({}, ['darwin']),
     new MakerRpm({
       options: {
+        bin: 'Present',
         icon: linuxIconPath,
         mimeType: ['x-scheme-handler/present'],
         name: 'present',
@@ -58,6 +60,7 @@ const config: ForgeConfig = {
     }),
     new MakerDeb({
       options: {
+        bin: 'Present',
         icon: linuxIconPath,
         mimeType: ['x-scheme-handler/present'],
         name: 'present',

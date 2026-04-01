@@ -19,6 +19,18 @@ on:
 
 jobs:
   build-macos:
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            artifact_name: present-macos-intel
+            display_name: Intel
+            r2_key: Present-mac-intel.zip
+            update_key: Present-mac.zip
+          - arch: arm64
+            artifact_name: present-macos-apple-silicon
+            display_name: Apple Silicon
+            r2_key: Present-mac-apple-silicon.zip
     runs-on: macos-latest
 
     steps:
@@ -39,8 +51,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Present for macOS
-        run: pnpm --filter @present/desktop run make:mac
+      - name: Build Present for macOS (${{ matrix.display_name }})
+        run: pnpm --filter @present/desktop exec electron-forge make --platform=darwin --arch=${{ matrix.arch }}
 
       - name: Upload macOS release files to Cloudflare R2
         shell: bash
@@ -53,10 +65,10 @@ jobs:
         run: |
           aws --version
 
-          zip_file="$(find apps/desktop/out/make -type f -name '*.zip' | head -n 1)"
+          zip_file="$(find apps/desktop/out/make -type f -path "*darwin/${{ matrix.arch }}/*.zip" | head -n 1)"
 
           if [ -z "$zip_file" ]; then
-            echo "macOS zip package not found"
+            echo "macOS zip package not found for ${{ matrix.arch }}"
             exit 1
           fi
 
@@ -65,14 +77,21 @@ jobs:
             --endpoint-url "$R2_ENDPOINT" \
             --cache-control "no-store" \
             --content-type "application/zip"
-          aws s3 cp "$zip_file" "s3://$R2_BUCKET/desktop/mac/Present-mac.zip" \
+          aws s3 cp "$zip_file" "s3://$R2_BUCKET/desktop/mac/${{ matrix.r2_key }}" \
             --endpoint-url "$R2_ENDPOINT" \
             --cache-control "no-store" \
             --content-type "application/zip"
 
+          if [ "${{ matrix.update_key }}" != "" ]; then
+            aws s3 cp "$zip_file" "s3://$R2_BUCKET/desktop/mac/${{ matrix.update_key }}" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "no-store" \
+              --content-type "application/zip"
+          fi
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: present-macos-universal
+          name: ${{ matrix.artifact_name }}
           path: apps/desktop/out/make/**/*.zip
           if-no-files-found: error
