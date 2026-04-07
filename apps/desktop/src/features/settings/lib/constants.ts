@@ -1,9 +1,22 @@
+import type {
+  ScriptureFooterPosition,
+  ScriptureTextAlign,
+  ScriptureVerticalAlign,
+} from "../../../shared/types/output-window";
+
 export type Settings = {
   scriptureSpeechLang: string;
   scriptureBackgroundMediaId?: string | null;
   scriptureFontSize: number;
   scriptureFontFamily: string;
-  scriptureTextAlign: "left" | "center" | "right";
+  scriptureFontWeight: string;
+  scriptureTextAlign: ScriptureTextAlign;
+  scriptureVerticalAlign: ScriptureVerticalAlign;
+  scriptureFooterAlign: ScriptureTextAlign;
+  scriptureFooterPosition: ScriptureFooterPosition;
+  libraryFontSize: number;
+  libraryFontFamily: string;
+  libraryFontWeight: string;
   timerXPercent: number;
   timerYPercent: number;
   timerClockFontPx: number;

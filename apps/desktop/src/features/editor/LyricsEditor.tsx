@@ -1,20 +1,60 @@
 "use client";
 
-import { memo, useState, useCallback, useRef, useEffect } from "react";
-import type { LibraryItem } from "../../shared/types";
-import { FontToolbar } from "./FontToolbar";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useDebouncedCallback } from "use-debounce";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "../../renderer/shared/components/ui/resizable";
+import type {
+  CanvasSizePreset,
+  LibraryContent,
+  LibraryItem,
+  LibraryItemDraft,
+  LibrarySlide,
+  SlideElement,
+  SlideElementType,
+} from "../../shared/types";
+import type { Id } from "@present/backend/convex/_generated/dataModel";
+import {
+  buildSlidesFromBody,
+  createDraftFromLibraryItem,
+  DEFAULT_CANVAS_SIZE,
+  getCanvasSizeDimensions,
+  getLibraryLabelOptions,
+  getSlideBackgroundColor,
+  normalizeLibraryContent,
+  normalizeLibrarySlide,
+  normalizePresentationSettings,
+  reorderLibrarySlides,
+  reorderSlideElements,
+  scaleSlidesToCanvas,
+  slidesToBody,
+} from "../library/lib/library-items";
+import type { LibraryTextStyleDefaults } from "../library/lib/library-items";
+import { normalizeEditableRichTextHtml } from "../../renderer/shared/lib/rich-text";
+import { EditorHeader } from "./components/EditorHeader";
+import { SlideList } from "./components/SlideList";
+import { EditorCanvas } from "./components/EditorCanvas";
+import { EditorInspector } from "./components/EditorInspector";
 
 interface LyricsEditorProps {
-  libraryItem: LibraryItem;
+  libraryItem: LibraryItem | null;
   fontFamily: string;
   fontSize: number;
   fontBold: boolean;
   fontItalic: boolean;
   fontUnderline: boolean;
+  libraryDefaultFontFamily: string;
+  libraryDefaultFontSize: number;
+  libraryDefaultFontWeight: string;
+  scriptureDefaultFontFamily: string;
+  scriptureDefaultFontSize: number;
+  scriptureDefaultFontWeight: string;
   scrollToSlideIndex?: number | null;
-  onSave: (title: string, body: string) => Promise<void>;
+  onSave: (draft: LibraryItemDraft) => Promise<void>;
   onFixLyrics: (body: string) => Promise<string>;
   onFontStyleChange: (styles: {
     fontFamily?: string;
@@ -23,7 +63,75 @@ interface LyricsEditorProps {
     fontItalic?: boolean;
     fontUnderline?: boolean;
   }) => void;
+  onUpdateOutput?: (payload: {
+    slideId: string;
+    text: string;
+    elements: SlideElement[];
+    canvasSize: CanvasSizePreset;
+    backgroundColor: string | null;
+  }) => void;
   onScrollComplete?: () => void;
+}
+
+type EditorViewMode = "slides" | "source";
+type GeneralInspectorTab = "presentation" | "slide";
+type ObjectInspectorTab = "text" | "shape" | "image";
+type InspectorTab = GeneralInspectorTab | ObjectInspectorTab;
+
+function isGeneralInspectorTab(tab: InspectorTab): tab is GeneralInspectorTab {
+  return tab === "presentation" || tab === "slide";
+}
+
+function getInspectorTabForElementType(
+  type: SlideElementType | null | undefined,
+): ObjectInspectorTab | null {
+  if (type === "text" || type === "shape" || type === "image") {
+    return type;
+  }
+
+  return null;
+}
+
+function buildDraftWithNormalizedContent(
+  draft: LibraryItemDraft,
+  slides: LibrarySlide[],
+  content?: LibraryContent,
+  textDefaults?: LibraryTextStyleDefaults,
+  options?: {
+    preserveBody?: boolean;
+  },
+): LibraryItemDraft {
+  const normalizedContent = normalizeLibraryContent(content ?? draft.content, slides);
+  const canvasSize =
+    normalizedContent.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE;
+  const nextSlides = slides.map((slide) =>
+    normalizeLibrarySlide(slide, canvasSize, textDefaults),
+  );
+  return {
+    ...draft,
+    body: options?.preserveBody ? draft.body : slidesToBody(nextSlides),
+    slides: nextSlides,
+    content: normalizedContent,
+  };
+}
+
+function getPrimarySlideTextFromElements(
+  elements: SlideElement[],
+  fallbackText: string,
+) {
+  return (
+    (
+      elements.find(
+        (element) =>
+          element.type === "text" &&
+          !element.isPlaceholder &&
+          element.contentRole === "scriptureVerse",
+      ) ??
+      elements.find(
+        (element) => element.type === "text" && !element.isPlaceholder,
+      )
+    )?.content ?? fallbackText
+  );
 }
 
 export const LyricsEditor = memo(function LyricsEditor({
@@ -33,266 +141,888 @@ export const LyricsEditor = memo(function LyricsEditor({
   fontBold,
   fontItalic,
   fontUnderline,
+  libraryDefaultFontFamily,
+  libraryDefaultFontSize,
+  libraryDefaultFontWeight,
+  scriptureDefaultFontFamily,
+  scriptureDefaultFontSize,
+  scriptureDefaultFontWeight,
   scrollToSlideIndex,
   onSave,
   onFixLyrics,
   onFontStyleChange,
+  onUpdateOutput,
   onScrollComplete,
 }: LyricsEditorProps) {
-  const [editTitle, setEditTitle] = useState(libraryItem.title);
-  const [editBody, setEditBody] = useState(libraryItem.body);
+  const libraryDefaultTextStyle = useMemo<LibraryTextStyleDefaults>(
+    () => ({
+      fontFamily: libraryDefaultFontFamily,
+      fontSize: libraryDefaultFontSize,
+      fontWeight: libraryDefaultFontWeight,
+    }),
+    [libraryDefaultFontFamily, libraryDefaultFontSize, libraryDefaultFontWeight],
+  );
+  const scriptureDefaultTextStyle = useMemo<LibraryTextStyleDefaults>(
+    () => ({
+      fontFamily: scriptureDefaultFontFamily,
+      fontSize: scriptureDefaultFontSize,
+      fontWeight: scriptureDefaultFontWeight,
+    }),
+    [
+      scriptureDefaultFontFamily,
+      scriptureDefaultFontSize,
+      scriptureDefaultFontWeight,
+    ],
+  );
+  const activeDefaultTextStyle = useMemo(
+    () =>
+      libraryItem?.type === "scripture"
+        ? scriptureDefaultTextStyle
+        : libraryDefaultTextStyle,
+    [libraryItem?.type, libraryDefaultTextStyle, scriptureDefaultTextStyle],
+  );
+  const [draft, setDraft] = useState<LibraryItemDraft>(() =>
+    libraryItem ? createDraftFromLibraryItem(libraryItem, activeDefaultTextStyle) : {
+      _id: "preview" as Id<"libraries">,
+      title: "New Item",
+      body: "",
+      slides: [normalizeLibrarySlide({ text: "", label: "" }, DEFAULT_CANVAS_SIZE, activeDefaultTextStyle)],
+      version: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+  );
+  const [editorView, setEditorView] = useState<EditorViewMode>("slides");
+  const [inspectorTab, setInspectorTabState] =
+    useState<InspectorTab>("presentation");
+  const [sidebarTab, setSidebarTab] = useState<"slides" | "layers">("slides");
+  const [selectedSlideId, setSelectedSlideId] = useState<string | null>(
+    draft.slides[0]?.id ?? null,
+  );
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [draggedSlideIndex, setDraggedSlideIndex] = useState<number | null>(null);
+  const [dropSlideIndex, setDropSlideIndex] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Track last known server state to detect external updates vs local edits
-  const lastServerTitle = useRef(libraryItem.title);
-  const lastServerBody = useRef(libraryItem.body);
-  const lastItemId = useRef(libraryItem._id);
-  const latestSave = useRef<{ title: string; body: string } | null>(null);
+  const latestSavedRef = useRef<string | null>(null);
+  const lastItemKeyRef = useRef<string | null>(null);
+  const lastGeneralInspectorTabRef = useRef<GeneralInspectorTab>("presentation");
 
-  // Sync with server state, but preserve local edits if divergent
+  const setInspectorTab = useCallback((tab: InspectorTab) => {
+    if (isGeneralInspectorTab(tab)) {
+      lastGeneralInspectorTabRef.current = tab;
+    }
+    setInspectorTabState(tab);
+  }, []);
+
   useEffect(() => {
-    // If item changed completely, reset everything
-    if (libraryItem._id !== lastItemId.current) {
-      setEditTitle(libraryItem.title);
-      setEditBody(libraryItem.body);
-      lastServerTitle.current = libraryItem.title;
-      lastServerBody.current = libraryItem.body;
-      lastItemId.current = libraryItem._id;
+    if (!libraryItem) return;
+    const itemKey = `${libraryItem._id}:${libraryItem.updatedAt}:${libraryItem.version}`;
+    const didSwitchItems =
+      lastItemKeyRef.current == null ||
+      !lastItemKeyRef.current.startsWith(`${libraryItem._id}:`);
+    if (itemKey === lastItemKeyRef.current) {
       return;
     }
 
-    // If server content changed (e.g. external update or save confirmation)
-    if (libraryItem.title !== lastServerTitle.current) {
-      // Only update if local matches old server (user hasn't typed)
-      // AND the update isn't just our own save coming back
-      const isMySave = latestSave.current?.title === libraryItem.title;
-      if (!isMySave && editTitle === lastServerTitle.current) {
-        setEditTitle(libraryItem.title);
-      }
-      lastServerTitle.current = libraryItem.title;
+    if (!didSwitchItems) {
+      // Avoid replacing local editor state on save echoes for the active item.
+      // This keeps slide sidebar scroll/selection stable while autosave runs.
+      lastItemKeyRef.current = itemKey;
+      return;
     }
 
-    if (libraryItem.body !== lastServerBody.current) {
-      // Only update if local matches old server (user hasn't typed)
-      // AND the update isn't just our own save coming back
-      const isMySave = latestSave.current?.body === libraryItem.body;
-      if (!isMySave && editBody === lastServerBody.current) {
-        setEditBody(libraryItem.body);
-      }
-      lastServerBody.current = libraryItem.body;
-    }
-  }, [libraryItem._id, libraryItem.title, libraryItem.body, editTitle, editBody]);
+    const nextDraft = createDraftFromLibraryItem(
+      libraryItem,
+      activeDefaultTextStyle,
+    );
+    const nextSelection = nextDraft.slides[0]?.id ?? null;
+    setDraft(nextDraft);
 
-  const [isBlinking, setIsBlinking] = useState(false);
-
-  // Debounced auto-save (silent, no toast)
-  const debouncedAutoSave = useDebouncedCallback(
-    async (title: string, body: string) => {
-      if (!title.trim()) return;
-      latestSave.current = { title, body };
-      try {
-        await onSave(title.trim(), body);
-        lastServerTitle.current = title.trim();
-        lastServerBody.current = body;
-      } catch {
-        // Silent fail for auto-save
+    setSelectedSlideId((current) => {
+      if (current && nextDraft.slides.some((slide) => slide.id === current)) {
+        return current;
       }
-    },
-    1000, // 1 second debounce
+      return nextSelection;
+    });
+
+    setSelectedElementId((current) => {
+      if (!current) {
+        return null;
+      }
+
+      const activeSlideId =
+        selectedSlideId && nextDraft.slides.some((slide) => slide.id === selectedSlideId)
+          ? selectedSlideId
+          : nextSelection;
+      const activeSlide =
+        nextDraft.slides.find((slide) => slide.id === activeSlideId) ?? null;
+
+      if (activeSlide?.elements?.some((element) => element.id === current)) {
+        return current;
+      }
+
+      return null;
+    });
+
+    lastGeneralInspectorTabRef.current = "presentation";
+    setInspectorTabState("presentation");
+    setEditorView(
+      nextDraft.content?.editorView === "source" ? "source" : "slides",
+    );
+
+    lastItemKeyRef.current = itemKey;
+  }, [activeDefaultTextStyle, libraryItem, selectedSlideId]);
+
+  const selectedSlideIndex = useMemo(
+    () => draft.slides.findIndex((slide) => slide.id === selectedSlideId),
+    [draft.slides, selectedSlideId],
+  );
+  const selectedSlide =
+    selectedSlideIndex >= 0 ? draft.slides[selectedSlideIndex] : null;
+  const presentationSettings = useMemo(
+    () => normalizePresentationSettings(draft.content?.presentation),
+    [draft.content?.presentation],
+  );
+  const currentCanvasSize =
+    presentationSettings.canvasSize ?? DEFAULT_CANVAS_SIZE;
+  const canvasDimensions = useMemo(
+    () => getCanvasSizeDimensions(currentCanvasSize),
+    [currentCanvasSize],
+  );
+  const selectedElement = useMemo(
+    () =>
+      selectedSlide?.elements?.find((element) => element.id === selectedElementId) ??
+      null,
+    [selectedElementId, selectedSlide?.elements],
   );
 
-  // Trigger auto-save when title or body change
   useEffect(() => {
-    if (
-      editTitle.trim() &&
-      (editTitle !== libraryItem.title || editBody !== libraryItem.body)
-    ) {
-      debouncedAutoSave(editTitle, editBody);
-    }
-  }, [editTitle, editBody, libraryItem.title, libraryItem.body, debouncedAutoSave]);
-
-  // Scroll to slide position when scrollToSlideIndex changes
-  useEffect(() => {
-    if (scrollToSlideIndex == null || !textareaRef.current) return;
-
-    const textarea = textareaRef.current;
-    const body = libraryItem.body;
-
-    // Split body into blocks (separated by empty lines)
-    // Each block corresponds to a slide
-    const blocks: { start: number; end: number }[] = [];
-    let currentStart = 0;
-    let inBlock = false;
-    let blockStart = 0;
-
-    for (let i = 0; i <= body.length; i++) {
-      const char = body[i];
-      const isEnd = i === body.length;
-      const isNewline = char === "\n";
-
-      if (isEnd || isNewline) {
-        const lineStart = currentStart;
-        const lineEnd = i;
-        const line = body.slice(lineStart, lineEnd).trim();
-
-        // Check if this line is a label like [Verse]
-        const isLabel = /^\[.+\]$/.test(line);
-
-        if (line.length > 0 && !isLabel) {
-          if (!inBlock) {
-            inBlock = true;
-            blockStart = lineStart;
-          }
-        } else if (inBlock && (line.length === 0 || isLabel)) {
-          // End of block
-          blocks.push({
-            start: blockStart,
-            end: currentStart > 0 ? currentStart - 1 : 0,
-          });
-          inBlock = false;
-          // Label starts a new potential block context
-        }
-
-        currentStart = i + 1;
-      }
-    }
-
-    // Don't forget the last block
-    if (inBlock) {
-      blocks.push({ start: blockStart, end: body.length });
-    }
-
-    // Find the target block
-    if (scrollToSlideIndex >= blocks.length) {
-      // Fallback: just go to end of document
-      textarea.focus();
-      textarea.setSelectionRange(body.length, body.length);
-      onScrollComplete?.();
+    if (!selectedElementId) {
       return;
     }
 
-    const targetBlock = blocks[scrollToSlideIndex];
-    const startPos = targetBlock.start;
-    const endPos = targetBlock.end;
+    if (!selectedElement) {
+      setSelectedElementId(null);
+      setInspectorTab(lastGeneralInspectorTabRef.current);
+      return;
+    }
 
-    // Focus the textarea
-    textarea.focus();
+    const objectTab = getInspectorTabForElementType(selectedElement.type);
+    if (objectTab) {
+      setInspectorTabState(objectTab);
+    }
+  }, [selectedElement, selectedElementId, setInspectorTab]);
 
-    // Scroll to position first
-    const textBefore = body.slice(0, startPos);
-    const lineNumber = textBefore.split("\n").length - 1;
-    const lineHeight = 20;
-    const scrollTop = Math.max(0, lineNumber * lineHeight - 100);
-    textarea.scrollTop = scrollTop;
+  const applyDraft = useCallback(
+    (
+      updater: (previous: LibraryItemDraft) => LibraryItemDraft,
+      options?: {
+        preserveBody?: boolean;
+      },
+    ) => {
+      setDraft((previous) => {
+        const next = updater(previous);
+        return buildDraftWithNormalizedContent(
+          next,
+          next.slides,
+          next.content,
+          activeDefaultTextStyle,
+          {
+            preserveBody: options?.preserveBody ?? editorView === "source",
+          },
+        );
+      });
+    },
+    [activeDefaultTextStyle, editorView],
+  );
 
-    // Place cursor at end of the slide (no selection, so typing works immediately)
-    textarea.setSelectionRange(endPos, endPos);
+  const persistDraft = useCallback(
+    async (nextDraft: LibraryItemDraft, showSuccessToast = false) => {
+      const trimmedTitle = nextDraft.title.trim();
+      if (!trimmedTitle) {
+        return;
+      }
 
-    // Trigger blink effect (border glow + caret blink)
-    setIsBlinking(true);
+      const payload = buildDraftWithNormalizedContent(
+        {
+          ...nextDraft,
+          title: trimmedTitle,
+          content: {
+            ...nextDraft.content,
+            editorView,
+          },
+        },
+        nextDraft.slides,
+        {
+          ...nextDraft.content,
+          editorView,
+        },
+        activeDefaultTextStyle,
+        {
+          preserveBody: editorView === "source",
+        },
+      );
 
-    // Stop blinking after animation completes (0.6s * 5 = 3s), then notify parent
-    const blinkTimeout = setTimeout(() => {
-      setIsBlinking(false);
-      onScrollComplete?.();
-    }, 3000);
+      latestSavedRef.current = JSON.stringify(payload);
+      await onSave(payload);
 
-    // Cleanup timeout if effect re-runs or component unmounts
-    return () => {
-      clearTimeout(blinkTimeout);
-    };
-  }, [scrollToSlideIndex, libraryItem.body, onScrollComplete]);
+      if (showSuccessToast) {
+        toast.success("Library updated");
+      }
+    },
+    [activeDefaultTextStyle, editorView, onSave],
+  );
 
-  const handleSave = useCallback(async () => {
-    if (!editTitle.trim()) {
+  const debouncedAutoSave = useDebouncedCallback(async (nextDraft: LibraryItemDraft) => {
+    try {
+      await persistDraft(nextDraft);
+    } catch {
+      // Silent auto-save failure.
+    }
+  }, 900);
+
+  useEffect(() => {
+    if (!draft.title.trim()) {
+      return;
+    }
+
+    debouncedAutoSave(draft);
+  }, [draft, debouncedAutoSave]);
+
+  useEffect(() => {
+    if (scrollToSlideIndex == null) {
+      return;
+    }
+
+    const slide = draft.slides[scrollToSlideIndex];
+    if (slide?.id) {
+      setSelectedSlideId(slide.id);
+      setSelectedElementId(null);
+      setInspectorTab("slide");
+    }
+    onScrollComplete?.();
+  }, [draft.slides, onScrollComplete, scrollToSlideIndex, setInspectorTab]);
+
+  const setSlides = useCallback(
+    (updater: (slides: LibrarySlide[]) => LibrarySlide[]) => {
+      applyDraft((previous) => {
+        const nextSlides = updater(previous.slides);
+        const finalSlides = nextSlides.length === 0 
+          ? [
+              normalizeLibrarySlide(
+                { text: "", label: "" },
+                currentCanvasSize,
+                activeDefaultTextStyle,
+              ),
+            ]
+          : nextSlides;
+
+        return {
+          ...previous,
+          slides: finalSlides,
+          body: slidesToBody(finalSlides),
+          content: {
+            ...previous.content,
+            slideLabelOptions: getLibraryLabelOptions(previous.content, finalSlides),
+          },
+        };
+      });
+    },
+    [activeDefaultTextStyle, applyDraft, currentCanvasSize],
+  );
+
+  const updateSlide = useCallback(
+    (
+      slideId: string | null,
+      updater: (slide: LibrarySlide) => LibrarySlide,
+    ) => {
+      if (!slideId) {
+        return;
+      }
+
+      setSlides((slides) =>
+        slides.map((slide) =>
+          slide.id === slideId
+            ? normalizeLibrarySlide(
+                updater(slide),
+                currentCanvasSize,
+                activeDefaultTextStyle,
+              )
+            : slide,
+        ),
+      );
+    },
+    [activeDefaultTextStyle, currentCanvasSize, setSlides],
+  );
+
+  const updateElement = useCallback(
+    (
+      slideId: string | null,
+      elementId: string | null,
+      updater: (element: SlideElement) => SlideElement,
+    ) => {
+      if (!slideId || !elementId) return;
+
+      updateSlide(slideId, (slide: LibrarySlide) => {
+        const nextElements = (slide.elements ?? []).map((el: SlideElement) =>
+          el.id === elementId ? updater(el) : el
+        );
+
+        const primaryText = getPrimarySlideTextFromElements(nextElements, slide.text);
+
+        return {
+          ...slide,
+          elements: nextElements,
+          text: primaryText,
+        };
+      });
+    },
+    [updateSlide]
+  );
+
+  const setAllTextElementsFontSize = useCallback(
+    (nextFontSize: number) => {
+      if (!Number.isFinite(nextFontSize)) {
+        return;
+      }
+
+      const normalizedFontSize = Math.max(8, Math.round(nextFontSize));
+      applyDraft((previous) => ({
+        ...previous,
+        slides: previous.slides.map((slide) => {
+          const currentElements = slide.elements ?? [];
+          if (currentElements.length === 0) {
+            return slide;
+          }
+
+          let didChange = false;
+          const nextElements = currentElements.map((element) => {
+            if (element.type !== "text") {
+              return element;
+            }
+
+            const currentFontSize = element.style?.fontSize;
+            if (currentFontSize === normalizedFontSize) {
+              return element;
+            }
+
+            didChange = true;
+            return {
+              ...element,
+              style: {
+                ...(element.style ?? {}),
+                fontSize: normalizedFontSize,
+              },
+            };
+          });
+
+          if (!didChange) {
+            return slide;
+          }
+
+          return {
+            ...slide,
+            elements: nextElements,
+            text: getPrimarySlideTextFromElements(nextElements, slide.text),
+          };
+        }),
+      }));
+    },
+    [applyDraft],
+  );
+
+  const handleSelectSlide = useCallback(
+    (slideId: string | null) => {
+      setSelectedSlideId(slideId);
+      setSelectedElementId(null);
+      setInspectorTab("slide");
+    },
+    [setInspectorTab],
+  );
+
+  const handleSelectElement = useCallback(
+    (elementId: string | null) => {
+      setSelectedElementId(elementId);
+
+      if (!elementId) {
+        setInspectorTab(lastGeneralInspectorTabRef.current);
+        return;
+      }
+
+      const nextSelectedElement = selectedSlide?.elements?.find(
+        (element) => element.id === elementId,
+      );
+      const nextInspectorTab = getInspectorTabForElementType(
+        nextSelectedElement?.type,
+      );
+
+      if (nextInspectorTab) {
+        setInspectorTab(nextInspectorTab);
+      }
+    },
+    [selectedSlide?.elements, setInspectorTab],
+  );
+
+  const addElement = useCallback(
+    (type: SlideElementType) => {
+      if (!selectedSlideId) return;
+
+      const newId = `${selectedSlideId}_${type}_${Date.now()}`;
+      
+      const width =
+        type === "text"
+          ? Math.round(canvasDimensions.width * 0.9)
+          : Math.round(canvasDimensions.width * (800 / 1920));
+      const height =
+        type === "text"
+          ? Math.round(canvasDimensions.height * 0.78)
+          : Math.round(canvasDimensions.height * (800 / 1080));
+      const x = (canvasDimensions.width - width) / 2;
+      const y = (canvasDimensions.height - height) / 2;
+
+      const newElement: SlideElement = {
+        id: newId,
+        type,
+        x,
+        y,
+        width,
+        height,
+        content: "",
+        isPlaceholder: type === "text",
+        style:
+          type === "text"
+            ? {
+                fontSize: 120,
+                textAlign: "center",
+                verticalAlign: "middle",
+                color: "#ffffff",
+              }
+            : type === "image"
+              ? {
+                  opacity: 1,
+                  borderRadius: 0,
+                }
+              : {
+                  backgroundColor: "#3b82f6",
+                  opacity: 1,
+                },
+      };
+
+      updateSlide(selectedSlideId, (slide) => ({
+        ...slide,
+        elements: [...(slide.elements ?? []), newElement],
+      }));
+      setSelectedElementId(newId);
+      setInspectorTab(getInspectorTabForElementType(type) ?? "slide");
+    },
+    [canvasDimensions.height, canvasDimensions.width, selectedSlideId, setInspectorTab, updateSlide]
+  );
+
+  const removeElement = useCallback(
+    (slideId: string, elementId: string) => {
+      updateSlide(slideId, (slide) => ({
+        ...slide,
+        elements: (slide.elements ?? []).filter((el) => el.id !== elementId),
+      }));
+      if (selectedElementId === elementId) {
+        handleSelectElement(null);
+      }
+    },
+    [handleSelectElement, selectedElementId, updateSlide]
+  );
+
+  const reorderSelectedSlideElements = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      if (!selectedSlideId) {
+        return;
+      }
+
+      updateSlide(selectedSlideId, (slide) => ({
+        ...slide,
+        elements: reorderSlideElements(slide.elements ?? [], fromIndex, toIndex),
+      }));
+    },
+    [selectedSlideId, updateSlide],
+  );
+
+  const moveSelectedElementLayer = useCallback(
+    (elementId: string, toIndex: number) => {
+      if (!selectedSlideId) {
+        return;
+      }
+
+      updateSlide(selectedSlideId, (slide) => {
+        const elements = slide.elements ?? [];
+        const fromIndex = elements.findIndex((element) => element.id === elementId);
+        if (fromIndex < 0 || toIndex < 0 || toIndex >= elements.length) {
+          return slide;
+        }
+
+        return {
+          ...slide,
+          elements: reorderSlideElements(elements, fromIndex, toIndex),
+        };
+      });
+    },
+    [selectedSlideId, updateSlide],
+  );
+
+  const selectedSlideBackground = getSlideBackgroundColor(
+    selectedSlide ?? undefined,
+    draft.content,
+  );
+
+  const applyInlineTextFormat = useCallback(
+    (command: "bold" | "italic" | "underline" | "strikeThrough") => {
+      if (!selectedSlideId || !selectedElementId) {
+        return false;
+      }
+
+      const activeElement = document.activeElement;
+      if (
+        !(activeElement instanceof HTMLElement) ||
+        activeElement.id !== `text-editor-${selectedElementId}` ||
+        !activeElement.isContentEditable
+      ) {
+        return false;
+      }
+
+      activeElement.focus();
+      document.execCommand("styleWithCSS", false, "false");
+      document.execCommand(command, false);
+
+      updateElement(selectedSlideId, selectedElementId, (element) => ({
+        ...element,
+        content: activeElement.innerText.replace(/\r\n/g, "\n"),
+        richTextHtml: normalizeEditableRichTextHtml(activeElement.innerHTML),
+        isPlaceholder: false,
+      }));
+
+      return true;
+    },
+    [selectedElementId, selectedSlideId, updateElement],
+  );
+
+  const handleUpdateOutput = useCallback(() => {
+    if (!selectedSlide?.elements?.length || !onUpdateOutput) {
+      return;
+    }
+
+    const baseId =
+      libraryItem?.type === "scripture" && selectedSlide.id?.startsWith("scripture:")
+        ? selectedSlide.id
+        : libraryItem?._id != null
+        ? `${libraryItem._id}:${selectedSlide.id ?? Math.max(selectedSlideIndex, 0)}`
+        : `draft:${selectedSlide.id ?? Date.now()}`;
+
+    onUpdateOutput({
+      slideId: baseId,
+      text: selectedSlide.text,
+      elements: selectedSlide.elements,
+      canvasSize: currentCanvasSize,
+      backgroundColor: selectedSlideBackground ?? null,
+    });
+    toast.success("Output updated");
+  }, [
+    currentCanvasSize,
+    libraryItem?._id,
+    libraryItem?.type,
+    onUpdateOutput,
+    selectedSlide,
+    selectedSlideBackground,
+    selectedSlideIndex,
+  ]);
+
+  const handleManualSave = useCallback(async () => {
+    if (!draft.title.trim()) {
       toast.error("Title is required");
       return;
     }
+
     setIsSaving(true);
-    latestSave.current = { title: editTitle, body: editBody };
     try {
-      await onSave(editTitle.trim(), editBody);
-      lastServerTitle.current = editTitle.trim();
-      lastServerBody.current = editBody;
-      toast.success("Saved successfully");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save");
+      await persistDraft(draft, true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save");
     } finally {
       setIsSaving(false);
     }
-  }, [editTitle, editBody, onSave]);
+  }, [draft, persistDraft]);
 
   const handleFix = useCallback(async () => {
-    if (!editBody.trim()) return;
+    if (!draft.body.trim()) {
+      return;
+    }
+
     setIsFixing(true);
     try {
-      const fixed = await onFixLyrics(editBody);
-      setEditBody(fixed);
-      toast.success("Content cleaned up");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to clean up");
+      const fixedBody = await onFixLyrics(draft.body);
+      const nextSlides = buildSlidesFromBody(
+        fixedBody,
+        currentCanvasSize,
+        activeDefaultTextStyle,
+      );
+      applyDraft(
+        (previous) => ({
+          ...previous,
+          slides: nextSlides,
+          body: fixedBody,
+        }),
+        {
+          preserveBody: editorView === "source",
+        },
+      );
+      setSelectedSlideId(nextSlides[0]?.id ?? null);
+      setSelectedElementId(null);
+      setInspectorTab("slide");
+      toast.success("Lyrics cleaned up");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to clean up");
     } finally {
       setIsFixing(false);
     }
-  }, [editBody, onFixLyrics]);
+  }, [
+    applyDraft,
+    activeDefaultTextStyle,
+    currentCanvasSize,
+    draft.body,
+    editorView,
+    onFixLyrics,
+    setInspectorTab,
+  ]);
+
+  const handleSourceBodyChange = useCallback(
+    (nextBody: string) => {
+      const nextSlides = buildSlidesFromBody(
+        nextBody,
+        currentCanvasSize,
+        activeDefaultTextStyle,
+      );
+      applyDraft(
+        (previous) => ({
+          ...previous,
+          slides: nextSlides,
+          body: nextBody,
+        }),
+        {
+          preserveBody: true,
+        },
+      );
+
+      setSelectedSlideId((current) => {
+        if (current && nextSlides.some((slide) => slide.id === current)) {
+          return current;
+        }
+        return nextSlides[0]?.id ?? null;
+      });
+      setSelectedElementId(null);
+      setInspectorTab("slide");
+    },
+    [activeDefaultTextStyle, applyDraft, currentCanvasSize, setInspectorTab],
+  );
+
+  const handleAddSlide = useCallback(() => {
+    const nextSlide = normalizeLibrarySlide(
+      {
+        text: "",
+        label: "",
+      },
+      currentCanvasSize,
+      activeDefaultTextStyle,
+    );
+
+    setSlides((slides) => {
+      const nextSlides = [...slides];
+      const insertAt =
+        selectedSlideIndex >= 0 ? selectedSlideIndex + 1 : nextSlides.length;
+      nextSlides.splice(insertAt, 0, nextSlide);
+      return nextSlides;
+    });
+    setSelectedSlideId(nextSlide.id ?? null);
+    setSelectedElementId(null);
+    setInspectorTab("slide");
+  }, [
+    activeDefaultTextStyle,
+    currentCanvasSize,
+    selectedSlideIndex,
+    setInspectorTab,
+    setSlides,
+  ]);
+
+  const handleRemoveSlide = useCallback(
+    (slideId: string) => {
+      setSlides((slides) => slides.filter((slide) => slide.id !== slideId));
+      setSelectedElementId(null);
+      setInspectorTab("slide");
+
+      setSelectedSlideId((current) => {
+        if (current !== slideId) {
+          return current;
+        }
+
+        const nextSlides = draft.slides.filter((slide) => slide.id !== slideId);
+        return nextSlides[0]?.id ?? null;
+      });
+    },
+    [draft.slides, setInspectorTab, setSlides],
+  );
+
+  const handleSlideDragStart = (index: number, event: React.DragEvent<HTMLDivElement>) => {
+    setDraggedSlideIndex(index);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(index));
+  };
+
+  const handleSlideDrop = (toIndex: number, fromIndex?: number) => {
+    const sourceIndex = fromIndex ?? draggedSlideIndex;
+
+    if (sourceIndex == null || sourceIndex === toIndex) {
+      setDraggedSlideIndex(null);
+      setDropSlideIndex(null);
+      return;
+    }
+
+    setSlides((slides) => reorderLibrarySlides(slides, sourceIndex, toIndex));
+    setDraggedSlideIndex(null);
+    setDropSlideIndex(null);
+  };
+
+  const handlePresentationCanvasSizeChange = useCallback(
+    (nextCanvasSize: CanvasSizePreset) => {
+      applyDraft((previous) => {
+        const previousCanvasSize = normalizePresentationSettings(
+          previous.content?.presentation,
+        ).canvasSize;
+
+        if (previousCanvasSize === nextCanvasSize) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          slides: scaleSlidesToCanvas(
+            previous.slides,
+            previousCanvasSize,
+            nextCanvasSize,
+          ),
+          content: {
+            ...previous.content,
+            presentation: {
+              ...previous.content?.presentation,
+              canvasSize: nextCanvasSize,
+            },
+          },
+        };
+      });
+    },
+    [applyDraft],
+  );
 
   return (
-    <div className="flex h-full flex-col gap-3">
-      {/* Title and actions */}
-      <div className="flex items-center gap-3">
-        <input
-          value={editTitle}
-          onChange={(e) => setEditTitle(e.target.value)}
-          className="flex-1 rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-          placeholder="Title"
-        />
-        <button
-          type="button"
-          onClick={handleFix}
-          disabled={isFixing}
-          className="rounded-md border border-input px-4 py-2 text-xs font-medium text-foreground transition hover:bg-secondary disabled:opacity-50"
+    <div className="h-full w-full bg-background flex flex-col overflow-hidden">
+      <EditorHeader
+        editorView={editorView}
+        setEditorView={setEditorView}
+        handleFix={handleFix}
+        isFixing={isFixing}
+        handleManualSave={handleManualSave}
+        isSaving={isSaving}
+      />
+      <div className="flex-1 min-h-0">
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="h-full"
+          autoSaveId="present-library-editor-layout-v2"
         >
-          {isFixing ? "Cleaning..." : "Clean up body"}
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={isSaving}
-          className="rounded-md bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
-        >
-          {isSaving ? "Saving..." : "Save"}{" "}
-          <span className="text-[10px] opacity-60">⌘S</span>
-        </button>
+          <ResizablePanel
+            defaultSize={20}
+            minSize={16}
+            maxSize={30}
+            className="bg-background border-r border-border"
+          >
+            <SlideList
+              sidebarTab={sidebarTab}
+              setSidebarTab={setSidebarTab}
+              slides={draft.slides}
+              selectedSlideId={selectedSlideId}
+              selectedSlide={selectedSlide}
+              draggedSlideIndex={draggedSlideIndex}
+              dropSlideIndex={dropSlideIndex}
+              content={draft.content}
+              fontFamily={fontFamily}
+              onAddSlide={handleAddSlide}
+              onRemoveSlide={handleRemoveSlide}
+              onSelectSlide={handleSelectSlide}
+              onDragStart={handleSlideDragStart}
+              onDrop={handleSlideDrop}
+              setDropSlideIndex={setDropSlideIndex}
+              setDraggedSlideIndex={setDraggedSlideIndex}
+              onSelectElement={handleSelectElement}
+              selectedElementId={selectedElementId}
+              onUpdateElement={updateElement}
+              onReorderElements={reorderSelectedSlideElements}
+            />
+          </ResizablePanel>
+  
+          <ResizableHandle withHandle />
+  
+          <ResizablePanel defaultSize={55} minSize={40}>
+            <EditorCanvas
+              editorView={editorView}
+              draftBody={draft.body}
+              onSourceBodyChange={handleSourceBodyChange}
+              canvasSize={currentCanvasSize}
+              selectedSlide={selectedSlide}
+              selectedSlideId={selectedSlideId}
+              selectedSlideBackground={selectedSlideBackground}
+              updateSlide={updateSlide}
+              selectedElementId={selectedElementId}
+              onSelectElement={handleSelectElement}
+              onAddElement={addElement}
+              onUpdateElement={updateElement}
+              onRemoveElement={removeElement}
+              fontFamily={fontFamily}
+              fontSize={fontSize}
+              fontBold={fontBold}
+              fontItalic={fontItalic}
+              fontUnderline={fontUnderline}
+              onFontStyleChange={onFontStyleChange}
+            />
+          </ResizablePanel>
+  
+          <ResizableHandle withHandle />
+  
+          <ResizablePanel
+            defaultSize={25}
+            minSize={20}
+            maxSize={35}
+            className="bg-background border-l border-border"
+          >
+            <EditorInspector
+              inspectorTab={inspectorTab}
+              setInspectorTab={(tab) => setInspectorTab(tab as InspectorTab)}
+              onPresentationCanvasSizeChange={handlePresentationCanvasSizeChange}
+              draft={draft}
+              applyDraft={applyDraft}
+              selectedSlideId={selectedSlideId}
+              selectedSlide={selectedSlide}
+              selectedElementId={selectedElementId}
+              onUpdateElement={updateElement}
+              onMoveElementLayer={moveSelectedElementLayer}
+              fontFamily={fontFamily}
+              fontSize={fontSize}
+              fontBold={fontBold}
+              fontItalic={fontItalic}
+              fontUnderline={fontUnderline}
+              onSetAllTextFontSize={setAllTextElementsFontSize}
+              onUpdateOutput={handleUpdateOutput}
+              onApplyInlineTextFormat={applyInlineTextFormat}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
-
-      {/* Font toolbar */}
-      <FontToolbar
-        fontFamily={fontFamily}
-        fontSize={fontSize}
-        fontBold={fontBold}
-        fontItalic={fontItalic}
-        fontUnderline={fontUnderline}
-        onFontFamilyChange={(f) => onFontStyleChange({ fontFamily: f })}
-        onFontSizeChange={(s) => onFontStyleChange({ fontSize: s })}
-        onBoldToggle={() => onFontStyleChange({ fontBold: !fontBold })}
-        onItalicToggle={() => onFontStyleChange({ fontItalic: !fontItalic })}
-        onUnderlineToggle={() =>
-          onFontStyleChange({ fontUnderline: !fontUnderline })
-        }
-      />
-
-      {/* Body textarea */}
-      <textarea
-        ref={textareaRef}
-        value={editBody}
-        onChange={(e) => setEditBody(e.target.value)}
-        className={`flex-1 resize-none rounded-md border border-input bg-card p-4 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary ${
-          isBlinking ? "editor-blink" : ""
-        }`}
-        placeholder="[Verse 1]&#10;Line 1&#10;Line 2&#10;&#10;[Chorus]&#10;Line 1"
-      />
     </div>
   );
 });

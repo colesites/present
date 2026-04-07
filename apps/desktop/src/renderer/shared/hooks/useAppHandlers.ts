@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback } from "react";
+import type React from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { LibraryItem } from "../../../shared/types";
+import type { LibraryItem, LibraryItemDraft } from "../../../shared/types";
 import type { ScriptureSlide } from "../../../features/scripture/lib/slides";
 import { parseReference, type ParsedReference } from "../../../features/scripture/lib/parser";
-import { generateBibleSlides } from "../../../features/scripture/lib/slides";
+import {
+  generateBibleSlides,
+  mergeScriptureSlides,
+} from "../../../features/scripture/lib/slides";
 import type { BibleVerse, BibleBookRecord } from "../../../features/scripture/lib/db";
 
 interface UseAppHandlersProps {
@@ -13,7 +17,7 @@ interface UseAppHandlersProps {
   setSelected: (selected: { libraryId: string | null; index: number } | null) => void;
   setViewMode: (mode: "show" | "edit" | "settings") => void;
   setSelectedLibraryId: (id: string | null) => void;
-  setScriptureSlides: (slides: ScriptureSlide[]) => void;
+  setScriptureSlides: React.Dispatch<React.SetStateAction<ScriptureSlide[]>>;
   setShowTextInOutput: (show: boolean) => void;
   setEditScrollToSlide: (index: number | null) => void;
   
@@ -27,7 +31,7 @@ interface UseAppHandlersProps {
   removeFromService: (serviceId: Id<"services">, index: number) => Promise<void>;
   addLibraryItemToService: (serviceId: Id<"services">, libraryId: string) => Promise<void>;
   addMediaToService: (serviceId: Id<"services">, mediaId: string, mediaName: string) => Promise<void>;
-  updateExistingLibraryItem: (id: string, title: string, body: string) => Promise<void>;
+  updateExistingLibraryItem: (id: string, draft: LibraryItemDraft) => Promise<void>;
   
   // Context/Data
   libraryItems: LibraryItem[];
@@ -57,6 +61,23 @@ export function useAppHandlers({
   availableBooks,
   lookupRef,
 }: UseAppHandlersProps) {
+  const resolveLibrarySlideIndex = useCallback(
+    (libraryId: string, slideToken: string): number | null => {
+      const item = libraryItems.find((libraryItem) => String(libraryItem._id) === libraryId);
+      if (!item) {
+        return null;
+      }
+
+      const matchedSlideIndex = item.slides.findIndex((slide) => slide.id === slideToken);
+      if (matchedSlideIndex >= 0) {
+        return matchedSlideIndex;
+      }
+
+      const parsedIndex = Number(slideToken);
+      return Number.isFinite(parsedIndex) ? parsedIndex : null;
+    },
+    [libraryItems],
+  );
   
   const handleSelectSlide = useCallback(
     async (slideId: string, text: string, footer?: string) => {
@@ -65,16 +86,30 @@ export function useAppHandlers({
         suppressBroadcast: isOutputFrozen,
       });
 
-      const [idPart, indexStr] = slideId.split(":");
-      const index = Number(indexStr);
+      const separatorIndex = slideId.indexOf(":");
+      const idPart = separatorIndex >= 0 ? slideId.slice(0, separatorIndex) : slideId;
+      const slideToken = separatorIndex >= 0 ? slideId.slice(separatorIndex + 1) : "";
+      const parsedIndex = Number(slideToken);
 
       if (slideId.startsWith("scripture")) {
-        setSelected({ libraryId: null, index });
+        setSelected({
+          libraryId: null,
+          index: Number.isFinite(parsedIndex) ? parsedIndex : 0,
+        });
       } else if (slideId.includes(":")) {
-        setSelected({ libraryId: idPart, index });
+        const resolvedIndex = resolveLibrarySlideIndex(idPart, slideToken);
+        if (resolvedIndex != null) {
+          setSelected({ libraryId: idPart, index: resolvedIndex });
+        }
       }
     },
-    [selectSlide, isOutputFrozen, setShowTextInOutput, setSelected]
+    [
+      selectSlide,
+      isOutputFrozen,
+      resolveLibrarySlideIndex,
+      setShowTextInOutput,
+      setSelected,
+    ]
   );
 
   const handleEditSlide = useCallback(
@@ -112,9 +147,9 @@ export function useAppHandlers({
   );
 
   const handleSaveLibraryItem = useCallback(
-    async (title: string, body: string) => {
+    async (draft: LibraryItemDraft) => {
       if (!selectedLibraryId) return;
-      await updateExistingLibraryItem(selectedLibraryId, title, body);
+      await updateExistingLibraryItem(selectedLibraryId, draft);
     },
     [selectedLibraryId, updateExistingLibraryItem]
   );
@@ -123,7 +158,12 @@ export function useAppHandlers({
     async (libraryId: string, newTitle: string) => {
       const item = libraryItems.find((s) => s._id === libraryId);
       if (!item) return;
-      await updateExistingLibraryItem(libraryId, newTitle, item.body);
+      await updateExistingLibraryItem(libraryId, {
+        title: newTitle,
+        body: item.body,
+        slides: item.slides,
+        content: item.content,
+      });
     },
     [libraryItems, updateExistingLibraryItem]
   );
@@ -132,7 +172,9 @@ export function useAppHandlers({
     async (slides: ScriptureSlide[]) => {
       setShowTextInOutput(true);
       setSelectedLibraryId(null);
-      setScriptureSlides(slides);
+      setScriptureSlides((previousSlides) =>
+        mergeScriptureSlides(previousSlides, slides),
+      );
 
       if (slides.length > 0) {
         await handleSelectSlide(

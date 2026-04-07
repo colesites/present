@@ -16,9 +16,13 @@ import {
   useDesktopSessionStore,
 } from "../store/desktopSession";
 
-const convexUrl = process.env.CONVEX_URL;
-if (!convexUrl) {
-  throw new Error("CONVEX_URL is not set");
+const DEFAULT_DESKTOP_CONVEX_URL = "https://wary-iguana-735.convex.cloud";
+const convexUrl = process.env.CONVEX_URL ?? DEFAULT_DESKTOP_CONVEX_URL;
+
+if (!process.env.CONVEX_URL) {
+  console.warn(
+    `[Desktop Auth] CONVEX_URL missing from build env. Using fallback ${DEFAULT_DESKTOP_CONVEX_URL}.`,
+  );
 }
 
 const convex = new ConvexReactClient(convexUrl);

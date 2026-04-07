@@ -7,7 +7,7 @@ import type { Id } from "@present/backend/convex/_generated/dataModel";
 
 const PLAYBACK_STORAGE_KEY = "present-playback-local";
 const DEFAULT_FONT_STYLE = {
-  fontFamily: "Inter",
+  fontFamily: "system-ui",
   fontSize: 72,
   fontBold: false,
   fontItalic: false,
@@ -115,26 +115,20 @@ export function usePlayback(orgId: Id<"organizations"> | null) {
   const selectSlide = useCallback(
     async (
       slideId: string,
-      slideText?: string,
-      slideFooter?: string,
-      options?: { suppressBroadcast?: boolean },
+      _slideText?: string,
+      _slideFooter?: string,
+      _options?: { suppressBroadcast?: boolean },
     ) => {
+      void _slideText;
+      void _slideFooter;
+      void _options;
+
       // Mark that we have local changes (prevents server overwrite)
       hasLocalChanges.current = true;
 
       // Update local state immediately
       setLocalActiveSlideId(slideId);
       persistLocalPlayback(slideId, localFontStyle);
-
-      // Broadcast for instant local update via IPC
-      if (!options?.suppressBroadcast && window.electronAPI) {
-        window.electronAPI.sendToOutput({
-          type: "active-slide",
-          slideId,
-          slideText,
-          slideFooter,
-        });
-      }
 
       if (!orgId) {
         return;

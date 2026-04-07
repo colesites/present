@@ -1,21 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AutoFitText } from "../shared/components/AutoFitText";
-import { stripBracketsForDisplay } from "../shared/lib/lyrics";
-import { cn } from "../shared/lib/utils";
+import { LibrarySlideLayer } from "../shared/components/LibrarySlideLayer";
+import { ScriptureTextLayer } from "../shared/components/ScriptureTextLayer";
 import type {
   VideoSettings,
   LibraryStyle,
   OutputState,
 } from "../../shared/types/output-window";
+import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 
 export function OutputWindow() {
   const [state, setState] = useState<OutputState>({
     mediaUrl: null,
     mediaType: null,
     mediaId: null,
-    showText: true,
+    showText: false,
     showMedia: true,
     videoSettings: { loop: true, muted: true },
     mediaFilterCSS: "",
@@ -25,10 +25,13 @@ export function OutputWindow() {
     activeSlideId: null,
     slideText: null,
     slideFooter: null,
+    slideElements: null,
+    slideCanvasSize: null,
+    slideBackgroundColor: null,
     timerLabel: null,
     timerText: null,
     timerRunning: false,
-    timerVisible: true,
+    timerVisible: false,
     timerLayout: {
       xPercent: 82,
       yPercent: 8,
@@ -41,9 +44,13 @@ export function OutputWindow() {
       titlePosition: "bottom",
     },
     scriptureStyle: {
-      fontSize: 72,
+      fontSize: 96,
       fontFamily: "Inter",
-      textAlign: "center",
+      fontWeight: "400",
+      textAlign: "left",
+      verticalAlign: "middle",
+      footerAlign: "center",
+      footerPosition: "bottom",
     },
     libraryStyle: {
       fontFamily: "Inter",
@@ -55,6 +62,7 @@ export function OutputWindow() {
   });
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const wasShowingMediaRef = useRef(false);
 
   // Listen to IPC messages from main window (relayed through main process)
   useEffect(() => {
@@ -99,6 +107,11 @@ export function OutputWindow() {
           activeSlideId: msg.slideId as string | null,
           slideText: (msg.slideText as string) || null,
           slideFooter: (msg.slideFooter as string) || null,
+          slideElements: (msg.slideElements as OutputState["slideElements"]) ?? null,
+          slideCanvasSize:
+            (msg.slideCanvasSize as OutputState["slideCanvasSize"]) ?? null,
+          slideBackgroundColor:
+            (msg.slideBackgroundColor as string | null) || null,
         }));
       } else if (msg.type === "timer-update") {
         setState((prev) => ({
@@ -117,6 +130,8 @@ export function OutputWindow() {
           activeSlideId: null,
           slideText: null,
           slideFooter: null,
+          slideElements: null,
+          slideCanvasSize: null,
           mediaUrl: null,
           mediaType: null,
           mediaId: null,
@@ -128,25 +143,33 @@ export function OutputWindow() {
     window.electronAPI.notifyOutputReady();
   }, []);
 
+  useEffect(() => {
+    void ensureFontCatalogLoaded(document, { force: true });
+  }, [state.libraryStyle.fontFamily, state.scriptureStyle.fontFamily]);
+
   // Sync video playback
   useEffect(() => {
-    if (videoRef.current && state.mediaType === "video") {
-      if (state.isVideoPlaying) {
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        videoRef.current.play().catch(() => {});
-      } else {
-        videoRef.current.pause();
-      }
+    const wasShowingMedia = wasShowingMediaRef.current;
+    wasShowingMediaRef.current = state.showMedia;
 
-      if (state.shouldSyncTime) {
-        if (
-          Math.abs(videoRef.current.currentTime - state.videoCurrentTime) > 0.5
-        ) {
-          videoRef.current.currentTime = state.videoCurrentTime;
-        }
+    if (!videoRef.current || state.mediaType !== "video" || !state.showMedia) {
+      return;
+    }
+
+    if (state.shouldSyncTime || !wasShowingMedia) {
+      if (Math.abs(videoRef.current.currentTime - state.videoCurrentTime) > 0.5) {
+        videoRef.current.currentTime = state.videoCurrentTime;
       }
     }
+
+    if (state.isVideoPlaying) {
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      videoRef.current.play().catch(() => {});
+    } else {
+      videoRef.current.pause();
+    }
   }, [
+    state.showMedia,
     state.isVideoPlaying,
     state.videoCurrentTime,
     state.shouldSyncTime,
@@ -156,32 +179,9 @@ export function OutputWindow() {
 
   // Determine if this is a scripture slide
   const isScripture = state.activeSlideId?.startsWith("scripture:") ?? false;
+  const shouldUseScriptureTextLayer =
+    isScripture && (state.slideElements?.length ?? 0) === 0;
 
-  // Pick the right style based on slide type
-  const textStyle = isScripture
-    ? {
-        fontFamily: state.scriptureStyle.fontFamily,
-        textAlign: state.scriptureStyle.textAlign as
-          | "left"
-          | "center"
-          | "right",
-        fontWeight: "normal" as const,
-        fontStyle: "normal" as const,
-        textDecoration: "none" as const,
-      }
-    : {
-        fontFamily: state.libraryStyle.fontFamily,
-        textAlign: "center" as const, // Items are always centered
-        fontWeight: state.libraryStyle.fontBold
-          ? ("bold" as const)
-          : ("normal" as const),
-        fontStyle: state.libraryStyle.fontItalic
-          ? ("italic" as const)
-          : ("normal" as const),
-        textDecoration: state.libraryStyle.fontUnderline
-          ? ("underline" as const)
-          : ("none" as const),
-      };
   const timerClockFont = useMemo(
     () =>
       `${Math.min(Math.max(state.timerLayout?.clockFontPx ?? 24, 12), 400)}px`,
@@ -219,31 +219,59 @@ export function OutputWindow() {
         </div>
       )}
 
-      {/* Text Layer (Foreground) */}
-      {state.showText && state.slideText && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-[4vw]">
-          <div className="flex flex-1 w-full h-full min-h-0 items-center justify-center">
-            <AutoFitText
-              text={stripBracketsForDisplay(state.slideText)}
-              className={cn(
-                "text-white leading-relaxed drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)] pointer-events-none select-none"
-              )}
-              style={textStyle}
-              maxFontSize={
-                isScripture
-                  ? state.scriptureStyle.fontSize
-                  : state.libraryStyle.fontSize
-              }
-              minScale={isScripture ? 0.3 : 0.1}
-            />
-          </div>
+      {state.slideBackgroundColor ? (
+        <div
+          className="absolute inset-0 z-[1]"
+          style={{ backgroundColor: state.slideBackgroundColor }}
+        />
+      ) : null}
 
-          {state.slideFooter && (
-            <div className="mt-4 text-[2vw] font-semibold tracking-wide text-white/90 drop-shadow-md uppercase">
-              {state.slideFooter}
-            </div>
-          )}
-        </div>
+      {/* Text Layer (Foreground) */}
+      {state.showText &&
+        (shouldUseScriptureTextLayer
+          ? Boolean(state.slideText)
+          : Boolean(state.slideText || state.slideElements?.length)) && (
+        shouldUseScriptureTextLayer ? (
+          <ScriptureTextLayer
+            key={[
+              state.activeSlideId ?? "",
+              state.slideText ?? "",
+              state.slideFooter ?? "",
+              state.scriptureStyle.fontFamily,
+              state.scriptureStyle.fontSize,
+              state.scriptureStyle.fontWeight,
+              state.scriptureStyle.textAlign,
+              state.scriptureStyle.verticalAlign,
+              state.scriptureStyle.footerAlign,
+              state.scriptureStyle.footerPosition,
+            ].join("|")}
+            text={state.slideText}
+            footer={state.slideFooter}
+            fontFamily={state.scriptureStyle.fontFamily}
+            fontSize={state.scriptureStyle.fontSize}
+            fontWeight={state.scriptureStyle.fontWeight}
+            textAlign={state.scriptureStyle.textAlign}
+            verticalAlign={state.scriptureStyle.verticalAlign}
+            footerAlign={state.scriptureStyle.footerAlign}
+            footerPosition={state.scriptureStyle.footerPosition}
+            maxFontSize={state.scriptureStyle.fontSize}
+            minScale={0.3}
+            containerClassName="absolute inset-0 z-10 flex flex-col p-[4vw]"
+            bodyClassName="flex h-full min-h-0 w-full flex-1"
+            textClassName="text-white leading-relaxed drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)] pointer-events-none select-none"
+            footerClassName="mt-4 text-[2vw] font-semibold tracking-wide text-white/90 drop-shadow-md uppercase"
+          />
+        ) : (
+          <LibrarySlideLayer
+            text={state.slideText}
+            elements={state.slideElements}
+            canvasSize={state.slideCanvasSize}
+            libraryStyle={state.libraryStyle}
+            className="absolute inset-0 z-10"
+            textClassName="drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]"
+            minScale={0.1}
+          />
+        )
       )}
 
       {(state.timerVisible ?? true) && state.timerText && (

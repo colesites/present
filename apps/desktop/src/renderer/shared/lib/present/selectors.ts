@@ -1,4 +1,4 @@
-import type { LibraryItem } from "../../../../shared/types";
+import type { LibraryItem, LibrarySlide } from "../../../../shared/types";
 import type { SlideData } from "../../../../features/slides";
 
 export function getSlidesForGrid(
@@ -17,15 +17,47 @@ export function getActiveSlideText(
   activeSlideId: string | null | undefined,
   libraryItems: (LibraryItem | null | undefined)[],
 ): string | null {
+  return getActiveLibrarySlide(activeSlideId, libraryItems)?.slide.text ?? null;
+}
+
+export function getActiveLibrarySlide(
+  activeSlideId: string | null | undefined,
+  libraryItems: (LibraryItem | null | undefined)[],
+): { item: LibraryItem; slide: LibrarySlide; index: number } | null {
   if (!activeSlideId || libraryItems.length === 0) return null;
 
-  const [idPart, indexStr] = activeSlideId.split(":");
-  const index = Number(indexStr);
+  const separatorIndex = activeSlideId.indexOf(":");
+  if (separatorIndex <= 0) {
+    return null;
+  }
 
-  if (!Number.isFinite(index)) return null;
+  const idPart = activeSlideId.slice(0, separatorIndex);
+  const slideToken = activeSlideId.slice(separatorIndex + 1);
+  const parsedIndex = Number(slideToken);
 
   const item = libraryItems.find((s) => s && String(s._id) === idPart);
-  return item?.slides[index]?.text ?? null;
+  if (!item) {
+    return null;
+  }
+
+  const matchedSlideIndex = item.slides.findIndex((slide) => slide.id === slideToken);
+  const slideIndex =
+    matchedSlideIndex >= 0
+      ? matchedSlideIndex
+      : Number.isFinite(parsedIndex)
+        ? parsedIndex
+        : -1;
+
+  const slide = item.slides[slideIndex];
+  if (!item || !slide) {
+    return null;
+  }
+
+  return {
+    item,
+    slide,
+    index: slideIndex,
+  };
 }
 
 /**

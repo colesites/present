@@ -4,8 +4,10 @@
  */
 export function stripBracketsForDisplay(text: string): string {
   return text
-    .replace(/^\[.*?\]\s*/gm, "") // remove [Label] at the start of a line
-    .replace(/\[.*?\]/g, "")       // remove any remaining inline [Label]
+    .replace(/^\s*\[[^\]]+\]\s*$/gm, "")
+    .replace(/^\s*\([^)]+\)\s*$/gm, "")
+    .replace(/^\[[^\]]+\]\s*/gm, "")
+    .replace(/\[.*?\]/g, "")
     .trim();
 }
 
@@ -33,32 +35,45 @@ export function parseLyricsToSlides(
     const block = raw.trim();
     if (!block) continue;
 
-    // Check if this entire block is just a label line like [Verse 1]
-    const labelMatch = block.match(/^\[([^\]]+)\]$/);
-    if (labelMatch) {
-      const parts = labelMatch[1].split(":");
-      pendingLabel = parts[0].trim();
-      pendingModifier = parts[1]?.trim() || undefined;
+    const lines = block.split("\n");
+    let label = pendingLabel;
+    let modifier = pendingModifier;
+    let textStartIndex = 0;
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const trimmedLine = lines[index]?.trim() ?? "";
+      if (!trimmedLine) {
+        textStartIndex = index + 1;
+        continue;
+      }
+
+      const labelMatch = trimmedLine.match(/^\[([^\]]+)\]\s*$/);
+      if (labelMatch) {
+        const parts = labelMatch[1].split(":");
+        label = parts[0]?.trim() || label;
+        modifier = parts[1]?.trim() || modifier;
+        textStartIndex = index + 1;
+        continue;
+      }
+
+      const instructionMatch = trimmedLine.match(/^\(([^)]+)\)\s*$/);
+      if (instructionMatch) {
+        modifier = instructionMatch[1]?.trim() || modifier;
+        textStartIndex = index + 1;
+        continue;
+      }
+
+      break;
+    }
+
+    const text = lines.slice(textStartIndex).join("\n").trim();
+
+    if (!text && textStartIndex >= lines.length) {
+      pendingLabel = label;
+      pendingModifier = modifier;
       continue;
     }
 
-    // Extract inline label from the first line if present
-    const lines = block.split("\n");
-    const firstLineLabel = lines[0].match(/^\[([^\]]+)\]\s*$/);
-    let text: string;
-    let label = pendingLabel;
-    let modifier = pendingModifier;
-
-    if (firstLineLabel) {
-      const parts = firstLineLabel[1].split(":");
-      label = parts[0].trim();
-      modifier = parts[1]?.trim() || undefined;
-      text = lines.slice(1).join("\n").trim();
-    } else {
-      text = block;
-    }
-
-    // Reset pending after consumption
     pendingLabel = undefined;
     pendingModifier = undefined;
 

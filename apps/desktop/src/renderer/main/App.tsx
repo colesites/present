@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { AppHeader } from "../../features/header";
@@ -25,6 +25,7 @@ import { useDesktopSessionStore } from "../shared/store/desktopSession";
 import { api } from "@present/backend/convex/_generated/api";
 import { decodeJwtPayload } from "../shared/lib/utils";
 import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvider";
+import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 
 export default function Home() {
   const token = useDesktopSessionStore((state) => state.token);
@@ -72,6 +73,10 @@ export default function Home() {
     return (
       new URLSearchParams(window.location.search).get("window") === "settings"
     );
+  }, []);
+
+  useEffect(() => {
+    void ensureFontCatalogLoaded(document);
   }, []);
 
   useEffect(() => {
@@ -298,6 +303,10 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
     : isBibleActive
       ? "bible"
       : "services";
+  const [showTextInOutput, setShowTextInOutput] = useState(false);
+  const [showMediaInOutput, setShowMediaInOutput] = useState(true);
+  const [isTimerLayerEnabled, setIsTimerLayerEnabled] = useState(false);
+  const [isMessageLayerEnabled, setIsMessageLayerEnabled] = useState(false);
 
   // Shared Data hooks (lifted for Settings vs Present toggling)
   const mediaState = useMediaFolders();
@@ -374,6 +383,14 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
           mediaPanelRef={mediaPanelRef}
           scripturePanelRef={scripturePanelRef}
           isAutopilotEnabled={isAutopilotEnabled}
+          showTextInOutput={showTextInOutput}
+          setShowTextInOutput={setShowTextInOutput}
+          showMediaInOutput={showMediaInOutput}
+          setShowMediaInOutput={setShowMediaInOutput}
+          isTimerLayerEnabled={isTimerLayerEnabled}
+          setIsTimerLayerEnabled={setIsTimerLayerEnabled}
+          isMessageLayerEnabled={isMessageLayerEnabled}
+          setIsMessageLayerEnabled={setIsMessageLayerEnabled}
         />
       )}
     </div>

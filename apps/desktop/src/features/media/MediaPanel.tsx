@@ -22,6 +22,8 @@ import {
   Check,
   ArrowUp,
   ArrowDown,
+  FilePlus,
+  FolderPlus as FolderPlusIcon,
 } from "lucide-react";
 import { Input } from "../../renderer/shared/components/ui/input";
 import {
@@ -58,6 +60,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "../../renderer/shared/components/ui/resizable";
+import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
 
 type MediaFilter = "all" | "images" | "videos";
 
@@ -68,49 +71,61 @@ const MediaItemCard = memo(function MediaItemCard({
   onSelect,
   onAddToService,
   isInsideService,
+  isGridView,
 }: {
   item: MediaItem;
   isActive: boolean;
   onSelect: (item: MediaItem) => void;
   onAddToService: (item: MediaItem) => void;
   isInsideService: boolean;
+  isGridView?: boolean;
 }) {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <button
-          type="button"
-          onClick={() => onSelect(item)}
-          className={cn(
-            "group relative aspect-video overflow-hidden rounded-lg border bg-black transition",
-            isActive
-              ? "border-primary ring-2 ring-primary"
-              : "border-border hover:border-primary"
-          )}
-        >
-          {item.type === "image" ? (
-            <img
-              src={item.url}
-              alt={item.name}
-              className="h-full w-full object-cover"
-              loading="eager"
-            />
-          ) : (
-            <video
-              src={item.url}
-              className="h-full w-full object-cover"
-              muted
-              preload="metadata"
-              onLoadedMetadata={(e) => {
-                // Seek to a small time so the browser renders a thumbnail frame
-                e.currentTarget.currentTime = 0.1;
-              }}
-            />
-          )}
-          {/* Overlay with name */}
-          <div className="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/80 to-transparent p-2 opacity-0 transition group-hover:opacity-100">
-            <p className="truncate text-xs text-white">{item.name}</p>
+    <button
+      type="button"
+      onClick={() => onSelect(item)}
+      className={cn(
+        "group relative overflow-hidden rounded-lg border bg-black transition",
+        isGridView ? "aspect-video w-full" : "flex h-16 w-full flex-row items-center",
+        isActive
+          ? "border-primary ring-2 ring-primary"
+          : "border-border hover:border-primary"
+      )}
+    >
+          <div className={cn(
+            "overflow-hidden shrink-0",
+            isGridView ? "h-full w-full" : "h-full w-28 border-r border-border"
+          )}>
+            {item.type === "image" ? (
+              <img
+                src={item.url}
+                alt={item.name}
+                className="h-full w-full object-cover"
+                loading="eager"
+              />
+            ) : (
+              <video
+                src={item.url}
+                className="h-full w-full object-cover"
+                muted
+                preload="metadata"
+                onLoadedMetadata={(e) => {
+                  e.currentTarget.currentTime = 0.1;
+                }}
+              />
+            )}
           </div>
+          {isGridView ? (
+            <div className="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/80 to-transparent p-2 opacity-0 transition group-hover:opacity-100">
+              <p className="truncate text-xs text-white">{item.name}</p>
+            </div>
+          ) : (
+            <div className="flex flex-1 items-center px-4 overflow-hidden">
+              <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
+            </div>
+          )}
           {/* Type indicator */}
           <div className="absolute right-1 top-1 rounded bg-black/60 p-1">
             {item.type === "video" ? (
@@ -179,7 +194,7 @@ export const MediaPanel = memo(
   ) {
     const {
       folders,
-      allMediaItems, // Use all items, filter by folder via CSS
+      allMediaItems,
       isLoading,
       selectedFolderId,
       setSelectedFolderId,
@@ -187,7 +202,13 @@ export const MediaPanel = memo(
       removeFolder,
       refreshMedia,
       activeMediaItem,
+      addMediaFile,
+      createFolder,
+      renameFolder,
     } = mediaState;
+
+    const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+    const [editName, setEditName] = useState("");
 
     const [filter, setFilter] = useState<MediaFilter>("all");
     const [folderToRemove, setFolderToRemove] = useState<MediaFolder | null>(
@@ -196,6 +217,14 @@ export const MediaPanel = memo(
     const [searchQuery, setSearchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+
+    // UI State for Footer
+    const [scale, setScale] = useState(60);
+    const [isGridView, setIsGridView] = useState(true);
+
+    const scaleFactor = scale / 60;
+    const minItemWidth = Math.round(180 * scaleFactor);
+    const itemGap = Math.max(8, Math.round(12 * scaleFactor));
 
 
 
@@ -329,8 +358,8 @@ export const MediaPanel = memo(
           <ResizablePanel defaultSize="33" minSize="20" maxSize="40">
             <div className="flex h-full flex-col border-r border-border">
               <div className="flex items-center justify-between border-b border-border px-3 py-2">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Folders
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">
+                  Media
                 </span>
                 <div className="flex gap-1">
                   <button
@@ -345,14 +374,34 @@ export const MediaPanel = memo(
                     />
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={handleAddFolder}
-                    className="rounded p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
-                    title="Add folder"
-                  >
-                    <FolderPlus className="h-3.5 w-3.5" />
-                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="rounded p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+                        title="Add..."
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={handleAddFolder}>
+                        <FolderPlusIcon className="mr-2 h-4 w-4" />
+                        Add Existing Folder
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={async () => {
+                        // Find current folder path to use as parent, or default
+                        const currentFolder = folders.find(f => f.id === selectedFolderId);
+                        const newFolder = await createFolder("Untitled Folder", currentFolder?.path);
+                        if (newFolder) {
+                          setEditingFolderId(newFolder.id);
+                          setEditName(newFolder.name);
+                        }
+                      }}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        Create New Folder
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </div>
 
@@ -363,7 +412,7 @@ export const MediaPanel = memo(
                     onClick={handleAddFolder}
                     className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-dashed border-border p-4 text-muted-foreground transition hover:border-primary hover:text-foreground"
                   >
-                    <FolderPlus className="h-8 w-8" />
+                    <FolderPlusIcon className="h-8 w-8" />
                     <span className="text-xs">Add folder</span>
                   </button>
                 ) : (
@@ -404,12 +453,39 @@ export const MediaPanel = memo(
                         <button
                           type="button"
                           onClick={() => setSelectedFolderId(folder.id)}
+                          onDoubleClick={() => {
+                            setEditingFolderId(folder.id);
+                            setEditName(folder.name);
+                          }}
                           className="flex min-w-0 flex-1 items-center gap-2 text-left"
                         >
                           <Folder className="h-3.5 w-3.5 shrink-0" />
-                          <span className="min-w-0 flex-1 truncate">
-                            {folder.name}
-                          </span>
+                          <div className="min-w-0 flex-1">
+                            {editingFolderId === folder.id ? (
+                              <Input
+                                autoFocus
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                className="h-6 w-full py-0 px-1 text-xs focus-visible:ring-1"
+                                onKeyDown={async (e) => {
+                                  if (e.key === "Enter") {
+                                    await renameFolder(folder.id, editName.trim());
+                                    setEditingFolderId(null);
+                                  } else if (e.key === "Escape") {
+                                    setEditingFolderId(null);
+                                  }
+                                }}
+                                onBlur={async () => {
+                                  await renameFolder(folder.id, editName.trim());
+                                  setEditingFolderId(null);
+                                }}
+                              />
+                            ) : (
+                              <span className="block truncate">
+                                {folder.name}
+                              </span>
+                            )}
+                          </div>
                         </button>
                         <div className="flex shrink-0 items-center gap-1">
 
@@ -489,16 +565,7 @@ export const MediaPanel = memo(
 
                 {/* Search Input */}
                 <div className="flex items-center gap-1">
-                  <div className="relative w-32 xl:w-40">
-                    <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      ref={searchInputRef}
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search files..."
-                      className="h-7 w-full pl-7 text-[10px]"
-                    />
-                  </div>
+                  {/* Search moved to footer */}
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -563,20 +630,27 @@ export const MediaPanel = memo(
                 ) : (
                   <>
                     <div className={cn("absolute inset-0 overflow-auto p-3", filter !== "all" && "hidden")}>
-                      <div className="grid grid-cols-4 gap-2">
-                        {filteredItems.map((item) => {
-                          return (
-                            <div key={item.id}>
-                              <MediaItemCard
-                                item={item}
-                                isActive={activeMediaItem?.id === item.id}
-                                onSelect={handleSelectMedia}
-                                onAddToService={handleAddToService}
-                                isInsideService={isInsideService}
-                              />
-                            </div>
-                          );
-                        })}
+                      <div 
+                        className={cn("pb-8", isGridView ? "grid" : "flex flex-col")}
+                        style={{
+                          gap: `${itemGap}px`,
+                          gridTemplateColumns: isGridView 
+                            ? `repeat(auto-fill, minmax(${minItemWidth}px, 1fr))` 
+                            : undefined
+                        }}
+                      >
+                        {filteredItems.map((item) => (
+                          <div key={item.id}>
+                            <MediaItemCard
+                              item={item}
+                              isActive={activeMediaItem?.id === item.id}
+                              onSelect={handleSelectMedia}
+                              onAddToService={handleAddToService}
+                              isInsideService={isInsideService}
+                              isGridView={isGridView}
+                            />
+                          </div>
+                        ))}
                       </div>
                       {/* Empty state overlay */}
                       {filteredItems.length === 0 && (
@@ -587,22 +661,29 @@ export const MediaPanel = memo(
                       )}
                     </div>
                     <div className={cn("absolute inset-0 overflow-auto p-3", filter !== "images" && "hidden")}>
-                      <div className="grid grid-cols-4 gap-2">
+                      <div 
+                         className={cn("pb-8", isGridView ? "grid" : "flex flex-col")}
+                         style={{
+                           gap: `${itemGap}px`,
+                           gridTemplateColumns: isGridView 
+                             ? `repeat(auto-fill, minmax(${minItemWidth}px, 1fr))` 
+                             : undefined
+                         }}
+                      >
                         {filteredItems
                           .filter((item) => item.type === "image")
-                          .map((item) => {
-                            return (
-                              <div key={item.id}>
-                                <MediaItemCard
-                                  item={item}
-                                  isActive={activeMediaItem?.id === item.id}
-                                  onSelect={handleSelectMedia}
-                                  onAddToService={handleAddToService}
-                                  isInsideService={isInsideService}
-                                />
-                              </div>
-                            );
-                          })}
+                          .map((item) => (
+                            <div key={item.id}>
+                              <MediaItemCard
+                                item={item}
+                                isActive={activeMediaItem?.id === item.id}
+                                onSelect={handleSelectMedia}
+                                onAddToService={handleAddToService}
+                                isInsideService={isInsideService}
+                                isGridView={isGridView}
+                              />
+                            </div>
+                          ))}
                       </div>
                       {/* Empty state overlay */}
                       {imageCount === 0 && (
@@ -613,22 +694,29 @@ export const MediaPanel = memo(
                       )}
                     </div>
                     <div className={cn("absolute inset-0 overflow-auto p-3", filter !== "videos" && "hidden")}>
-                      <div className="grid grid-cols-4 gap-2">
+                      <div 
+                         className={cn("pb-8", isGridView ? "grid" : "flex flex-col")}
+                         style={{
+                           gap: `${itemGap}px`,
+                           gridTemplateColumns: isGridView 
+                             ? `repeat(auto-fill, minmax(${minItemWidth}px, 1fr))` 
+                             : undefined
+                         }}
+                      >
                         {filteredItems
                           .filter((item) => item.type === "video")
-                          .map((item) => {
-                            return (
-                              <div key={item.id}>
-                                <MediaItemCard
-                                  item={item}
-                                  isActive={activeMediaItem?.id === item.id}
-                                  onSelect={handleSelectMedia}
-                                  onAddToService={handleAddToService}
-                                  isInsideService={isInsideService}
-                                />
-                              </div>
-                            );
-                          })}
+                          .map((item) => (
+                            <div key={item.id}>
+                              <MediaItemCard
+                                item={item}
+                                isActive={activeMediaItem?.id === item.id}
+                                onSelect={handleSelectMedia}
+                                onAddToService={handleAddToService}
+                                isInsideService={isInsideService}
+                                isGridView={isGridView}
+                              />
+                            </div>
+                          ))}
                       </div>
                       {/* Empty state overlay */}
                       {videoCount === 0 && (
@@ -641,6 +729,44 @@ export const MediaPanel = memo(
                   </>
                 )}
               </div>
+
+              <WorkspaceFooter
+                isGridView={isGridView}
+                onViewModeChange={setIsGridView}
+                scale={scale}
+                onScaleChange={setScale}
+                className="h-12 border-t-2"
+                leftContent={
+                  <button
+                    type="button"
+                    onClick={() => selectedFolderId && addMediaFile(selectedFolderId)}
+                    disabled={!selectedFolderId}
+                    className="flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-primary transition hover:bg-primary/20 disabled:pointer-events-none disabled:opacity-30 antialiased"
+                    title="Add Media File to current folder"
+                  >
+                    <FilePlus className="h-3.5 w-3.5" />
+                    Add Media
+                  </button>
+                }
+                centerContent={
+                  <div className="flex items-center gap-3 w-full max-w-md">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 select-none">Search</span>
+                    <div className="relative flex-1 group">
+                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/30 transition-colors group-focus-within:text-primary" />
+                      <Input
+                        ref={searchInputRef}
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Filter media..."
+                        className="h-8 w-full pl-8 pr-12 text-xs bg-muted/20 border-muted-foreground/10 focus-visible:ring-1 focus-visible:bg-muted/40 transition-all shadow-inner"
+                      />
+                      <kbd className="absolute right-2 top-1/2 -translate-y-1/2 h-5 flex items-center px-1.5 rounded border border-muted-foreground/20 bg-muted/50 font-sans text-[10px] font-medium text-muted-foreground/60 select-none pointer-events-none group-focus-within:opacity-0 transition-opacity">
+                        ⌘M
+                      </kbd>
+                    </div>
+                  </div>
+                }
+              />
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>

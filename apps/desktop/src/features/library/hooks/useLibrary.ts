@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { parseLyricsToSlides } from "../../../renderer/shared/lib/lyrics";
-import type { LibraryItem, ContentSource } from "../../../shared/types";
+import type {
+  LibraryContent,
+  LibraryItem,
+  LibraryItemDraft,
+  ContentSource,
+} from "../../../shared/types";
 import {
   createLocalLibraryItem,
   enqueueSyncOperation,
@@ -10,6 +14,17 @@ import {
   removeLibraryItemLocal,
   upsertLibraryItem,
 } from "../../../renderer/shared/offline/localData";
+import {
+  buildSlidesFromBody,
+  createComposedLibraryDraft,
+  DEFAULT_CANVAS_SIZE,
+  normalizeLibraryContent,
+  normalizeLibraryItem,
+  normalizeLibrarySlide,
+  reorderLibrarySlides,
+  slidesToBody,
+} from "../lib/library-items";
+import type { LibraryTextStyleDefaults } from "../lib/library-items";
 
 const normalizeSearchText = (value: string): string =>
   value
@@ -85,10 +100,16 @@ const scoreLibrarySearchMatch = (
 export function useLibrary(
   input: { orgId: string | null; userId: string | null },
   contentSource: ContentSource,
+  options?: {
+    defaultTextStyle?: LibraryTextStyleDefaults;
+  },
 ) {
+  const defaultTextStyle = options?.defaultTextStyle;
   const workspaceId = input.orgId ?? "personal";
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>(() =>
-    readOrgLibraryItems(workspaceId)
+    readOrgLibraryItems(workspaceId).map((item) =>
+      normalizeLibraryItem(item, defaultTextStyle),
+    )
   );
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(
@@ -99,8 +120,12 @@ export function useLibrary(
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
-    setLibraryItems(readOrgLibraryItems(workspaceId));
-  }, [workspaceId]);
+    setLibraryItems(
+      readOrgLibraryItems(workspaceId).map((item) =>
+        normalizeLibraryItem(item, defaultTextStyle),
+      ),
+    );
+  }, [defaultTextStyle, workspaceId]);
 
   useEffect(() => {
     if (selectedItemId) {
@@ -153,20 +178,101 @@ export function useLibrary(
     title: string,
     body: string,
     categoryId?: string,
+    content?: LibraryContent,
   ) => {
-    if (!title.trim()) return null;
-    const slides = parseLyricsToSlides(body);
+    return createItemFromDraft(
+      {
+        title,
+        body,
+        slides: buildSlidesFromBody(
+          body,
+          content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
+          defaultTextStyle,
+        ),
+        content,
+      },
+      categoryId,
+    );
+  };
+
+  const createItemFromDraft = async (
+    draft: LibraryItemDraft,
+    categoryId?: string,
+  ) => {
+    if (!draft.title.trim()) return null;
+
+    const canvasSize =
+      draft.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE;
+    const slides =
+      Array.isArray(draft.slides) && draft.slides.length > 0
+        ? draft.slides.map((slide) =>
+            normalizeLibrarySlide(slide, canvasSize, defaultTextStyle),
+          )
+        : buildSlidesFromBody(draft.body, canvasSize, defaultTextStyle);
+
     const nextItem = createLocalLibraryItem(workspaceId, {
-      title: title.trim(),
-      body,
+      title: draft.title.trim(),
+      body: draft.body,
       slides,
+      content: normalizeLibraryContent(draft.content, slides),
       categoryId: categoryId as LibraryItem["categoryId"],
       userId: input.userId ?? undefined,
       createdAt: Date.now(),
     });
-    setLibraryItems(readOrgLibraryItems(workspaceId));
-    enqueueSyncOperation(workspaceId, "library", String(nextItem._id), "create", nextItem);
+    setLibraryItems(
+      readOrgLibraryItems(workspaceId).map((item) =>
+        normalizeLibraryItem(item, defaultTextStyle),
+      ),
+    );
+    enqueueSyncOperation(
+      workspaceId,
+      "library",
+      String(nextItem._id),
+      "create",
+      nextItem,
+    );
     return nextItem._id;
+  };
+
+  const saveExistingItem = async (
+    itemId: string,
+    input: LibraryItemDraft,
+  ) => {
+    const existing = libraryItems.find((item) => item._id === itemId);
+    if (!existing) {
+      return;
+    }
+    const slides =
+      Array.isArray(input.slides) && input.slides.length > 0
+        ? input.slides.map((slide) =>
+            normalizeLibrarySlide(
+              slide,
+              input.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
+              defaultTextStyle,
+            ),
+          )
+        : buildSlidesFromBody(
+            input.body,
+            input.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
+            defaultTextStyle,
+          );
+    const body =
+      typeof input.body === "string" ? input.body : slidesToBody(slides);
+    const content = normalizeLibraryContent(input.content, slides);
+    const nextItem = upsertLibraryItem(workspaceId, {
+      ...existing,
+      title: input.title,
+      body,
+      slides,
+      content,
+      updatedAt: Date.now(),
+    });
+    setLibraryItems(
+      readOrgLibraryItems(workspaceId).map((item) =>
+        normalizeLibraryItem(item, defaultTextStyle),
+      ),
+    );
+    enqueueSyncOperation(workspaceId, "library", itemId, "update", nextItem);
   };
 
   const updateExistingItem = async (
@@ -174,25 +280,68 @@ export function useLibrary(
     title: string,
     body: string,
   ) => {
-    const slides = parseLyricsToSlides(body);
+    const existing = libraryItems.find((item) => item._id === itemId);
+    await saveExistingItem(itemId, {
+      title,
+      body,
+      slides: buildSlidesFromBody(
+        body,
+        existing?.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
+        defaultTextStyle,
+      ),
+      content: existing?.content,
+    });
+  };
+
+  const createComposedItem = async (
+    title: string,
+    itemIds: string[],
+    categoryId?: string,
+  ) => {
+    const selectedItems = libraryItems.filter((item) =>
+      itemIds.includes(String(item._id)),
+    );
+    if (selectedItems.length === 0 || !title.trim()) {
+      return null;
+    }
+    const draft = createComposedLibraryDraft(
+      title.trim(),
+      selectedItems,
+      defaultTextStyle,
+    );
+    return createNewItem(
+      draft.title,
+      draft.body,
+      categoryId,
+      draft.content,
+    );
+  };
+
+  const reorderItemSlides = async (
+    itemId: string,
+    fromIndex: number,
+    toIndex: number,
+  ) => {
     const existing = libraryItems.find((item) => item._id === itemId);
     if (!existing) {
       return;
     }
-    const nextItem = upsertLibraryItem(workspaceId, {
-      ...existing,
-      title,
-      body,
+    const slides = reorderLibrarySlides(existing.slides, fromIndex, toIndex);
+    await saveExistingItem(itemId, {
+      title: existing.title,
+      body: slidesToBody(slides),
       slides,
-      updatedAt: Date.now(),
+      content: existing.content,
     });
-    setLibraryItems(readOrgLibraryItems(workspaceId));
-    enqueueSyncOperation(workspaceId, "library", itemId, "update", nextItem);
   };
 
   const deleteItem = async (itemId: string) => {
     removeLibraryItemLocal(workspaceId, itemId);
-    setLibraryItems(readOrgLibraryItems(workspaceId));
+    setLibraryItems(
+      readOrgLibraryItems(workspaceId).map((item) =>
+        normalizeLibraryItem(item, defaultTextStyle),
+      ),
+    );
     enqueueSyncOperation(workspaceId, "library", itemId, "delete", { id: itemId });
     if (selectedItemId === itemId) {
       setSelectedItemId(null);
@@ -200,7 +349,7 @@ export function useLibrary(
   };
 
   return {
-    libraryItems: libraryItems as any,
+    libraryItems,
     isLoading: false,
     filteredItems,
     selectedItem,
@@ -211,7 +360,11 @@ export function useLibrary(
     setSelectedCategoryId,
     setSearchQuery,
     createNewItem,
+    createItemFromDraft,
+    createComposedItem,
     updateExistingItem,
+    saveExistingItem,
+    reorderItemSlides,
     deleteItem,
   };
 }

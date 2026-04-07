@@ -42,7 +42,59 @@ jobs:
       - name: Build Present for Windows
         env:
           DEBUG: electron-forge:*,electron-windows-installer*
+          CONVEX_URL: https://wary-iguana-735.convex.cloud
+          WEB_APP_URL: https://present-gha.vercel.app
         run: pnpm --filter @present/desktop run make:windows
+
+      - name: Validate packaged renderer bundle
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const asar = require('@electron/asar');
+
+          const collectFiles = (dir, accumulator = []) => {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const nextPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                collectFiles(nextPath, accumulator);
+                continue;
+              }
+              accumulator.push(nextPath);
+            }
+            return accumulator;
+          };
+
+          const outDir = path.resolve('apps/desktop/out');
+          if (!fs.existsSync(outDir)) {
+            throw new Error(`Desktop out directory not found: ${outDir}`);
+          }
+
+          const asarCandidates = collectFiles(outDir).filter((item) => /[\\/]resources[\\/]app\.asar$/i.test(item));
+          if (asarCandidates.length === 0) {
+            throw new Error('No app.asar found in packaged output.');
+          }
+
+          const requiredEntries = [
+            '/.webpack/main/index.js',
+            '/.webpack/renderer/main_window/index.html',
+            '/.webpack/renderer/main_window/index.js',
+            '/.webpack/renderer/output_window/index.html',
+            '/.webpack/renderer/output_window/index.js',
+          ];
+
+          for (const asarPath of asarCandidates) {
+            const files = asar.listPackage(asarPath);
+            const missing = requiredEntries.filter((entry) => !files.includes(entry));
+            if (missing.length > 0) {
+              throw new Error(
+                `Missing renderer entries in ${asarPath}:\n${missing.join('\n')}`
+              );
+            }
+            console.log(`Validated renderer assets in ${asarPath}`);
+          }
+          NODE
 
       - name: Upload Windows release files to Cloudflare R2
         shell: bash

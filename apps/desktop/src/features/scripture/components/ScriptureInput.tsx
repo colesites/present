@@ -27,6 +27,8 @@ interface ScriptureInputProps {
   className?: string;
   placeholder?: string;
   onEnter?: (value?: string) => void;
+  value?: string;
+  onValueChange?: (value: string) => void;
 }
 
 export interface ScriptureInputRef {
@@ -43,13 +45,16 @@ export const ScriptureInput = forwardRef<ScriptureInputRef, ScriptureInputProps>
       className,
       placeholder = "Search Bible... (John 3:16)",
       onEnter,
+      value: controlledValue,
+      onValueChange,
     },
     ref,
   ) {
-    const [value, setValue] = useState("");
+    const [internalValue, setInternalValue] = useState(controlledValue ?? "");
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [showDropdown, setShowDropdown] = useState(false);
+    const value = controlledValue ?? internalValue;
 
     // Use the forwarded ref if provided, or fallback to internal ref
     const internalInputRef = useRef<HTMLInputElement>(null);
@@ -57,6 +62,13 @@ export const ScriptureInput = forwardRef<ScriptureInputRef, ScriptureInputProps>
     // Simplest is to just use standard imperative handle or just assign to the input if simple.
     // Actually, standard pattern:
 
+
+    const setValue = (nextValue: string) => {
+      if (controlledValue === undefined) {
+        setInternalValue(nextValue);
+      }
+      onValueChange?.(nextValue);
+    };
 
     const parsed = useMemo(
       () => parseReference(value, availableBooks),

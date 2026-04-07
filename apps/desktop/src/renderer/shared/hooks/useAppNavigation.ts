@@ -48,9 +48,11 @@ export function useAppNavigation({
             slidesForGrid.length - 1,
           );
           const nextSlide = slidesForGrid[nextIndex];
-          const slideId = nextSlide.libraryItem
-            ? `${nextSlide.libraryItem._id}:${nextSlide.index}`
-            : `scripture:${nextSlide.index}`;
+          const slideId =
+            nextSlide.id ??
+            (nextSlide.libraryItem
+              ? `${nextSlide.libraryItem._id}:${nextSlide.index}`
+              : `scripture:${nextSlide.index}`);
           handleSelectSlide(
             slideId,
             nextSlide.slide.text,
@@ -60,9 +62,11 @@ export function useAppNavigation({
           e.preventDefault();
           const prevIndex = Math.max(currentIndex - 1, 0);
           const prevSlide = slidesForGrid[prevIndex];
-          const slideId = prevSlide.libraryItem
-            ? `${prevSlide.libraryItem._id}:${prevSlide.index}`
-            : `scripture:${prevSlide.index}`;
+          const slideId =
+            prevSlide.id ??
+            (prevSlide.libraryItem
+              ? `${prevSlide.libraryItem._id}:${prevSlide.index}`
+              : `scripture:${prevSlide.index}`);
           handleSelectSlide(
             slideId,
             prevSlide.slide.text,

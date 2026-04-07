@@ -1,23 +1,53 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SETTINGS_LANGUAGE_OPTIONS } from "../lib/constants";
 import {
   FontFamilySelect,
-  FontSizeInput,
 } from "../../../renderer/shared/components";
+import {
+  getFontWeightOptionsForFamily,
+  resolveFontWeightForFamily,
+  useFontCatalog,
+} from "../../../renderer/shared/hooks/useFontCatalog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../renderer/shared/components/ui/select";
 import { cn } from "../../../renderer/shared/lib/utils";
 import { MediaItem, MediaFolder } from "../../media/hooks/useMediaFolders";
+import type {
+  ScriptureFooterPosition,
+  ScriptureTextAlign,
+  ScriptureVerticalAlign,
+} from "../../../shared/types/output-window";
 
 interface SettingsScreenProps {
   settingsLang: string;
   setSettingsLang: (lang: string) => void;
   settingsScriptureFontFamily: string;
   setSettingsScriptureFontFamily: (font: string) => void;
+  settingsScriptureFontWeight: string;
+  setSettingsScriptureFontWeight: (weight: string) => void;
   settingsScriptureFontSize: number;
   setSettingsScriptureFontSize: (size: number) => void;
-  settingsScriptureTextAlign: "left" | "center" | "right";
-  setSettingsScriptureTextAlign: (align: "left" | "center" | "right") => void;
+  settingsScriptureTextAlign: ScriptureTextAlign;
+  setSettingsScriptureTextAlign: (align: ScriptureTextAlign) => void;
+  settingsScriptureVerticalAlign: ScriptureVerticalAlign;
+  setSettingsScriptureVerticalAlign: (align: ScriptureVerticalAlign) => void;
+  settingsScriptureFooterAlign: ScriptureTextAlign;
+  setSettingsScriptureFooterAlign: (align: ScriptureTextAlign) => void;
+  settingsScriptureFooterPosition: ScriptureFooterPosition;
+  setSettingsScriptureFooterPosition: (position: ScriptureFooterPosition) => void;
+  settingsLibraryFontSize: number;
+  setSettingsLibraryFontSize: (size: number) => void;
+  settingsLibraryFontFamily: string;
+  setSettingsLibraryFontFamily: (font: string) => void;
+  settingsLibraryFontWeight: string;
+  setSettingsLibraryFontWeight: (weight: string) => void;
   settingsScriptureBackgroundId: string | null;
   setSettingsScriptureBackgroundId: (id: string | null) => void;
   settingsTimerXPercent: number;
@@ -51,10 +81,16 @@ export function SettingsScreen({
   setSettingsLang,
   settingsScriptureFontFamily,
   setSettingsScriptureFontFamily,
+  settingsScriptureFontWeight,
+  setSettingsScriptureFontWeight,
   settingsScriptureFontSize,
   setSettingsScriptureFontSize,
-  settingsScriptureTextAlign,
-  setSettingsScriptureTextAlign,
+  settingsLibraryFontSize,
+  setSettingsLibraryFontSize,
+  settingsLibraryFontFamily,
+  setSettingsLibraryFontFamily,
+  settingsLibraryFontWeight,
+  setSettingsLibraryFontWeight,
   settingsScriptureBackgroundId,
   setSettingsScriptureBackgroundId,
   settingsTimerXPercent,
@@ -82,9 +118,84 @@ export function SettingsScreen({
   allMediaItems,
   selectMediaForOutput,
 }: SettingsScreenProps) {
-  const [activeSection, setActiveSection] = useState<"scripture" | "timer">(
-    "scripture"
+  const [activeSection, setActiveSection] = useState<
+    "scripture" | "libraries" | "timer"
+  >("scripture");
+  const { faces: fontFaces } = useFontCatalog();
+  const scriptureWeightOptions = useMemo(
+    () =>
+      getFontWeightOptionsForFamily(fontFaces, settingsScriptureFontFamily),
+    [fontFaces, settingsScriptureFontFamily],
   );
+  const libraryWeightOptions = useMemo(
+    () => getFontWeightOptionsForFamily(fontFaces, settingsLibraryFontFamily),
+    [fontFaces, settingsLibraryFontFamily],
+  );
+  const resolvedScriptureFontWeight = useMemo(
+    () =>
+      resolveFontWeightForFamily(
+        fontFaces,
+        settingsScriptureFontFamily,
+        settingsScriptureFontWeight,
+      ),
+    [fontFaces, settingsScriptureFontFamily, settingsScriptureFontWeight],
+  );
+  const resolvedLibraryFontWeight = useMemo(
+    () =>
+      resolveFontWeightForFamily(
+        fontFaces,
+        settingsLibraryFontFamily,
+        settingsLibraryFontWeight,
+      ),
+    [fontFaces, settingsLibraryFontFamily, settingsLibraryFontWeight],
+  );
+  const normalizedLibraryFontSize = useMemo(
+    () => Math.min(Math.max(Math.round(settingsLibraryFontSize), 24), 400),
+    [settingsLibraryFontSize],
+  );
+  const normalizedScriptureFontSize = useMemo(
+    () => Math.min(Math.max(Math.round(settingsScriptureFontSize), 12), 400),
+    [settingsScriptureFontSize],
+  );
+  const handleScriptureFontSizeInput = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = Number(event.target.value);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    setSettingsScriptureFontSize(value);
+  };
+  const handleLibraryFontSizeInput = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = Number(event.target.value);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    setSettingsLibraryFontSize(value);
+  };
+
+  useEffect(() => {
+    if (resolvedScriptureFontWeight !== settingsScriptureFontWeight) {
+      setSettingsScriptureFontWeight(resolvedScriptureFontWeight);
+    }
+  }, [
+    resolvedScriptureFontWeight,
+    setSettingsScriptureFontWeight,
+    settingsScriptureFontWeight,
+  ]);
+
+  useEffect(() => {
+    if (resolvedLibraryFontWeight !== settingsLibraryFontWeight) {
+      setSettingsLibraryFontWeight(resolvedLibraryFontWeight);
+    }
+  }, [
+    resolvedLibraryFontWeight,
+    setSettingsLibraryFontWeight,
+    settingsLibraryFontWeight,
+  ]);
+
   const previewRef = useRef<HTMLDivElement>(null);
   const timerBoxRef = useRef<HTMLDivElement>(null);
   const [dragMode, setDragMode] = useState<null | "move">(null);
@@ -322,6 +433,18 @@ export function SettingsScreen({
           </button>
           <button
             type="button"
+            onClick={() => setActiveSection("libraries")}
+            className={cn(
+              "w-full rounded-md px-2 py-1.5 text-left font-medium transition",
+              activeSection === "libraries"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            Libraries
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveSection("timer")}
             className={cn(
               "w-full rounded-md px-2 py-1.5 text-left font-medium transition",
@@ -338,11 +461,17 @@ export function SettingsScreen({
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="shrink-0 border-b border-border bg-card px-6 py-3">
           <h2 className="text-sm font-semibold">
-            {activeSection === "scripture" ? "Scripture" : "Timer Layout"}
+            {activeSection === "scripture"
+              ? "Scripture"
+              : activeSection === "libraries"
+              ? "Libraries"
+              : "Timer Layout"}
           </h2>
           <p className="text-[11px] text-muted-foreground">
             {activeSection === "scripture"
               ? "Control how voice search listens for Bible passages."
+              : activeSection === "libraries"
+              ? "Set default typography used when creating new library slides."
               : "Drag timer position and customize timer/name style for output screens."}
           </p>
         </div>
@@ -359,17 +488,21 @@ export function SettingsScreen({
                   when identifying scripture.
                 </p>
                 <div className="mt-2 max-w-xs">
-                  <select
+                  <Select
                     value={settingsLang}
-                    onChange={(e) => setSettingsLang(e.target.value)}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                    onValueChange={setSettingsLang}
                   >
-                    {SETTINGS_LANGUAGE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="w-full border border-input bg-background px-3 py-2 text-sm text-foreground">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SETTINGS_LANGUAGE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </section>
 
@@ -377,43 +510,133 @@ export function SettingsScreen({
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Typography
                 </h3>
-                <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 w-fit">
-                  <FontFamilySelect
-                    value={settingsScriptureFontFamily}
-                    onChange={setSettingsScriptureFontFamily}
-                  />
-
-                  <FontSizeInput
-                    value={settingsScriptureFontSize}
-                    onChange={setSettingsScriptureFontSize}
-                    presets={[6, 8, 10, 12, 14, 16, 18, 20, 24, 30]}
-                    unit="vh"
-                    min={1}
-                    max={50}
-                  />
+                <p className="text-[11px] text-muted-foreground">
+                  Set the default scripture typography used for new scripture
+                  slides. Manual edits in the editor remain unchanged.
+                </p>
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      Font family
+                    </span>
+                    <FontFamilySelect
+                      value={settingsScriptureFontFamily}
+                      onChange={setSettingsScriptureFontFamily}
+                      className="h-9 w-full rounded-md border-border bg-muted/45 px-3 text-[12px] font-medium"
+                    />
+                  </div>
+                  <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2">
+                    <div className="space-y-1">
+                      <span className="text-[11px] text-muted-foreground">
+                        Font weight
+                      </span>
+                      <Select
+                        value={resolvedScriptureFontWeight}
+                        onValueChange={setSettingsScriptureFontWeight}
+                      >
+                        <SelectTrigger className="h-9 rounded-md border border-border bg-muted/45 px-3 text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40">
+                          <SelectValue placeholder="Select weight" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(scriptureWeightOptions.length > 0
+                            ? scriptureWeightOptions
+                            : [
+                                {
+                                  value: resolvedScriptureFontWeight,
+                                  label: resolvedScriptureFontWeight,
+                                },
+                              ]
+                          ).map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[11px] text-muted-foreground">
+                        Font size
+                      </span>
+                      <input
+                        type="number"
+                        value={normalizedScriptureFontSize}
+                        onChange={handleScriptureFontSizeInput}
+                        min={12}
+                        max={400}
+                        step={1}
+                        className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-center text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                      />
+                    </div>
+                  </div>
                 </div>
               </section>
-
+            </>
+          ) : activeSection === "libraries" ? (
+            <>
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Text Alignment
+                  Default typography
                 </h3>
-                <div className="flex items-center gap-2">
-                  {(["left", "center", "right"] as const).map((align) => (
-                    <button
-                      key={align}
-                      type="button"
-                      onClick={() => setSettingsScriptureTextAlign(align)}
-                      className={cn(
-                        "rounded-md border px-3 py-1.5 text-xs capitalize transition",
-                        settingsScriptureTextAlign === align
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border text-muted-foreground hover:bg-muted"
-                      )}
-                    >
-                      {align}
-                    </button>
-                  ))}
+                <p className="text-[11px] text-muted-foreground">
+                  New library items and generated lyric slides will start with
+                  this typography. Manual changes in the editor stay untouched.
+                </p>
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      Font family
+                    </span>
+                    <FontFamilySelect
+                      value={settingsLibraryFontFamily}
+                      onChange={setSettingsLibraryFontFamily}
+                      className="h-9 w-full rounded-md border-border bg-muted/45 px-3 text-[12px] font-medium"
+                    />
+                  </div>
+                  <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2">
+                    <div className="space-y-1">
+                      <span className="text-[11px] text-muted-foreground">
+                        Font weight
+                      </span>
+                      <Select
+                        value={resolvedLibraryFontWeight}
+                        onValueChange={setSettingsLibraryFontWeight}
+                      >
+                        <SelectTrigger className="h-9 rounded-md border border-border bg-muted/45 px-3 text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40">
+                          <SelectValue placeholder="Select weight" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(libraryWeightOptions.length > 0
+                            ? libraryWeightOptions
+                            : [
+                                {
+                                  value: resolvedLibraryFontWeight,
+                                  label: resolvedLibraryFontWeight,
+                                },
+                              ]
+                          ).map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[11px] text-muted-foreground">
+                        Font size
+                      </span>
+                      <input
+                        type="number"
+                        value={normalizedLibraryFontSize}
+                        onChange={handleLibraryFontSizeInput}
+                        min={24}
+                        max={400}
+                        step={1}
+                        className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-center text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                      />
+                    </div>
+                  </div>
                 </div>
               </section>
             </>
@@ -728,20 +951,22 @@ export function SettingsScreen({
                       <span className="text-[11px] text-muted-foreground">
                         Folder
                       </span>
-                      <select
+                      <Select
                         value={settingsMediaFolderId}
-                        onChange={(e) =>
-                          setSettingsMediaFolderId(e.target.value)
-                        }
-                        className="h-7 rounded-md border border-input bg-background px-2 text-[11px] text-foreground"
+                        onValueChange={setSettingsMediaFolderId}
                       >
-                        <option value="all">All folders</option>
-                        {folders.map((folder) => (
-                          <option key={folder.id} value={folder.id}>
-                            {folder.name}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="h-7 rounded-md border border-input bg-background px-2 text-[11px] text-foreground">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All folders</SelectItem>
+                          {folders.map((folder) => (
+                            <SelectItem key={folder.id} value={folder.id}>
+                              {folder.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="flex-1 overflow-y-auto rounded-md border border-border bg-card p-2">

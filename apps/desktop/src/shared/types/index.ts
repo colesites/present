@@ -21,35 +21,150 @@ export type DeleteTarget = {
   name: string;
 } | null;
 
-export type LibraryItem = {
-  _id: any;
-  _creationTime: number;
-  orgId: any;
-  userId?: any;
-  categoryId?: any;
-  type?: "song" | "scripture" | "slide" | "note";
-  content?: Record<string, unknown>;
+export type SlideElementType = "text" | "shape" | "image" | "video" | "web";
+
+export type SlideElementStyle = {
+  fontFamily?: string;
+  fontSize?: number;
+  fontWeight?: string;
+  fontBold?: boolean;
+  fontUnderline?: boolean;
+  fontStyle?: string;
+  textDecoration?: string;
+  color?: string;
+  textAlign?: "left" | "center" | "right" | "justify";
+  verticalAlign?: "top" | "middle" | "bottom";
+  backgroundColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  borderRadius?: number;
+  opacity?: number;
+  strokeColor?: string;
+  strokeWidth?: number;
+  shadow?: string;
+  paddingTop?: number;
+  paddingRight?: number;
+  paddingBottom?: number;
+  paddingLeft?: number;
+  textFillMode?: "solid" | "gradient";
+  gradientFromColor?: string;
+  gradientToColor?: string;
+  gradientAngle?: number;
+  rotation?: number;
+  flipX?: boolean;
+  flipY?: boolean;
+  objectFit?: "cover" | "contain" | "fill";
+  capitalization?:
+    | "none"
+    | "allCaps"
+    | "titleCase"
+    | "lineStart"
+    | "uppercase"
+    | "lowercase"
+    | "capitalize";
+};
+
+export type SlideElement = {
+  id: string;
+  type: SlideElementType;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  content: string; // Text string or Image URL
+  richTextHtml?: string;
+  isPlaceholder?: boolean;
+  contentRole?: "scriptureVerse" | "scriptureFooter";
+  style?: SlideElementStyle;
+  isLocked?: boolean;
+  isVisible?: boolean;
+};
+
+export type CanvasSizePreset =
+  | "1920x1080"
+  | "1280x720"
+  | "1024x768"
+  | "800x600";
+
+export type LibrarySlide = {
+  id?: string;
+  text: string; // Main text / legacy fallback
+  elements?: SlideElement[];
+  label?: string;
+  labelColor?: string;
+  modifier?: string;
+  backgroundId?: string;
+  backgroundColor?: string;
+  useBackgroundColor?: boolean;
+};
+
+export type LibraryPresentationSettings = {
+  artist?: string;
+  author?: string;
+  canvasSize?: CanvasSizePreset;
+  backgroundColor?: string;
+  useBackgroundColor?: boolean;
+};
+
+export type LibraryCompositionSource = {
+  libraryId: string;
+  title: string;
+  slideCount: number;
+};
+
+export type LibraryContent = {
+  presentation?: LibraryPresentationSettings;
+  slideLabelOptions?: string[];
+  composition?: {
+    sourceItems: LibraryCompositionSource[];
+    createdAt: number;
+  };
+  editorView?: "slides" | "source";
+};
+
+export type LibraryItemDraft = {
   title: string;
   body: string;
-  slides: Array<{
-    text: string;
-    label?: string;
-    modifier?: string;
-    backgroundId?: string;
-  }>;
+  slides: LibrarySlide[];
+  content?: LibraryContent;
+};
+
+export type LibraryItem = {
+  _id: Id<"libraries"> | string;
+  _creationTime: number;
+  orgId: Id<"organizations"> | string;
+  userId?: string;
+  categoryId?: Id<"categories"> | string;
+  type?: "song" | "scripture" | "slide" | "note";
+  content?: LibraryContent;
+  title: string;
+  body: string;
+  slides: LibrarySlide[];
   createdAt: number;
   updatedAt: number;
   version: number;
   deleted: boolean;
 };
 
-export type ServiceItemType = "library" | "media" | "scripture";
+export type ServicePresentation = {
+  title: string;
+  sourceType: "pdf" | "pptx";
+  slides: LibrarySlide[];
+  content?: LibraryContent;
+};
+
+export type ServiceItemType =
+  | "library"
+  | "media"
+  | "scripture"
+  | "presentation";
 
 export interface ServiceItem {
   type: ServiceItemType;
   refId: string;
   label?: string;
   addedAt: number;
+  presentation?: ServicePresentation | null;
   libraryItem: LibraryItem | null;
   index: number;
 }
@@ -65,6 +180,7 @@ export type Service = {
     refId: string;
     label?: string;
     addedAt: number;
+    presentation?: ServicePresentation;
   }>;
   createdAt: number;
   updatedAt: number;

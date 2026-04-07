@@ -9,6 +9,8 @@ import { registerAuthIPC } from './auth.ipc';
 import { registerNetworkIPC } from './network.ipc';
 import { registerPermissionsIPC } from './permissions.ipc';
 import { registerBrowserIPC } from './browser.ipc';
+import { registerFontIPC } from './font.ipc';
+import { registerPptxIPC } from './pptx.ipc';
 
 /**
  * Register all IPC handlers
@@ -21,4 +23,6 @@ export const registerAllIPC = (): void => {
   registerNetworkIPC();
   registerPermissionsIPC();
   registerBrowserIPC();
+  registerFontIPC();
+  registerPptxIPC();
 };

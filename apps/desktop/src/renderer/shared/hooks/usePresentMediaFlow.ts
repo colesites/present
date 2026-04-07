@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import type { Id } from "@present/backend/convex/_generated/dataModel";
-
 import { ServiceItem } from "../../../shared/types";
 
 export function usePresentMediaFlow<
@@ -15,12 +13,12 @@ export function usePresentMediaFlow<
   setServiceItemIndex: (index: number) => void;
   setSelectedLibraryId: (id: string | null) => void;
 
-  // ✅ NOW uses your real MediaItem type (TMedia), so no mismatch
   selectMediaForOutput: (item: TMedia | null) => void;
 
-  selectSlide: (slideId: string, text: string) => Promise<void> | void;
   onSelectScripture?: (refId: string) => void;
+  onSelectPresentation?: (refId: string) => void;
   onClearScripture?: () => void;
+  onClearPresentation?: () => void;
 
   setShouldAutoPlay: (v: boolean) => void;
 }) {
@@ -31,8 +29,10 @@ export function usePresentMediaFlow<
     setServiceItemIndex,
     setSelectedLibraryId,
     selectMediaForOutput,
-    selectSlide,
+    onSelectScripture,
+    onSelectPresentation,
     onClearScripture,
+    onClearPresentation,
     setShouldAutoPlay,
   } = params;
 
@@ -53,6 +53,7 @@ export function usePresentMediaFlow<
           setSelectedLibraryId(libraryId);
           setPreviewMediaItem(null);
           onClearScripture?.();
+          onClearPresentation?.();
           return;
         }
       }
@@ -65,6 +66,7 @@ export function usePresentMediaFlow<
         setPreviewMediaItem(mediaItem);
         setSelectedLibraryId(null);
         onClearScripture?.();
+        onClearPresentation?.();
 
         // Go live immediately for media items
         if (mediaItem?.type === "video") setShouldAutoPlay(true);
@@ -74,10 +76,21 @@ export function usePresentMediaFlow<
 
       if (item.type === "scripture") {
         const refId = item.refId;
-        if (refId && params.onSelectScripture) {
-          params.onSelectScripture(refId);
+        if (refId && onSelectScripture) {
+          onSelectScripture(refId);
           setPreviewMediaItem(null);
           setSelectedLibraryId(null);
+          onClearPresentation?.();
+        }
+      }
+
+      if (item.type === "presentation") {
+        const refId = item.refId;
+        if (refId && onSelectPresentation) {
+          onSelectPresentation(refId);
+          setPreviewMediaItem(null);
+          setSelectedLibraryId(null);
+          onClearScripture?.();
         }
       }
     },
@@ -86,11 +99,12 @@ export function usePresentMediaFlow<
       setServiceItemIndex,
       setSelectedLibraryId,
       allMediaItems,
+      onSelectPresentation,
+      onSelectScripture,
       onClearScripture,
+      onClearPresentation,
       selectMediaForOutput,
-      selectSlide,
       setShouldAutoPlay,
-      params,
     ],
   );
 
@@ -117,7 +131,6 @@ export function usePresentMediaFlow<
       allMediaItems,
       setShouldAutoPlay,
       selectMediaForOutput,
-      selectSlide,
     ],
   );
 
@@ -129,25 +142,32 @@ export function usePresentMediaFlow<
     selectMediaForOutput(previewMediaItem);
     // Keep current text/slide active when changing backgrounds.
     onClearScripture?.();
+    onClearPresentation?.();
   }, [
     previewMediaItem,
     setShouldAutoPlay,
     selectMediaForOutput,
-    selectSlide,
     onClearScripture,
+    onClearPresentation,
   ]);
 
   const onMediaPanelSelect = useCallback(
     (item: TMedia | null) => {
       setPreviewMediaItem(null);
       onClearScripture?.();
+      onClearPresentation?.();
 
       if (item?.type === "video") setShouldAutoPlay(true);
 
       selectMediaForOutput(item);
       // Keep current text/slide active when changing backgrounds.
     },
-    [setShouldAutoPlay, selectMediaForOutput, selectSlide, onClearScripture],
+    [
+      setShouldAutoPlay,
+      selectMediaForOutput,
+      onClearPresentation,
+      onClearScripture,
+    ],
   );
 
   const isPreviewOutputting =

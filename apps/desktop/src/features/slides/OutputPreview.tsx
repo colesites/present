@@ -2,8 +2,15 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../renderer/shared/lib/utils";
-import { AutoFitText } from "../../renderer/shared/components/AutoFitText";
-import { stripBracketsForDisplay } from "../../renderer/shared/lib/lyrics";
+import { LibrarySlideLayer } from "../../renderer/shared/components/LibrarySlideLayer";
+import { ScriptureTextLayer } from "../../renderer/shared/components/ScriptureTextLayer";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../renderer/shared/components/ui/select";
 import {
   ChevronDown,
   Clock3,
@@ -15,7 +22,6 @@ import {
   Pause,
   Play,
   Plus,
-  Repeat,
   RotateCcw,
   Send,
   SkipBack,
@@ -34,7 +40,13 @@ import type {
   MediaItem,
   VideoSettings,
 } from "../../features/media/hooks";
-import { DEFAULT_FILTERS, filtersToCSS } from "../../features/media/hooks";
+import { filtersToCSS } from "../../features/media/hooks";
+import type { CanvasSizePreset, SlideElement } from "../../shared/types";
+import type {
+  ScriptureFooterPosition,
+  ScriptureTextAlign,
+  ScriptureVerticalAlign,
+} from "../../shared/types/output-window";
 
 interface SlideGroup {
   label: string;
@@ -47,6 +59,9 @@ const OUTPUT_BASE_HEIGHT = 720;
 interface OutputPreviewProps {
   text: string | null;
   footer?: string | null;
+  slideElements?: SlideElement[] | null;
+  canvasSize?: CanvasSizePreset | null;
+  backgroundColor?: string | null;
   activeSlideId?: string | null;
   fontBold: boolean;
   fontItalic: boolean;
@@ -55,14 +70,20 @@ interface OutputPreviewProps {
   fontSize?: number;
   scriptureFontFamily?: string;
   scriptureFontSize?: number;
-  scriptureTextAlign?: "left" | "center" | "right";
+  scriptureFontWeight?: string;
+  scriptureTextAlign?: ScriptureTextAlign;
+  scriptureVerticalAlign?: ScriptureVerticalAlign;
+  scriptureFooterAlign?: ScriptureTextAlign;
+  scriptureFooterPosition?: ScriptureFooterPosition;
   groups?: SlideGroup[];
   activeMediaItem: MediaItem | null;
   videoSettings: VideoSettings;
   onVideoSettingsChange: (settings: Partial<VideoSettings>) => void;
+  onToggleVideoPlayback: () => void;
   showText: boolean;
   showMedia: boolean;
   onToggleText: () => void;
+  onToggleMedia: () => void;
   onClearMedia: () => void;
   mediaFilters: MediaFilters;
   onMediaFiltersChange: (filters: Partial<MediaFilters>) => void;
@@ -71,6 +92,10 @@ interface OutputPreviewProps {
   videoCurrentTime: number;
   isFrozen?: boolean;
   onToggleFreeze?: () => void;
+  isTimerLayerEnabled: boolean;
+  onToggleTimerLayer: () => void;
+  isMessageLayerEnabled: boolean;
+  onToggleMessageLayer: () => void;
   timerLayout: {
     xPercent: number;
     yPercent: number;
@@ -258,6 +283,9 @@ const timerAffectsClockFields: (keyof TimerConfig)[] = [
 export const OutputPreview = memo(function OutputPreview({
   text,
   footer,
+  slideElements,
+  canvasSize,
+  backgroundColor,
   activeSlideId,
   fontBold,
   fontItalic,
@@ -266,14 +294,20 @@ export const OutputPreview = memo(function OutputPreview({
   fontSize,
   scriptureFontFamily,
   scriptureFontSize,
+  scriptureFontWeight = "400",
   scriptureTextAlign = "center",
+  scriptureVerticalAlign = "middle",
+  scriptureFooterAlign = "center",
+  scriptureFooterPosition = "bottom",
   groups = [],
   activeMediaItem,
   videoSettings,
   onVideoSettingsChange,
+  onToggleVideoPlayback,
   showText,
   showMedia,
   onToggleText,
+  onToggleMedia,
   onClearMedia,
   mediaFilters,
   onMediaFiltersChange,
@@ -282,13 +316,17 @@ export const OutputPreview = memo(function OutputPreview({
   videoCurrentTime,
   isFrozen,
   onToggleFreeze,
+  isTimerLayerEnabled,
+  onToggleTimerLayer,
+  isMessageLayerEnabled,
+  onToggleMessageLayer,
   timerLayout,
 }: OutputPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const outputFrameRef = useRef<HTMLDivElement>(null);
   const [showFilters, setShowFilters] = useState(false);
-  const [isTimerLayerEnabled, setIsTimerLayerEnabled] = useState(true);
-  const [previewScale, setPreviewScale] = useState(0.7);
+  const [previewScale, setPreviewScale] = useState(0.35);
+  const [timerSyncTrigger, setTimerSyncTrigger] = useState(0);
   const [timers, setTimers] = useState<TimerItem[]>(() => {
     const defaults: TimerConfig[] = [
       {
@@ -336,9 +374,20 @@ export const OutputPreview = memo(function OutputPreview({
     "pre-service"
   );
 
-  const hasActiveFilters =
-    JSON.stringify(mediaFilters) !== JSON.stringify(DEFAULT_FILTERS);
   const isScriptureSlide = activeSlideId?.startsWith("scripture:") ?? false;
+  const shouldUseScriptureTextLayer =
+    isScriptureSlide && (slideElements?.length ?? 0) === 0;
+  const hasLibrarySlideLayer = Boolean(text || (slideElements?.length ?? 0) > 0);
+  const libraryStyle = useMemo(
+    () => ({
+      fontFamily: fontFamily ?? "Inter",
+      fontSize: fontSize ?? 72,
+      fontBold,
+      fontItalic,
+      fontUnderline,
+    }),
+    [fontBold, fontFamily, fontItalic, fontSize, fontUnderline],
+  );
 
   const activeTimerId = useMemo(
     () =>
@@ -405,6 +454,15 @@ export const OutputPreview = memo(function OutputPreview({
     if (!window.electronAPI) {
       return;
     }
+    window.electronAPI.onOutputReady(() => {
+      setTimerSyncTrigger((current) => current + 1);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) {
+      return;
+    }
     window.electronAPI.sendToOutput({
       type: "timer-update",
       timerLabel: timerLabelForOutput,
@@ -417,6 +475,7 @@ export const OutputPreview = memo(function OutputPreview({
     isTimerLayerEnabled,
     timerLabelForOutput,
     timerTextForOutput,
+    timerSyncTrigger,
   ]);
 
   useEffect(() => {
@@ -493,6 +552,18 @@ export const OutputPreview = memo(function OutputPreview({
   }, []);
 
   const filterStyle = filtersToCSS(mediaFilters);
+  const previewTextScale = useMemo(
+    () => Math.min(Math.max(previewScale * 0.45, 0.1), 0.22),
+    [previewScale],
+  );
+  const scripturePreviewFontSize = useMemo(
+    () =>
+      Math.max(
+        10,
+        Math.round((scriptureFontSize ?? 96) * previewTextScale),
+      ),
+    [previewTextScale, scriptureFontSize]
+  );
 
   const createTimer = () => {
     const timerConfig: TimerConfig = {
@@ -687,40 +758,60 @@ export const OutputPreview = memo(function OutputPreview({
                 />
               ))}
 
-            {showText && text && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
-                <div className="flex min-h-0 w-full flex-1 items-center justify-center">
-                  <AutoFitText
-                    text={stripBracketsForDisplay(text)}
-                    className={cn(
-                      "pointer-events-none select-none leading-relaxed text-white",
-                      !isScriptureSlide && fontBold && "font-bold",
-                      !isScriptureSlide && fontItalic && "italic",
-                      !isScriptureSlide && fontUnderline && "underline",
-                      "drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
-                    )}
-                    style={{
-                      fontFamily: isScriptureSlide
-                        ? scriptureFontFamily || fontFamily
-                        : fontFamily,
-                    }}
-                    align={isScriptureSlide ? scriptureTextAlign : "center"}
-                    maxFontSize={
-                      isScriptureSlide
-                        ? Math.max(24, (scriptureFontSize ?? 72) * 0.3)
-                        : fontSize
-                          ? fontSize * 0.18
-                          : 24
-                    }
-                    minScale={isScriptureSlide ? 0.45 : 0.4}
-                  />
-                </div>
-                {footer && (
-                  <div className="mt-2 text-[8px] font-semibold uppercase tracking-wide text-white/90 drop-shadow-md sm:text-[10px]">
-                    {footer}
-                  </div>
-                )}
-              </div>
+            {backgroundColor ? (
+              <div
+                className="absolute inset-0"
+                style={{ backgroundColor }}
+              />
+            ) : null}
+
+            {showText &&
+              (shouldUseScriptureTextLayer
+                ? Boolean(text)
+                : hasLibrarySlideLayer) && (
+              shouldUseScriptureTextLayer ? (
+                <ScriptureTextLayer
+                  key={[
+                    text ?? "",
+                    footer ?? "",
+                    scriptureFontFamily || fontFamily || "Inter",
+                    scriptureFontWeight,
+                    scriptureTextAlign,
+                    scriptureVerticalAlign,
+                    scriptureFooterAlign,
+                    scriptureFooterPosition,
+                    Math.round(scripturePreviewFontSize),
+                  ].join("|")}
+                  text={text}
+                  footer={footer}
+                  fontFamily={scriptureFontFamily || fontFamily || "Inter"}
+                  fontSize={scripturePreviewFontSize}
+                  fontWeight={scriptureFontWeight}
+                  textAlign={scriptureTextAlign}
+                  verticalAlign={scriptureVerticalAlign}
+                  footerAlign={scriptureFooterAlign}
+                  footerPosition={scriptureFooterPosition}
+                  maxFontSize={scripturePreviewFontSize}
+                  minScale={0.3}
+                  fitScale={1}
+                  containerClassName="absolute inset-0 z-10 flex flex-col p-4"
+                  bodyClassName="min-h-0 w-full flex-1"
+                  textClassName="pointer-events-none select-none leading-relaxed text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
+                  footerClassName="mt-2 text-[8px] font-semibold uppercase tracking-wide text-white/90 drop-shadow-md sm:text-[10px]"
+                />
+              ) : (
+                <LibrarySlideLayer
+                  text={text}
+                  elements={slideElements}
+                  canvasSize={canvasSize}
+                  libraryStyle={libraryStyle}
+                  className="absolute inset-0 z-10"
+                  textClassName="drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
+                  minScale={0.4}
+                  fontSizeScale={previewTextScale}
+                  fitScale={1}
+                />
+              )
             )}
 
             {isTimerLayerEnabled &&
@@ -791,7 +882,7 @@ export const OutputPreview = memo(function OutputPreview({
             )}
           </div>
 
-          <div className="grid w-24 shrink-0 grid-cols-[2.8rem_1fr] text-muted-foreground">
+          <div className="grid w-24 shrink-0 grid-cols-[2.8rem_1fr] text-muted-foreground pr-2">
             <div className="flex items-center justify-center border-r border-border/70">
               <button
                 type="button"
@@ -811,6 +902,7 @@ export const OutputPreview = memo(function OutputPreview({
               <button
                 type="button"
                 onClick={onToggleText}
+                aria-pressed={showText}
                 className={cn(
                   "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
                   showText ? "text-primary" : "text-muted-foreground"
@@ -821,16 +913,31 @@ export const OutputPreview = memo(function OutputPreview({
               </button>
               <button
                 type="button"
-                className="inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground"
-                title="Message layer"
+                onClick={onToggleMessageLayer}
+                aria-pressed={isMessageLayerEnabled}
+                className={cn(
+                  "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
+                  isMessageLayerEnabled ? "text-primary" : "text-muted-foreground"
+                )}
+                title={
+                  isMessageLayerEnabled
+                    ? "Hide message layer"
+                    : "Show message layer"
+                }
               >
                 <MessageSquare className="h-6 w-6" />
               </button>
               <button
                 type="button"
-                onClick={onClearMedia}
-                className="inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground"
-                title="Clear media"
+                onClick={onToggleMedia}
+                aria-pressed={showMedia && Boolean(activeMediaItem)}
+                className={cn(
+                  "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
+                  showMedia && activeMediaItem
+                    ? "text-primary"
+                    : "text-muted-foreground"
+                )}
+                title={showMedia ? "Hide media layer" : "Show media layer"}
               >
                 <Image className="h-6 w-6" />
               </button>
@@ -839,7 +946,7 @@ export const OutputPreview = memo(function OutputPreview({
                 onClick={() => setShowFilters((previous) => !previous)}
                 className={cn(
                   "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
-                  showFilters || hasActiveFilters
+                  showFilters
                     ? "text-primary"
                     : "text-muted-foreground"
                 )}
@@ -866,58 +973,6 @@ export const OutputPreview = memo(function OutputPreview({
           </div>
         </div>
       </div>
-
-      {activeMediaItem?.type === "video" && (
-        <div className="mt-2 flex shrink-0 items-center justify-center gap-2 px-3">
-          <button
-            type="button"
-            onClick={() => onVideoSettingsChange({ loop: !videoSettings.loop })}
-            className={cn(
-              "flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition",
-              videoSettings.loop
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-muted-foreground hover:text-foreground"
-            )}
-            title={videoSettings.loop ? "Disable loop" : "Enable loop"}
-          >
-            <Repeat className="h-3 w-3" />
-            Loop
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              onVideoSettingsChange({ muted: !videoSettings.muted })
-            }
-            className={cn(
-              "flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition",
-              videoSettings.muted
-                ? "bg-destructive/20 text-destructive"
-                : "bg-secondary text-muted-foreground hover:text-foreground"
-            )}
-            title={videoSettings.muted ? "Unmute" : "Mute"}
-          >
-            {videoSettings.muted ? (
-              <VolumeX className="h-3 w-3" />
-            ) : (
-              <Volume2 className="h-3 w-3" />
-            )}
-          </button>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.1"
-            value={videoSettings.volume}
-            onChange={(event) =>
-              onVideoSettingsChange({
-                volume: Number.parseFloat(event.target.value),
-              })
-            }
-            className="h-1 w-16 accent-primary"
-            title={`Volume: ${Math.round(videoSettings.volume * 100)}%`}
-          />
-        </div>
-      )}
 
       {showFilters && (
         <div className="mx-3 mt-2 shrink-0 space-y-1.5 rounded-lg border border-border bg-card/50 p-2">
@@ -1014,40 +1069,60 @@ export const OutputPreview = memo(function OutputPreview({
         </div>
       )}
 
-      <div className="mt-4 px-3">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          Groups
-        </p>
-        <div className="space-y-1">
-          {groups.length > 0 ? (
-            groups.map((group, index) => (
-              <div
-                key={`${group.label}-${index}`}
-                className="flex items-center justify-between py-1 text-sm"
-              >
-                <span className="text-foreground">{group.label}</span>
-                <span className="text-muted-foreground">{group.count}</span>
-              </div>
-            ))
-          ) : (
-            <p className="text-xs text-muted-foreground">No groups</p>
-          )}
+      {!isScriptureSlide && (
+        <div className="mt-4 px-3">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Groups
+          </p>
+          <div className="space-y-1">
+            {groups.length > 0 ? (
+              groups.map((group, index) => (
+                <div
+                  key={`${group.label}-${index}`}
+                  className="flex items-center justify-between py-1 text-sm"
+                >
+                  <span className="text-foreground">{group.label}</span>
+                  <span className="text-muted-foreground">{group.count}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground">No groups</p>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="mt-4 flex-1 border-t border-border px-3 py-2">
         <div className="mb-2 rounded-md border border-border/70 bg-secondary/25">
           <div className="px-2 pt-2">
-            <input
-              type="range"
-              min={0}
-              max={100}
-              defaultValue={100}
-              className="h-1.5 w-full accent-muted-foreground"
-              aria-label="Timer intensity"
-            />
+            {activeMediaItem?.type === "video" ? (
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={videoSettings.volume}
+                onChange={(event) =>
+                  onVideoSettingsChange({
+                    volume: Number.parseFloat(event.target.value),
+                  })
+                }
+                className="h-1.5 w-full accent-muted-foreground"
+                aria-label="Video volume"
+                title={`Volume: ${Math.round(videoSettings.volume * 100)}%`}
+              />
+            ) : (
+              <input
+                type="range"
+                min={0}
+                max={100}
+                defaultValue={100}
+                className="h-1.5 w-full accent-muted-foreground"
+                aria-label="Timer intensity"
+              />
+            )}
           </div>
-          <div className="flex items-center justify-center gap-1.5 px-2 py-2">
+          <div className="flex flex-wrap items-center justify-center gap-1.5 px-2 py-2">
             <button
               type="button"
               onClick={() => {
@@ -1064,15 +1139,33 @@ export const OutputPreview = memo(function OutputPreview({
             <button
               type="button"
               onClick={() => {
+                if (activeMediaItem?.type === "video") {
+                  onToggleVideoPlayback();
+                  return;
+                }
                 if (activeTimerId) {
                   toggleTimerPlayback(activeTimerId);
                 }
               }}
-              disabled={!activeTimer}
+              disabled={activeMediaItem?.type === "video" ? false : !activeTimer}
               className="inline-flex h-8 w-8 items-center justify-center rounded border border-border bg-background text-foreground transition hover:bg-accent/35 disabled:opacity-40"
-              title={activeTimer?.isRunning ? "Pause timer" : "Play timer"}
+              title={
+                activeMediaItem?.type === "video"
+                  ? isVideoPlaying
+                    ? "Pause video"
+                    : "Play video"
+                  : activeTimer?.isRunning
+                    ? "Pause timer"
+                    : "Play timer"
+              }
             >
-              {activeTimer?.isRunning ? (
+              {activeMediaItem?.type === "video" ? (
+                isVideoPlaying ? (
+                  <Pause className="h-4 w-4" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )
+              ) : activeTimer?.isRunning ? (
                 <Pause className="h-4 w-4" />
               ) : (
                 <Play className="h-4 w-4" />
@@ -1094,13 +1187,32 @@ export const OutputPreview = memo(function OutputPreview({
             <button
               type="button"
               onClick={() => {
+                if (activeMediaItem?.type === "video") {
+                  onVideoSettingsChange({ loop: !videoSettings.loop });
+                  return;
+                }
                 if (activeTimerId) {
                   resetTimer(activeTimerId);
                 }
               }}
-              disabled={!activeTimerId}
-              className="inline-flex h-7 w-7 items-center justify-center rounded border border-border bg-background/60 text-muted-foreground transition hover:text-foreground disabled:opacity-40"
-              title="Reset timer"
+              disabled={
+                activeMediaItem?.type === "video" ? false : !activeTimerId
+              }
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded border transition disabled:opacity-40",
+                activeMediaItem?.type === "video"
+                  ? videoSettings.loop
+                    ? "border-primary/60 bg-primary/20 text-primary"
+                    : "border-border bg-background/60 text-muted-foreground hover:text-foreground"
+                  : "border-border bg-background/60 text-muted-foreground hover:text-foreground"
+              )}
+              title={
+                activeMediaItem?.type === "video"
+                  ? videoSettings.loop
+                    ? "Disable video loop"
+                    : "Enable video loop"
+                  : "Reset timer"
+              }
             >
               <RotateCcw className="h-3.5 w-3.5" />
             </button>
@@ -1113,10 +1225,33 @@ export const OutputPreview = memo(function OutputPreview({
             >
               <Square className="h-3.5 w-3.5" />
             </button>
+            {activeMediaItem?.type === "video" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onVideoSettingsChange({ muted: !videoSettings.muted })
+                  }
+                  className={cn(
+                    "inline-flex h-7 w-7 items-center justify-center rounded border transition",
+                    videoSettings.muted
+                      ? "border-destructive/50 bg-destructive/15 text-destructive"
+                      : "border-border bg-background/60 text-muted-foreground hover:text-foreground"
+                  )}
+                  title={videoSettings.muted ? "Unmute video" : "Mute video"}
+                >
+                  {videoSettings.muted ? (
+                    <VolumeX className="h-3.5 w-3.5" />
+                  ) : (
+                    <Volume2 className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
 
-        <div className="mb-2 grid grid-cols-6 overflow-hidden rounded-md border border-border/70 bg-secondary/20">
+        <div className="mb-2 grid grid-cols-6 overflow-hidden rounded-md border border-border/70 bg-secondary/20 mr-1.5 font-bold uppercase tracking-widest text-muted-foreground">
           <button
             type="button"
             className="inline-flex h-7 items-center justify-center border-r border-border/70 text-muted-foreground"
@@ -1133,7 +1268,8 @@ export const OutputPreview = memo(function OutputPreview({
           </button>
           <button
             type="button"
-            onClick={() => setIsTimerLayerEnabled((previous) => !previous)}
+            onClick={onToggleTimerLayer}
+            aria-pressed={isTimerLayerEnabled}
             className={cn(
               "inline-flex h-7 items-center justify-center border-r border-border/70 transition",
               isTimerLayerEnabled
@@ -1266,21 +1402,23 @@ export const OutputPreview = memo(function OutputPreview({
                       <label className="text-[10px] font-medium text-muted-foreground">
                         Type
                       </label>
-                      <select
+                      <Select
                         value={timer.type}
-                        onChange={(event) =>
-                          updateTimer(timer.id, {
-                            type: event.target.value as TimerType,
-                          })
+                        onValueChange={(value) =>
+                          updateTimer(timer.id, { type: value as TimerType })
                         }
-                        className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
                       >
-                        <option value="countdown">Countdown Timer</option>
-                        <option value="countdownToTime">
-                          Countdown to Time
-                        </option>
-                        <option value="elapsed">Elapsed Time</option>
-                      </select>
+                        <SelectTrigger className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:border-primary/60 focus-visible:ring-0">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="countdown">Countdown Timer</SelectItem>
+                          <SelectItem value="countdownToTime">
+                            Countdown to Time
+                          </SelectItem>
+                          <SelectItem value="elapsed">Elapsed Time</SelectItem>
+                        </SelectContent>
+                      </Select>
                       <p className="text-[10px] text-muted-foreground">
                         {getTimerTypeLabel(timer.type)}
                       </p>
@@ -1309,64 +1447,79 @@ export const OutputPreview = memo(function OutputPreview({
                           <label className="text-[10px] font-medium text-muted-foreground">
                             Hour
                           </label>
-                          <select
-                            value={timer.hour}
-                            onChange={(event) =>
+                          <Select
+                            value={String(timer.hour)}
+                            onValueChange={(value) =>
                               updateTimer(timer.id, {
-                                hour: Number.parseInt(event.target.value, 10),
+                                hour: Number.parseInt(value, 10),
                               })
                             }
-                            className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
                           >
-                            {Array.from(
-                              { length: 12 },
-                              (_, index) => index + 1
-                            ).map((hourValue) => (
-                              <option key={hourValue} value={hourValue}>
-                                {hourValue}
-                              </option>
-                            ))}
-                          </select>
+                            <SelectTrigger className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:border-primary/60 focus-visible:ring-0">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from(
+                                { length: 12 },
+                                (_, index) => index + 1,
+                              ).map((hourValue) => (
+                                <SelectItem key={hourValue} value={String(hourValue)}>
+                                  {hourValue}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[10px] font-medium text-muted-foreground">
                             Minute
                           </label>
-                          <select
-                            value={timer.minute}
-                            onChange={(event) =>
+                          <Select
+                            value={String(timer.minute)}
+                            onValueChange={(value) =>
                               updateTimer(timer.id, {
-                                minute: Number.parseInt(event.target.value, 10),
+                                minute: Number.parseInt(value, 10),
                               })
                             }
-                            className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
                           >
-                            {Array.from(
-                              { length: 60 },
-                              (_, index) => index
-                            ).map((minuteValue) => (
-                              <option key={minuteValue} value={minuteValue}>
-                                {String(minuteValue).padStart(2, "0")}
-                              </option>
-                            ))}
-                          </select>
+                            <SelectTrigger className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:border-primary/60 focus-visible:ring-0">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from(
+                                { length: 60 },
+                                (_, index) => index,
+                              ).map((minuteValue) => (
+                                <SelectItem
+                                  key={minuteValue}
+                                  value={String(minuteValue)}
+                                >
+                                  {String(minuteValue).padStart(2, "0")}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[10px] font-medium text-muted-foreground">
                             Period
                           </label>
-                          <select
+                          <Select
                             value={timer.meridiem}
-                            onChange={(event) =>
+                            onValueChange={(value) =>
                               updateTimer(timer.id, {
-                                meridiem: event.target.value as "AM" | "PM",
+                                meridiem: value as "AM" | "PM",
                               })
                             }
-                            className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
                           >
-                            <option value="AM">AM</option>
-                            <option value="PM">PM</option>
-                          </select>
+                            <SelectTrigger className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:border-primary/60 focus-visible:ring-0">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="AM">AM</SelectItem>
+                              <SelectItem value="PM">PM</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
                     ) : null}

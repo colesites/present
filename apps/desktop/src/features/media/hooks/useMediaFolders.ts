@@ -374,6 +374,86 @@ export function useMediaFolders() {
 
   const mediaFilterCSS = useMemo(() => filtersToCSS(mediaFilters), [mediaFilters]);
 
+  const addMediaFile = useCallback(async (folderId: string) => {
+    try {
+      const folder = folders.find(f => f.id === folderId);
+      if (!folder) throw new Error("Folder not found");
+
+      const fileSelection = await window.electronAPI.selectMediaFile();
+      if (!fileSelection) return null;
+
+      const targetPath = `${folder.path}/${fileSelection.name}`;
+      const success = await window.electronAPI.copyMediaFile(fileSelection.path, targetPath);
+      
+      if (success) {
+        // Trigger a refresh/reload by creating a new identity for the folders array
+        setFolders(prev => [...prev]);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error("Failed to add media file:", error);
+      throw error;
+    }
+  }, [folders]);
+
+  const createFolder = useCallback(async (name: string, parentPath?: string) => {
+    try {
+      let targetParent = parentPath;
+      if (!targetParent) {
+        const result = await window.electronAPI.selectFolder();
+        if (!result) return null;
+        targetParent = result.path;
+      }
+
+      const newPath = await window.electronAPI.createDirectory(targetParent, name);
+      
+      // Auto-add the folder to the app
+      const folderId = `folder-${Date.now()}`;
+      // Basic path manipulation for Electron paths (works for both / and \)
+      const folderName = newPath.replace(/\\/g, '/').split('/').pop() || name;
+      
+      await saveFolderDB(folderId, folderName, newPath);
+      
+      const newFolder: MediaFolder = { id: folderId, name: folderName, path: newPath };
+      setFolders(prev => [...prev, newFolder]);
+      setSelectedFolderId(folderId);
+      
+      return newFolder;
+    } catch (error) {
+      console.error("Failed to create folder:", error);
+      throw error;
+    }
+  }, []);
+
+  const renameFolder = useCallback(async (id: string, newName: string) => {
+    try {
+      const folder = folders.find(f => f.id === id);
+      if (!folder) throw new Error("Folder not found");
+      
+      const normalizedPath = folder.path.replace(/\\/g, '/');
+      const parts = normalizedPath.split('/');
+      parts.pop();
+      const parentPath = parts.join('/');
+      const newPath = `${parentPath}/${newName}`;
+      
+      if (folder.path === newPath) return true; // No change
+
+      await window.electronAPI.renameDirectory(folder.path, newPath);
+      
+      // Update DB
+      await saveFolderDB(id, newName, newPath);
+      
+      // Update state
+      setFolders(prev => prev.map(f => f.id === id ? { ...f, name: newName, path: newPath } : f));
+      
+      return true;
+    } catch (error) {
+      console.error("Failed to rename folder:", error);
+      throw error;
+    }
+  }, [folders]);
+
   return {
     folders,
     mediaItems,
@@ -394,5 +474,8 @@ export function useMediaFolders() {
     updateMediaFilters,
     resetMediaFilters,
     mediaFilterCSS,
+    addMediaFile,
+    createFolder,
+    renameFolder,
   };
 }

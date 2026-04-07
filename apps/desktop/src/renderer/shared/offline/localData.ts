@@ -23,6 +23,8 @@ interface PersistedLocalState {
 
 const LOCAL_DATA_KEY = "present-local-data-v1";
 const SYNC_QUEUE_KEY = "present-sync-queue-v1";
+const MAX_SYNC_QUEUE_ITEMS = 150;
+let inMemoryLocalState: PersistedLocalState | null = null;
 
 const now = () => Date.now();
 
@@ -48,17 +50,134 @@ const readJson = <T,>(key: string, fallback: T): T => {
   }
 };
 
+const isQuotaExceededError = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const maybeError = error as { name?: string; message?: string };
+  return (
+    maybeError.name === "QuotaExceededError" ||
+    maybeError.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    (maybeError.message ?? "").toLowerCase().includes("quota")
+  );
+};
+
+const compactSyncPayload = (
+  entityType: OfflineEntityType,
+  operation: OfflineOperation,
+  payload: unknown,
+) => {
+  if (payload == null || typeof payload !== "object") {
+    return payload;
+  }
+
+  const data = payload as Record<string, unknown>;
+
+  if (entityType === "service") {
+    const service = data;
+    const items = Array.isArray(service.items) ? service.items : [];
+    return {
+      _id: service._id,
+      name: service.name,
+      updatedAt: service.updatedAt,
+      version: service.version,
+      operation,
+      items: items.map((item) => {
+        const entry = item as Record<string, unknown>;
+        const presentation = (entry.presentation ?? null) as
+          | Record<string, unknown>
+          | null;
+        return {
+          type: entry.type,
+          refId: entry.refId,
+          label: entry.label,
+          addedAt: entry.addedAt,
+          presentation:
+            presentation == null
+              ? null
+              : {
+                  title: presentation.title,
+                  sourceType: presentation.sourceType,
+                  slideCount: Array.isArray(presentation.slides)
+                    ? presentation.slides.length
+                    : undefined,
+                },
+        };
+      }),
+    };
+  }
+
+  if (entityType === "library") {
+    return {
+      _id: data._id,
+      title: data.title,
+      updatedAt: data.updatedAt,
+      version: data.version,
+      operation,
+      slideCount: Array.isArray(data.slides) ? data.slides.length : undefined,
+    };
+  }
+
+  return payload;
+};
+
 const writeJson = (key: string, value: unknown) => {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(key, JSON.stringify(value));
+
+  const serialize = (candidate: unknown) => JSON.stringify(candidate);
+  const persist = (candidate: unknown) => window.localStorage.setItem(key, serialize(candidate));
+
+  try {
+    persist(value);
+  } catch (error) {
+    if (!isQuotaExceededError(error)) {
+      console.error(`Failed to persist local data for key "${key}"`, error);
+      return;
+    }
+
+    if (key !== SYNC_QUEUE_KEY || !Array.isArray(value)) {
+      console.warn(`Storage quota exceeded while writing "${key}". Skipping persist.`);
+      return;
+    }
+
+    // For sync queue, keep the newest small subset so writes never crash the UI.
+    try {
+      const queue = value as SyncQueueItem[];
+      const compactQueue = queue
+        .slice(-MAX_SYNC_QUEUE_ITEMS)
+        .map((item) => ({
+          ...item,
+          payload: compactSyncPayload(item.entityType, item.operation, item.payload),
+        }));
+      persist(compactQueue);
+    } catch (retryError) {
+      console.warn("Storage quota still exceeded after compacting sync queue.", retryError);
+      try {
+        persist([]);
+      } catch {
+        // Ignore final failure to avoid runtime crashes.
+      }
+    }
+  }
 };
 
-const readLocalState = (): PersistedLocalState =>
-  readJson<PersistedLocalState>(LOCAL_DATA_KEY, { libraryItems: [], services: [] });
+const readLocalState = (): PersistedLocalState => {
+  if (inMemoryLocalState) {
+    return inMemoryLocalState;
+  }
+
+  inMemoryLocalState = readJson<PersistedLocalState>(LOCAL_DATA_KEY, {
+    libraryItems: [],
+    services: [],
+  });
+  return inMemoryLocalState;
+};
 
 const writeLocalState = (state: PersistedLocalState) => {
+  inMemoryLocalState = state;
   writeJson(LOCAL_DATA_KEY, state);
 };
 
@@ -233,17 +352,22 @@ export const enqueueSyncOperation = (
   payload: unknown
 ) => {
   const queue = readJson<SyncQueueItem[]>(SYNC_QUEUE_KEY, []);
+
+  const compactPayload = compactSyncPayload(entityType, operation, payload);
   queue.push({
     id: uid(),
     orgId,
     entityType,
     entityId,
     operation,
-    payload,
+    payload: compactPayload,
     updatedAt: now(),
     version: now(),
   });
-  writeJson(SYNC_QUEUE_KEY, queue);
+  writeJson(
+    SYNC_QUEUE_KEY,
+    queue.slice(-MAX_SYNC_QUEUE_ITEMS),
+  );
 };
 
 export const readSyncQueue = () => readJson<SyncQueueItem[]>(SYNC_QUEUE_KEY, []);

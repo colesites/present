@@ -9,6 +9,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   readFolder: (folderPath: string) => ipcRenderer.invoke('read-folder', folderPath),
+  selectMediaFile: () => ipcRenderer.invoke('select-media-file'),
+  selectPresentationFiles: () => ipcRenderer.invoke('select-presentation-files'),
+  copyMediaFile: (source: string, target: string) => ipcRenderer.invoke('copy-media-file', source, target),
+  createDirectory: (parent: string, name: string) => ipcRenderer.invoke('create-directory', parent, name),
+  renameDirectory: (oldPath: string, newPath: string) => ipcRenderer.invoke('rename-directory', oldPath, newPath),
   listBundledBibles: () => ipcRenderer.invoke('list-bundled-bibles'),
   readBundledBible: (filePath: string) => ipcRenderer.invoke('read-bundled-bible', filePath),
   fetchHostedBibleCatalog: (catalogUrl: string) =>
@@ -39,6 +44,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onOpenSettingsFromMenu: (callback: () => void) => {
     ipcRenderer.on('open-settings', () => callback());
+  },
+  onOpenImportFromMenu: (
+    callback: (mode?: "presentation" | "images") => void,
+  ) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      mode?: "presentation" | "images",
+    ) => callback(mode);
+    ipcRenderer.on('open-import', listener);
+    return () => {
+      ipcRenderer.removeListener('open-import', listener);
+    };
   },
   setBrowserModeEnabled: (enabled: boolean) =>
     ipcRenderer.invoke('browser-mode:set-enabled', enabled),
@@ -78,4 +95,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('browser-focus-address', listener);
     };
   },
+});
+
+contextBridge.exposeInMainWorld('fontAPI', {
+  getSystemFonts: () => ipcRenderer.invoke('get-system-fonts'),
+  getSystemFontFaces: () => ipcRenderer.invoke('get-system-font-faces'),
+  pickFontFile: () => ipcRenderer.invoke('pick-font-file'),
+  installCustomFonts: (filePaths: string[]) =>
+    ipcRenderer.invoke('install-custom-fonts', filePaths),
+  getCustomFonts: () => ipcRenderer.invoke('get-custom-fonts'),
+});
+
+contextBridge.exposeInMainWorld('pptxAPI', {
+  openFile: () => ipcRenderer.invoke('open-pptx'),
+  parseFile: (filePath: string) => ipcRenderer.invoke('parse-pptx', filePath),
 });

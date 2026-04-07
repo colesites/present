@@ -38,6 +38,7 @@ const searchEngineBaseUrl = 'https://www.google.com/search?q=';
 const ignorePromiseError = (): null => null;
 let scrollSyncTimer: NodeJS.Timeout | null = null;
 let isCapturingPreview = false;
+const browserSessionPartition = 'persist:present-browser-mode';
 
 const isValidHttpUrl = (value: string): boolean => {
   try {
@@ -271,6 +272,7 @@ const createManagedBrowserView = (role: ManagedBrowserViewRole): BrowserView => 
       sandbox: true,
       webSecurity: true,
       spellcheck: false,
+      partition: browserSessionPartition,
     },
   });
 

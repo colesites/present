@@ -78,6 +78,13 @@ export function useShowVideoSync(params: {
     setIsVideoPlaying(false);
   }, []);
 
+  const toggleVideoPlayback = useCallback(() => {
+    if (showViewMedia?.type !== "video") {
+      return;
+    }
+    setIsVideoPlaying((previous) => !previous);
+  }, [showViewMedia?.type]);
+
   const handleVideoSeeked = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
       setVideoCurrentTime(e.currentTarget.currentTime);
@@ -94,5 +101,6 @@ export function useShowVideoSync(params: {
     handleVideoPause,
     handleVideoEnded,
     handleVideoSeeked,
+    toggleVideoPlayback,
   };
 }

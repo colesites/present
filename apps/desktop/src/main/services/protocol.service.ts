@@ -2,12 +2,24 @@ import { protocol, net } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
-import { pathToFileURL } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { isDev } from '../utils/app.utils';
 
 // Webpack entry points (declared globally by Forge)
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const OUTPUT_WINDOW_WEBPACK_ENTRY: string;
+
+const resolveWebpackEntryPath = (entry: string): string => {
+  try {
+    const parsed = new URL(entry);
+    if (parsed.protocol === 'file:') {
+      return fileURLToPath(parsed);
+    }
+    return decodeURIComponent(parsed.pathname);
+  } catch {
+    return entry;
+  }
+};
 
 /**
  * Register custom protocol schemes as privileged BEFORE app is ready
@@ -46,23 +58,23 @@ export const registerProtocolHandlers = (): void => {
   // the renderer a proper origin (app://app) instead of file:// (null origin).
   // This is critical for Clerk SDK initialization in production.
   if (!isDev()) {
+    const mainEntryPath = resolveWebpackEntryPath(MAIN_WINDOW_WEBPACK_ENTRY);
+    const outputEntryPath = resolveWebpackEntryPath(OUTPUT_WINDOW_WEBPACK_ENTRY);
+    const mainDir = path.dirname(mainEntryPath);
+    const outputDir = path.dirname(outputEntryPath);
+
     protocol.handle('app', (request) => {
       const url = new URL(request.url);
       // url.pathname is e.g. '/main_window' or '/main_window/some-asset.js'
-      const mainEntryUrl = new URL(MAIN_WINDOW_WEBPACK_ENTRY);
-      const outputEntryUrl = new URL(OUTPUT_WINDOW_WEBPACK_ENTRY);
-      const mainDir = path.dirname(mainEntryUrl.pathname);
-      const outputDir = path.dirname(outputEntryUrl.pathname);
-
       const pathname = decodeURIComponent(url.pathname);
 
       let filePath: string;
       if (pathname === '/main_window' || pathname === '/main_window/') {
         // Serve the main window index.html
-        filePath = mainEntryUrl.pathname;
+        filePath = mainEntryPath;
       } else if (pathname === '/output_window' || pathname === '/output_window/') {
         // Serve the output window index.html
-        filePath = outputEntryUrl.pathname;
+        filePath = outputEntryPath;
       } else if (pathname.startsWith('/main_window/')) {
         // Asset relative to main window dir
         const relativePath = pathname.slice('/main_window/'.length);
@@ -77,9 +89,12 @@ export const registerProtocolHandlers = (): void => {
         filePath = path.join(mainDir, relativePath);
       }
 
-      // On Windows, strip leading slash from /C:/... paths
-      if (process.platform === 'win32' && filePath.startsWith('/')) {
-        filePath = filePath.slice(1);
+      if (!fs.existsSync(filePath)) {
+        console.error('[Protocol] app:// asset not found', {
+          filePath,
+          requestUrl: request.url,
+        });
+        return new Response('Not Found', { status: 404 });
       }
 
       return net.fetch(pathToFileURL(filePath).toString());

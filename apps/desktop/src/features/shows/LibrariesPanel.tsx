@@ -13,6 +13,13 @@ import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { LibraryItem, Category, ContentSource } from "../../shared/types";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import { Input } from "../../renderer/shared/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../renderer/shared/components/ui/select";
 import { Spinner } from "../../renderer/shared/components/ui/spinner";
 import { Skeleton } from "../../renderer/shared/components/ui/skeleton";
 import { cn } from "../../renderer/shared/lib/utils";
@@ -22,14 +29,17 @@ import {
   Search,
   ArrowUpDown,
   Check,
+  Layers3,
   ArrowUp,
   ArrowDown,
   Download,
   Upload,
   LayoutGrid,
   List,
+  Loader2,
   Mic,
   MicOff,
+  X,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -59,6 +69,11 @@ interface LibrariesPanelProps {
     body: string,
     categoryId?: string,
   ) => Promise<unknown>;
+  onCreateComposedLibraryItem: (
+    title: string,
+    itemIds: string[],
+    categoryId?: string,
+  ) => Promise<unknown>;
   onRenameLibraryItem: (id: string, title: string) => Promise<void>;
   onDeleteLibraryItem: (id: string) => Promise<void>;
   onAddToService: (libraryId: string) => void;
@@ -86,6 +101,7 @@ export const LibrariesPanel = memo(
       onSelectLibraryItem,
       onSelectCategory,
       onCreateLibraryItem,
+      onCreateComposedLibraryItem,
       onRenameLibraryItem,
       onDeleteLibraryItem,
       onAddToService,
@@ -99,6 +115,7 @@ export const LibrariesPanel = memo(
   ) {
     const [showNewLibraryItemDialog, setShowNewLibraryItemDialog] = useState(false);
     const [showNewCategoryDialog, setShowNewCategoryDialog] = useState(false);
+    const [showComposeDialog, setShowComposeDialog] = useState(false);
     const [renameTarget, setRenameTarget] = useState<{
       id: string;
       title: string;
@@ -111,6 +128,7 @@ export const LibrariesPanel = memo(
     const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
     const [layoutMode, setLayoutMode] = useState<"grid" | "list">("list");
+    const [selectedComposeIds, setSelectedComposeIds] = useState<string[]>([]);
 
     const searchInputRef = useRef<HTMLInputElement>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
@@ -118,6 +136,7 @@ export const LibrariesPanel = memo(
 
     const {
       isListening: isSpeechListening,
+      isStarting: isSpeechStarting,
       isSupported: isSpeechSupported,
       error: speechError,
       startListening,
@@ -160,23 +179,17 @@ export const LibrariesPanel = memo(
       return result;
     }, [libraryItems, searchQuery, selectedCategoryId, sortBy, sortOrder]);
 
-    const selectedCategoryName = useMemo(() => {
-      if (!selectedCategoryId) {
-        return "All libraries";
-      }
-
-      return categories.find((category) => category._id === selectedCategoryId)?.name
-        ?? "All libraries";
-    }, [categories, selectedCategoryId]);
-
-    const visibleItemLabel = `${filteredItems.length} ${filteredItems.length === 1 ? "item" : "items"}`;
     const hasActiveSearch = searchQuery.trim().length > 0;
+    const composeSelectionCount = selectedComposeIds.length;
 
     const handleSpeechToggle = () => {
       searchInputRef.current?.focus();
 
       if (isSpeechListening) {
         stopListening();
+        return;
+      }
+      if (isSpeechStarting) {
         return;
       }
 
@@ -205,6 +218,14 @@ export const LibrariesPanel = memo(
       anchor.download = fileName;
       anchor.click();
       URL.revokeObjectURL(url);
+    };
+
+    const toggleComposeSelection = (itemId: string) => {
+      setSelectedComposeIds((previous) =>
+        previous.includes(itemId)
+          ? previous.filter((currentId) => currentId !== itemId)
+          : [...previous, itemId],
+      );
     };
 
     const handleImportLibraries = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -339,22 +360,35 @@ export const LibrariesPanel = memo(
                   <button
                     type="button"
                     onClick={handleSpeechToggle}
-                    disabled={!isSpeechSupported}
+                    disabled={!isSpeechSupported || isSpeechStarting}
+                    aria-busy={isSpeechStarting}
                     className={cn(
-                      "h-10 w-10 shrink-0 rounded-xl border transition-colors",
+                      "relative h-10 w-10 shrink-0 rounded-xl border transition-colors",
                       isSpeechListening
                         ? "border-red-600 bg-red-500 text-white"
+                        : isSpeechStarting
+                          ? "border-amber-500 bg-amber-500/10 text-amber-600"
                         : "border-input bg-background text-muted-foreground hover:bg-secondary",
-                      !isSpeechSupported && "cursor-not-allowed opacity-40",
+                      (!isSpeechSupported || isSpeechStarting) && "cursor-not-allowed opacity-40",
                     )}
                     title={
                       isSpeechListening
                         ? "Stop listening"
+                        : isSpeechStarting
+                          ? "Starting microphone"
                         : "Speak to search libraries"
                     }
                   >
                     {isSpeechListening ? (
                       <Mic className="mx-auto h-4 w-4 animate-pulse" />
+                    ) : isSpeechStarting ? (
+                      <>
+                        <span className="absolute right-1 top-1 flex h-2.5 w-2.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
+                        </span>
+                        <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+                      </>
                     ) : (
                       <MicOff className="mx-auto h-4 w-4" />
                     )}
@@ -364,6 +398,14 @@ export const LibrariesPanel = memo(
                 {speechError ? (
                   <p className="mt-2 text-[10px] text-destructive">
                     {speechError}
+                  </p>
+                ) : isSpeechStarting ? (
+                  <p className="mt-2 flex items-center gap-2 text-[10px] text-amber-600">
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-400" />
+                    </span>
+                    Starting microphone...
                   </p>
                 ) : isSpeechListening ? (
                   <p className="mt-2 text-[10px] text-primary">
@@ -377,6 +419,34 @@ export const LibrariesPanel = memo(
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowComposeDialog(true)}
+                  disabled={composeSelectionCount < 2}
+                  className={cn(
+                    "inline-flex h-10 items-center gap-2 rounded-xl px-3 text-xs font-semibold shadow-sm transition",
+                    composeSelectionCount >= 2
+                      ? "border border-[#ff6f59]/30 bg-[#ff6f59]/12 text-[#ff6f59] hover:bg-[#ff6f59]/18"
+                      : "border border-input bg-background text-muted-foreground",
+                  )}
+                  title="Create one flow from selected library items"
+                >
+                  <Layers3 className="h-4 w-4" />
+                  Create flow
+                </button>
+
+                {composeSelectionCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedComposeIds([])}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-input bg-background px-3 text-xs font-medium text-muted-foreground shadow-sm transition hover:bg-secondary"
+                    title="Clear selected libraries"
+                  >
+                    <X className="h-4 w-4" />
+                    {composeSelectionCount} selected
+                  </button>
+                ) : null}
+
                 <button
                   type="button"
                   onClick={handleExportLibraries}
@@ -526,6 +596,8 @@ export const LibrariesPanel = memo(
                     item={item}
                     isSelected={selectedLibraryId === item._id}
                     showAddToService={isInsideService && !!selectedServiceId}
+                    isChecked={selectedComposeIds.includes(item._id)}
+                    onToggleSelected={() => toggleComposeSelection(item._id)}
                     onSelect={() => onSelectLibraryItem(item._id)}
                     onRename={() =>
                       setRenameTarget({ id: item._id, title: item.title })
@@ -546,6 +618,8 @@ export const LibrariesPanel = memo(
                     item={item}
                     isSelected={selectedLibraryId === item._id}
                     showAddToService={isInsideService && !!selectedServiceId}
+                    isChecked={selectedComposeIds.includes(item._id)}
+                    onToggleSelected={() => toggleComposeSelection(item._id)}
                     onSelect={() => onSelectLibraryItem(item._id)}
                     onRename={() =>
                       setRenameTarget({ id: item._id, title: item.title })
@@ -580,6 +654,21 @@ export const LibrariesPanel = memo(
           />
         )}
 
+        {showComposeDialog && (
+          <ComposeLibrariesDialog
+            itemIds={selectedComposeIds}
+            libraryItems={libraryItems}
+            categories={categories}
+            categoryId={selectedCategoryId}
+            onClose={() => setShowComposeDialog(false)}
+            onCreate={async (title, itemIds, categoryId) => {
+              await onCreateComposedLibraryItem(title, itemIds, categoryId);
+              setSelectedComposeIds([]);
+              setShowComposeDialog(false);
+            }}
+          />
+        )}
+
         {renameTarget && (
           <RenameLibraryItemDialog
             title={renameTarget.title}
@@ -611,6 +700,8 @@ interface LibraryItemCardProps {
   item: LibraryItem;
   isSelected: boolean;
   showAddToService: boolean;
+  isChecked: boolean;
+  onToggleSelected: () => void;
   onSelect: () => void;
   onRename: () => void;
   onDelete: () => void;
@@ -621,6 +712,8 @@ const LibraryItemCard = memo(function LibraryItemCard({
   item,
   isSelected,
   showAddToService,
+  isChecked,
+  onToggleSelected,
   onSelect,
   onRename,
   onDelete,
@@ -636,6 +729,19 @@ const LibraryItemCard = memo(function LibraryItemCard({
       )}
     >
       <div className="flex items-start justify-between">
+        <button
+          type="button"
+          onClick={onToggleSelected}
+          className={cn(
+            "mr-2 mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition",
+            isChecked
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-background text-transparent hover:border-primary/60",
+          )}
+          aria-label={isChecked ? "Deselect library item" : "Select library item"}
+        >
+          <Check className="h-3 w-3" />
+        </button>
         <button type="button" onClick={onSelect} className="flex-1 text-left">
           <div className="font-medium">{item.title}</div>
           <div className="mt-1 text-muted-foreground">
@@ -724,6 +830,8 @@ const LibraryItemRow = memo(function LibraryItemRow({
   item,
   isSelected,
   showAddToService,
+  isChecked,
+  onToggleSelected,
   onSelect,
   onRename,
   onDelete,
@@ -738,6 +846,19 @@ const LibraryItemRow = memo(function LibraryItemRow({
           : "border-border hover:border-primary/35",
       )}
     >
+      <button
+        type="button"
+        onClick={onToggleSelected}
+        className={cn(
+          "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition",
+          isChecked
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-border bg-background text-transparent hover:border-primary/60",
+        )}
+        aria-label={isChecked ? "Deselect library item" : "Select library item"}
+      >
+        <Check className="h-3 w-3" />
+      </button>
       <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left">
         <p className="truncate text-sm font-medium text-foreground">{item.title}</p>
         <p className="text-[11px] text-muted-foreground">{item.slides.length} slides</p>
@@ -857,17 +978,21 @@ function NewLibraryItemDialog({
           <label className="text-xs font-medium text-muted-foreground">
             Library
           </label>
-          <select
+          <Select
             value={targetCategoryId}
-            onChange={(e) => setTargetCategoryId(e.target.value)}
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+            onValueChange={setTargetCategoryId}
           >
-            {categories.map((cat) => (
-              <option key={cat._id} value={cat._id}>
-                {cat.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-full border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:border-primary focus-visible:ring-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {categories.map((cat) => (
+                <SelectItem key={cat._id} value={String(cat._id)}>
+                  {cat.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="space-y-1.5">
@@ -914,6 +1039,149 @@ function NewLibraryItemDialog({
           >
             {isCreating && <Spinner className="size-3" />}
             {isCreating ? "Creating..." : "Create"}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function ComposeLibrariesDialog({
+  itemIds,
+  libraryItems,
+  categories,
+  categoryId,
+  onClose,
+  onCreate,
+}: {
+  itemIds: string[];
+  libraryItems: LibraryItem[];
+  categories: Category[];
+  categoryId: string | null;
+  onClose: () => void;
+  onCreate: (
+    title: string,
+    itemIds: string[],
+    categoryId?: string,
+  ) => Promise<unknown>;
+}) {
+  const selectedItems = useMemo(
+    () => libraryItems.filter((item) => itemIds.includes(String(item._id))),
+    [itemIds, libraryItems],
+  );
+  const [title, setTitle] = useState(
+    selectedItems.map((item) => item.title).slice(0, 3).join(" / "),
+  );
+  const [targetCategoryId, setTargetCategoryId] = useState<string>(
+    categoryId ?? categories[0]?._id ?? "",
+  );
+  const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCreate = async () => {
+    if (!title.trim()) {
+      setError("Flow title is required");
+      return;
+    }
+
+    if (selectedItems.length < 2) {
+      setError("Select at least two library items");
+      return;
+    }
+
+    setIsCreating(true);
+    try {
+      await onCreate(title.trim(), itemIds, targetCategoryId || undefined);
+    } catch (createError) {
+      setError(
+        createError instanceof Error ? createError.message : "Failed to create flow",
+      );
+      setIsCreating(false);
+      return;
+    }
+    setIsCreating(false);
+  };
+
+  return (
+    <Dialog title="Create flow from library items" onClose={onClose}>
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-border/70 bg-card/50 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Selected items
+          </p>
+          <div className="mt-3 space-y-2">
+            {selectedItems.map((item, index) => (
+              <div
+                key={item._id}
+                className="flex items-center justify-between rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs"
+              >
+                <span className="truncate text-foreground">
+                  {index + 1}. {item.title}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  {item.slides.length} slides
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">
+            Save to library
+          </label>
+          <Select
+            value={targetCategoryId}
+            onValueChange={setTargetCategoryId}
+          >
+            <SelectTrigger className="w-full border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:border-primary focus-visible:ring-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {categories.map((cat) => (
+                <SelectItem key={cat._id} value={String(cat._id)}>
+                  {cat.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">
+            Flow title
+          </label>
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+            placeholder="Praise flow"
+            autoFocus
+          />
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          The new library item starts as one combined flow. You can then reorder
+          slides, remove verses, and relabel sections in edit mode.
+        </p>
+
+        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 rounded-md border border-input py-2 text-xs font-medium text-foreground hover:bg-secondary"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleCreate}
+            disabled={isCreating}
+            className="flex-1 rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {isCreating ? "Creating..." : "Create flow"}
           </button>
         </div>
       </div>

@@ -14,10 +14,14 @@ import {
 } from "../../renderer/shared/components/ui/context-menu";
 
 interface ServiceItem {
-  type: "library" | "media" | "scripture";
+  type: "library" | "media" | "scripture" | "presentation";
   refId: string;
   label?: string;
   addedAt: number;
+  presentation?: {
+    title: string;
+    sourceType: "pdf" | "pptx";
+  } | null;
   libraryItem: LibraryItem | null | undefined;
   index: number;
 }
@@ -265,10 +269,12 @@ const ServiceList = memo(function ServiceList({
 }) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+  const dragDataKey = "application/x-present-service-index";
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(dragDataKey, String(index));
     e.dataTransfer.setData("text/plain", String(index));
   };
 
@@ -286,7 +292,12 @@ const ServiceList = memo(function ServiceList({
 
   const handleDrop = async (e: React.DragEvent, toIndex: number) => {
     e.preventDefault();
-    const fromIndex = draggedIndex;
+    const droppedIndex = Number.parseInt(
+      e.dataTransfer.getData(dragDataKey) || e.dataTransfer.getData("text/plain"),
+      10,
+    );
+    const fromIndex =
+      draggedIndex ?? (Number.isFinite(droppedIndex) ? droppedIndex : null);
     setDraggedIndex(null);
     setDropTargetIndex(null);
     if (fromIndex !== null && fromIndex !== toIndex && onReorder) {
@@ -392,10 +403,12 @@ const ServiceItemsList = memo(function ServiceItemsList({
 }) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+  const dragDataKey = "application/x-present-service-item-index";
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(dragDataKey, String(index));
     e.dataTransfer.setData("text/plain", String(index));
   };
 
@@ -413,7 +426,12 @@ const ServiceItemsList = memo(function ServiceItemsList({
 
   const handleDrop = async (e: React.DragEvent, toIndex: number) => {
     e.preventDefault();
-    const fromIndex = draggedIndex;
+    const droppedIndex = Number.parseInt(
+      e.dataTransfer.getData(dragDataKey) || e.dataTransfer.getData("text/plain"),
+      10,
+    );
+    const fromIndex =
+      draggedIndex ?? (Number.isFinite(droppedIndex) ? droppedIndex : null);
     setDraggedIndex(null);
     setDropTargetIndex(null);
     if (fromIndex !== null && fromIndex !== toIndex && onReorder) {
@@ -452,6 +470,9 @@ const ServiceItemsList = memo(function ServiceItemsList({
         } else if (item.type === "scripture") {
           displayName = item.label ?? "Scripture";
           icon = <BookIcon />;
+        } else if (item.type === "presentation") {
+          displayName = item.presentation?.title ?? item.label ?? "Presentation";
+          icon = <FolderIcon />;
         }
 
         return (

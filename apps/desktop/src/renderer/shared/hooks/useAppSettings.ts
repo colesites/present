@@ -4,7 +4,20 @@ import {
   SETTINGS_STORAGE_KEY
 } from "../../../features/settings/lib/constants";
 import { MediaItem, MediaFolder } from "../../../features/media/hooks/useMediaFolders";
+import type {
+  ScriptureFooterPosition,
+  ScriptureTextAlign,
+  ScriptureVerticalAlign,
+} from "../../../shared/types/output-window";
 
+const DEFAULT_SCRIPTURE_FONT_SIZE = 96;
+const DEFAULT_SCRIPTURE_FONT_WEIGHT = "400";
+const DEFAULT_SCRIPTURE_TEXT_ALIGN: ScriptureTextAlign = "left";
+const DEFAULT_SCRIPTURE_VERTICAL_ALIGN: ScriptureVerticalAlign = "middle";
+const DEFAULT_SCRIPTURE_FOOTER_ALIGN: ScriptureTextAlign = "center";
+const DEFAULT_SCRIPTURE_FOOTER_POSITION: ScriptureFooterPosition = "bottom";
+const DEFAULT_LIBRARY_FONT_SIZE = 80;
+const DEFAULT_LIBRARY_FONT_WEIGHT = "400";
 const DEFAULT_TIMER_X = 82;
 const DEFAULT_TIMER_Y = 8;
 const DEFAULT_TIMER_CLOCK_FONT_PX = 24;
@@ -27,6 +40,20 @@ function clampTimerLayout(layout: {
   return { xPercent, yPercent };
 }
 
+function normalizeScriptureFontSize(value: number) {
+  const legacyAdjusted = value <= 30 ? value * 4 : value;
+  return Math.min(Math.max(Math.round(legacyAdjusted), 24), 400);
+}
+
+function normalizeLibraryFontSize(value: number) {
+  return Math.min(Math.max(Math.round(value), 24), 400);
+}
+
+function normalizeFontWeight(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : "400";
+}
+
 interface UseAppSettingsProps {
   folders: MediaFolder[];
   allMediaItems: MediaItem[];
@@ -38,12 +65,27 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   const [settingsScriptureBackgroundId, setSettingsScriptureBackgroundId] =
     useState<string | null>(null);
   const [settingsScriptureFontSize, setSettingsScriptureFontSize] =
-    useState(18);
+    useState(DEFAULT_SCRIPTURE_FONT_SIZE);
   const [settingsScriptureFontFamily, setSettingsScriptureFontFamily] =
     useState("Inter");
+  const [settingsScriptureFontWeight, setSettingsScriptureFontWeight] =
+    useState(DEFAULT_SCRIPTURE_FONT_WEIGHT);
   const [settingsScriptureTextAlign, setSettingsScriptureTextAlign] = useState<
-    "left" | "center" | "right"
-  >("left");
+    ScriptureTextAlign
+  >(DEFAULT_SCRIPTURE_TEXT_ALIGN);
+  const [settingsScriptureVerticalAlign, setSettingsScriptureVerticalAlign] =
+    useState<ScriptureVerticalAlign>(DEFAULT_SCRIPTURE_VERTICAL_ALIGN);
+  const [settingsScriptureFooterAlign, setSettingsScriptureFooterAlign] =
+    useState<ScriptureTextAlign>(DEFAULT_SCRIPTURE_FOOTER_ALIGN);
+  const [settingsScriptureFooterPosition, setSettingsScriptureFooterPosition] =
+    useState<ScriptureFooterPosition>(DEFAULT_SCRIPTURE_FOOTER_POSITION);
+  const [settingsLibraryFontSize, setSettingsLibraryFontSize] = useState(
+    DEFAULT_LIBRARY_FONT_SIZE
+  );
+  const [settingsLibraryFontFamily, setSettingsLibraryFontFamily] =
+    useState("Inter");
+  const [settingsLibraryFontWeight, setSettingsLibraryFontWeight] =
+    useState(DEFAULT_LIBRARY_FONT_WEIGHT);
   const [settingsTimerXPercent, setSettingsTimerXPercent] = useState(DEFAULT_TIMER_X);
   const [settingsTimerYPercent, setSettingsTimerYPercent] = useState(DEFAULT_TIMER_Y);
   const [settingsTimerClockFontPx, setSettingsTimerClockFontPx] = useState(
@@ -92,10 +134,17 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
       setSettingsScriptureBackgroundId(null);
     }
     if (isFiniteNumber(parsed.scriptureFontSize)) {
-      setSettingsScriptureFontSize(parsed.scriptureFontSize);
+      setSettingsScriptureFontSize(
+        normalizeScriptureFontSize(parsed.scriptureFontSize)
+      );
     }
     if (typeof parsed.scriptureFontFamily === "string") {
       setSettingsScriptureFontFamily(parsed.scriptureFontFamily);
+    }
+    if (typeof parsed.scriptureFontWeight === "string") {
+      setSettingsScriptureFontWeight(
+        normalizeFontWeight(parsed.scriptureFontWeight)
+      );
     }
     if (
       parsed.scriptureTextAlign === "left" ||
@@ -103,6 +152,37 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
       parsed.scriptureTextAlign === "right"
     ) {
       setSettingsScriptureTextAlign(parsed.scriptureTextAlign);
+    }
+    if (
+      parsed.scriptureVerticalAlign === "top" ||
+      parsed.scriptureVerticalAlign === "middle" ||
+      parsed.scriptureVerticalAlign === "bottom"
+    ) {
+      setSettingsScriptureVerticalAlign(parsed.scriptureVerticalAlign);
+    }
+    if (
+      parsed.scriptureFooterAlign === "left" ||
+      parsed.scriptureFooterAlign === "center" ||
+      parsed.scriptureFooterAlign === "right"
+    ) {
+      setSettingsScriptureFooterAlign(parsed.scriptureFooterAlign);
+    }
+    if (
+      parsed.scriptureFooterPosition === "top" ||
+      parsed.scriptureFooterPosition === "bottom"
+    ) {
+      setSettingsScriptureFooterPosition(parsed.scriptureFooterPosition);
+    }
+    if (isFiniteNumber(parsed.libraryFontSize)) {
+      setSettingsLibraryFontSize(normalizeLibraryFontSize(parsed.libraryFontSize));
+    }
+    if (typeof parsed.libraryFontFamily === "string") {
+      setSettingsLibraryFontFamily(parsed.libraryFontFamily);
+    }
+    if (typeof parsed.libraryFontWeight === "string") {
+      setSettingsLibraryFontWeight(
+        normalizeFontWeight(parsed.libraryFontWeight)
+      );
     }
     const nextTimer = clampTimerLayout({
       xPercent: isFiniteNumber(parsed.timerXPercent) ? parsed.timerXPercent : DEFAULT_TIMER_X,
@@ -194,7 +274,14 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         scriptureBackgroundMediaId: settingsScriptureBackgroundId ?? null,
         scriptureFontSize: settingsScriptureFontSize,
         scriptureFontFamily: settingsScriptureFontFamily,
+        scriptureFontWeight: normalizeFontWeight(settingsScriptureFontWeight),
         scriptureTextAlign: settingsScriptureTextAlign,
+        scriptureVerticalAlign: settingsScriptureVerticalAlign,
+        scriptureFooterAlign: settingsScriptureFooterAlign,
+        scriptureFooterPosition: settingsScriptureFooterPosition,
+        libraryFontSize: normalizeLibraryFontSize(settingsLibraryFontSize),
+        libraryFontFamily: settingsLibraryFontFamily,
+        libraryFontWeight: normalizeFontWeight(settingsLibraryFontWeight),
         timerXPercent: timerLayout.xPercent,
         timerYPercent: timerLayout.yPercent,
         timerClockFontPx: Math.min(Math.max(settingsTimerClockFontPx, 12), 400),
@@ -217,7 +304,14 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsScriptureBackgroundId,
     settingsScriptureFontSize,
     settingsScriptureFontFamily,
+    settingsScriptureFontWeight,
     settingsScriptureTextAlign,
+    settingsScriptureVerticalAlign,
+    settingsScriptureFooterAlign,
+    settingsScriptureFooterPosition,
+    settingsLibraryFontSize,
+    settingsLibraryFontFamily,
+    settingsLibraryFontWeight,
     settingsTimerXPercent,
     settingsTimerYPercent,
     settingsTimerClockFontPx,
@@ -244,8 +338,22 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsScriptureFontSize,
     settingsScriptureFontFamily,
     setSettingsScriptureFontFamily,
+    settingsScriptureFontWeight,
+    setSettingsScriptureFontWeight,
     settingsScriptureTextAlign,
     setSettingsScriptureTextAlign,
+    settingsScriptureVerticalAlign,
+    setSettingsScriptureVerticalAlign,
+    settingsScriptureFooterAlign,
+    setSettingsScriptureFooterAlign,
+    settingsScriptureFooterPosition,
+    setSettingsScriptureFooterPosition,
+    settingsLibraryFontSize,
+    setSettingsLibraryFontSize,
+    settingsLibraryFontFamily,
+    setSettingsLibraryFontFamily,
+    settingsLibraryFontWeight,
+    setSettingsLibraryFontWeight,
     settingsTimerXPercent,
     setSettingsTimerXPercent,
     settingsTimerYPercent,

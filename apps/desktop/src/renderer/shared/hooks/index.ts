@@ -7,3 +7,4 @@ export { useShowVideoSync } from "./useShowVideoSync";
 export { usePersistedUIState } from "./usePersistedUIState";
 export { usePresentMediaFlow } from "./usePresentMediaFlow";
 export { useGlobalShortcuts } from "./useGlobalShortcuts";
+export { useFontCatalog } from "./useFontCatalog";

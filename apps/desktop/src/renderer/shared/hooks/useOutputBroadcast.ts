@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { ScriptureStyle } from "../../../shared/types/output-window";
+import type { CanvasSizePreset, SlideElement } from "../../../shared/types";
 
 type MediaItem =
   | {
@@ -28,11 +30,7 @@ type Params = {
   isVideoPlaying: boolean;
   videoCurrentTime: number;
   isFrozen?: boolean;
-  scriptureStyle: {
-    fontSize: number;
-    fontFamily: string;
-    textAlign: "left" | "center" | "right";
-  };
+  scriptureStyle: ScriptureStyle;
   libraryStyle: {
     fontFamily: string;
     fontSize: number;
@@ -68,10 +66,16 @@ export function useOutputBroadcast({
   activeSlideId,
   slideText,
   slideFooter,
+  slideElements,
+  slideCanvasSize,
+  slideBackgroundColor,
 }: Params & {
   activeSlideId?: string | null;
   slideText?: string | null;
   slideFooter?: string | null;
+  slideElements?: SlideElement[] | null;
+  slideCanvasSize?: CanvasSizePreset | null;
+  slideBackgroundColor?: string | null;
 }) {
   /* Track previous video time to only sync when it actually changes */
   const prevVideoTimeRef = useRef<number | undefined>(undefined);
@@ -135,6 +139,9 @@ export function useOutputBroadcast({
       slideId: activeSlideId,
       slideText: slideText,
       slideFooter: slideFooter,
+      slideElements,
+      slideCanvasSize,
+      slideBackgroundColor,
     });
   }, [
     activeMediaItem,
@@ -150,7 +157,11 @@ export function useOutputBroadcast({
     scriptureStyle,
     scriptureStyle.fontSize,
     scriptureStyle.fontFamily,
+    scriptureStyle.fontWeight,
     scriptureStyle.textAlign,
+    scriptureStyle.verticalAlign,
+    scriptureStyle.footerAlign,
+    scriptureStyle.footerPosition,
     libraryStyle,
     libraryStyle.fontFamily,
     libraryStyle.fontSize,
@@ -167,6 +178,9 @@ export function useOutputBroadcast({
     activeSlideId,
     slideText,
     slideFooter,
+    slideElements,
+    slideCanvasSize,
+    slideBackgroundColor,
     syncTrigger,
   ]);
 }

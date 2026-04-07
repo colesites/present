@@ -9,7 +9,6 @@ import {
 import { PresentServicesSidebar } from "./PresentServicesSidebar";
 import { PresentCenterArea } from "./PresentCenterArea";
 import { PresentOutputSidebar } from "./PresentOutputSidebar";
-import { Kbd } from "../../renderer/shared/components/ui/kbd";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { SlideData } from "../../features/slides";
 import {
@@ -18,16 +17,24 @@ import {
   MediaFilters,
   MediaState,
 } from "../../features/media/hooks/useMediaFolders";
+import type {
+  ScriptureFooterPosition,
+  ScriptureTextAlign,
+  ScriptureVerticalAlign,
+} from "../../shared/types/output-window";
 import { MediaPanel } from "../media";
 import type {
   ViewMode,
   BottomTab,
   LibraryItem,
+  LibraryItemDraft,
+  CanvasSizePreset,
   Category,
   Service,
   PlaybackState,
   ServiceItem,
   ContentSource,
+  SlideElement,
 } from "../../shared/types/index";
 import { fixLyrics } from "../../renderer/shared/lib/lyrics";
 import { ScriptureSlide } from "../../features/scripture/lib/slides";
@@ -38,8 +45,10 @@ import type { LibrariesPanelRef } from "../shows/LibrariesPanel";
 export interface MainViewPresentState {
   slidesForGrid: SlideData[];
   activeSlideId: string | null;
+  outputActiveSlideId: string | null;
   selected: { libraryId: string | null; index: number } | null;
   selectedLibraryItem: LibraryItem | null;
+  scriptureEditorItem: LibraryItem | null;
   selectedLibraryId: string | null;
   setSelectedLibraryId: (id: string | null) => void;
   handleSelectSlide: (
@@ -48,13 +57,31 @@ export interface MainViewPresentState {
     footer?: string
   ) => Promise<void>;
   handleEditSlide: (libraryId: string, slideIndex: number) => void;
-  handleSaveLibraryItem: (title: string, body: string) => Promise<void>;
+  handleSaveLibraryItem: (draft: LibraryItemDraft) => Promise<void>;
+  handleSaveScriptureEditor: (draft: LibraryItemDraft) => Promise<void>;
+  handleUpdateEditedSlideOutput: EditorUpdateOutputHandler;
+  handleUpdateScriptureEditedSlideOutput: EditorUpdateOutputHandler;
+  handleReorderLibrarySlides: (fromIndex: number, toIndex: number) => Promise<void>;
   editScrollToSlide: number | null;
   setEditScrollToSlide: (index: number | null) => void;
   handleScriptureOutput: (slides: ScriptureSlide[]) => void;
-  activeSlideContent: { text: string; footer?: string } | null;
+  activeSlideContent: {
+    text: string;
+    footer?: string;
+    elements?: SlideElement[] | null;
+    canvasSize?: CanvasSizePreset | null;
+    backgroundColor?: string | null;
+  } | null;
   slideGroups: { label: string; count: number }[];
 }
+
+export type EditorUpdateOutputHandler = (payload: {
+  slideId: string;
+  text: string;
+  elements: SlideElement[];
+  canvasSize: CanvasSizePreset;
+  backgroundColor: string | null;
+}) => void;
 
 export interface MainViewMediaState {
   mediaState: MediaState;
@@ -67,6 +94,7 @@ export interface MainViewMediaState {
   handleVideoPause: () => void;
   handleVideoEnded: () => void;
   handleVideoSeeked: (e: React.SyntheticEvent<HTMLVideoElement, Event>) => void;
+  onToggleVideoPlayback: () => void;
   handleMediaPanelSelect: (item: MediaItem | null) => void;
   handleAddMediaToService: (
     mediaId: string,
@@ -94,6 +122,11 @@ export interface MainViewLibraryState {
     body: string,
     categoryId?: string
   ) => Promise<void>;
+  createComposedLibraryItem: (
+    title: string,
+    itemIds: string[],
+    categoryId?: string
+  ) => Promise<void>;
   handleRenameLibraryItem: (
     libraryId: string,
     newTitle: string
@@ -114,7 +147,19 @@ export interface MainViewStyleState {
   fontUnderline: boolean;
   scriptureFontFamily: string;
   scriptureFontSize: number;
-  scriptureTextAlign: "left" | "center" | "right";
+  scriptureFontWeight: string;
+  scriptureTextAlign: ScriptureTextAlign;
+  scriptureVerticalAlign: ScriptureVerticalAlign;
+  scriptureFooterAlign: ScriptureTextAlign;
+  scriptureFooterPosition: ScriptureFooterPosition;
+  libraryDefaultFontFamily: string;
+  libraryDefaultFontSize: number;
+  libraryDefaultFontWeight: string;
+  setScriptureFontSize: (size: number) => void;
+  setScriptureTextAlign: (align: ScriptureTextAlign) => void;
+  setScriptureVerticalAlign: (align: ScriptureVerticalAlign) => void;
+  setScriptureFooterAlign: (align: ScriptureTextAlign) => void;
+  setScriptureFooterPosition: (position: ScriptureFooterPosition) => void;
   timerLayout: {
     xPercent: number;
     yPercent: number;
@@ -140,6 +185,10 @@ export interface MainViewOutputState {
   onToggleFreeze: () => void;
   showTextInOutput: boolean;
   setShowTextInOutput: (show: boolean) => void;
+  isTimerLayerEnabled: boolean;
+  setIsTimerLayerEnabled: (show: boolean) => void;
+  isMessageLayerEnabled: boolean;
+  setIsMessageLayerEnabled: (show: boolean) => void;
 }
 
 interface MainViewProps {
@@ -199,6 +248,10 @@ export function MainView({
     onToggleFreeze,
     showTextInOutput,
     setShowTextInOutput,
+    isTimerLayerEnabled,
+    setIsTimerLayerEnabled,
+    isMessageLayerEnabled,
+    setIsMessageLayerEnabled,
   } = outputState;
 
   const {
@@ -211,10 +264,12 @@ export function MainView({
     handleVideoPause,
     handleVideoEnded,
     handleVideoSeeked,
+    onToggleVideoPlayback,
     handleMediaPanelSelect,
     handleAddMediaToService,
     updateVideoSettings,
     showMediaInOutput,
+    setShowMediaInOutput,
     onClearMedia,
     mediaFilters,
     onMediaFiltersChange: updateMediaFilters,
@@ -226,16 +281,22 @@ export function MainView({
   const {
     slidesForGrid,
     activeSlideId,
+    outputActiveSlideId,
     selected,
     selectedLibraryItem,
+    scriptureEditorItem,
     selectedLibraryId,
     setSelectedLibraryId,
     handleSelectSlide,
     handleEditSlide,
     handleSaveLibraryItem,
+    handleSaveScriptureEditor,
+    handleUpdateEditedSlideOutput,
+    handleReorderLibrarySlides,
     editScrollToSlide,
     setEditScrollToSlide,
     handleScriptureOutput,
+    handleUpdateScriptureEditedSlideOutput,
     activeSlideContent,
     slideGroups,
   } = presentState;
@@ -247,6 +308,7 @@ export function MainView({
     selectedCategoryId,
     setSelectedCategoryId,
     createNewLibraryItem,
+    createComposedLibraryItem,
     handleRenameLibraryItem,
     deleteLibraryItem,
     handleAddToService,
@@ -263,7 +325,14 @@ export function MainView({
     fontUnderline,
     scriptureFontFamily,
     scriptureFontSize,
+    scriptureFontWeight,
     scriptureTextAlign,
+    scriptureVerticalAlign,
+    scriptureFooterAlign,
+    scriptureFooterPosition,
+    libraryDefaultFontFamily,
+    libraryDefaultFontSize,
+    libraryDefaultFontWeight,
     timerLayout,
     updateFontStyle,
   } = styleState;
@@ -290,62 +359,273 @@ export function MainView({
 
   const { showsPanelRef, mediaPanelRef, scripturePanelRef } = panelRefs;
 
-  return (
+  const handleEditorScrollComplete = React.useCallback(() => {
+    setEditScrollToSlide(null);
+  }, [setEditScrollToSlide]);
+
+  const editorProps = React.useMemo(
+    () => ({
+      fontFamily,
+      fontSize,
+      fontBold,
+      fontItalic,
+      fontUnderline,
+      libraryDefaultFontFamily,
+      libraryDefaultFontSize,
+      libraryDefaultFontWeight,
+      scriptureDefaultFontFamily: scriptureFontFamily,
+      scriptureDefaultFontSize: scriptureFontSize,
+      scriptureDefaultFontWeight: scriptureFontWeight,
+      onFontStyleChange: updateFontStyle,
+      onSave: handleSaveLibraryItem,
+      onFixLyrics: fixLyrics,
+      onUpdateOutput: handleUpdateEditedSlideOutput,
+      scrollToSlideIndex: editScrollToSlide,
+      onScrollComplete: handleEditorScrollComplete,
+    }),
+    [
+      editScrollToSlide,
+      fontBold,
+      fontFamily,
+      fontItalic,
+      fontSize,
+      fontUnderline,
+      handleEditorScrollComplete,
+      handleSaveLibraryItem,
+      handleUpdateEditedSlideOutput,
+      libraryDefaultFontFamily,
+      libraryDefaultFontSize,
+      libraryDefaultFontWeight,
+      scriptureFontFamily,
+      scriptureFontSize,
+      scriptureFontWeight,
+      updateFontStyle,
+    ],
+  );
+
+  const showsPanelProps = React.useMemo(
+    () => ({
+      libraryItems: filteredLibraryItems,
+      isLoading: libraryLoading,
+      categories,
+      selectedLibraryId,
+      selectedCategoryId,
+      isInsideService,
+      selectedServiceId,
+      onSelectLibraryItem: setSelectedLibraryId,
+      onSelectCategory: setSelectedCategoryId,
+      onCreateLibraryItem: createNewLibraryItem,
+      onCreateComposedLibraryItem: createComposedLibraryItem,
+      onRenameLibraryItem: handleRenameLibraryItem,
+      onDeleteLibraryItem: deleteLibraryItem,
+      onAddToService: handleAddToService,
+      onCreateCategory: createNewCategory,
+      onFixLyrics: fixLyrics,
+      searchQuery,
+      onSearchChange: setSearchQuery,
+      contentSource,
+    }),
+    [
+      categories,
+      contentSource,
+      createComposedLibraryItem,
+      createNewCategory,
+      createNewLibraryItem,
+      deleteLibraryItem,
+      filteredLibraryItems,
+      handleAddToService,
+      handleRenameLibraryItem,
+      isInsideService,
+      libraryLoading,
+      searchQuery,
+      selectedCategoryId,
+      selectedLibraryId,
+      selectedServiceId,
+      setSearchQuery,
+      setSelectedCategoryId,
+      setSelectedLibraryId,
+    ],
+  );
+
+  const handleOutputPreviewMediaClick = React.useCallback(() => {
+    handleOutputPreviewMedia();
+  }, [handleOutputPreviewMedia]);
+
+  const handleToggleTextInOutput = React.useCallback(() => {
+    setShowTextInOutput(!showTextInOutput);
+  }, [setShowTextInOutput, showTextInOutput]);
+
+  const handleToggleMediaInOutput = React.useCallback(() => {
+    setShowMediaInOutput(!showMediaInOutput);
+  }, [setShowMediaInOutput, showMediaInOutput]);
+
+  const handleClearOutputMedia = React.useCallback(() => {
+    onClearMedia();
+  }, [onClearMedia]);
+
+  const handleToggleTimerLayer = React.useCallback(() => {
+    setIsTimerLayerEnabled(!isTimerLayerEnabled);
+  }, [isTimerLayerEnabled, setIsTimerLayerEnabled]);
+
+  const handleToggleMessageLayer = React.useCallback(() => {
+    setIsMessageLayerEnabled(!isMessageLayerEnabled);
+  }, [isMessageLayerEnabled, setIsMessageLayerEnabled]);
+
+  const outputPreviewProps = React.useMemo(
+    () => ({
+      text: activeSlideContent?.text ?? null,
+      footer: activeSlideContent?.footer ?? null,
+      slideElements: activeSlideContent?.elements ?? null,
+      canvasSize: activeSlideContent?.canvasSize ?? null,
+      backgroundColor: activeSlideContent?.backgroundColor ?? null,
+      activeSlideId: outputActiveSlideId,
+      fontFamily,
+      fontSize,
+      fontBold,
+      fontItalic,
+      fontUnderline,
+      scriptureFontFamily,
+      scriptureFontSize,
+      scriptureFontWeight,
+      scriptureTextAlign,
+      scriptureVerticalAlign,
+      scriptureFooterAlign,
+      scriptureFooterPosition,
+      groups: slideGroups,
+      activeMediaItem: effectiveActiveMediaItem,
+      videoSettings,
+      onVideoSettingsChange: updateVideoSettings,
+      onToggleVideoPlayback,
+      showText: showTextInOutput,
+      showMedia: showMediaInOutput,
+      onToggleText: handleToggleTextInOutput,
+      onToggleMedia: handleToggleMediaInOutput,
+      onClearMedia: handleClearOutputMedia,
+      mediaFilters,
+      onMediaFiltersChange: updateMediaFilters,
+      onResetFilters,
+      isVideoPlaying,
+      videoCurrentTime,
+      isFrozen: isOutputFrozen,
+      onToggleFreeze,
+      isTimerLayerEnabled,
+      onToggleTimerLayer: handleToggleTimerLayer,
+      isMessageLayerEnabled,
+      onToggleMessageLayer: handleToggleMessageLayer,
+      timerLayout,
+    }),
+    [
+      activeSlideContent?.backgroundColor,
+      activeSlideContent?.canvasSize,
+      activeSlideContent?.elements,
+      activeSlideContent?.footer,
+      activeSlideContent?.text,
+      effectiveActiveMediaItem,
+      fontBold,
+      fontFamily,
+      fontItalic,
+      fontSize,
+      fontUnderline,
+      handleClearOutputMedia,
+      handleToggleMediaInOutput,
+      handleToggleMessageLayer,
+      handleToggleTextInOutput,
+      handleToggleTimerLayer,
+      isMessageLayerEnabled,
+      isOutputFrozen,
+      isTimerLayerEnabled,
+      isVideoPlaying,
+      mediaFilters,
+      onResetFilters,
+      onToggleFreeze,
+      outputActiveSlideId,
+      scriptureFooterAlign,
+      scriptureFooterPosition,
+      scriptureFontFamily,
+      scriptureFontSize,
+      scriptureFontWeight,
+      scriptureTextAlign,
+      scriptureVerticalAlign,
+      showMediaInOutput,
+      showTextInOutput,
+      slideGroups,
+      timerLayout,
+      onToggleVideoPlayback,
+      updateMediaFilters,
+      updateVideoSettings,
+      videoCurrentTime,
+      videoSettings,
+    ],
+  );
+
+  const handleReorderServiceItemsSafe = React.useCallback(
+    (from: number, to: number) => {
+      return reorderServiceItems(from, to);
+    },
+    [reorderServiceItems],
+  );
+
+  const mergedServicesSidebarProps = React.useMemo(
+    () => ({
+      services,
+      isLoading: servicesLoading,
+      selectedServiceId,
+      isInsideService,
+      selectedService,
+      serviceItems,
+      serviceItemIndex,
+      onEnterService: enterService,
+      onExitService: exitService,
+      onSelectServiceItem: handleSelectServiceItem,
+      onDoubleClickServiceItem: handleDoubleClickServiceItem,
+      onRemoveFromService: handleRemoveFromService,
+      onCreateService: createNewService,
+      onRenameService: renameExistingService,
+      onDeleteService: deleteService,
+      onReorderServiceItems: handleReorderServiceItemsSafe,
+      onReorderServices: reorderServices,
+    }),
+    [
+      createNewService,
+      deleteService,
+      enterService,
+      exitService,
+      handleDoubleClickServiceItem,
+      handleRemoveFromService,
+      handleReorderServiceItemsSafe,
+      handleSelectServiceItem,
+      isInsideService,
+      renameExistingService,
+      reorderServices,
+      selectedService,
+      selectedServiceId,
+      serviceItemIndex,
+      serviceItems,
+      services,
+      servicesLoading,
+    ],
+  );
+
+  const renderShowMode = () => (
     <ResizablePanelGroup
       direction="horizontal"
       className="flex-1 w-full h-full"
-      autoSaveId="present-main-layout-v11"
+      autoSaveId="present-main-layout-v13"
     >
-      <ResizablePanel defaultSize="78" minSize="60" maxSize="84" order={1}>
-        <ResizablePanelGroup
-          direction="vertical"
-          className="h-full w-full"
-          autoSaveId="present-workspace-layout-v11"
-        >
-          <ResizablePanel defaultSize="68" minSize="45" maxSize="84" order={1}>
-            <ResizablePanelGroup
-              direction="horizontal"
-              className="h-full w-full"
-              autoSaveId="present-main-top-layout-v11"
-            >
-              <ResizablePanel
-                defaultSize="24"
-                minSize="16"
-                maxSize="32"
-                order={1}
-              >
+      <ResizablePanel defaultSize="80" order={1}>
+        <ResizablePanelGroup direction="vertical">
+          {/* Top Row: Services (Left) + Center (Workspace) */}
+          <ResizablePanel defaultSize="70">
+            <ResizablePanelGroup direction="horizontal">
+              <ResizablePanel defaultSize="20" minSize="15" maxSize="35" order={1}>
                 <PresentServicesSidebar
-                  servicesSidebarProps={{
-                    services,
-                    isLoading: servicesLoading,
-                    selectedServiceId,
-                    isInsideService,
-                    selectedService,
-                    serviceItems,
-                    serviceItemIndex,
-                    onEnterService: enterService,
-                    onExitService: exitService,
-                    onSelectServiceItem: handleSelectServiceItem,
-                    onDoubleClickServiceItem: handleDoubleClickServiceItem,
-                    onRemoveFromService: (index: number) =>
-                      handleRemoveFromService(index),
-                    onCreateService: createNewService,
-                    onRenameService: renameExistingService,
-                    onDeleteService: deleteService,
-                    onReorderServiceItems: reorderServiceItems,
-                    onReorderServices: reorderServices,
-                  }}
+                  servicesSidebarProps={mergedServicesSidebarProps}
                 />
               </ResizablePanel>
 
               <ResizableHandle withHandle />
 
-              <ResizablePanel
-                defaultSize="76"
-                minSize="56"
-                maxSize="84"
-                order={2}
-              >
+              <ResizablePanel defaultSize="80" order={2}>
                 <PresentCenterArea
                   viewMode={viewMode}
                   bottomTab={bottomTab}
@@ -353,51 +633,27 @@ export function MainView({
                   activeSlideId={activeSlideId}
                   selectedIndex={selected?.index ?? null}
                   selectedLibraryItem={selectedLibraryItem}
+                  scriptureEditorItem={scriptureEditorItem}
                   selectedLibraryId={selectedLibraryId}
                   onSelectSlide={handleSelectSlide}
                   onEditSlide={handleEditSlide}
-                  editorProps={{
-                    fontFamily,
-                    fontSize,
-                    fontBold,
-                    fontItalic,
-                    fontUnderline,
-                    onFontStyleChange: updateFontStyle,
-                    onSave: handleSaveLibraryItem,
-                    onFixLyrics: fixLyrics,
-                    scrollToSlideIndex: editScrollToSlide,
-                    onScrollComplete: () => setEditScrollToSlide(null),
-                  }}
+                  onReorderSlides={handleReorderLibrarySlides}
+                  editorProps={editorProps}
+                  onSaveScriptureEditor={handleSaveScriptureEditor}
+                  onUpdateScriptureEditorOutput={
+                    handleUpdateScriptureEditedSlideOutput
+                  }
                   showViewMedia={showViewMedia}
                   showVideoRef={showVideoRef}
                   videoSettings={videoSettings}
-                  onOutputPreviewMedia={() => handleOutputPreviewMedia()}
+                  onOutputPreviewMedia={handleOutputPreviewMediaClick}
                   onVideoPlay={handleVideoPlay}
                   onVideoPause={handleVideoPause}
                   onVideoEnded={handleVideoEnded}
                   onVideoSeeked={handleVideoSeeked}
                   showsPanelRef={showsPanelRef}
                   scripturePanelRef={scripturePanelRef}
-                  showsPanelProps={{
-                    libraryItems: filteredLibraryItems,
-                    isLoading: libraryLoading,
-                    categories,
-                    selectedLibraryId,
-                    selectedCategoryId,
-                    isInsideService,
-                    selectedServiceId,
-                    onSelectLibraryItem: setSelectedLibraryId,
-                    onSelectCategory: setSelectedCategoryId,
-                    onCreateLibraryItem: createNewLibraryItem,
-                    onRenameLibraryItem: handleRenameLibraryItem,
-                    onDeleteLibraryItem: deleteLibraryItem,
-                    onAddToService: handleAddToService,
-                    onCreateCategory: createNewCategory,
-                    onFixLyrics: fixLyrics,
-                    searchQuery,
-                    onSearchChange: setSearchQuery,
-                    contentSource,
-                  }}
+                  showsPanelProps={showsPanelProps}
                   onSendScripture={handleScriptureOutput}
                   orgId={orgId ?? null}
                   userId={userId}
@@ -408,17 +664,10 @@ export function MainView({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize="32" minSize="16" maxSize="55" order={2}>
-            <div className="flex h-full flex-col border-t border-border bg-card">
-              <div className="flex h-8 items-center justify-between border-b border-border px-3">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                  Media
-                </span>
-                <span className="text-[10px] text-muted-foreground">
-                  Search <Kbd className="ml-1">⌘M</Kbd>
-                </span>
-              </div>
-              <div className="min-h-0 flex-1">
+          {/* Bottom Row: Wide Media Panel (spanning left till right sidebar) */}
+          <ResizablePanel defaultSize="30" minSize="15">
+            <div className="flex h-full flex-col border-t border-border bg-card overflow-hidden">
+              <div className="min-h-0 flex-1 relative">
                 <MediaPanel
                   ref={mediaPanelRef}
                   mediaState={mediaState.mediaState}
@@ -436,39 +685,51 @@ export function MainView({
 
       <ResizableHandle withHandle />
 
-      <ResizablePanel defaultSize="22" minSize="22" maxSize="32" order={2}>
+      {/* Right Column: Output Preview */}
+      <ResizablePanel defaultSize="20" minSize="18" maxSize="30" order={2}>
         <PresentOutputSidebar
-          outputPreviewProps={{
-            text: activeSlideContent?.text ?? null,
-            footer: activeSlideContent?.footer ?? null,
-            activeSlideId,
-            fontFamily,
-            fontSize,
-            fontBold,
-            fontItalic,
-            fontUnderline,
-            scriptureFontFamily,
-            scriptureFontSize,
-            scriptureTextAlign,
-            groups: slideGroups,
-            activeMediaItem: effectiveActiveMediaItem,
-            videoSettings,
-            onVideoSettingsChange: updateVideoSettings,
-            showText: showTextInOutput,
-            showMedia: showMediaInOutput,
-            onToggleText: () => setShowTextInOutput(!showTextInOutput),
-            onClearMedia: () => onClearMedia(),
-            mediaFilters,
-            onMediaFiltersChange: updateMediaFilters,
-            onResetFilters,
-            isVideoPlaying,
-            videoCurrentTime,
-            isFrozen: isOutputFrozen,
-            onToggleFreeze,
-            timerLayout,
-          }}
+          outputPreviewProps={outputPreviewProps}
         />
       </ResizablePanel>
     </ResizablePanelGroup>
   );
+
+  const renderEditMode = () => (
+    <div className="h-full w-full bg-background overflow-hidden">
+      <PresentCenterArea
+        viewMode="edit"
+        bottomTab={bottomTab}
+        slidesForGrid={slidesForGrid}
+        activeSlideId={activeSlideId}
+        selectedIndex={selected?.index ?? null}
+        selectedLibraryItem={selectedLibraryItem}
+        scriptureEditorItem={scriptureEditorItem}
+        selectedLibraryId={selectedLibraryId}
+        onSelectSlide={handleSelectSlide}
+        onEditSlide={handleEditSlide}
+        onReorderSlides={handleReorderLibrarySlides}
+        editorProps={editorProps}
+        onSaveScriptureEditor={handleSaveScriptureEditor}
+        onUpdateScriptureEditorOutput={
+          handleUpdateScriptureEditedSlideOutput
+        }
+        showViewMedia={showViewMedia}
+        showVideoRef={showVideoRef}
+        videoSettings={videoSettings}
+        onOutputPreviewMedia={handleOutputPreviewMediaClick}
+        onVideoPlay={handleVideoPlay}
+        onVideoPause={handleVideoPause}
+        onVideoEnded={handleVideoEnded}
+        onVideoSeeked={handleVideoSeeked}
+        showsPanelRef={showsPanelRef}
+        scripturePanelRef={scripturePanelRef}
+        showsPanelProps={showsPanelProps}
+        onSendScripture={handleScriptureOutput}
+        orgId={orgId ?? null}
+        userId={userId}
+      />
+    </div>
+  );
+
+  return viewMode === "edit" ? renderEditMode() : renderShowMode();
 }

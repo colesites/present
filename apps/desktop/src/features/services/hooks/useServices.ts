@@ -2,7 +2,12 @@
 
 import { useMemo, useState, useEffect } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { LibraryItem, Service } from "../../../shared/types";
+import type {
+  LibraryItem,
+  Service,
+  ServiceItem,
+  ServicePresentation,
+} from "../../../shared/types";
 import {
   createLocalService,
   enqueueSyncOperation,
@@ -12,7 +17,7 @@ import {
   upsertService,
 } from "../../../renderer/shared/offline/localData";
 
-export type ServiceItemType = "library" | "media" | "scripture";
+export type ServiceItemType = "library" | "media" | "scripture" | "presentation";
 
 const SERVICE_STATE_KEY = "present-service-state";
 
@@ -95,23 +100,15 @@ export function useServices(
   }, [selectedServiceId, services]);
 
   // Service items with resolved library items
-  const serviceItems = useMemo(() => {
+  const serviceItems = useMemo<ServiceItem[]>(() => {
     if (!selectedService) return [];
     return selectedService.items.map(
-      (
-        item: {
-          type: ServiceItemType;
-          refId: string;
-          label?: string;
-          addedAt: number;
-        },
-        index: number,
-      ) => {
+      (item: Service["items"][number], index: number): ServiceItem => {
         if (item.type === "library") {
           const libraryItem = libraryItems.find((s: LibraryItem) => s._id === item.refId);
-          return { ...item, libraryItem, index };
+          return { ...item, libraryItem, presentation: null, index };
         }
-        return { ...item, libraryItem: null, index };
+        return { ...item, libraryItem: null, presentation: item.presentation ?? null, index };
       },
     );
   }, [selectedService, libraryItems]);
@@ -226,6 +223,75 @@ export function useServices(
     enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
   };
 
+  const addPresentationToService = async (
+    serviceId: Id<"services">,
+    presentation: ServicePresentation,
+  ) => {
+    const service = services.find((item) => item._id === serviceId);
+    if (!service) {
+      return null;
+    }
+
+    const refId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? `presentation_${crypto.randomUUID()}`
+        : `presentation_${Date.now().toString(36)}_${Math.random()
+            .toString(36)
+            .slice(2)}`;
+
+    const nextService = upsertService(workspaceId, {
+      ...service,
+      items: [
+        ...service.items,
+        {
+          type: "presentation",
+          refId,
+          label: presentation.title,
+          addedAt: Date.now(),
+          presentation,
+        },
+      ],
+    });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
+    return refId;
+  };
+
+  const updatePresentationInService = async (
+    serviceId: Id<"services">,
+    presentationRefId: string,
+    presentation: ServicePresentation,
+  ) => {
+    const service = services.find((item) => item._id === serviceId);
+    if (!service) {
+      return;
+    }
+
+    const presentationIndex = service.items.findIndex(
+      (item) => item.type === "presentation" && item.refId === presentationRefId,
+    );
+    if (presentationIndex < 0) {
+      return;
+    }
+
+    const nextItems = service.items.map((item, index) =>
+      index === presentationIndex
+        ? {
+            ...item,
+            label: presentation.title,
+            presentation,
+          }
+        : item,
+    );
+
+    const nextService = upsertService(workspaceId, {
+      ...service,
+      items: nextItems,
+    });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
+  };
+
   const removeFromService = async (
     serviceId: Id<"services">,
     index: number
@@ -286,7 +352,7 @@ export function useServices(
   };
 
   return {
-    services: services as any,
+    services,
     isLoading: false,
     selectedService,
     selectedServiceId,
@@ -301,6 +367,8 @@ export function useServices(
     addLibraryItemToService,
     addMediaToService,
     addScriptureToService,
+    addPresentationToService,
+    updatePresentationInService,
     removeFromService,
     reorderServiceItems,
     reorderServices,

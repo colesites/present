@@ -19,6 +19,7 @@ interface UseSpeechRecognitionOptions {
 
 interface UseSpeechRecognitionReturn {
   isListening: boolean;
+  isStarting: boolean;
   isSupported: boolean;
   transcript: string;
   interimTranscript: string;
@@ -79,6 +80,7 @@ declare global {
 
 interface AssemblyAiTokenResponse {
   token: string;
+  expiresInSeconds?: number;
 }
 
 interface AssemblyAiTokenErrorPayload {
@@ -109,6 +111,15 @@ interface StreamingSession {
 const DEFAULT_WEB_APP_URL = "https://present-gha.vercel.app";
 const ASSEMBLYAI_STREAM_URL = "wss://streaming.assemblyai.com/v3/ws";
 const ASSEMBLYAI_TOKEN_PATH = "/api/assemblyai/token";
+const ASSEMBLYAI_TOKEN_REFRESH_BUFFER_MS = 15_000;
+
+let cachedAssemblyAiToken:
+  | {
+      authToken: string;
+      token: string;
+      expiresAt: number;
+    }
+  | null = null;
 
 const resolveWebBaseUrl = (): string => {
   const configured = process.env.WEB_APP_URL;
@@ -207,6 +218,7 @@ export function useSpeechRecognition(
   } = options;
 
   const [isListening, setIsListening] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [interimTranscript, setInterimTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -253,6 +265,7 @@ export function useSpeechRecognition(
     recognition.lang = lang;
 
     recognition.onstart = () => {
+      setIsStarting(false);
       setIsListening(true);
       setError(null);
       isStoppingRef.current = false;
@@ -304,11 +317,13 @@ export function useSpeechRecognition(
       if (event.error === "aborted" && isStoppingRef.current) {
         return;
       }
+      setIsStarting(false);
       setError(mapRecognitionError(event.error));
       setIsListening(false);
     };
 
     recognition.onend = () => {
+      setIsStarting(false);
       setIsListening(false);
       setInterimTranscript("");
       
@@ -324,11 +339,12 @@ export function useSpeechRecognition(
 
     return () => {
       isStoppingRef.current = true;
+      setIsStarting(false);
       recognition.abort();
     };
   }, [hasBrowserSpeechRecognition, continuous, interimResults, lang]);
 
-  const ensureMicrophoneAccess = useCallback(async () => {
+  const requestMicrophonePermission = useCallback(async () => {
     if (typeof window === "undefined") {
       return;
     }
@@ -337,13 +353,6 @@ export function useSpeechRecognition(
     if (mediaAccess && !mediaAccess.granted) {
       throw new Error("Microphone access was denied.");
     }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      return;
-    }
-
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((track) => track.stop());
   }, []);
 
   const stopStreamingSession = useCallback(() => {
@@ -397,6 +406,20 @@ export function useSpeechRecognition(
       throw new Error("Sign in to use voice search.");
     }
 
+    if (
+      cachedAssemblyAiToken &&
+      cachedAssemblyAiToken.authToken === authToken &&
+      cachedAssemblyAiToken.expiresAt > Date.now() + ASSEMBLYAI_TOKEN_REFRESH_BUFFER_MS
+    ) {
+      return {
+        token: cachedAssemblyAiToken.token,
+        expiresInSeconds: Math.max(
+          0,
+          Math.floor((cachedAssemblyAiToken.expiresAt - Date.now()) / 1000),
+        ),
+      };
+    }
+
     if (window.electronAPI?.requestAssemblyAiToken) {
       const payload = await window.electronAPI.requestAssemblyAiToken(authToken) as
         | AssemblyAiTokenResponse
@@ -412,6 +435,16 @@ export function useSpeechRecognition(
         );
       }
 
+      cachedAssemblyAiToken = {
+        authToken,
+        token: payload.token,
+        expiresAt:
+          Date.now() +
+          (typeof payload.expiresInSeconds === "number"
+            ? payload.expiresInSeconds
+            : 300) *
+            1000,
+      };
       return payload;
     }
 
@@ -441,6 +474,16 @@ export function useSpeechRecognition(
       throw new Error(message || "Live transcription could not start.");
     }
 
+    cachedAssemblyAiToken = {
+      authToken,
+      token: payload.token,
+      expiresAt:
+        Date.now() +
+        (typeof payload.expiresInSeconds === "number"
+          ? payload.expiresInSeconds
+          : 300) *
+          1000,
+    };
     return payload;
   }, [authToken]);
 
@@ -449,16 +492,36 @@ export function useSpeechRecognition(
       throw new Error("Live transcription is unavailable in this runtime.");
     }
 
-    await ensureMicrophoneAccess();
+    await requestMicrophonePermission();
 
-    const mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Audio capture is unavailable in this desktop session.");
+    }
+
+    const [mediaStreamResult, tokenResult] = await Promise.allSettled([
+      navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      }),
+      fetchAssemblyAiToken(),
+    ]);
+
+    if (mediaStreamResult.status === "rejected") {
+      throw mediaStreamResult.reason;
+    }
+
+    const mediaStream = mediaStreamResult.value;
+
+    if (tokenResult.status === "rejected") {
+      mediaStream.getTracks().forEach((track) => track.stop());
+      throw tokenResult.reason;
+    }
+
+    const { token } = tokenResult.value;
 
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) {
@@ -478,8 +541,6 @@ export function useSpeechRecognition(
 
     try {
       await audioContext.resume();
-
-      const { token } = await fetchAssemblyAiToken();
       const socketUrl = buildAssemblyAiSocketUrl({
         token,
         sampleRate: audioContext.sampleRate,
@@ -546,18 +607,21 @@ export function useSpeechRecognition(
           console.info("[AssemblyAI] streaming session started", {
             sessionId: typeof event.data === "string" ? payload["id"] : undefined,
           });
+          setIsStarting(false);
           setIsListening(true);
           setError(null);
           return;
         }
 
         if (payload.type === "Error" || payload.error || payload.message) {
+          setIsStarting(false);
           setError(payload.error ?? payload.message ?? "Live transcription failed.");
           return;
         }
 
         if (payload.type !== "Turn") {
           if (payload.type === "Termination") {
+            setIsStarting(false);
             setIsListening(false);
             setInterimTranscript("");
           }
@@ -589,6 +653,7 @@ export function useSpeechRecognition(
 
       socket.onerror = (event) => {
         console.error("[AssemblyAI] websocket error", event);
+        setIsStarting(false);
         setError("Live transcription connection failed.");
       };
 
@@ -602,6 +667,7 @@ export function useSpeechRecognition(
         if (streamingSessionRef.current?.socket === socket) {
           stopStreamingSession();
         }
+        setIsStarting(false);
         setIsListening(false);
         setInterimTranscript("");
 
@@ -625,16 +691,16 @@ export function useSpeechRecognition(
       throw error;
     }
   }, [
-    ensureMicrophoneAccess,
     fetchAssemblyAiToken,
     hasStreamingSupport,
     keyterms,
     lang,
+    requestMicrophonePermission,
     stopStreamingSession,
   ]);
 
   const startListening = useCallback(async () => {
-    if (isListening) {
+    if (isListening || isStarting) {
       return Promise.resolve();
     }
 
@@ -642,6 +708,7 @@ export function useSpeechRecognition(
     setTranscript("");
     setInterimTranscript("");
     setError(null);
+    setIsStarting(true);
     isStoppingRef.current = false;
 
     if (authToken && hasStreamingSupport) {
@@ -652,6 +719,7 @@ export function useSpeechRecognition(
         stopStreamingSession();
         activeModeRef.current = null;
         if (!hasBrowserSpeechRecognition) {
+          setIsStarting(false);
           setError(formatSpeechError(error));
           return;
         }
@@ -659,30 +727,34 @@ export function useSpeechRecognition(
     }
 
     if (!recognitionRef.current) {
+      setIsStarting(false);
       setError("Voice input is unavailable in this runtime.");
       return;
     }
 
     activeModeRef.current = "webspeech";
-    return ensureMicrophoneAccess()
+    return requestMicrophonePermission()
       .then(() => {
         recognitionRef.current?.start();
       })
       .catch((e) => {
+        setIsStarting(false);
         setError(formatSpeechError(e));
       });
   }, [
     authToken,
-    ensureMicrophoneAccess,
     hasBrowserSpeechRecognition,
     hasStreamingSupport,
     isListening,
+    isStarting,
+    requestMicrophonePermission,
     startAssemblyAiListening,
     stopStreamingSession,
   ]);
 
   const stopListening = useCallback(() => {
     isStoppingRef.current = true;
+    setIsStarting(false);
     if (activeModeRef.current === "assemblyai") {
       stopStreamingSession();
       activeModeRef.current = null;
@@ -712,6 +784,7 @@ export function useSpeechRecognition(
 
   return {
     isListening,
+    isStarting,
     isSupported,
     transcript: transcript.trim(),
     interimTranscript,

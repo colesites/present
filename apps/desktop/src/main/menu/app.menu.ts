@@ -1,10 +1,22 @@
 import { app, Menu, type MenuItemConstructorOptions } from 'electron';
+import { getMainWindow } from '../windows/main.window';
+
+type ImportMenuMode = "presentation" | "images";
 
 /**
  * Build and set the application menu
  */
 export const setupMenu = (openSettingsCallback: () => void): void => {
   const isMac = process.platform === 'darwin';
+  const sendImportEvent = (mode: ImportMenuMode) => {
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.focus();
+    mainWindow.webContents.send('open-import', mode);
+  };
   
   const makeSettingsItem = (): MenuItemConstructorOptions => ({
     label: 'Settings…',
@@ -31,6 +43,21 @@ export const setupMenu = (openSettingsCallback: () => void): void => {
   }
 
   const fileSubmenu: MenuItemConstructorOptions[] = [
+    {
+      label: 'Import',
+      submenu: [
+        {
+          label: 'Presentation…',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => sendImportEvent("presentation"),
+        },
+        {
+          label: 'Presentation As Images…',
+          click: () => sendImportEvent("images"),
+        },
+      ],
+    },
+    { type: 'separator' },
     makeSettingsItem(),
     { type: 'separator' },
     isMac ? { role: 'close' } : { role: 'quit' },

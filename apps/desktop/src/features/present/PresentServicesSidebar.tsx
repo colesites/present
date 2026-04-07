@@ -2,14 +2,14 @@
 
 import { ResizablePanel } from "../../renderer/shared/components";
 import { ServicesSidebar } from "../../features/services";
-import type { ComponentProps } from "react";
+import { memo, type ComponentProps } from "react";
 
 type Props = {
   servicesSidebarProps: ComponentProps<typeof ServicesSidebar>;
   order?: number;
 } & ComponentProps<typeof ResizablePanel>;
 
-export function PresentServicesSidebar({
+export const PresentServicesSidebar = memo(function PresentServicesSidebar({
   servicesSidebarProps,
 }: Props) {
   return (
@@ -17,4 +17,4 @@ export function PresentServicesSidebar({
       <ServicesSidebar {...servicesSidebarProps} />
     </div>
   );
-}
+});

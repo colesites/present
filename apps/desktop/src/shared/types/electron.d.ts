@@ -1,4 +1,8 @@
 
+import type { CustomFontFace, SystemFontFace } from "./font";
+import type { ParsedPptxPresentation } from "./pptx";
+
+declare global {
 interface Display {
   id: number;
   bounds: { x: number; y: number; width: number; height: number };
@@ -41,6 +45,26 @@ interface BrowserModeState {
   previewDataUrl: string | null;
 }
 
+interface PresentationImportFile {
+  name: string;
+  path: string;
+  bytes: Uint8Array;
+  lastModified: number;
+}
+
+interface FontAPI {
+  getSystemFonts: () => Promise<string[]>;
+  getSystemFontFaces?: () => Promise<SystemFontFace[]>;
+  pickFontFile: () => Promise<string[] | null>;
+  installCustomFonts?: (filePaths: string[]) => Promise<CustomFontFace[]>;
+  getCustomFonts?: () => Promise<CustomFontFace[]>;
+}
+
+interface PptxAPI {
+  openFile: () => Promise<string | null>;
+  parseFile: (filePath: string) => Promise<ParsedPptxPresentation>;
+}
+
 interface ElectronAPI {
   openOutputWindow: () => Promise<boolean>;
   closeOutputWindow: () => Promise<boolean>;
@@ -67,6 +91,9 @@ interface ElectronAPI {
   openExternalBrowser: (url: string) => Promise<boolean>;
   onAuthCallback: (callback: (payload: DesktopAuthPayload) => void) => void;
   onOpenSettingsFromMenu: (callback: () => void) => void;
+  onOpenImportFromMenu: (
+    callback: (mode?: "presentation" | "images") => void,
+  ) => () => void;
 
   setBrowserModeEnabled: (enabled: boolean) => Promise<BrowserModeState>;
   setBrowserModeBounds: (bounds: {
@@ -85,8 +112,20 @@ interface ElectronAPI {
   getBrowserModeState: () => Promise<BrowserModeState>;
   onBrowserModeStateChanged: (callback: (state: BrowserModeState) => void) => () => void;
   onBrowserFocusAddress: (callback: () => void) => () => void;
+
+  // Media & Filesystem
+  selectMediaFile: () => Promise<{ name: string; path: string } | null>;
+  selectPresentationFiles: () => Promise<PresentationImportFile[] | null>;
+  copyMediaFile: (source: string, target: string) => Promise<boolean>;
+  createDirectory: (parent: string, name: string) => Promise<string>;
+  renameDirectory: (oldPath: string, newPath: string) => Promise<boolean>;
 }
 
 interface Window {
   electronAPI: ElectronAPI;
+  fontAPI?: FontAPI;
+  pptxAPI?: PptxAPI;
 }
+}
+
+export {};

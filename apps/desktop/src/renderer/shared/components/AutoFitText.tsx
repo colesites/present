@@ -1,6 +1,6 @@
 "use client";
 
-import React, {
+import {
   memo,
   useLayoutEffect,
   useRef,
@@ -14,6 +14,7 @@ export interface AutoFitTextProps {
   className?: string;
   style?: CSSProperties;
   minScale?: number;
+  fitScale?: number;
   align?: "left" | "center" | "right";
   verticalAlign?: "top" | "center" | "bottom";
   maxFontSize?: number;
@@ -29,6 +30,7 @@ const AutoFitTextComponent = ({
   className,
   style,
   minScale = 0.4,
+  fitScale = 1,
   align = "center",
   verticalAlign = "center",
   maxFontSize,
@@ -57,7 +59,6 @@ const AutoFitTextComponent = ({
 
       // Save original styles to restore later
       const originalFontSize = textEl.style.fontSize;
-      const originalVisibility = textEl.style.visibility;
 
       // Hide during measurement to prevent flickering
       textEl.style.visibility = "hidden";
@@ -78,15 +79,12 @@ const AutoFitTextComponent = ({
         }
       }
 
-      // Restore and apply best fit
-      textEl.style.visibility = originalVisibility;
+      // Restore to visible and apply original font size
+      textEl.style.visibility = "";
       textEl.style.fontSize = originalFontSize;
 
-      if (maxFontSize && best > maxFontSize) {
-        setFittedFontSizePx(maxFontSize);
-      } else {
-        setFittedFontSizePx(best);
-      }
+      const clampedBest = maxFontSize && best > maxFontSize ? maxFontSize : best;
+      setFittedFontSizePx(Math.max(1, clampedBest * fitScale));
     };
 
     if (bypassFit) {
@@ -108,7 +106,7 @@ const AutoFitTextComponent = ({
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [text, minScale, style, maxFontSize, bypassFit]);
+  }, [text, minScale, fitScale, style, maxFontSize, bypassFit]);
 
   return (
     <div

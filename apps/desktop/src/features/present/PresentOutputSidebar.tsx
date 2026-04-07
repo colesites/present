@@ -2,14 +2,14 @@
 
 import { ResizablePanel } from "../../renderer/shared/components";
 import { OutputPreview } from "../../features/slides";
-import type { ComponentProps } from "react";
+import { memo, type ComponentProps } from "react";
 
 type Props = {
   outputPreviewProps: ComponentProps<typeof OutputPreview>;
   order?: number;
 } & ComponentProps<typeof ResizablePanel>;
 
-export function PresentOutputSidebar({
+export const PresentOutputSidebar = memo(function PresentOutputSidebar({
   outputPreviewProps,
 }: Props) {
   return (
@@ -17,4 +17,4 @@ export function PresentOutputSidebar({
       <OutputPreview {...outputPreviewProps} />
     </div>
   );
-}
+});
