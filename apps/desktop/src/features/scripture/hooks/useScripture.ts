@@ -418,8 +418,15 @@ export function useScripture() {
       limit?: number;
     }): Promise<BibleVerse[]> => {
       const { query, versionCode, limit = 50 } = input;
-      const normalized = query.trim().toLowerCase();
-      if (normalized.length < 2) {
+      const normalizedQuery = normalizeSearchText(query);
+      if (normalizedQuery.length < 2) {
+        return [];
+      }
+      const rawTokens = normalizedQuery
+        .split(" ")
+        .filter((token) => token.length >= 2);
+      const queryTokens = tokenizeSearchText(query);
+      if (rawTokens.length === 0 && queryTokens.length === 0) {
         return [];
       }
 
@@ -432,18 +439,55 @@ export function useScripture() {
       const matches: Array<{ verse: BibleVerse; score: number }> = [];
 
       for (const candidate of pool) {
-        const index = candidate.lowerText.indexOf(normalized);
-        if (index === -1) {
+        let score = 0;
+        const exactIndex = candidate.normalizedText.indexOf(normalizedQuery);
+        if (exactIndex !== -1) {
+          score += 500 - Math.min(exactIndex, 240);
+        }
+
+        let matchedTokens = 0;
+        for (const token of queryTokens) {
+          if (!candidate.normalizedText.includes(token)) {
+            continue;
+          }
+          matchedTokens += 1;
+          score += 30 + Math.min(token.length, 8);
+        }
+
+        if (queryTokens.length > 0) {
+          const coverage = matchedTokens / queryTokens.length;
+          if (coverage < 0.34 && exactIndex === -1) {
+            continue;
+          }
+          score += Math.round(coverage * 140);
+        } else if (exactIndex === -1) {
+          let looseMatches = 0;
+          for (const token of rawTokens) {
+            if (candidate.normalizedText.includes(token)) {
+              looseMatches += 1;
+            }
+          }
+          if (looseMatches === 0) {
+            continue;
+          }
+          score += Math.round((looseMatches / rawTokens.length) * 100);
+        }
+
+        if (candidate.normalizedText.startsWith(normalizedQuery)) {
+          score += 80;
+        }
+
+        if (score <= 0) {
           continue;
         }
 
         matches.push({
           verse: candidate.verse,
-          score: index,
+          score,
         });
       }
 
-      matches.sort((a, b) => a.score - b.score || a.verse.pk.localeCompare(b.verse.pk));
+      matches.sort((a, b) => b.score - a.score || a.verse.pk.localeCompare(b.verse.pk));
       return matches.slice(0, limit).map((item) => item.verse);
     },
     [getSearchPool, resolveVersion],

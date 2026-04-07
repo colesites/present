@@ -70,6 +70,7 @@ interface OutputPreviewProps {
   fontSize?: number;
   scriptureFontFamily?: string;
   scriptureFontSize?: number;
+  scriptureFooterFontSize?: number;
   scriptureFontWeight?: string;
   scriptureTextAlign?: ScriptureTextAlign;
   scriptureVerticalAlign?: ScriptureVerticalAlign;
@@ -294,6 +295,7 @@ export const OutputPreview = memo(function OutputPreview({
   fontSize,
   scriptureFontFamily,
   scriptureFontSize,
+  scriptureFooterFontSize,
   scriptureFontWeight = "400",
   scriptureTextAlign = "center",
   scriptureVerticalAlign = "middle",
@@ -564,6 +566,17 @@ export const OutputPreview = memo(function OutputPreview({
       ),
     [previewTextScale, scriptureFontSize]
   );
+  const scripturePreviewFooterFontSize = useMemo(
+    () =>
+      Math.max(
+        8,
+        Math.round(
+          (scriptureFooterFontSize ?? Math.max(16, Math.round((scriptureFontSize ?? 96) * 0.28)))
+          * previewTextScale
+        ),
+      ),
+    [previewTextScale, scriptureFooterFontSize, scriptureFontSize]
+  );
 
   const createTimer = () => {
     const timerConfig: TimerConfig = {
@@ -781,12 +794,16 @@ export const OutputPreview = memo(function OutputPreview({
                     scriptureFooterAlign,
                     scriptureFooterPosition,
                     Math.round(scripturePreviewFontSize),
+                    Math.round(scripturePreviewFooterFontSize),
                   ].join("|")}
                   text={text}
                   footer={footer}
                   fontFamily={scriptureFontFamily || fontFamily || "Inter"}
                   fontSize={scripturePreviewFontSize}
                   fontWeight={scriptureFontWeight}
+                  footerFontSize={scripturePreviewFooterFontSize}
+                  footerFontFamily={scriptureFontFamily || fontFamily || "Inter"}
+                  footerFontWeight={scriptureFontWeight}
                   textAlign={scriptureTextAlign}
                   verticalAlign={scriptureVerticalAlign}
                   footerAlign={scriptureFooterAlign}
@@ -797,7 +814,7 @@ export const OutputPreview = memo(function OutputPreview({
                   containerClassName="absolute inset-0 z-10 flex flex-col p-4"
                   bodyClassName="min-h-0 w-full flex-1"
                   textClassName="pointer-events-none select-none leading-relaxed text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
-                  footerClassName="mt-2 text-[8px] font-semibold uppercase tracking-wide text-white/90 drop-shadow-md sm:text-[10px]"
+                  footerClassName="mt-2 uppercase tracking-wide text-white/90 drop-shadow-md"
                 />
               ) : (
                 <LibrarySlideLayer

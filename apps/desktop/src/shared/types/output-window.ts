@@ -19,6 +19,7 @@ export type LibraryStyle = {
 
 export type ScriptureStyle = {
   fontSize: number;
+  footerFontSize: number;
   fontFamily: string;
   fontWeight: string;
   textAlign: ScriptureTextAlign;

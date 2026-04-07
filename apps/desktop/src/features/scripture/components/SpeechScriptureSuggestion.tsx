@@ -77,7 +77,7 @@ export function SpeechScriptureSuggestion({
             className="flex-1 px-3 py-2 rounded-lg border border-border text-xs font-medium hover:bg-accent transition-colors flex items-center justify-center gap-1.5"
           >
             <X className="h-3.5 w-3.5" />
-            Dismiss
+            Reject
           </button>
           <button
             onClick={handleAccept}

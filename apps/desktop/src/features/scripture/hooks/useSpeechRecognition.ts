@@ -308,7 +308,7 @@ export function useSpeechRecognition(
       }
 
       if (emittedFinalTranscript) {
-        onFinalResultRef.current?.(nextFinalTranscript);
+        onFinalResultRef.current?.(emittedFinalTranscript);
       }
     };
 

@@ -16,6 +16,7 @@ const DEFAULT_SCRIPTURE_TEXT_ALIGN: ScriptureTextAlign = "left";
 const DEFAULT_SCRIPTURE_VERTICAL_ALIGN: ScriptureVerticalAlign = "middle";
 const DEFAULT_SCRIPTURE_FOOTER_ALIGN: ScriptureTextAlign = "center";
 const DEFAULT_SCRIPTURE_FOOTER_POSITION: ScriptureFooterPosition = "bottom";
+const DEFAULT_SCRIPTURE_FOOTER_FONT_SIZE = 28;
 const DEFAULT_LIBRARY_FONT_SIZE = 80;
 const DEFAULT_LIBRARY_FONT_WEIGHT = "400";
 const DEFAULT_TIMER_X = 82;
@@ -45,6 +46,16 @@ function normalizeScriptureFontSize(value: number) {
   return Math.min(Math.max(Math.round(legacyAdjusted), 24), 400);
 }
 
+function normalizeScriptureFooterFontSize(value: number) {
+  return Math.min(Math.max(Math.round(value), 8), 220);
+}
+
+function deriveScriptureFooterFontSize(scriptureFontSize: number) {
+  return normalizeScriptureFooterFontSize(
+    Math.max(16, Math.round(scriptureFontSize * 0.28)),
+  );
+}
+
 function normalizeLibraryFontSize(value: number) {
   return Math.min(Math.max(Math.round(value), 24), 400);
 }
@@ -66,6 +77,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     useState<string | null>(null);
   const [settingsScriptureFontSize, setSettingsScriptureFontSize] =
     useState(DEFAULT_SCRIPTURE_FONT_SIZE);
+  const [settingsScriptureFooterFontSize, setSettingsScriptureFooterFontSize] =
+    useState(DEFAULT_SCRIPTURE_FOOTER_FONT_SIZE);
   const [settingsScriptureFontFamily, setSettingsScriptureFontFamily] =
     useState("Inter");
   const [settingsScriptureFontWeight, setSettingsScriptureFontWeight] =
@@ -124,6 +137,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   );
 
   const applyParsedSettings = useCallback((parsed: Partial<Settings>) => {
+    let parsedScriptureFontSize: number | null = null;
+
     if (typeof parsed.scriptureSpeechLang === "string") {
       setSettingsLang(parsed.scriptureSpeechLang);
     }
@@ -134,8 +149,17 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
       setSettingsScriptureBackgroundId(null);
     }
     if (isFiniteNumber(parsed.scriptureFontSize)) {
-      setSettingsScriptureFontSize(
-        normalizeScriptureFontSize(parsed.scriptureFontSize)
+      parsedScriptureFontSize = normalizeScriptureFontSize(parsed.scriptureFontSize);
+      setSettingsScriptureFontSize(parsedScriptureFontSize);
+    }
+    if (isFiniteNumber(parsed.scriptureFooterFontSize)) {
+      setSettingsScriptureFooterFontSize(
+        normalizeScriptureFooterFontSize(parsed.scriptureFooterFontSize)
+      );
+    } else if (parsedScriptureFontSize !== null) {
+      // Backward compatibility for old settings blobs without explicit footer size.
+      setSettingsScriptureFooterFontSize(
+        deriveScriptureFooterFontSize(parsedScriptureFontSize)
       );
     }
     if (typeof parsed.scriptureFontFamily === "string") {
@@ -273,6 +297,9 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         scriptureSpeechLang: settingsLang,
         scriptureBackgroundMediaId: settingsScriptureBackgroundId ?? null,
         scriptureFontSize: settingsScriptureFontSize,
+        scriptureFooterFontSize: normalizeScriptureFooterFontSize(
+          settingsScriptureFooterFontSize
+        ),
         scriptureFontFamily: settingsScriptureFontFamily,
         scriptureFontWeight: normalizeFontWeight(settingsScriptureFontWeight),
         scriptureTextAlign: settingsScriptureTextAlign,
@@ -303,6 +330,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsLang,
     settingsScriptureBackgroundId,
     settingsScriptureFontSize,
+    settingsScriptureFooterFontSize,
     settingsScriptureFontFamily,
     settingsScriptureFontWeight,
     settingsScriptureTextAlign,
@@ -336,6 +364,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsScriptureBackgroundId,
     settingsScriptureFontSize,
     setSettingsScriptureFontSize,
+    settingsScriptureFooterFontSize,
+    setSettingsScriptureFooterFontSize,
     settingsScriptureFontFamily,
     setSettingsScriptureFontFamily,
     settingsScriptureFontWeight,

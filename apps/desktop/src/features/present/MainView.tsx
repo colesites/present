@@ -147,6 +147,7 @@ export interface MainViewStyleState {
   fontUnderline: boolean;
   scriptureFontFamily: string;
   scriptureFontSize: number;
+  scriptureFooterFontSize: number;
   scriptureFontWeight: string;
   scriptureTextAlign: ScriptureTextAlign;
   scriptureVerticalAlign: ScriptureVerticalAlign;
@@ -325,6 +326,7 @@ export function MainView({
     fontUnderline,
     scriptureFontFamily,
     scriptureFontSize,
+    scriptureFooterFontSize,
     scriptureFontWeight,
     scriptureTextAlign,
     scriptureVerticalAlign,
@@ -486,6 +488,7 @@ export function MainView({
       fontUnderline,
       scriptureFontFamily,
       scriptureFontSize,
+      scriptureFooterFontSize,
       scriptureFontWeight,
       scriptureTextAlign,
       scriptureVerticalAlign,
@@ -543,6 +546,7 @@ export function MainView({
       scriptureFooterPosition,
       scriptureFontFamily,
       scriptureFontSize,
+      scriptureFooterFontSize,
       scriptureFontWeight,
       scriptureTextAlign,
       scriptureVerticalAlign,

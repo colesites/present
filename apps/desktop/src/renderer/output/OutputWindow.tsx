@@ -45,6 +45,7 @@ export function OutputWindow() {
     },
     scriptureStyle: {
       fontSize: 96,
+      footerFontSize: 28,
       fontFamily: "Inter",
       fontWeight: "400",
       textAlign: "left",
@@ -254,12 +255,15 @@ export function OutputWindow() {
             verticalAlign={state.scriptureStyle.verticalAlign}
             footerAlign={state.scriptureStyle.footerAlign}
             footerPosition={state.scriptureStyle.footerPosition}
+            footerFontSize={state.scriptureStyle.footerFontSize}
+            footerFontFamily={state.scriptureStyle.fontFamily}
+            footerFontWeight={state.scriptureStyle.fontWeight}
             maxFontSize={state.scriptureStyle.fontSize}
             minScale={0.3}
             containerClassName="absolute inset-0 z-10 flex flex-col p-[4vw]"
             bodyClassName="flex h-full min-h-0 w-full flex-1"
             textClassName="text-white leading-relaxed drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)] pointer-events-none select-none"
-            footerClassName="mt-4 text-[2vw] font-semibold tracking-wide text-white/90 drop-shadow-md uppercase"
+            footerClassName="mt-4 tracking-wide text-white/90 drop-shadow-md uppercase"
           />
         ) : (
           <LibrarySlideLayer

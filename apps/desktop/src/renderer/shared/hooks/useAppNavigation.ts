@@ -1,28 +1,47 @@
 import { useEffect } from "react";
-import type { LibraryItem } from "../../../shared/types";
+import type { BottomTab } from "../../../shared/types";
 import type { SlideData } from "../../../features/slides";
 
 interface UseAppNavigationProps {
   viewMode: string;
-  selectedLibraryItem: LibraryItem | null;
+  bottomTab: BottomTab;
   selectedLibraryId: string | null;
   selected: { libraryId: string | null; index: number } | null;
   slidesForGrid: SlideData[];
   handleSelectSlide: (slideId: string, text: string, footer?: string) => Promise<void>;
-  scriptureSlidesCount: number;
 }
 
 export function useAppNavigation({
   viewMode,
-  selectedLibraryItem,
+  bottomTab,
   selectedLibraryId,
   selected,
   slidesForGrid,
   handleSelectSlide,
-  scriptureSlidesCount,
 }: UseAppNavigationProps) {
   useEffect(() => {
+    const isEditableTarget = (eventTarget: EventTarget | null) => {
+      if (!(eventTarget instanceof HTMLElement)) {
+        return false;
+      }
+
+      const tagName = eventTarget.tagName.toLowerCase();
+      if (
+        tagName === "input" ||
+        tagName === "textarea" ||
+        tagName === "select"
+      ) {
+        return true;
+      }
+
+      return eventTarget.isContentEditable || Boolean(eventTarget.closest("[contenteditable='true']"));
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) {
+        return;
+      }
+
       // Cmd+S is handled by LyricsEditor component, but we prevent default here if needed
       if (
         (e.metaKey || e.ctrlKey) &&
@@ -37,7 +56,7 @@ export function useAppNavigation({
       // Arrow navigation in show mode
       if (
         viewMode === "show" &&
-        (selectedLibraryItem || scriptureSlidesCount > 0) &&
+        bottomTab !== "shows" &&
         slidesForGrid.length > 0
       ) {
         const currentIndex = selected?.index ?? 0;
@@ -80,11 +99,10 @@ export function useAppNavigation({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     viewMode,
-    selectedLibraryItem,
+    bottomTab,
     selectedLibraryId,
     selected,
     slidesForGrid,
     handleSelectSlide,
-    scriptureSlidesCount,
   ]);
 }

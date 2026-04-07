@@ -156,6 +156,7 @@ export function useOutputBroadcast({
     isFrozen,
     scriptureStyle,
     scriptureStyle.fontSize,
+    scriptureStyle.footerFontSize,
     scriptureStyle.fontFamily,
     scriptureStyle.fontWeight,
     scriptureStyle.textAlign,

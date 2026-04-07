@@ -92,8 +92,10 @@ export const ScripturePanel = memo(
     const identifyTimeoutRef = useRef<number | null>(null);
     const identifyRequestRef = useRef(0);
     const textSearchRequestRef = useRef(0);
+    const speechSearchRequestRef = useRef(0);
     const [downloadingHostedId, setDownloadingHostedId] = useState<string | null>(null);
     const [removingVersionId, setRemovingVersionId] = useState<string | null>(null);
+    const [speechSearchResults, setSpeechSearchResults] = useState<BibleVerse[]>([]);
 
     useImperativeHandle(ref, () => ({
       focusSearch: () => {
@@ -310,11 +312,13 @@ export const ScripturePanel = memo(
         if (!text) {
           setSuggestion(null);
           setIsIdentifying(false);
+          setSpeechSearchResults([]);
           return;
         }
 
         const quickParsed = parseReference(text, availableBooks);
         if (!quickParsed.book || !quickParsed.chapter) {
+          setSuggestion(null);
           return;
         }
 
@@ -335,6 +339,7 @@ export const ScripturePanel = memo(
         effectiveSelectedVersionCode,
         formatReference,
         setLiveTranscript,
+        setSpeechSearchResults,
         setSuggestion,
       ],
     );
@@ -349,19 +354,28 @@ export const ScripturePanel = memo(
       setIsTextSearching(true);
     }, [setTextSearchQuery, setTextSearchResults]);
 
-    const onSpeechResult = useCallback((result: { transcript: string; isFinal: boolean }) => {
-      if (!result.transcript) return;
-      handleAiQueryChange(result.transcript);
-    }, [handleAiQueryChange]);
+    const onSpeechResult = useCallback(
+      (result: { transcript: string; isFinal: boolean }) => {
+        if (!result.transcript) return;
+        handleAiQueryChange(result.transcript);
 
-    const onSpeechFinal = useCallback((text: string) => {
-      handleAiQueryChange(text);
-    }, [handleAiQueryChange]);
+        if (!result.isFinal) {
+          return;
+        }
+
+        const quickParsed = parseReference(result.transcript, availableBooks);
+        if (quickParsed.book && quickParsed.chapter) {
+          return;
+        }
+
+        void identifyScripture(result.transcript);
+      },
+      [availableBooks, handleAiQueryChange, identifyScripture],
+    );
 
     const { isListening, isStarting, isSupported, startListening, stopListening, error: speechError } =
       useSpeechRecognition({
         onResult: onSpeechResult,
-        onFinalResult: onSpeechFinal,
         lang: speechLang,
         sessionToken,
       });
@@ -383,10 +397,13 @@ export const ScripturePanel = memo(
 
       identifyRequestRef.current += 1;
       textSearchRequestRef.current += 1;
+      speechSearchRequestRef.current += 1;
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsIdentifying(false);
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsTextSearching(false);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSpeechSearchResults([]);
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setParsedRef({
         book: null,
@@ -559,6 +576,7 @@ export const ScripturePanel = memo(
 
       const query = textSearchQuery.trim();
       if (!query) {
+        setTextSearchResults([]);
         return;
       }
 
@@ -588,6 +606,44 @@ export const ScripturePanel = memo(
       searchVersesByText,
       setTextSearchResults,
       textSearchQuery,
+    ]);
+
+    useEffect(() => {
+      if (!isActive) {
+        return;
+      }
+
+      const query = liveTranscript.trim();
+      if (!query) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setSpeechSearchResults([]);
+        return;
+      }
+
+      const requestId = speechSearchRequestRef.current + 1;
+      speechSearchRequestRef.current = requestId;
+
+      const timeoutId = window.setTimeout(async () => {
+        const results = await searchVersesByText({
+          query,
+          versionCode: effectiveSelectedVersionCode,
+          limit: 60,
+        });
+
+        if (speechSearchRequestRef.current !== requestId) {
+          return;
+        }
+        setSpeechSearchResults(results);
+      }, 90);
+
+      return () => {
+        window.clearTimeout(timeoutId);
+      };
+    }, [
+      isActive,
+      effectiveSelectedVersionCode,
+      liveTranscript,
+      searchVersesByText,
     ]);
 
     const handleSendTextVerse = useCallback(
@@ -957,7 +1013,7 @@ export const ScripturePanel = memo(
               <div className="rounded-lg border border-border bg-card p-3">
                 <div className="mb-2">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
-                    Search Results
+                    Verse Search Results
                   </h3>
                 </div>
 
@@ -966,6 +1022,62 @@ export const ScripturePanel = memo(
                 ) : (
                   <div className="space-y-1">
                     {textSearchResults.map((verse) => {
+                      const versionCode = resolveVersionCode(verse.version);
+                      const verseRef = `${verse.bookName} ${verse.chapter}:${verse.verse}${versionCode ? ` ${versionCode}` : ""}`;
+                      return (
+                        <div
+                          key={verse.pk}
+                          className="group rounded-md border border-border/60 bg-background/40 px-2 py-1.5 transition hover:border-primary/40 hover:bg-accent/20"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleSendTextVerse(verse)}
+                              className="flex-1 text-left"
+                            >
+                              <p className="text-[10px] font-semibold uppercase text-muted-foreground">{verseRef}</p>
+                              <p className="text-xs text-foreground">{verse.text}</p>
+                            </button>
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                              <button
+                                type="button"
+                                onClick={() => handleSendTextVerse(verse)}
+                                className="h-6 w-6 rounded border border-input text-muted-foreground"
+                              >
+                                <Monitor className="mx-auto h-3 w-3" />
+                              </button>
+                              {selectedServiceId && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddTextVerseToService(verse)}
+                                  className="h-6 w-6 rounded border border-input text-muted-foreground"
+                                >
+                                  <Plus className="mx-auto h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {liveTranscript.trim().length > 0 && (
+              <div className="rounded-lg border border-border bg-card p-3">
+                <div className="mb-2">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                    Speech Search Results
+                  </h3>
+                </div>
+
+                {speechSearchResults.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No matches found.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {speechSearchResults.map((verse) => {
                       const versionCode = resolveVersionCode(verse.version);
                       const verseRef = `${verse.bookName} ${verse.chapter}:${verse.verse}${versionCode ? ` ${versionCode}` : ""}`;
                       return (

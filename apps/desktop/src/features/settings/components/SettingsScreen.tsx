@@ -34,6 +34,8 @@ interface SettingsScreenProps {
   setSettingsScriptureFontWeight: (weight: string) => void;
   settingsScriptureFontSize: number;
   setSettingsScriptureFontSize: (size: number) => void;
+  settingsScriptureFooterFontSize: number;
+  setSettingsScriptureFooterFontSize: (size: number) => void;
   settingsScriptureTextAlign: ScriptureTextAlign;
   setSettingsScriptureTextAlign: (align: ScriptureTextAlign) => void;
   settingsScriptureVerticalAlign: ScriptureVerticalAlign;
@@ -85,6 +87,8 @@ export function SettingsScreen({
   setSettingsScriptureFontWeight,
   settingsScriptureFontSize,
   setSettingsScriptureFontSize,
+  settingsScriptureFooterFontSize,
+  setSettingsScriptureFooterFontSize,
   settingsLibraryFontSize,
   setSettingsLibraryFontSize,
   settingsLibraryFontFamily,
@@ -157,6 +161,10 @@ export function SettingsScreen({
     () => Math.min(Math.max(Math.round(settingsScriptureFontSize), 12), 400),
     [settingsScriptureFontSize],
   );
+  const normalizedScriptureFooterFontSize = useMemo(
+    () => Math.min(Math.max(Math.round(settingsScriptureFooterFontSize), 8), 220),
+    [settingsScriptureFooterFontSize],
+  );
   const handleScriptureFontSizeInput = (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -174,6 +182,15 @@ export function SettingsScreen({
       return;
     }
     setSettingsLibraryFontSize(value);
+  };
+  const handleScriptureFooterFontSizeInput = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = Number(event.target.value);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    setSettingsScriptureFooterFontSize(value);
   };
 
   useEffect(() => {
@@ -568,6 +585,20 @@ export function SettingsScreen({
                         className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-center text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
                       />
                     </div>
+                  </div>
+                  <div className="max-w-[6rem] space-y-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      Footer size
+                    </span>
+                    <input
+                      type="number"
+                      value={normalizedScriptureFooterFontSize}
+                      onChange={handleScriptureFooterFontSizeInput}
+                      min={8}
+                      max={220}
+                      step={1}
+                      className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-center text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                    />
                   </div>
                 </div>
               </section>

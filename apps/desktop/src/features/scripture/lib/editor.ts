@@ -23,6 +23,7 @@ type ScriptureEditorDefaults = {
   canvasSize?: CanvasSizePreset;
   fontFamily: string;
   fontSize: number;
+  footerFontSize: number;
   fontWeight: string;
   textAlign: ScriptureTextAlign;
   verticalAlign: ScriptureVerticalAlign;
@@ -110,7 +111,7 @@ function createScriptureTextElements(
     content: slide.footer,
     style: {
       fontFamily: defaults.fontFamily,
-      fontSize: Math.max(28, Math.round(defaults.fontSize * 0.28)),
+      fontSize: Math.max(8, Math.round(defaults.footerFontSize)),
       fontWeight: defaults.fontWeight,
       textAlign: defaults.footerAlign,
       verticalAlign: "middle",

@@ -26,6 +26,12 @@ export function useShowVideoSync(params: {
 
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const currentVideoItem =
+    activeMediaItem?.type === "video"
+      ? activeMediaItem
+      : showViewMedia?.type === "video"
+        ? showViewMedia
+        : null;
 
   const [prevMediaId, setPrevMediaId] = useState(activeMediaItem?.id);
   if (activeMediaItem?.id !== prevMediaId) {
@@ -48,7 +54,7 @@ export function useShowVideoSync(params: {
 
   // Sync Show view video element with isVideoPlaying
   useEffect(() => {
-    if (showVideoRef.current && showViewMedia?.type === "video") {
+    if (showVideoRef.current && currentVideoItem?.type === "video") {
       isProgrammaticPlayRef.current = true;
 
       if (effectiveIsVideoPlaying) {
@@ -64,7 +70,7 @@ export function useShowVideoSync(params: {
         isProgrammaticPlayRef.current = false;
       }, 100);
     }
-  }, [effectiveIsVideoPlaying, showViewMedia?.type]);
+  }, [currentVideoItem?.type, effectiveIsVideoPlaying]);
 
   const handleVideoPlay = useCallback(() => {
     if (!isProgrammaticPlayRef.current) setIsVideoPlaying(true);
@@ -79,11 +85,11 @@ export function useShowVideoSync(params: {
   }, []);
 
   const toggleVideoPlayback = useCallback(() => {
-    if (showViewMedia?.type !== "video") {
+    if (currentVideoItem?.type !== "video") {
       return;
     }
     setIsVideoPlaying((previous) => !previous);
-  }, [showViewMedia?.type]);
+  }, [currentVideoItem?.type]);
 
   const handleVideoSeeked = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {

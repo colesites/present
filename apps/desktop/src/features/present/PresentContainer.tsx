@@ -148,6 +148,7 @@ export function PresentContainer({
 
   const {
     settingsScriptureFontSize,
+    settingsScriptureFooterFontSize,
     settingsScriptureFontFamily,
     settingsScriptureFontWeight,
     settingsScriptureTextAlign,
@@ -362,6 +363,7 @@ export function PresentContainer({
         canvasSize: "1920x1080",
         fontFamily: settingsScriptureFontFamily,
         fontSize: settingsScriptureFontSize,
+        footerFontSize: settingsScriptureFooterFontSize,
         fontWeight: settingsScriptureFontWeight,
         textAlign: settingsScriptureTextAlign,
         verticalAlign: settingsScriptureVerticalAlign,
@@ -372,6 +374,7 @@ export function PresentContainer({
       scriptureSlides,
       settingsScriptureFontFamily,
       settingsScriptureFontSize,
+      settingsScriptureFooterFontSize,
       settingsScriptureFontWeight,
       settingsScriptureTextAlign,
       settingsScriptureVerticalAlign,
@@ -381,15 +384,11 @@ export function PresentContainer({
   );
 
   const isScriptureActive = useMemo(() => {
-    if (activeSlideId?.startsWith("scripture:")) return true;
-    if (
-      bottomTab === "scripture" &&
-      !selectedLibraryId &&
-      !selectedPresentationLibraryId
-    ) {
-      return true;
+    if (activeSlideId?.startsWith("scripture:")) {
+      return scriptureSlides.length > 0;
     }
     if (
+      bottomTab === "scripture" &&
       scriptureSlides.length > 0 &&
       !selectedLibraryId &&
       !selectedPresentationLibraryId
@@ -752,6 +751,7 @@ export function PresentContainer({
     isFrozen: isOutputFrozen,
     scriptureStyle: {
       fontSize: settingsScriptureFontSize,
+      footerFontSize: settingsScriptureFooterFontSize,
       fontFamily: settingsScriptureFontFamily,
       fontWeight: settingsScriptureFontWeight,
       textAlign: settingsScriptureTextAlign,
@@ -787,12 +787,11 @@ export function PresentContainer({
 
   useAppNavigation({
     viewMode,
-    selectedLibraryItem: selectedDeckItem,
+    bottomTab,
     selectedLibraryId: selectedDeckLibraryId,
     selected,
     slidesForGrid,
     handleSelectSlide: handleLiveSlideSelect,
-    scriptureSlidesCount: scriptureSlides.length,
   });
 
   const handleImportFiles = useCallback(
@@ -1024,6 +1023,7 @@ export function PresentContainer({
         fontUnderline,
         scriptureFontFamily: settingsScriptureFontFamily,
         scriptureFontSize: settingsScriptureFontSize,
+        scriptureFooterFontSize: settingsScriptureFooterFontSize,
         scriptureFontWeight: settingsScriptureFontWeight,
         scriptureTextAlign: settingsScriptureTextAlign,
         scriptureVerticalAlign: settingsScriptureVerticalAlign,

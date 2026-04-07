@@ -27,6 +27,9 @@ interface ScriptureTextLayerProps {
   fontFamily: string;
   fontSize: number;
   fontWeight?: string;
+  footerFontSize?: number;
+  footerFontFamily?: string;
+  footerFontWeight?: string;
   textAlign: ScriptureTextAlign;
   verticalAlign: ScriptureVerticalAlign;
   footerAlign: ScriptureTextAlign;
@@ -46,6 +49,9 @@ export function ScriptureTextLayer({
   fontFamily,
   fontSize,
   fontWeight = "400",
+  footerFontSize,
+  footerFontFamily,
+  footerFontWeight,
   textAlign,
   verticalAlign,
   footerAlign,
@@ -58,6 +64,13 @@ export function ScriptureTextLayer({
   textClassName,
   footerClassName,
 }: ScriptureTextLayerProps) {
+  const resolvedFooterFontSize = Math.max(
+    8,
+    Math.round(footerFontSize ?? fontSize * 0.28),
+  );
+  const resolvedFooterFontFamily = footerFontFamily ?? fontFamily;
+  const resolvedFooterFontWeight = footerFontWeight ?? fontWeight;
+
   const footerNode =
     footer && footer.trim().length > 0 ? (
       <div
@@ -68,6 +81,11 @@ export function ScriptureTextLayer({
           footerAlign === "right" && "text-right",
           footerClassName,
         )}
+        style={{
+          fontFamily: resolvedFooterFontFamily,
+          fontWeight: resolvedFooterFontWeight,
+          fontSize: `${resolvedFooterFontSize}px`,
+        }}
       >
         {footer}
       </div>

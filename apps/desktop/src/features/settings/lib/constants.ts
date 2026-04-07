@@ -8,6 +8,7 @@ export type Settings = {
   scriptureSpeechLang: string;
   scriptureBackgroundMediaId?: string | null;
   scriptureFontSize: number;
+  scriptureFooterFontSize: number;
   scriptureFontFamily: string;
   scriptureFontWeight: string;
   scriptureTextAlign: ScriptureTextAlign;
