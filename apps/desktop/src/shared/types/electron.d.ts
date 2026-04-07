@@ -25,8 +25,41 @@ interface MediaAccessResult {
 }
 
 interface DesktopAuthPayload {
-  token: string;
-  refreshToken: string | null;
+  accessToken?: string | null;
+  sessionToken: string;
+}
+
+interface DesktopStoredAuthUser {
+  email: string;
+  id: string;
+  name: string;
+}
+
+interface DesktopStoredAuthOrganization {
+  id: string;
+  logo?: string;
+  name: string;
+  type: "organization" | "personal";
+}
+
+interface DesktopStoredAuthSession {
+  orgId: string | null;
+  organizations: DesktopStoredAuthOrganization[];
+  savedAtMs: number;
+  sessionExpiresAtMs: number | null;
+  sessionToken: string;
+  token: string | null;
+  tokenExpiresAtMs: number | null;
+  user: DesktopStoredAuthUser | null;
+}
+
+interface DesktopRefreshSessionResponse {
+  accessToken?: string;
+  accessTokenExpiresAt?: number;
+  refreshToken?: string;
+  sessionExpiresAt?: number;
+  sessionToken?: string;
+  token?: string;
 }
 
 interface BrowserSuggestionsResponse {
@@ -76,7 +109,7 @@ interface ElectronAPI {
   readBundledBible: (filePath: string) => Promise<Uint8Array | null>;
   fetchHostedBibleCatalog: (catalogUrl: string) => Promise<unknown | null>;
   fetchBrowserSuggestions: (query: string) => Promise<BrowserSuggestionsResponse | null>;
-  requestAssemblyAiToken: (authToken: string) => Promise<unknown | null>;
+  requestAssemblyAiToken: (sessionToken: string) => Promise<unknown | null>;
   requestMicrophoneAccess: () => Promise<MediaAccessResult>;
 
   // Output window IPC
@@ -88,6 +121,12 @@ interface ElectronAPI {
   // Auth & System URLs
   beginAuthFlow: () => Promise<{ ok: boolean; error?: string }>;
   consumePendingAuthToken: () => Promise<DesktopAuthPayload | null>;
+  getStoredAuthSession: () => Promise<DesktopStoredAuthSession | null>;
+  setStoredAuthSession: (payload: DesktopStoredAuthSession) => Promise<boolean>;
+  clearStoredAuthSession: () => Promise<boolean>;
+  refreshDesktopSession: (
+    sessionToken: string,
+  ) => Promise<DesktopRefreshSessionResponse | null>;
   openExternalBrowser: (url: string) => Promise<boolean>;
   onAuthCallback: (callback: (payload: DesktopAuthPayload) => void) => void;
   onOpenSettingsFromMenu: (callback: () => void) => void;

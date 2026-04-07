@@ -21,15 +21,28 @@ import { BrowserModePanel } from "../../features/browser/BrowserModePanel";
 import { BrowserPreviewSidebar } from "../../features/browser/BrowserPreviewSidebar";
 import type { ContentSource } from "../../shared/types";
 import type { HeaderSearchScope } from "../../features/header/AppHeader";
-import { useDesktopSessionStore } from "../shared/store/desktopSession";
+import {
+  ensureFreshDesktopAccessToken,
+  useDesktopSessionStore,
+} from "../shared/store/desktopSession";
 import { api } from "@present/backend/convex/_generated/api";
-import { decodeJwtPayload } from "../shared/lib/utils";
 import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvider";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 
 export default function Home() {
-  const token = useDesktopSessionStore((state) => state.token);
+  const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
+  const sessionExpiresAtMs = useDesktopSessionStore(
+    (state) => state.sessionExpiresAtMs
+  );
   const authStatus = useDesktopSessionStore((state) => state.authStatus);
+  const hasHydratedSession = useDesktopSessionStore(
+    (state) => state.hasHydratedSession
+  );
+  const hydrateAuthSession = useDesktopSessionStore(
+    (state) => state.hydrateAuthSession
+  );
+  const user = useDesktopSessionStore((state) => state.user);
+  const organizations = useDesktopSessionStore((state) => state.organizations);
   const setAuthTokens = useDesktopSessionStore((state) => state.setAuthTokens);
   const setSessionFromConvex = useDesktopSessionStore(
     (state) => state.setSessionFromConvex
@@ -38,9 +51,28 @@ export default function Home() {
   const setError = useDesktopSessionStore((state) => state.setError);
   const clearSession = useDesktopSessionStore((state) => state.clearSession);
   const isConvexAuthReady = useDesktopConvexAuthReady();
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine
+  );
+
+  useEffect(() => {
+    void hydrateAuthSession();
+  }, [hydrateAuthSession]);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
   const currentUser = useQuery(
     api.users.getCurrentUser,
-    token && isConvexAuthReady ? {} : "skip"
+    sessionToken && isOnline && isConvexAuthReady ? {} : "skip"
   ) as
     | {
         user: { id: string; name: string; email: string };
@@ -56,7 +88,7 @@ export default function Home() {
     | undefined;
   const organizationsFallback = useQuery(
     api.users.listMyOrganizations,
-    token && isConvexAuthReady ? {} : "skip"
+    sessionToken && isOnline && isConvexAuthReady ? {} : "skip"
   ) as
     | Array<{
         id: string;
@@ -87,62 +119,17 @@ export default function Home() {
     let disposed = false;
 
     const applyAuthPayload = (payload: DesktopAuthPayload | null) => {
-      if (!payload?.token || disposed) {
+      if (!payload?.sessionToken || disposed) {
         return;
       }
-      const decodedPayload = decodeJwtPayload(payload.token);
-      const audClaim = decodedPayload?.aud;
-      const issClaim = decodedPayload?.iss;
-      const hasConvexAudience = Array.isArray(audClaim)
-        ? audClaim.includes("convex")
-        : audClaim === "convex";
-
-      console.info("[Desktop Auth] token received from deep link", {
-        hasRefreshToken: Boolean(payload.refreshToken),
-        tokenLength: payload.token.length,
-        hasConvexAudience,
-        issuer: typeof issClaim === "string" ? issClaim : null,
-      });
-      console.info("[Desktop Auth] decoded JWT payload", {
-        aud: audClaim,
-        iss: issClaim,
-        sub: decodedPayload?.sub,
-      });
-
-      if (!hasConvexAudience) {
-        console.error("[Desktop Auth] token audience mismatch", {
-          expectedAudience: "convex",
-          actualAudience: audClaim,
-        });
-        clearSession();
-        setAuthStatus("unauthenticated");
-        setError("Invalid sign-in token. Please sign in again.");
-        return;
-      }
-
-      if (!issClaim || typeof issClaim !== "string") {
-        console.error("[Desktop Auth] token issuer missing");
-        clearSession();
-        setAuthStatus("unauthenticated");
-        setError("Invalid sign-in token. Please sign in again.");
-        return;
-      }
-
-      if (!issClaim.includes("clerk")) {
-        console.error("[Desktop Auth] token issuer is not Clerk", {
-          issuer: issClaim,
-        });
-        clearSession();
-        setAuthStatus("unauthenticated");
-        setError("Invalid sign-in token. Please sign in again.");
-        return;
-      }
-
-      console.info("[Desktop Auth] token received from Clerk", {
-        issuer: issClaim,
+      console.info("[Desktop Auth] session token received from deep link", {
+        hasAccessToken: Boolean(payload.accessToken),
+        sessionTokenLength: payload.sessionToken.length,
       });
       setAuthTokens(payload);
       setAuthStatus("loading");
+      setError(null);
+      void ensureFreshDesktopAccessToken();
     };
 
     void window.electronAPI.consumePendingAuthToken().then(applyAuthPayload);
@@ -162,8 +149,32 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!token) {
+    if (!hasHydratedSession) {
+      setAuthStatus("loading");
+      return;
+    }
+
+    if (!sessionToken) {
       setAuthStatus("unauthenticated");
+      return;
+    }
+
+    if (sessionExpiresAtMs && sessionExpiresAtMs <= Date.now()) {
+      setAuthStatus("unauthenticated");
+      setError(
+        isOnline
+          ? "Session expired. Please sign in again."
+          : "Session expired. Reconnect to continue."
+      );
+      return;
+    }
+
+    if (!isOnline) {
+      if (user && organizations.length > 0) {
+        setAuthStatus("authenticated");
+        return;
+      }
+      setAuthStatus("loading");
       return;
     }
 
@@ -235,12 +246,17 @@ export default function Home() {
   }, [
     clearSession,
     currentUser,
+    hasHydratedSession,
+    isOnline,
     isConvexAuthReady,
+    organizations,
     organizationsFallback,
     setAuthStatus,
     setError,
     setSessionFromConvex,
-    token,
+    sessionExpiresAtMs,
+    sessionToken,
+    user,
   ]);
 
   if (authStatus === "loading") {

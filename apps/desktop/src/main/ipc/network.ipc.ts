@@ -27,14 +27,14 @@ async function fetchJsonFollowingRedirects(url: string, maxRedirects = 5): Promi
   throw new Error('Too many redirects');
 }
 
-async function fetchAssemblyAiToken(authToken: string, maxRedirects = 5): Promise<unknown> {
+async function fetchAssemblyAiToken(sessionToken: string, maxRedirects = 5): Promise<unknown> {
   let currentUrl = new URL('/api/assemblyai/token', getWebAppBaseUrl()).toString();
 
   for (let i = 0; i <= maxRedirects; i += 1) {
     const response = await net.fetch(currentUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${authToken}`,
+        Authorization: `Bearer ${sessionToken}`,
       },
     });
 
@@ -107,13 +107,13 @@ export const registerNetworkIPC = (): void => {
     }
   });
 
-  ipcMain.handle('request-assemblyai-token', async (_, authToken: string) => {
+  ipcMain.handle('request-assemblyai-token', async (_, sessionToken: string) => {
     try {
-      if (typeof authToken !== 'string' || authToken.trim().length === 0) {
-        throw new Error('Missing auth token');
+      if (typeof sessionToken !== 'string' || sessionToken.trim().length === 0) {
+        throw new Error('Missing session token');
       }
 
-      return await fetchAssemblyAiToken(authToken);
+      return await fetchAssemblyAiToken(sessionToken);
     } catch (error) {
       console.error('Failed to request AssemblyAI token', error);
       return null;

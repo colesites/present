@@ -1,7 +1,6 @@
 "use client";
 
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
 import { useWorkspaceStore } from "../../../../../../packages/shared/src/store/workspace";
 import { decodeJwtPayload } from "../lib/utils";
 
@@ -24,13 +23,17 @@ export type DesktopAuthStatus =
   | "unauthenticated";
 
 interface DesktopSessionState {
-  refreshToken: string | null;
+  sessionToken: string | null;
+  sessionExpiresAtMs: number | null;
   token: string | null;
+  tokenExpiresAtMs: number | null;
   user: DesktopUser | null;
   organizations: DesktopOrganization[];
   orgId: string | null;
   authStatus: DesktopAuthStatus;
   error: string | null;
+  hasHydratedSession: boolean;
+  hydrateAuthSession: () => Promise<void>;
   setAuthTokens: (payload: DesktopAuthPayload | null) => void;
   clearSession: () => void;
   setSessionFromConvex: (payload: {
@@ -43,7 +46,24 @@ interface DesktopSessionState {
   setOrgId: (orgId: string) => void;
 }
 
-const SESSION_STORAGE_KEY = "present-desktop-session";
+type DesktopRefreshResponse = {
+  accessToken?: string;
+  accessTokenExpiresAt?: number;
+  refreshToken?: string;
+  sessionExpiresAt?: number;
+  sessionToken?: string;
+  token?: string;
+};
+
+class DesktopRefreshError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 let desktopAccessTokenRefreshPromise: Promise<string | null> | null = null;
@@ -58,6 +78,46 @@ const resolveDesktopWebBaseUrl = (): string => {
     : "https://present-gha.vercel.app";
 };
 
+const decodeBase64UrlSegment = (value: string): string | null => {
+  try {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padding = (4 - (normalized.length % 4)) % 4;
+    const padded = normalized + "=".repeat(padding);
+    return atob(padded);
+  } catch {
+    return null;
+  }
+};
+
+const decodeDesktopSessionTokenPayload = (
+  sessionToken: string
+): Record<string, unknown> | null => {
+  const [payloadSegment] = sessionToken.split(".");
+  if (!payloadSegment) {
+    return null;
+  }
+
+  const decoded = decodeBase64UrlSegment(payloadSegment);
+  if (!decoded) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(decoded) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+};
+
+const getSessionExpiryTimestampMs = (sessionToken: string): number | null => {
+  const payload = decodeDesktopSessionTokenPayload(sessionToken);
+  const expClaim = payload?.exp;
+  if (typeof expClaim !== "number") {
+    return null;
+  }
+  return expClaim * 1000;
+};
+
 const getTokenExpiryTimestampMs = (token: string): number | null => {
   const payload = decodeJwtPayload(token);
   const expClaim = payload?.exp;
@@ -67,54 +127,127 @@ const getTokenExpiryTimestampMs = (token: string): number | null => {
   return expClaim * 1000;
 };
 
-const shouldRefreshToken = (token: string): boolean => {
-  const expiryMs = getTokenExpiryTimestampMs(token);
-  if (!expiryMs) {
+const isTimestampExpired = (timestampMs: number | null): boolean => {
+  if (!timestampMs) {
     return false;
   }
-  return expiryMs <= Date.now() + TOKEN_REFRESH_BUFFER_MS;
+  return timestampMs <= Date.now();
 };
 
-const isTokenExpired = (token: string): boolean => {
-  const expiryMs = getTokenExpiryTimestampMs(token);
-  if (!expiryMs) {
-    return false;
+const shouldRefreshAccessToken = (tokenExpiryTimestampMs: number | null): boolean => {
+  if (!tokenExpiryTimestampMs) {
+    return true;
   }
-  return expiryMs <= Date.now();
+  return tokenExpiryTimestampMs <= Date.now() + TOKEN_REFRESH_BUFFER_MS;
 };
 
-const persistTokenFailure = (message: string): null => {
-  const state = useDesktopSessionStore.getState();
-  state.clearSession();
-  state.setError(message);
-  return null;
+const isOnline = (): boolean => {
+  if (typeof navigator === "undefined") {
+    return true;
+  }
+  return navigator.onLine;
 };
 
-export const getStoredDesktopAuth = async (): Promise<DesktopAuthPayload | null> => {
-  if (typeof window === "undefined") {
+const normalizeStoredSession = (
+  payload: DesktopStoredAuthSession | null
+): DesktopStoredAuthSession | null => {
+  if (!payload) {
     return null;
   }
+
+  if (typeof payload.sessionToken !== "string" || payload.sessionToken.length === 0) {
+    return null;
+  }
+
+  return {
+    orgId: typeof payload.orgId === "string" ? payload.orgId : null,
+    organizations: Array.isArray(payload.organizations) ? payload.organizations : [],
+    savedAtMs:
+      typeof payload.savedAtMs === "number" && Number.isFinite(payload.savedAtMs)
+        ? payload.savedAtMs
+        : Date.now(),
+    sessionExpiresAtMs:
+      typeof payload.sessionExpiresAtMs === "number" &&
+      Number.isFinite(payload.sessionExpiresAtMs)
+        ? payload.sessionExpiresAtMs
+        : null,
+    sessionToken: payload.sessionToken,
+    token: typeof payload.token === "string" ? payload.token : null,
+    tokenExpiresAtMs:
+      typeof payload.tokenExpiresAtMs === "number" &&
+      Number.isFinite(payload.tokenExpiresAtMs)
+        ? payload.tokenExpiresAtMs
+        : null,
+    user: payload.user,
+  };
+};
+
+const buildStoredSessionPayload = (
+  state: Pick<
+    DesktopSessionState,
+    | "orgId"
+    | "organizations"
+    | "sessionExpiresAtMs"
+    | "sessionToken"
+    | "token"
+    | "tokenExpiresAtMs"
+    | "user"
+  >
+): DesktopStoredAuthSession | null => {
+  if (!state.sessionToken) {
+    return null;
+  }
+
+  return {
+    orgId: state.orgId,
+    organizations: state.organizations,
+    savedAtMs: Date.now(),
+    sessionExpiresAtMs: state.sessionExpiresAtMs,
+    sessionToken: state.sessionToken,
+    token: state.token,
+    tokenExpiresAtMs: state.tokenExpiresAtMs,
+    user: state.user,
+  };
+};
+
+const persistSessionSnapshot = async (
+  state: Pick<
+    DesktopSessionState,
+    | "orgId"
+    | "organizations"
+    | "sessionExpiresAtMs"
+    | "sessionToken"
+    | "token"
+    | "tokenExpiresAtMs"
+    | "user"
+  >
+): Promise<void> => {
+  if (typeof window === "undefined" || !window.electronAPI) {
+    return;
+  }
+
+  const payload = buildStoredSessionPayload(state);
   try {
-    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
-    if (!raw) {
-      return null;
+    if (!payload) {
+      await window.electronAPI.clearStoredAuthSession();
+      return;
     }
-    const parsed = JSON.parse(raw) as
-      | { state?: { refreshToken?: string | null; token?: string | null } }
-      | null;
-    const token = parsed?.state?.token;
-    const refreshToken = parsed?.state?.refreshToken;
-    if (typeof token !== "string" || token.length === 0) {
-      return null;
-    }
-    return {
-      refreshToken:
-        typeof refreshToken === "string" && refreshToken.length > 0
-          ? refreshToken
-          : null,
-      token,
-    };
-  } catch {
+    await window.electronAPI.setStoredAuthSession(payload);
+  } catch (error) {
+    console.error("[Desktop Auth] failed to persist auth session", error);
+  }
+};
+
+export const getStoredDesktopAuth = async (): Promise<DesktopStoredAuthSession | null> => {
+  if (typeof window === "undefined" || !window.electronAPI?.getStoredAuthSession) {
+    return null;
+  }
+
+  try {
+    const payload = await window.electronAPI.getStoredAuthSession();
+    return normalizeStoredSession(payload);
+  } catch (error) {
+    console.error("[Desktop Auth] failed to load stored auth session", error);
     return null;
   }
 };
@@ -124,83 +257,166 @@ export const getStoredDesktopToken = async (): Promise<string | null> => {
   return auth?.token ?? null;
 };
 
-const refreshDesktopAccessToken = async (
-  refreshToken: string
-): Promise<DesktopAuthPayload | null> => {
+const fetchDesktopRefreshPayload = async (
+  sessionToken: string
+): Promise<DesktopRefreshResponse | null> => {
+  if (window.electronAPI?.refreshDesktopSession) {
+    return (await window.electronAPI.refreshDesktopSession(sessionToken)) as DesktopRefreshResponse | null;
+  }
+
   const response = await fetch(
-    `${resolveDesktopWebBaseUrl()}/api/auth/desktop/refresh`,
+    `${resolveDesktopWebBaseUrl()}/api/auth/desktop/refresh-session`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        refreshToken,
+        sessionToken,
       }),
     }
   );
 
   if (!response.ok) {
-    throw new Error(`Desktop refresh failed with status ${response.status}`);
+    const message = await response.text().catch(() => "");
+    throw new DesktopRefreshError(
+      message || `Desktop refresh failed with status ${response.status}`,
+      response.status
+    );
   }
 
-  const payload = (await response.json()) as Partial<DesktopAuthPayload> | null;
+  return (await response.json()) as DesktopRefreshResponse | null;
+};
+
+const refreshDesktopAccessToken = async (
+  sessionToken: string
+): Promise<{
+  accessToken: string;
+  accessTokenExpiresAtMs: number | null;
+  sessionExpiresAtMs: number | null;
+  sessionToken: string;
+}> => {
+  const payload = await fetchDesktopRefreshPayload(sessionToken);
+  const nextAccessToken = payload?.accessToken ?? payload?.token;
+  const nextSessionToken = payload?.sessionToken ?? payload?.refreshToken;
+
   if (
     !payload ||
-    typeof payload.token !== "string" ||
-    payload.token.length === 0
+    typeof nextAccessToken !== "string" ||
+    nextAccessToken.length === 0 ||
+    typeof nextSessionToken !== "string" ||
+    nextSessionToken.length === 0
   ) {
-    throw new Error("Desktop refresh response did not include a token");
+    throw new DesktopRefreshError(
+      "Desktop refresh response did not include credentials",
+      500
+    );
   }
 
+  const accessTokenExpiresAtMs =
+    typeof payload.accessTokenExpiresAt === "number" &&
+    Number.isFinite(payload.accessTokenExpiresAt)
+      ? payload.accessTokenExpiresAt * 1000
+      : getTokenExpiryTimestampMs(nextAccessToken);
+
+  const sessionExpiresAtMs =
+    typeof payload.sessionExpiresAt === "number" &&
+    Number.isFinite(payload.sessionExpiresAt)
+      ? payload.sessionExpiresAt * 1000
+      : getSessionExpiryTimestampMs(nextSessionToken);
+
   return {
-    refreshToken:
-      typeof payload.refreshToken === "string" && payload.refreshToken.length > 0
-        ? payload.refreshToken
-        : refreshToken,
-    token: payload.token,
+    accessToken: nextAccessToken,
+    accessTokenExpiresAtMs,
+    sessionExpiresAtMs,
+    sessionToken: nextSessionToken,
   };
+};
+
+const persistTokenFailure = (message: string, clearSession: boolean): null => {
+  const state = useDesktopSessionStore.getState();
+  if (clearSession) {
+    state.clearSession();
+  }
+  state.setAuthStatus("unauthenticated");
+  state.setError(message);
+  return null;
 };
 
 export const ensureFreshDesktopAccessToken = async (): Promise<string | null> => {
   const currentState = useDesktopSessionStore.getState();
   const stateToken = currentState.token;
-  const stateRefreshToken = currentState.refreshToken;
+  const stateTokenExpiresAtMs =
+    currentState.tokenExpiresAtMs ??
+    (stateToken ? getTokenExpiryTimestampMs(stateToken) : null);
+  const stateSessionToken = currentState.sessionToken;
+  const stateSessionExpiresAtMs =
+    currentState.sessionExpiresAtMs ??
+    (stateSessionToken ? getSessionExpiryTimestampMs(stateSessionToken) : null);
 
-  if (stateToken && !shouldRefreshToken(stateToken)) {
+  if (!stateSessionToken) {
+    return null;
+  }
+
+  if (isTimestampExpired(stateSessionExpiresAtMs)) {
+    return isOnline()
+      ? persistTokenFailure("Session expired. Please sign in again.", true)
+      : persistTokenFailure("Session expired. Reconnect to continue.", false);
+  }
+
+  if (stateToken && !shouldRefreshAccessToken(stateTokenExpiresAtMs)) {
     return stateToken;
   }
 
-  const storedAuth = await getStoredDesktopAuth();
-  const token = stateToken ?? storedAuth?.token ?? null;
-  const refreshToken = stateRefreshToken ?? storedAuth?.refreshToken ?? null;
-
-  if (token && !shouldRefreshToken(token)) {
-    return token;
-  }
-
-  if (!refreshToken) {
-    return token && token.length > 0
-      ? persistTokenFailure("Session expired. Please sign in again.")
-      : null;
+  if (!isOnline()) {
+    if (stateToken && !isTimestampExpired(stateTokenExpiresAtMs)) {
+      return stateToken;
+    }
+    return null;
   }
 
   if (!desktopAccessTokenRefreshPromise) {
-    const fallbackToken = token;
-    desktopAccessTokenRefreshPromise = refreshDesktopAccessToken(refreshToken)
+    const fallbackToken = stateToken;
+    const fallbackTokenExpiryMs = stateTokenExpiresAtMs;
+
+    desktopAccessTokenRefreshPromise = refreshDesktopAccessToken(stateSessionToken)
       .then((payload) => {
-        if (!payload) {
-          return persistTokenFailure("Session expired. Please sign in again.");
-        }
-        useDesktopSessionStore.getState().setAuthTokens(payload);
-        return payload.token;
+        useDesktopSessionStore.setState((previous) => {
+          const nextState: Partial<DesktopSessionState> = {
+            error: null,
+            sessionExpiresAtMs: payload.sessionExpiresAtMs,
+            sessionToken: payload.sessionToken,
+            token: payload.accessToken,
+            tokenExpiresAtMs: payload.accessTokenExpiresAtMs,
+          };
+
+          if (previous.user && previous.organizations.length > 0) {
+            nextState.authStatus = "authenticated";
+          }
+
+          return nextState;
+        });
+
+        const snapshot = useDesktopSessionStore.getState();
+        void persistSessionSnapshot(snapshot);
+
+        return payload.accessToken;
       })
       .catch((error) => {
         console.error("[Desktop Auth] token refresh failed", error);
-        if (fallbackToken && !isTokenExpired(fallbackToken)) {
+        if (error instanceof DesktopRefreshError && error.status === 401) {
+          return persistTokenFailure("Session expired. Please sign in again.", true);
+        }
+
+        if (fallbackToken && !isTimestampExpired(fallbackTokenExpiryMs)) {
           return fallbackToken;
         }
-        return persistTokenFailure("Session expired. Please sign in again.");
+
+        if (!isOnline()) {
+          return null;
+        }
+
+        return persistTokenFailure("Session refresh failed. Please sign in again.", false);
       })
       .finally(() => {
         desktopAccessTokenRefreshPromise = null;
@@ -210,103 +426,193 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
   return desktopAccessTokenRefreshPromise;
 };
 
-export const useDesktopSessionStore = create<DesktopSessionState>()(
-  persist(
-    (set, get): DesktopSessionState => ({
-      refreshToken: null,
-      token: null,
-      user: null,
-      organizations: [],
+export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) => ({
+  sessionToken: null,
+  sessionExpiresAtMs: null,
+  token: null,
+  tokenExpiresAtMs: null,
+  user: null,
+  organizations: [],
+  orgId: null,
+  authStatus: "loading",
+  error: null,
+  hasHydratedSession: false,
+
+  hydrateAuthSession: async () => {
+    if (get().hasHydratedSession) {
+      return;
+    }
+
+    if (get().sessionToken) {
+      set({ hasHydratedSession: true });
+      return;
+    }
+
+    const stored = await getStoredDesktopAuth();
+    if (!stored) {
+      if (get().sessionToken) {
+        set({ hasHydratedSession: true });
+        return;
+      }
+      set({
+        authStatus: "unauthenticated",
+        hasHydratedSession: true,
+      });
+      return;
+    }
+
+    const sessionExpiresAtMs =
+      stored.sessionExpiresAtMs ?? getSessionExpiryTimestampMs(stored.sessionToken);
+
+    if (isTimestampExpired(sessionExpiresAtMs)) {
+      await window.electronAPI?.clearStoredAuthSession?.();
+      set({
+        authStatus: "unauthenticated",
+        error: "Session expired. Please sign in again.",
+        hasHydratedSession: true,
+      });
+      return;
+    }
+
+    const tokenExpiresAtMs =
+      stored.tokenExpiresAtMs ??
+      (stored.token ? getTokenExpiryTimestampMs(stored.token) : null);
+
+    const hasCachedIdentity =
+      Boolean(stored.user) && Array.isArray(stored.organizations) && stored.organizations.length > 0;
+
+    set({
+      authStatus: hasCachedIdentity ? "authenticated" : "loading",
+      hasHydratedSession: true,
+      orgId: stored.orgId,
+      organizations: stored.organizations,
+      sessionExpiresAtMs,
+      sessionToken: stored.sessionToken,
+      token: stored.token,
+      tokenExpiresAtMs,
+      user: stored.user,
+    });
+  },
+
+  setAuthTokens: (payload: DesktopAuthPayload | null) => {
+    desktopAccessTokenRefreshPromise = null;
+
+    if (!payload?.sessionToken) {
+      useWorkspaceStore.getState().setWorkspace("personal", null);
+      set({
+        authStatus: "unauthenticated",
+        error: null,
+        orgId: null,
+        organizations: [],
+        sessionExpiresAtMs: null,
+        sessionToken: null,
+        token: null,
+        tokenExpiresAtMs: null,
+        user: null,
+      });
+      void persistSessionSnapshot(get());
+      return;
+    }
+
+    const nextSessionExpiresAtMs = getSessionExpiryTimestampMs(payload.sessionToken);
+    const nextToken =
+      typeof payload.accessToken === "string" && payload.accessToken.length > 0
+        ? payload.accessToken
+        : null;
+    const nextTokenExpiresAtMs =
+      nextToken ? getTokenExpiryTimestampMs(nextToken) : null;
+
+    useWorkspaceStore.getState().setWorkspace("personal", null);
+    set(() => ({
+      authStatus: "loading",
+      error: null,
       orgId: null,
+      organizations: [],
+      sessionExpiresAtMs: nextSessionExpiresAtMs,
+      sessionToken: payload.sessionToken,
+      token: nextToken,
+      tokenExpiresAtMs: nextTokenExpiresAtMs,
+      user: null,
+    }));
+
+    console.info("[Desktop Auth] session stored", {
+      hasAccessToken: Boolean(nextToken),
+      hasSessionToken: true,
+      sessionTokenLength: payload.sessionToken.length,
+    });
+
+    void persistSessionSnapshot(get());
+  },
+
+  clearSession: () => {
+    desktopAccessTokenRefreshPromise = null;
+    useWorkspaceStore.getState().setWorkspace("personal", null);
+    set({
       authStatus: "unauthenticated",
       error: null,
-      setAuthTokens: (payload: DesktopAuthPayload | null) => {
-        const nextToken = payload?.token ?? null;
-        const nextRefreshToken = payload?.refreshToken ?? null;
-        console.info("[Desktop Auth] token stored", {
-          hasRefreshToken: Boolean(nextRefreshToken),
-          hasToken: Boolean(nextToken),
-          tokenLength: nextToken?.length ?? 0,
-        });
-        useWorkspaceStore.getState().setWorkspace("personal", null);
-        set(() => ({
-          refreshToken: nextRefreshToken,
-          token: nextToken,
-          user: null,
-          organizations: [],
-          orgId: null,
-          authStatus: nextToken ? "loading" : "unauthenticated",
-          error: null,
-        }));
-      },
-      clearSession: () => {
-        desktopAccessTokenRefreshPromise = null;
-        useWorkspaceStore.getState().setWorkspace("personal", null);
-        set({
-          refreshToken: null,
-          token: null,
-          user: null,
-          organizations: [],
-          orgId: null,
-          authStatus: "unauthenticated",
-          error: null,
-        });
-      },
-      setSessionFromConvex: ({
-        user,
-        organizations,
-        currentOrgId,
-      }: {
-        user: DesktopUser;
-        organizations: DesktopOrganization[];
-        currentOrgId?: string | null;
-      }) => {
-        const selectedOrg =
-          (currentOrgId
-            ? organizations.find((org) => org.id === currentOrgId)
-            : null) ??
-          organizations[0] ??
-          null;
-        if (selectedOrg) {
-          useWorkspaceStore
-            .getState()
-            .setWorkspace(
-              selectedOrg.type === "personal" ? "personal" : "organization",
-              selectedOrg.type === "personal" ? null : selectedOrg.id
-            );
-        }
-        set({
-          user,
-          organizations,
-          orgId: selectedOrg?.id ?? null,
-          authStatus: "authenticated",
-          error: null,
-        });
-      },
-      setAuthStatus: (status: DesktopAuthStatus) => set({ authStatus: status }),
-      setError: (error: string | null) => set({ error }),
-      setOrgId: (orgId: string) => {
-        const target = get().organizations.find((org) => org.id === orgId);
-        if (!target) {
-          return;
-        }
-        useWorkspaceStore
-          .getState()
-          .setWorkspace(
-            target.type === "personal" ? "personal" : "organization",
-            target.type === "personal" ? null : target.id
-          );
-        set({ orgId, error: null });
-      },
-    }),
-    {
-      name: SESSION_STORAGE_KEY,
-      storage: createJSONStorage(() => window.localStorage),
-      partialize: (state) => ({
-        refreshToken: state.refreshToken,
-        token: state.token,
-        orgId: state.orgId,
-      }),
+      orgId: null,
+      organizations: [],
+      sessionExpiresAtMs: null,
+      sessionToken: null,
+      token: null,
+      tokenExpiresAtMs: null,
+      user: null,
+    });
+    void persistSessionSnapshot(get());
+  },
+
+  setSessionFromConvex: ({
+    user,
+    organizations,
+    currentOrgId,
+  }: {
+    user: DesktopUser;
+    organizations: DesktopOrganization[];
+    currentOrgId?: string | null;
+  }) => {
+    const selectedOrg =
+      (currentOrgId
+        ? organizations.find((org) => org.id === currentOrgId)
+        : null) ??
+      organizations[0] ??
+      null;
+
+    if (selectedOrg) {
+      useWorkspaceStore
+        .getState()
+        .setWorkspace(
+          selectedOrg.type === "personal" ? "personal" : "organization",
+          selectedOrg.type === "personal" ? null : selectedOrg.id
+        );
     }
-  )
-);
+
+    set({
+      authStatus: "authenticated",
+      error: null,
+      orgId: selectedOrg?.id ?? null,
+      organizations,
+      user,
+    });
+
+    void persistSessionSnapshot(get());
+  },
+
+  setAuthStatus: (status: DesktopAuthStatus) => set({ authStatus: status }),
+  setError: (error: string | null) => set({ error }),
+  setOrgId: (orgId: string) => {
+    const target = get().organizations.find((org) => org.id === orgId);
+    if (!target) {
+      return;
+    }
+
+    useWorkspaceStore
+      .getState()
+      .setWorkspace(
+        target.type === "personal" ? "personal" : "organization",
+        target.type === "personal" ? null : target.id
+      );
+
+    set({ error: null, orgId });
+    void persistSessionSnapshot(get());
+  },
+}));

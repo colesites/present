@@ -132,7 +132,7 @@ export const LibrariesPanel = memo(
 
     const searchInputRef = useRef<HTMLInputElement>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
-    const authToken = useDesktopSessionStore((state) => state.token);
+    const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
 
     const {
       isListening: isSpeechListening,
@@ -142,7 +142,7 @@ export const LibrariesPanel = memo(
       startListening,
       stopListening,
     } = useSpeechRecognition({
-      authToken,
+      sessionToken,
       lang: "en-US",
       onResult: ({ transcript }) => {
         onSearchChange(transcript);

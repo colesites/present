@@ -105,7 +105,7 @@ export const ScripturePanel = memo(
     const allBooks = useMemo(() => liveBooks ?? [], [liveBooks]);
     const liveVersions = useLiveQuery(() => db.versions.toArray());
     const availableVersions = useMemo(() => liveVersions ?? [], [liveVersions]);
-    const authToken = useDesktopSessionStore((state) => state.token);
+    const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
 
     const { addScriptureToService, selectedServiceId } = useServices({ orgId, userId }, []);
 
@@ -363,7 +363,7 @@ export const ScripturePanel = memo(
         onResult: onSpeechResult,
         onFinalResult: onSpeechFinal,
         lang: speechLang,
-        authToken,
+        sessionToken,
       });
 
     useEffect(() => {

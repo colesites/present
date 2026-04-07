@@ -81,19 +81,28 @@ jobs:
           }
 
           const requiredEntries = [
-            '/.webpack/main/index.js',
-            '/.webpack/renderer/main_window/index.html',
-            '/.webpack/renderer/main_window/index.js',
-            '/.webpack/renderer/output_window/index.html',
-            '/.webpack/renderer/output_window/index.js',
+            '.webpack/main/index.js',
+            '.webpack/renderer/main_window/index.html',
+            '.webpack/renderer/main_window/index.js',
+            '.webpack/renderer/output_window/index.html',
+            '.webpack/renderer/output_window/index.js',
           ];
 
           for (const asarPath of asarCandidates) {
+            const normalizeAsarPath = (value) =>
+              String(value)
+                .replace(/[\\]+/g, '/')
+                .replace(/^\/+/, '')
+                .replace(/^\.\//, '');
             const files = asar.listPackage(asarPath);
-            const missing = requiredEntries.filter((entry) => !files.includes(entry));
+            const normalizedFiles = new Set(files.map(normalizeAsarPath));
+            const missing = requiredEntries.filter(
+              (entry) => !normalizedFiles.has(normalizeAsarPath(entry))
+            );
             if (missing.length > 0) {
+              const sampleEntries = Array.from(normalizedFiles).sort().slice(0, 40);
               throw new Error(
-                `Missing renderer entries in ${asarPath}:\n${missing.join('\n')}`
+                `Missing renderer entries in ${asarPath}:\n${missing.join('\n')}\n\nSample entries:\n${sampleEntries.join('\n')}`
               );
             }
             console.log(`Validated renderer assets in ${asarPath}`);

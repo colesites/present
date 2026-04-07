@@ -12,7 +12,6 @@ import {
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import {
   ensureFreshDesktopAccessToken,
-  getStoredDesktopToken,
   useDesktopSessionStore,
 } from "../store/desktopSession";
 
@@ -29,26 +28,25 @@ const convex = new ConvexReactClient(convexUrl);
 const DesktopConvexAuthReadyContext = createContext(false);
 
 function useDesktopConvexAuth() {
-  const refreshToken = useDesktopSessionStore((state) => state.refreshToken);
-  const token = useDesktopSessionStore((state) => state.token);
+  const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
 
   const fetchAccessToken = useCallback(async () => {
     const nextToken = await ensureFreshDesktopAccessToken();
     console.info("[Desktop Auth] token attached to Convex", {
-      hasRefreshToken: Boolean(refreshToken),
+      hasSessionToken: Boolean(sessionToken),
       hasToken: Boolean(nextToken),
       tokenLength: nextToken?.length ?? 0,
     });
     return nextToken;
-  }, [refreshToken]);
+  }, [sessionToken]);
 
   return useMemo(
     () => ({
       isLoading: false,
-      isAuthenticated: Boolean(token || refreshToken),
+      isAuthenticated: Boolean(sessionToken),
       fetchAccessToken,
     }),
-    [fetchAccessToken, refreshToken, token]
+    [fetchAccessToken, sessionToken]
   );
 }
 
@@ -57,15 +55,15 @@ export default function ConvexClientProvider({
 }: {
   children: ReactNode;
 }) {
+  const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
   const token = useDesktopSessionStore((state) => state.token);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
     setIsAuthReady(false);
     convex.setAuth(async () => {
-      const storedToken = await getStoredDesktopToken();
       const resolvedToken =
-        (await ensureFreshDesktopAccessToken()) ?? storedToken ?? token ?? null;
+        (await ensureFreshDesktopAccessToken()) ?? token ?? null;
       console.info("[Convex Auth Debug] token being sent:", {
         exists: Boolean(resolvedToken),
         length: resolvedToken?.length ?? 0,
@@ -78,7 +76,7 @@ export default function ConvexClientProvider({
       tokenLength: token?.length ?? 0,
       convexUrl,
     });
-  }, [token]);
+  }, [sessionToken, token]);
 
   return (
     <DesktopConvexAuthReadyContext.Provider value={isAuthReady}>

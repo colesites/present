@@ -2,8 +2,8 @@ import { shell } from 'electron';
 import { getWebAppBaseUrl } from '../utils/app.utils';
 
 export type DesktopAuthPayload = {
-  refreshToken: string | null;
-  token: string;
+  accessToken?: string | null;
+  sessionToken: string;
 };
 
 let pendingAuthPayload: DesktopAuthPayload | null = null;
@@ -15,9 +15,9 @@ export const consumePendingAuthToken = (): DesktopAuthPayload | null => {
   const payload = pendingAuthPayload;
   pendingAuthPayload = null;
   console.info('[Desktop Auth] token consumed in main process', {
-    hasRefreshToken: Boolean(payload?.refreshToken),
-    hasToken: Boolean(payload?.token),
-    tokenLength: payload?.token.length ?? 0,
+    hasAccessToken: Boolean(payload?.accessToken),
+    hasSessionToken: Boolean(payload?.sessionToken),
+    sessionTokenLength: payload?.sessionToken.length ?? 0,
   });
   return payload;
 };
@@ -28,8 +28,8 @@ export const consumePendingAuthToken = (): DesktopAuthPayload | null => {
 export const setPendingAuthToken = (payload: DesktopAuthPayload): void => {
   pendingAuthPayload = payload;
   console.info('[Desktop Auth] token received in main process', {
-    hasRefreshToken: Boolean(payload.refreshToken),
-    tokenLength: payload.token.length,
+    hasAccessToken: Boolean(payload.accessToken),
+    sessionTokenLength: payload.sessionToken.length,
   });
 };
 
@@ -61,8 +61,8 @@ export const sendAuthTokenToRenderer = (
   payload: DesktopAuthPayload,
   handleDeepLink: (url: string) => void,
 ): void => {
-  const deepLink = `present://auth?token=${encodeURIComponent(payload.token)}${
-    payload.refreshToken ? `&refreshToken=${encodeURIComponent(payload.refreshToken)}` : ''
+  const deepLink = `present://auth?sessionToken=${encodeURIComponent(payload.sessionToken)}${
+    payload.accessToken ? `&accessToken=${encodeURIComponent(payload.accessToken)}` : ''
   }`;
   handleDeepLink(deepLink);
 };

@@ -1,4 +1,5 @@
 import { auth, verifyToken } from "@clerk/nextjs/server";
+import { verifyDesktopSessionToken } from "../../../../lib/server/desktop-auth";
 
 const DEFAULT_ALLOWED_ORIGINS = new Set([
   "http://localhost:3000",
@@ -21,6 +22,11 @@ const readBearerToken = (authorizationHeader: string | null): string | null => {
 const isAuthorizedRequest = async (request: Request): Promise<boolean> => {
   const bearerToken = readBearerToken(request.headers.get("authorization"));
   if (bearerToken) {
+    const desktopSession = verifyDesktopSessionToken(bearerToken);
+    if (desktopSession) {
+      return true;
+    }
+
     const clerkSecretKey = process.env.CLERK_SECRET_KEY;
     if (!clerkSecretKey) {
       return false;

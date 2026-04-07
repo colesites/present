@@ -20,8 +20,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('fetch-hosted-bible-catalog', catalogUrl),
   fetchBrowserSuggestions: (query: string) =>
     ipcRenderer.invoke('fetch-browser-suggestions', query),
-  requestAssemblyAiToken: (authToken: string) =>
-    ipcRenderer.invoke('request-assemblyai-token', authToken),
+  requestAssemblyAiToken: (sessionToken: string) =>
+    ipcRenderer.invoke('request-assemblyai-token', sessionToken),
   requestMicrophoneAccess: () => ipcRenderer.invoke('request-microphone-access'),
 
   // Output window IPC - send state from main window to output window
@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Auth & System URLs
   beginAuthFlow: () => ipcRenderer.invoke('begin-auth-flow'),
   consumePendingAuthToken: () => ipcRenderer.invoke('consume-pending-auth-token'),
+  getStoredAuthSession: () => ipcRenderer.invoke('get-stored-auth-session'),
+  setStoredAuthSession: (payload: DesktopStoredAuthSession) =>
+    ipcRenderer.invoke('set-stored-auth-session', payload),
+  clearStoredAuthSession: () => ipcRenderer.invoke('clear-stored-auth-session'),
+  refreshDesktopSession: (sessionToken: string) =>
+    ipcRenderer.invoke('refresh-desktop-session', sessionToken),
   openExternalBrowser: (url: string) => ipcRenderer.invoke('open-external-browser', url),
   onAuthCallback: (callback: (payload: DesktopAuthPayload) => void) => {
     ipcRenderer.on('auth-callback', (_event, payload) => callback(payload));

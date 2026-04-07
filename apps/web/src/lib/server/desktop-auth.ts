@@ -2,48 +2,53 @@ import "server-only";
 
 import { createHmac, timingSafeEqual } from "crypto";
 
-const DESKTOP_REFRESH_TOKEN_VERSION = 1;
-const DESKTOP_REFRESH_TOKEN_TYPE = "present-desktop-refresh";
-const DESKTOP_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 180;
+const DESKTOP_SESSION_TOKEN_VERSION = 1;
+const DESKTOP_SESSION_TOKEN_TYPE = "present-desktop-session";
+const DESKTOP_SESSION_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 180;
 
-type DesktopRefreshTokenClaims = {
+type DesktopSessionTokenClaims = {
   exp: number;
   iat: number;
   sid: string;
   sub: string;
-  typ: typeof DESKTOP_REFRESH_TOKEN_TYPE;
-  v: typeof DESKTOP_REFRESH_TOKEN_VERSION;
+  typ: typeof DESKTOP_SESSION_TOKEN_TYPE;
+  v: typeof DESKTOP_SESSION_TOKEN_VERSION;
 };
 
-const encodeBase64UrlJson = (value: DesktopRefreshTokenClaims): string => {
+const encodeBase64UrlJson = (value: DesktopSessionTokenClaims): string => {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 };
 
-const decodeBase64UrlJson = (value: string): DesktopRefreshTokenClaims | null => {
+const decodeBase64UrlJson = (value: string): DesktopSessionTokenClaims | null => {
   try {
     const decoded = Buffer.from(value, "base64url").toString("utf8");
-    return JSON.parse(decoded) as DesktopRefreshTokenClaims;
+    return JSON.parse(decoded) as DesktopSessionTokenClaims;
   } catch {
     return null;
   }
 };
 
-const getDesktopRefreshSecret = (): string => {
-  const explicitSecret = process.env.DESKTOP_AUTH_REFRESH_SECRET?.trim();
+const getDesktopSessionSecret = (): string => {
+  const explicitSecret = process.env.DESKTOP_AUTH_SESSION_SECRET?.trim();
   if (explicitSecret) {
     return explicitSecret;
   }
 
-  const clerkSecret = process.env.CLERK_SECRET_KEY?.trim();
-  if (clerkSecret) {
-    return `${clerkSecret}:desktop-refresh:${DESKTOP_REFRESH_TOKEN_VERSION}`;
+  const legacyExplicitSecret = process.env.DESKTOP_AUTH_REFRESH_SECRET?.trim();
+  if (legacyExplicitSecret) {
+    return legacyExplicitSecret;
   }
 
-  throw new Error("Missing desktop auth refresh secret");
+  const clerkSecret = process.env.CLERK_SECRET_KEY?.trim();
+  if (clerkSecret) {
+    return `${clerkSecret}:desktop-session:${DESKTOP_SESSION_TOKEN_VERSION}`;
+  }
+
+  throw new Error("Missing desktop auth session secret");
 };
 
-const signDesktopRefreshPayload = (payloadBase64: string): string => {
-  return createHmac("sha256", getDesktopRefreshSecret())
+const signDesktopSessionPayload = (payloadBase64: string): string => {
+  return createHmac("sha256", getDesktopSessionSecret())
     .update(payloadBase64)
     .digest("base64url");
 };
@@ -59,33 +64,33 @@ const signaturesMatch = (received: string, expected: string): boolean => {
   return timingSafeEqual(receivedBuffer, expectedBuffer);
 };
 
-export const issueDesktopRefreshToken = (input: {
+export const issueDesktopSessionToken = (input: {
   sessionId: string;
   userId: string;
 }): string => {
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const payload: DesktopRefreshTokenClaims = {
-    exp: nowSeconds + DESKTOP_REFRESH_TOKEN_TTL_SECONDS,
+  const payload: DesktopSessionTokenClaims = {
+    exp: nowSeconds + DESKTOP_SESSION_TOKEN_TTL_SECONDS,
     iat: nowSeconds,
     sid: input.sessionId,
     sub: input.userId,
-    typ: DESKTOP_REFRESH_TOKEN_TYPE,
-    v: DESKTOP_REFRESH_TOKEN_VERSION,
+    typ: DESKTOP_SESSION_TOKEN_TYPE,
+    v: DESKTOP_SESSION_TOKEN_VERSION,
   };
   const encodedPayload = encodeBase64UrlJson(payload);
-  const signature = signDesktopRefreshPayload(encodedPayload);
+  const signature = signDesktopSessionPayload(encodedPayload);
   return `${encodedPayload}.${signature}`;
 };
 
-export const verifyDesktopRefreshToken = (
+export const verifyDesktopSessionToken = (
   token: string
-): { sessionId: string; userId: string } | null => {
+): { expiresAt: number; sessionId: string; userId: string } | null => {
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) {
     return null;
   }
 
-  const expectedSignature = signDesktopRefreshPayload(encodedPayload);
+  const expectedSignature = signDesktopSessionPayload(encodedPayload);
   if (!signaturesMatch(signature, expectedSignature)) {
     return null;
   }
@@ -96,8 +101,8 @@ export const verifyDesktopRefreshToken = (
   }
 
   if (
-    payload.typ !== DESKTOP_REFRESH_TOKEN_TYPE ||
-    payload.v !== DESKTOP_REFRESH_TOKEN_VERSION ||
+    payload.typ !== DESKTOP_SESSION_TOKEN_TYPE ||
+    payload.v !== DESKTOP_SESSION_TOKEN_VERSION ||
     typeof payload.sid !== "string" ||
     typeof payload.sub !== "string" ||
     typeof payload.exp !== "number"
@@ -111,7 +116,45 @@ export const verifyDesktopRefreshToken = (
   }
 
   return {
+    expiresAt: payload.exp,
     sessionId: payload.sid,
     userId: payload.sub,
   };
 };
+
+export const decodeDesktopSessionToken = (
+  token: string
+): { expiresAt: number; sessionId: string; userId: string } | null => {
+  const [encodedPayload] = token.split(".");
+  if (!encodedPayload) {
+    return null;
+  }
+
+  const payload = decodeBase64UrlJson(encodedPayload);
+  if (!payload) {
+    return null;
+  }
+
+  if (
+    payload.typ !== DESKTOP_SESSION_TOKEN_TYPE ||
+    payload.v !== DESKTOP_SESSION_TOKEN_VERSION ||
+    typeof payload.sid !== "string" ||
+    typeof payload.sub !== "string" ||
+    typeof payload.exp !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    expiresAt: payload.exp,
+    sessionId: payload.sid,
+    userId: payload.sub,
+  };
+};
+
+// Backward compatibility aliases. Existing callers can migrate incrementally.
+export const issueDesktopRefreshToken = issueDesktopSessionToken;
+export const verifyDesktopRefreshToken = verifyDesktopSessionToken;
+
+export const getDesktopSessionTokenTtlSeconds = (): number =>
+  DESKTOP_SESSION_TOKEN_TTL_SECONDS;

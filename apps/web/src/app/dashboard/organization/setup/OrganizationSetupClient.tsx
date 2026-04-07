@@ -9,15 +9,13 @@ import { Building2, Check, ImagePlus, Link2, Mail, Users } from "lucide-react";
 import { useWorkspaceStore } from "../../../../../../../packages/shared/src/store/workspace";
 
 interface OrganizationSetupClientProps {
-  desktopRefreshToken?: string | null;
+  desktopSessionToken?: string | null;
   source?: string | null;
-  desktopToken?: string | null;
 }
 
 export default function OrganizationSetupClient({
-  desktopRefreshToken,
+  desktopSessionToken,
   source,
-  desktopToken,
 }: OrganizationSetupClientProps) {
   const router = useRouter();
   const { user, isLoaded: isUserLoaded } = useUser();
@@ -71,10 +69,10 @@ export default function OrganizationSetupClient({
     }
   }, [isLoading, isUserLoaded, router, user]);
 
-  const completeDesktopFlow = (token: string, refreshToken: string) => {
-    window.location.href = `present://auth?token=${encodeURIComponent(
-      token
-    )}&refreshToken=${encodeURIComponent(refreshToken)}`;
+  const completeDesktopFlow = (sessionToken: string) => {
+    window.location.href = `present://auth?sessionToken=${encodeURIComponent(
+      sessionToken
+    )}`;
     window.setTimeout(() => {
       window.close();
     }, 350);
@@ -165,8 +163,8 @@ export default function OrganizationSetupClient({
         await inviteMemberByEmail(nextOrgId, email, userRole);
       }
 
-      if (isDesktopSource && desktopToken && desktopRefreshToken) {
-        completeDesktopFlow(desktopToken, desktopRefreshToken);
+      if (isDesktopSource && desktopSessionToken) {
+        completeDesktopFlow(desktopSessionToken);
         return;
       }
 
@@ -208,8 +206,8 @@ export default function OrganizationSetupClient({
       const payload = (await response.json()) as { orgId: string };
       setWorkspace("organization", payload.orgId);
 
-      if (isDesktopSource && desktopToken && desktopRefreshToken) {
-        completeDesktopFlow(desktopToken, desktopRefreshToken);
+      if (isDesktopSource && desktopSessionToken) {
+        completeDesktopFlow(desktopSessionToken);
         return;
       }
 

@@ -13,7 +13,7 @@ interface UseSpeechRecognitionOptions {
   continuous?: boolean;
   interimResults?: boolean;
   lang?: string;
-  authToken?: string | null;
+  sessionToken?: string | null;
   keyterms?: string[];
 }
 
@@ -115,7 +115,7 @@ const ASSEMBLYAI_TOKEN_REFRESH_BUFFER_MS = 15_000;
 
 let cachedAssemblyAiToken:
   | {
-      authToken: string;
+      sessionToken: string;
       token: string;
       expiresAt: number;
     }
@@ -213,7 +213,7 @@ export function useSpeechRecognition(
     continuous = true,
     interimResults = true,
     lang = "en-US",
-    authToken = null,
+    sessionToken = null,
     keyterms,
   } = options;
 
@@ -241,7 +241,7 @@ export function useSpeechRecognition(
 
   const isSupported =
     hasBrowserSpeechRecognition ||
-    (hasStreamingSupport && Boolean(authToken));
+    (hasStreamingSupport && Boolean(sessionToken));
 
   // Use refs for callbacks to avoid re-initializing recognition when they change
   const onResultRef = useRef(onResult);
@@ -402,13 +402,13 @@ export function useSpeechRecognition(
   }, []);
 
   const fetchAssemblyAiToken = useCallback(async (): Promise<AssemblyAiTokenResponse> => {
-    if (!authToken) {
+    if (!sessionToken) {
       throw new Error("Sign in to use voice search.");
     }
 
     if (
       cachedAssemblyAiToken &&
-      cachedAssemblyAiToken.authToken === authToken &&
+      cachedAssemblyAiToken.sessionToken === sessionToken &&
       cachedAssemblyAiToken.expiresAt > Date.now() + ASSEMBLYAI_TOKEN_REFRESH_BUFFER_MS
     ) {
       return {
@@ -421,7 +421,7 @@ export function useSpeechRecognition(
     }
 
     if (window.electronAPI?.requestAssemblyAiToken) {
-      const payload = await window.electronAPI.requestAssemblyAiToken(authToken) as
+      const payload = await window.electronAPI.requestAssemblyAiToken(sessionToken) as
         | AssemblyAiTokenResponse
         | AssemblyAiTokenErrorPayload
         | null;
@@ -436,7 +436,7 @@ export function useSpeechRecognition(
       }
 
       cachedAssemblyAiToken = {
-        authToken,
+        sessionToken,
         token: payload.token,
         expiresAt:
           Date.now() +
@@ -451,7 +451,7 @@ export function useSpeechRecognition(
     const response = await fetch(`${resolveWebBaseUrl()}${ASSEMBLYAI_TOKEN_PATH}`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${authToken}`,
+        Authorization: `Bearer ${sessionToken}`,
       },
       cache: "no-store",
     });
@@ -475,7 +475,7 @@ export function useSpeechRecognition(
     }
 
     cachedAssemblyAiToken = {
-      authToken,
+      sessionToken,
       token: payload.token,
       expiresAt:
         Date.now() +
@@ -485,7 +485,7 @@ export function useSpeechRecognition(
           1000,
     };
     return payload;
-  }, [authToken]);
+  }, [sessionToken]);
 
   const startAssemblyAiListening = useCallback(async () => {
     if (!hasStreamingSupport) {
@@ -711,7 +711,7 @@ export function useSpeechRecognition(
     setIsStarting(true);
     isStoppingRef.current = false;
 
-    if (authToken && hasStreamingSupport) {
+    if (sessionToken && hasStreamingSupport) {
       try {
         await startAssemblyAiListening();
         return;
@@ -742,7 +742,7 @@ export function useSpeechRecognition(
         setError(formatSpeechError(e));
       });
   }, [
-    authToken,
+    sessionToken,
     hasBrowserSpeechRecognition,
     hasStreamingSupport,
     isListening,
