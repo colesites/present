@@ -237,7 +237,7 @@ export const EditorCanvas = memo(function EditorCanvas({
       <div className="flex min-h-0 flex-1 flex-col bg-background/50 h-full">
         <div className="border-b border-border px-4 py-3 bg-card/20">
           <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground/60">
-            Source editor
+            Lyrics editor
           </p>
         </div>
         <textarea

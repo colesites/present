@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SETTINGS_LANGUAGE_OPTIONS } from "../lib/constants";
-import {
-  FontFamilySelect,
-} from "../../../renderer/shared/components";
+import { FontFamilySelect } from "../../../renderer/shared/components";
 import {
   getFontWeightOptionsForFamily,
   resolveFontWeightForFamily,
@@ -25,9 +23,16 @@ import type {
   ScriptureVerticalAlign,
 } from "../../../shared/types/output-window";
 
+type AudioInputOption = {
+  deviceId: string;
+  label: string;
+};
+
 interface SettingsScreenProps {
   settingsLang: string;
   setSettingsLang: (lang: string) => void;
+  settingsSpeechInputDeviceId: string | null;
+  setSettingsSpeechInputDeviceId: (deviceId: string | null) => void;
   settingsScriptureFontFamily: string;
   setSettingsScriptureFontFamily: (font: string) => void;
   settingsScriptureFontWeight: string;
@@ -43,7 +48,9 @@ interface SettingsScreenProps {
   settingsScriptureFooterAlign: ScriptureTextAlign;
   setSettingsScriptureFooterAlign: (align: ScriptureTextAlign) => void;
   settingsScriptureFooterPosition: ScriptureFooterPosition;
-  setSettingsScriptureFooterPosition: (position: ScriptureFooterPosition) => void;
+  setSettingsScriptureFooterPosition: (
+    position: ScriptureFooterPosition
+  ) => void;
   settingsLibraryFontSize: number;
   setSettingsLibraryFontSize: (size: number) => void;
   settingsLibraryFontFamily: string;
@@ -70,6 +77,23 @@ interface SettingsScreenProps {
   setSettingsTimerNameBannerColor: (value: string) => void;
   settingsTimerTitlePosition: "top" | "bottom";
   setSettingsTimerTitlePosition: (value: "top" | "bottom") => void;
+  settingsOutputDisplayId: number | null;
+  setSettingsOutputDisplayId: (value: number | null) => void;
+  settingsNdiEnabled: boolean;
+  setSettingsNdiEnabled: (value: boolean) => void;
+  settingsNdiSourceName: string;
+  setSettingsNdiSourceName: (value: string) => void;
+  settingsNdiGroupName: string;
+  setSettingsNdiGroupName: (value: string) => void;
+  settingsNdiRuntimeStatus: {
+    running: boolean;
+    sourceName: string;
+    groupName: string;
+    lastError: string | null;
+    libraryLoaded: boolean;
+    framesSent: number;
+    usingFallbackFrame: boolean;
+  };
   settingsMediaFolderId: string;
   setSettingsMediaFolderId: (id: string) => void;
   settingsMediaItems: MediaItem[];
@@ -81,6 +105,8 @@ interface SettingsScreenProps {
 export function SettingsScreen({
   settingsLang,
   setSettingsLang,
+  settingsSpeechInputDeviceId,
+  setSettingsSpeechInputDeviceId,
   settingsScriptureFontFamily,
   setSettingsScriptureFontFamily,
   settingsScriptureFontWeight,
@@ -115,6 +141,15 @@ export function SettingsScreen({
   setSettingsTimerNameBannerColor,
   settingsTimerTitlePosition,
   setSettingsTimerTitlePosition,
+  settingsOutputDisplayId,
+  setSettingsOutputDisplayId,
+  settingsNdiEnabled,
+  setSettingsNdiEnabled,
+  settingsNdiSourceName,
+  setSettingsNdiSourceName,
+  settingsNdiGroupName,
+  setSettingsNdiGroupName,
+  settingsNdiRuntimeStatus,
   settingsMediaFolderId,
   setSettingsMediaFolderId,
   settingsMediaItems,
@@ -123,59 +158,84 @@ export function SettingsScreen({
   selectMediaForOutput,
 }: SettingsScreenProps) {
   const [activeSection, setActiveSection] = useState<
-    "scripture" | "libraries" | "timer"
-  >("scripture");
+    "speech" | "scripture" | "libraries" | "timer" | "connections"
+  >("speech");
+  const [availableDisplays, setAvailableDisplays] = useState<Display[]>([]);
+  const [availableAudioInputs, setAvailableAudioInputs] = useState<AudioInputOption[]>([]);
+  const [isLoadingAudioInputs, setIsLoadingAudioInputs] = useState(false);
+  const [audioInputsError, setAudioInputsError] = useState<string | null>(null);
   const { faces: fontFaces } = useFontCatalog();
   const scriptureWeightOptions = useMemo(
-    () =>
-      getFontWeightOptionsForFamily(fontFaces, settingsScriptureFontFamily),
-    [fontFaces, settingsScriptureFontFamily],
+    () => getFontWeightOptionsForFamily(fontFaces, settingsScriptureFontFamily),
+    [fontFaces, settingsScriptureFontFamily]
   );
   const libraryWeightOptions = useMemo(
     () => getFontWeightOptionsForFamily(fontFaces, settingsLibraryFontFamily),
-    [fontFaces, settingsLibraryFontFamily],
+    [fontFaces, settingsLibraryFontFamily]
   );
   const resolvedScriptureFontWeight = useMemo(
     () =>
       resolveFontWeightForFamily(
         fontFaces,
         settingsScriptureFontFamily,
-        settingsScriptureFontWeight,
+        settingsScriptureFontWeight
       ),
-    [fontFaces, settingsScriptureFontFamily, settingsScriptureFontWeight],
+    [fontFaces, settingsScriptureFontFamily, settingsScriptureFontWeight]
   );
   const resolvedLibraryFontWeight = useMemo(
     () =>
       resolveFontWeightForFamily(
         fontFaces,
         settingsLibraryFontFamily,
-        settingsLibraryFontWeight,
+        settingsLibraryFontWeight
       ),
-    [fontFaces, settingsLibraryFontFamily, settingsLibraryFontWeight],
+    [fontFaces, settingsLibraryFontFamily, settingsLibraryFontWeight]
   );
   const normalizedLibraryFontSize = useMemo(
     () => Math.min(Math.max(Math.round(settingsLibraryFontSize), 24), 400),
-    [settingsLibraryFontSize],
+    [settingsLibraryFontSize]
   );
-  const normalizedScriptureFontSize = useMemo(
-    () => Math.min(Math.max(Math.round(settingsScriptureFontSize), 12), 400),
-    [settingsScriptureFontSize],
+  const normalizeScriptureFontSizeInput = (value: number) =>
+    Math.max(Math.round(value), 12);
+  const normalizeScriptureFooterFontSizeInput = (value: number) =>
+    Math.max(Math.round(value), 8);
+  const [scriptureFontSizeDraft, setScriptureFontSizeDraft] = useState(() =>
+    String(normalizeScriptureFontSizeInput(settingsScriptureFontSize))
   );
-  const normalizedScriptureFooterFontSize = useMemo(
-    () => Math.min(Math.max(Math.round(settingsScriptureFooterFontSize), 8), 220),
-    [settingsScriptureFooterFontSize],
+  const [scriptureFooterFontSizeDraft, setScriptureFooterFontSizeDraft] = useState(
+    () => String(normalizeScriptureFooterFontSizeInput(settingsScriptureFooterFontSize))
   );
-  const handleScriptureFontSizeInput = (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const value = Number(event.target.value);
+  const commitScriptureFontSizeDraft = (raw: string) => {
+    const value = Number(raw);
     if (!Number.isFinite(value)) {
+      setScriptureFontSizeDraft(
+        String(normalizeScriptureFontSizeInput(settingsScriptureFontSize))
+      );
       return;
     }
-    setSettingsScriptureFontSize(value);
+    const normalized = normalizeScriptureFontSizeInput(value);
+    setSettingsScriptureFontSize(normalized);
+    setScriptureFontSizeDraft(String(normalized));
+  };
+  const commitScriptureFooterFontSizeDraft = (raw: string) => {
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+      setScriptureFooterFontSizeDraft(
+        String(normalizeScriptureFooterFontSizeInput(settingsScriptureFooterFontSize))
+      );
+      return;
+    }
+    const normalized = normalizeScriptureFooterFontSizeInput(value);
+    setSettingsScriptureFooterFontSize(normalized);
+    setScriptureFooterFontSizeDraft(String(normalized));
+  };
+  const handleScriptureFontSizeInput = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    setScriptureFontSizeDraft(event.target.value);
   };
   const handleLibraryFontSizeInput = (
-    event: React.ChangeEvent<HTMLInputElement>,
+    event: React.ChangeEvent<HTMLInputElement>
   ) => {
     const value = Number(event.target.value);
     if (!Number.isFinite(value)) {
@@ -184,13 +244,140 @@ export function SettingsScreen({
     setSettingsLibraryFontSize(value);
   };
   const handleScriptureFooterFontSizeInput = (
-    event: React.ChangeEvent<HTMLInputElement>,
+    event: React.ChangeEvent<HTMLInputElement>
   ) => {
-    const value = Number(event.target.value);
-    if (!Number.isFinite(value)) {
+    setScriptureFooterFontSizeDraft(event.target.value);
+  };
+  const handleDraftNumberKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement>
+  ) => {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+    }
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const refreshDisplays = async () => {
+      if (!window.electronAPI?.getDisplays) {
+        return;
+      }
+      try {
+        const displays = await window.electronAPI.getDisplays();
+        if (!mounted) {
+          return;
+        }
+        setAvailableDisplays(displays);
+      } catch {
+        if (mounted) {
+          setAvailableDisplays([]);
+        }
+      }
+    };
+
+    void refreshDisplays();
+    const intervalId = window.setInterval(() => {
+      void refreshDisplays();
+    }, 4000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  const refreshAudioInputs = useCallback(async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.enumerateDevices
+    ) {
+      setAvailableAudioInputs([]);
+      setAudioInputsError("Audio input selection is unavailable in this runtime.");
       return;
     }
-    setSettingsScriptureFooterFontSize(value);
+
+    setIsLoadingAudioInputs(true);
+    setAudioInputsError(null);
+
+    try {
+      const permissionResult =
+        await window.electronAPI?.requestMicrophoneAccess?.();
+      if (permissionResult && !permissionResult.granted) {
+        setAvailableAudioInputs([]);
+        setAudioInputsError("Microphone access was denied.");
+        return;
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices
+        .filter(
+          (device) =>
+            device.kind === "audioinput" &&
+            device.deviceId !== "default" &&
+            device.deviceId !== "communications",
+        )
+        .map((device, index) => ({
+          deviceId: device.deviceId,
+          label: device.label.trim() || `Microphone ${index + 1}`,
+        }));
+      setAvailableAudioInputs(audioInputs);
+      setAudioInputsError(
+        audioInputs.length === 0 ? "No sound input devices were found." : null,
+      );
+    } catch {
+      setAvailableAudioInputs([]);
+      setAudioInputsError("Unable to read available sound input devices.");
+    } finally {
+      setIsLoadingAudioInputs(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAudioInputs();
+
+    if (!navigator.mediaDevices?.addEventListener) {
+      return;
+    }
+
+    const handleDeviceChange = () => {
+      void refreshAudioInputs();
+    };
+
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+    };
+  }, [refreshAudioInputs]);
+
+  useEffect(() => {
+    if (!settingsSpeechInputDeviceId) {
+      return;
+    }
+
+    const selectionStillExists = availableAudioInputs.some(
+      (device) => device.deviceId === settingsSpeechInputDeviceId,
+    );
+    if (!selectionStillExists) {
+      setSettingsSpeechInputDeviceId(null);
+    }
+  }, [
+    availableAudioInputs,
+    settingsSpeechInputDeviceId,
+    setSettingsSpeechInputDeviceId,
+  ]);
+
+  const handleOutputDisplayChange = (value: string) => {
+    const nextId =
+      value === "auto"
+        ? null
+        : Number.isFinite(Number(value))
+          ? Number(value)
+          : null;
+    setSettingsOutputDisplayId(nextId);
+    if (window.electronAPI?.setPreferredOutputDisplay) {
+      void window.electronAPI.setPreferredOutputDisplay(nextId);
+    }
   };
 
   useEffect(() => {
@@ -438,6 +625,18 @@ export function SettingsScreen({
         <nav className="space-y-1 text-xs">
           <button
             type="button"
+            onClick={() => setActiveSection("speech")}
+            className={cn(
+              "w-full rounded-md px-2 py-1.5 text-left font-medium transition",
+              activeSection === "speech"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            Speech to Search
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveSection("scripture")}
             className={cn(
               "w-full rounded-md px-2 py-1.5 text-left font-medium transition",
@@ -472,43 +671,60 @@ export function SettingsScreen({
           >
             Timer Layout
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection("connections")}
+            className={cn(
+              "w-full rounded-md px-2 py-1.5 text-left font-medium transition",
+              activeSection === "connections"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            Connections
+          </button>
         </nav>
       </aside>
 
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="shrink-0 border-b border-border bg-card px-6 py-3">
           <h2 className="text-sm font-semibold">
-            {activeSection === "scripture"
-              ? "Scripture"
+            {activeSection === "speech"
+              ? "Speech to Search"
+              : activeSection === "scripture"
+                ? "Scripture"
               : activeSection === "libraries"
-              ? "Libraries"
-              : "Timer Layout"}
+                ? "Libraries"
+                : activeSection === "timer"
+                  ? "Timer Layout"
+                  : "Connections"}
           </h2>
           <p className="text-[11px] text-muted-foreground">
-            {activeSection === "scripture"
-              ? "Control how voice search listens for Bible passages."
+            {activeSection === "speech"
+              ? "Choose the language and microphone used for voice search across the app."
+              : activeSection === "scripture"
+                ? "Set the default scripture presentation appearance."
               : activeSection === "libraries"
-              ? "Set default typography used when creating new library slides."
-              : "Drag timer position and customize timer/name style for output screens."}
+                ? "Set default typography used when creating new library slides."
+                : activeSection === "timer"
+                  ? "Drag timer position and customize timer/name style for output screens."
+                  : "Manage projection routing and NDI streaming preferences."}
           </p>
         </div>
 
         <div className="flex flex-1 flex-col space-y-6 overflow-hidden px-6 py-4">
-          {activeSection === "scripture" ? (
+          {activeSection === "speech" ? (
             <>
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Voice language
                 </h3>
                 <p className="text-[11px] text-muted-foreground">
-                  Choose the language or accent the microphone should expect
-                  when identifying scripture.
+                  Choose the language or accent voice search should expect when
+                  identifying scripture and library queries.
                 </p>
                 <div className="mt-2 max-w-xs">
-                  <Select
-                    value={settingsLang}
-                    onValueChange={setSettingsLang}
-                  >
+                  <Select value={settingsLang} onValueChange={setSettingsLang}>
                     <SelectTrigger className="w-full border border-input bg-background px-3 py-2 text-sm text-foreground">
                       <SelectValue />
                     </SelectTrigger>
@@ -523,6 +739,59 @@ export function SettingsScreen({
                 </div>
               </section>
 
+              <section className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Sound input
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground">
+                      Pick the microphone voice search should listen to.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void refreshAudioInputs()}
+                    className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-foreground transition hover:bg-muted"
+                  >
+                    Refresh
+                  </button>
+                </div>
+                <div className="mt-2 max-w-lg space-y-2">
+                  <Select
+                    value={settingsSpeechInputDeviceId ?? "__default__"}
+                    onValueChange={(value) =>
+                      setSettingsSpeechInputDeviceId(
+                        value === "__default__" ? null : value,
+                      )
+                    }
+                  >
+                    <SelectTrigger className="w-full border border-input bg-background px-3 py-2 text-sm text-foreground">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default__">
+                        System default microphone
+                      </SelectItem>
+                      {availableAudioInputs.map((device) => (
+                        <SelectItem key={device.deviceId} value={device.deviceId}>
+                          {device.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    {isLoadingAudioInputs
+                      ? "Refreshing available sound inputs..."
+                      : audioInputsError
+                        ? audioInputsError
+                        : `${availableAudioInputs.length} sound input(s) available.`}
+                  </p>
+                </div>
+              </section>
+            </>
+          ) : activeSection === "scripture" ? (
+            <>
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Typography
@@ -577,10 +846,13 @@ export function SettingsScreen({
                       </span>
                       <input
                         type="number"
-                        value={normalizedScriptureFontSize}
+                        value={scriptureFontSizeDraft}
                         onChange={handleScriptureFontSizeInput}
+                        onBlur={(event) =>
+                          commitScriptureFontSizeDraft(event.target.value)
+                        }
+                        onKeyDown={handleDraftNumberKeyDown}
                         min={12}
-                        max={400}
                         step={1}
                         className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-center text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
                       />
@@ -592,10 +864,13 @@ export function SettingsScreen({
                     </span>
                     <input
                       type="number"
-                      value={normalizedScriptureFooterFontSize}
+                      value={scriptureFooterFontSizeDraft}
                       onChange={handleScriptureFooterFontSizeInput}
+                      onBlur={(event) =>
+                        commitScriptureFooterFontSizeDraft(event.target.value)
+                      }
+                      onKeyDown={handleDraftNumberKeyDown}
                       min={8}
-                      max={220}
                       step={1}
                       className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-center text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
                     />
@@ -671,7 +946,7 @@ export function SettingsScreen({
                 </div>
               </section>
             </>
-          ) : (
+          ) : activeSection === "timer" ? (
             <section className="space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Output timer layout
@@ -944,6 +1219,119 @@ export function SettingsScreen({
                 Update timer layout
               </button>
             </section>
+          ) : (
+            <section className="space-y-4">
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Output routing
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Choose where the main output should project. Select Auto to
+                  keep the current smart external-display fallback.
+                </p>
+                <div className="max-w-sm">
+                  <Select
+                    value={
+                      settingsOutputDisplayId === null
+                        ? "auto"
+                        : String(settingsOutputDisplayId)
+                    }
+                    onValueChange={handleOutputDisplayChange}
+                  >
+                    <SelectTrigger className="h-9 rounded-md border border-border bg-muted/45 px-3 text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40">
+                      <SelectValue placeholder="Select output display" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">
+                        Auto (largest external)
+                      </SelectItem>
+                      {availableDisplays.map((display) => (
+                        <SelectItem key={display.id} value={String(display.id)}>
+                          {display.isPrimary
+                            ? `Primary (${display.bounds.width}x${display.bounds.height})`
+                            : `${display.label?.trim() || `Display ${display.id}`} (${display.bounds.width}x${display.bounds.height})`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  NDI output
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Configure NDI source metadata used by the Media Stage screen
+                  and livestream routing.
+                </p>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={settingsNdiEnabled}
+                    onChange={(event) =>
+                      setSettingsNdiEnabled(event.target.checked)
+                    }
+                    className="accent-primary"
+                  />
+                  Enable NDI source
+                </label>
+                <div className="grid max-w-2xl gap-3 md:grid-cols-2">
+                  <label className="space-y-1 text-[11px] text-muted-foreground">
+                    <span>Source name</span>
+                    <input
+                      type="text"
+                      value={settingsNdiSourceName}
+                      onChange={(event) =>
+                        setSettingsNdiSourceName(event.target.value)
+                      }
+                      className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                      placeholder="Present Main Output"
+                    />
+                  </label>
+                  <label className="space-y-1 text-[11px] text-muted-foreground">
+                    <span>NDI group</span>
+                    <input
+                      type="text"
+                      value={settingsNdiGroupName}
+                      onChange={(event) =>
+                        setSettingsNdiGroupName(event.target.value)
+                      }
+                      className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                      placeholder="Public"
+                    />
+                  </label>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Status:{" "}
+                  <span
+                    className={cn(
+                      "font-medium",
+                      settingsNdiRuntimeStatus.running
+                        ? "text-emerald-500"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    {settingsNdiRuntimeStatus.running ? "running" : "stopped"}
+                  </span>
+                  {" · "}
+                  Source: {settingsNdiRuntimeStatus.sourceName}
+                  {" · "}
+                  Frames: {settingsNdiRuntimeStatus.framesSent}
+                </p>
+                {settingsNdiRuntimeStatus.lastError ? (
+                  <p className="text-[11px] text-red-500">
+                    NDI error: {settingsNdiRuntimeStatus.lastError}
+                  </p>
+                ) : null}
+                {!settingsNdiRuntimeStatus.libraryLoaded ? (
+                  <p className="text-[11px] text-red-500">
+                    NDI native module is unavailable. Install dependencies and
+                    restart the app.
+                  </p>
+                ) : null}
+              </section>
+            </section>
           )}
 
           {activeSection === "scripture" ? (
@@ -1025,16 +1413,28 @@ export function SettingsScreen({
                                   src={item.url}
                                   alt={item.name}
                                   className="h-full w-full object-cover"
+                                  loading="lazy"
                                 />
                               ) : (
                                 <video
                                   src={item.url}
                                   className="h-full w-full object-cover"
                                   muted
-                                  onMouseEnter={(e) => e.currentTarget.play()}
+                                  preload="none"
+                                  playsInline
+                                  onMouseEnter={(e) => {
+                                    const playPromise = e.currentTarget.play();
+                                    if (playPromise && typeof playPromise.catch === "function") {
+                                      playPromise.catch((): void => undefined);
+                                    }
+                                  }}
                                   onMouseLeave={(e) => {
-                                    e.currentTarget.pause();
-                                    e.currentTarget.currentTime = 0;
+                                    try {
+                                      e.currentTarget.pause();
+                                      e.currentTarget.currentTime = 0;
+                                    } catch {
+                                      // Ignore media reset errors.
+                                    }
                                   }}
                                 />
                               )}

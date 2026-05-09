@@ -4,6 +4,7 @@ import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
 import type { SlideElement } from "../../shared/types";
 import type { ParsedPptxPresentation, ParsedPptxSlide } from "../../shared/types/pptx";
+import { parsePptxWithPython } from "./pptx-python.service";
 
 const EMUS_PER_INCH = 914400;
 const PX_PER_INCH = 96;
@@ -482,33 +483,6 @@ function getRunText(runNode: XmlRecord | null) {
   return getStringValue(textNode);
 }
 
-function buildTextRunHtml(runNode: XmlRecord | null, themePalette: ThemePalette) {
-  const runProperties = asRecord(getChild(runNode, "rPr"));
-  const text = getRunText(runNode);
-  const fontFamily =
-    getStringAttr(asRecord(getChild(runProperties, "latin")), "typeface") ??
-    getStringAttr(asRecord(getChild(runProperties, "ea")), "typeface") ??
-    getStringAttr(asRecord(getChild(runProperties, "cs")), "typeface");
-  const fontSize = getNumberAttr(runProperties, "sz");
-  const color = resolveColorNode(runProperties, themePalette);
-  const underline = getStringAttr(runProperties, "u");
-  const styleTokens = [
-    fontFamily ? `font-family:${JSON.stringify(fontFamily)}` : "",
-    fontSize ? `font-size:${Math.max((fontSize / 100) * (96 / 72), 8)}px` : "",
-    getStringAttr(runProperties, "b") === "1" ? "font-weight:700" : "",
-    getStringAttr(runProperties, "i") === "1" ? "font-style:italic" : "",
-    color ? `color:${color}` : "",
-    underline && underline !== "none" ? "text-decoration:underline" : "",
-  ].filter(Boolean);
-
-  const escaped = escapeHtml(text);
-  if (styleTokens.length === 0) {
-    return escaped;
-  }
-
-  return `<span style="${styleTokens.join(";")}">${escaped}</span>`;
-}
-
 function extractTextContent(shapeNode: XmlRecord | null, inheritedNode: XmlRecord | null, themePalette: ThemePalette) {
   const txBody = asRecord(getChild(shapeNode, "txBody")) ?? asRecord(getChild(inheritedNode, "txBody"));
   if (!txBody) {
@@ -520,21 +494,16 @@ function extractTextContent(shapeNode: XmlRecord | null, inheritedNode: XmlRecor
     .filter(Boolean) as XmlRecord[];
 
   const textLines: string[] = [];
-  const htmlLines: string[] = [];
-
   for (const paragraph of paragraphs) {
     const runs = extractParagraphRuns(paragraph);
     if (runs.length === 0) {
       const paragraphText = getStringValue(getChild(paragraph, "t"));
       textLines.push(paragraphText);
-      htmlLines.push(escapeHtml(paragraphText));
       continue;
     }
 
     const lineText = runs.map((run) => getRunText(run)).join("");
-    const lineHtml = runs.map((run) => buildTextRunHtml(run, themePalette)).join("");
     textLines.push(lineText);
-    htmlLines.push(lineHtml);
   }
 
   const bodyPr =
@@ -552,7 +521,6 @@ function extractTextContent(shapeNode: XmlRecord | null, inheritedNode: XmlRecor
 
   return {
     text: textLines.join("\n"),
-    richTextHtml: htmlLines.join("<br/>"),
     fontFamily,
     fontSize: (() => {
       const rawSize = getNumberAttr(firstRunProps, "sz");
@@ -654,7 +622,6 @@ async function extractShapeElements(
         width: bounds.width,
         height: bounds.height,
         content: textContent.text,
-        richTextHtml: textContent.richTextHtml,
         style: {
           fontFamily: textContent.fontFamily,
           fontSize: textContent.fontSize,
@@ -791,17 +758,17 @@ async function resolveBackground(
     backgroundColor,
     backgroundElement: dataUrl
       ? {
-          id: `pptx_background_${crypto.randomUUID()}`,
-          type: "image",
-          x: 0,
-          y: 0,
-          width: slideWidthPx,
-          height: slideHeightPx,
-          content: dataUrl,
-          style: {
-            objectFit: "cover",
-          },
-        }
+        id: `pptx_background_${crypto.randomUUID()}`,
+        type: "image",
+        x: 0,
+        y: 0,
+        width: slideWidthPx,
+        height: slideHeightPx,
+        content: dataUrl,
+        style: {
+          objectFit: "cover",
+        },
+      }
       : null,
   };
 }
@@ -840,25 +807,38 @@ function scaleElements(
     height: Math.round(element.height * scaleY),
     style: element.style
       ? {
-          ...element.style,
-          fontSize:
-            element.style.fontSize === undefined
-              ? undefined
-              : Math.round(element.style.fontSize * Math.min(scaleX, scaleY)),
-          borderWidth: scaleOptional(
-            element.style.borderWidth,
-            Math.min(scaleX, scaleY),
-          ),
-          paddingLeft: scaleOptional(element.style.paddingLeft, scaleX),
-          paddingRight: scaleOptional(element.style.paddingRight, scaleX),
-          paddingTop: scaleOptional(element.style.paddingTop, scaleY),
-          paddingBottom: scaleOptional(element.style.paddingBottom, scaleY),
-        }
+        ...element.style,
+        fontSize:
+          element.style.fontSize === undefined
+            ? undefined
+            : Math.round(element.style.fontSize * Math.min(scaleX, scaleY)),
+        borderWidth: scaleOptional(
+          element.style.borderWidth,
+          Math.min(scaleX, scaleY),
+        ),
+        paddingLeft: scaleOptional(element.style.paddingLeft, scaleX),
+        paddingRight: scaleOptional(element.style.paddingRight, scaleX),
+        paddingTop: scaleOptional(element.style.paddingTop, scaleY),
+        paddingBottom: scaleOptional(element.style.paddingBottom, scaleY),
+      }
       : element.style,
   }));
 }
 
 export async function parsePptxFile(filePath: string): Promise<ParsedPptxPresentation> {
+  try {
+    return await parsePptxWithPython(filePath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (process.env.PRESENT_PPTX_LEGACY_FALLBACK !== "1") {
+      throw new Error(
+        `[pptx] Native parser failed. HTML/XML fallback is disabled to preserve rendering fidelity. ${message}`,
+      );
+    }
+    console.warn(
+      `[pptx] Native parser unavailable, using legacy XML fallback because PRESENT_PPTX_LEGACY_FALLBACK=1. ${message}`,
+    );
+  }
   const fileBuffer = await fs.promises.readFile(filePath);
   const zip = await JSZip.loadAsync(fileBuffer);
   const presentationDocument = await readXmlEntry(zip, "ppt/presentation.xml");
@@ -904,9 +884,9 @@ export async function parsePptxFile(filePath: string): Promise<ParsedPptxPresent
       asRecord(getChild(slideLayoutDocument, "sldLayout")) ?? slideLayoutDocument;
     const slideLayoutRelationships = slideLayoutPath
       ? await readRelationships(
-          zip,
-          `${path.posix.dirname(slideLayoutPath)}/_rels/${path.posix.basename(slideLayoutPath)}.rels`,
-        )
+        zip,
+        `${path.posix.dirname(slideLayoutPath)}/_rels/${path.posix.basename(slideLayoutPath)}.rels`,
+      )
       : new Map<string, string>();
     const slideMasterPath =
       Array.from(slideLayoutRelationships.values()).find((entry) =>
@@ -919,9 +899,9 @@ export async function parsePptxFile(filePath: string): Promise<ParsedPptxPresent
       asRecord(getChild(slideMasterDocument, "sldMaster")) ?? slideMasterDocument;
     const slideMasterRelationships = slideMasterPath
       ? await readRelationships(
-          zip,
-          `${path.posix.dirname(slideMasterPath)}/_rels/${path.posix.basename(slideMasterPath)}.rels`,
-        )
+        zip,
+        `${path.posix.dirname(slideMasterPath)}/_rels/${path.posix.basename(slideMasterPath)}.rels`,
+      )
       : new Map<string, string>();
     const themePath =
       Array.from(slideMasterRelationships.values()).find((entry) =>
@@ -1018,7 +998,6 @@ export async function parsePptxFile(filePath: string): Promise<ParsedPptxPresent
             width: slideWidthPx,
             height: slideHeightPx,
             content: allText.join(" "),
-            richTextHtml: escapeHtml(allText.join(" ")),
             style: {
               fontFamily: "sans-serif",
               fontSize: fallbackFontSizePx,

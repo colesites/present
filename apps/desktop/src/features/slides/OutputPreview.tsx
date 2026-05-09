@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../renderer/shared/lib/utils";
-import { LibrarySlideLayer } from "../../renderer/shared/components/LibrarySlideLayer";
+import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../../renderer/shared/components/ScriptureTextLayer";
 import {
   Select,
@@ -15,6 +15,7 @@ import {
   ChevronDown,
   Clock3,
   Image,
+  ImageOff,
   Layers3,
   MessageSquare,
   Monitor,
@@ -43,6 +44,7 @@ import type {
 import { filtersToCSS } from "../../features/media/hooks";
 import type { CanvasSizePreset, SlideElement } from "../../shared/types";
 import type {
+  OutputTextPosition,
   ScriptureFooterPosition,
   ScriptureTextAlign,
   ScriptureVerticalAlign,
@@ -83,8 +85,11 @@ interface OutputPreviewProps {
   onToggleVideoPlayback: () => void;
   showText: boolean;
   showMedia: boolean;
+  hideBackground: boolean;
+  textPosition: OutputTextPosition;
   onToggleText: () => void;
   onToggleMedia: () => void;
+  onToggleHideBackground: () => void;
   onClearMedia: () => void;
   mediaFilters: MediaFilters;
   onMediaFiltersChange: (filters: Partial<MediaFilters>) => void;
@@ -308,8 +313,11 @@ export const OutputPreview = memo(function OutputPreview({
   onToggleVideoPlayback,
   showText,
   showMedia,
+  hideBackground,
+  textPosition,
   onToggleText,
   onToggleMedia,
+  onToggleHideBackground,
   onClearMedia,
   mediaFilters,
   onMediaFiltersChange,
@@ -380,6 +388,7 @@ export const OutputPreview = memo(function OutputPreview({
   const shouldUseScriptureTextLayer =
     isScriptureSlide && (slideElements?.length ?? 0) === 0;
   const hasLibrarySlideLayer = Boolean(text || (slideElements?.length ?? 0) > 0);
+  const hasHiddenTextLayerContent = Boolean(text) && !showText;
   const libraryStyle = useMemo(
     () => ({
       fontFamily: fontFamily ?? "Inter",
@@ -429,6 +438,21 @@ export const OutputPreview = memo(function OutputPreview({
       ),
     [timerLayout.nameFontPx, previewScale]
   );
+  const previewTextPositionStyle = useMemo(
+    () => ({
+      left: `${textPosition.xPercent}%`,
+      top: `${textPosition.yPercent}%`,
+      width: `${textPosition.widthPercent}%`,
+      height: `${textPosition.heightPercent}%`,
+      transform: "translate(-50%, -50%)",
+    }),
+    [
+      textPosition.heightPercent,
+      textPosition.widthPercent,
+      textPosition.xPercent,
+      textPosition.yPercent,
+    ]
+  );
 
   useEffect(() => {
     const frame = outputFrameRef.current;
@@ -465,13 +489,18 @@ export const OutputPreview = memo(function OutputPreview({
     if (!window.electronAPI) {
       return;
     }
-    window.electronAPI.sendToOutput({
+    const timerPayload = {
       type: "timer-update",
       timerLabel: timerLabelForOutput,
       timerText: timerTextForOutput,
       timerRunning: activeTimer?.isRunning ?? false,
       timerVisible: isTimerLayerEnabled,
-    });
+    };
+
+    window.electronAPI.sendToOutput(timerPayload);
+    if (window.electronAPI.sendToStage) {
+      window.electronAPI.sendToStage(timerPayload);
+    }
   }, [
     activeTimer?.isRunning,
     isTimerLayerEnabled,
@@ -577,6 +606,9 @@ export const OutputPreview = memo(function OutputPreview({
       ),
     [previewTextScale, scriptureFooterFontSize, scriptureFontSize]
   );
+  const safeVideoVolume = Number.isFinite(videoSettings.volume)
+    ? videoSettings.volume
+    : 1;
 
   const createTimer = () => {
     const timerConfig: TimerConfig = {
@@ -750,7 +782,8 @@ export const OutputPreview = memo(function OutputPreview({
             ref={outputFrameRef}
             className="relative min-w-0 flex-1 aspect-video overflow-hidden rounded-sm border border-border/60 bg-black"
           >
-            {showMedia &&
+            {!hideBackground &&
+              showMedia &&
               activeMediaItem &&
               (activeMediaItem.type === "image" ? (
                 <img
@@ -771,7 +804,7 @@ export const OutputPreview = memo(function OutputPreview({
                 />
               ))}
 
-            {backgroundColor ? (
+            {!hideBackground && backgroundColor ? (
               <div
                 className="absolute inset-0"
                 style={{ backgroundColor }}
@@ -782,8 +815,12 @@ export const OutputPreview = memo(function OutputPreview({
               (shouldUseScriptureTextLayer
                 ? Boolean(text)
                 : hasLibrarySlideLayer) && (
-              shouldUseScriptureTextLayer ? (
-                <ScriptureTextLayer
+              <div
+                className="absolute z-10 overflow-hidden"
+                style={previewTextPositionStyle}
+              >
+                {shouldUseScriptureTextLayer ? (
+                  <ScriptureTextLayer
                   key={[
                     text ?? "",
                     footer ?? "",
@@ -811,24 +848,21 @@ export const OutputPreview = memo(function OutputPreview({
                   maxFontSize={scripturePreviewFontSize}
                   minScale={0.3}
                   fitScale={1}
-                  containerClassName="absolute inset-0 z-10 flex flex-col p-4"
+                  containerClassName="absolute inset-0 flex flex-col p-4"
                   bodyClassName="min-h-0 w-full flex-1"
                   textClassName="pointer-events-none select-none leading-relaxed text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
                   footerClassName="mt-2 uppercase tracking-wide text-white/90 drop-shadow-md"
                 />
-              ) : (
-                <LibrarySlideLayer
-                  text={text}
-                  elements={slideElements}
-                  canvasSize={canvasSize}
-                  libraryStyle={libraryStyle}
-                  className="absolute inset-0 z-10"
-                  textClassName="drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
-                  minScale={0.4}
-                  fontSizeScale={previewTextScale}
-                  fitScale={1}
-                />
-              )
+                ) : (
+                  <CanvasSlideLayer
+                    text={text}
+                    elements={slideElements}
+                    canvasSize={canvasSize}
+                    libraryStyle={libraryStyle}
+                    className="absolute inset-0"
+                  />
+                )}
+              </div>
             )}
 
             {isTimerLayerEnabled &&
@@ -892,11 +926,20 @@ export const OutputPreview = memo(function OutputPreview({
               </div>
             )}
 
-            {!text && !activeMediaItem && !isTimerLayerEnabled && (
+            {hasHiddenTextLayerContent && !activeMediaItem && !isTimerLayerEnabled && (
+              <div className="absolute inset-0 z-0 flex h-full items-center justify-center">
+                <p className="text-xs text-zinc-500">Text layer is hidden</p>
+              </div>
+            )}
+
+            {!text &&
+              !activeMediaItem &&
+              !isTimerLayerEnabled &&
+              !hasHiddenTextLayerContent && (
               <div className="absolute inset-0 z-0 flex h-full items-center justify-center">
                 <p className="text-xs text-zinc-600">No content</p>
               </div>
-            )}
+              )}
           </div>
 
           <div className="grid w-24 shrink-0 grid-cols-[2.8rem_1fr] text-muted-foreground pr-2">
@@ -909,7 +952,7 @@ export const OutputPreview = memo(function OutputPreview({
                   }
                   onClearMedia();
                 }}
-                className="inline-flex h-10 w-10 items-center justify-center transition hover:text-foreground"
+                className="inline-flex h-10 w-10 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none"
                 title="Clear text and media"
               >
                 <X className="h-7 w-7" />
@@ -921,7 +964,7 @@ export const OutputPreview = memo(function OutputPreview({
                 onClick={onToggleText}
                 aria-pressed={showText}
                 className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
+                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
                   showText ? "text-primary" : "text-muted-foreground"
                 )}
                 title={showText ? "Hide text layer" : "Show text layer"}
@@ -933,7 +976,7 @@ export const OutputPreview = memo(function OutputPreview({
                 onClick={onToggleMessageLayer}
                 aria-pressed={isMessageLayerEnabled}
                 className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
+                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
                   isMessageLayerEnabled ? "text-primary" : "text-muted-foreground"
                 )}
                 title={
@@ -949,7 +992,7 @@ export const OutputPreview = memo(function OutputPreview({
                 onClick={onToggleMedia}
                 aria-pressed={showMedia && Boolean(activeMediaItem)}
                 className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
+                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
                   showMedia && activeMediaItem
                     ? "text-primary"
                     : "text-muted-foreground"
@@ -960,9 +1003,21 @@ export const OutputPreview = memo(function OutputPreview({
               </button>
               <button
                 type="button"
+                onClick={onToggleHideBackground}
+                aria-pressed={hideBackground}
+                className={cn(
+                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
+                  hideBackground ? "text-primary" : "text-muted-foreground"
+                )}
+                title={hideBackground ? "Show background layer" : "Hide background layer"}
+              >
+                <ImageOff className="h-6 w-6" />
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowFilters((previous) => !previous)}
                 className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
+                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
                   showFilters
                     ? "text-primary"
                     : "text-muted-foreground"
@@ -1114,11 +1169,12 @@ export const OutputPreview = memo(function OutputPreview({
           <div className="px-2 pt-2">
             {activeMediaItem?.type === "video" ? (
               <input
+                key="video-volume"
                 type="range"
                 min="0"
                 max="1"
                 step="0.05"
-                value={videoSettings.volume}
+                value={safeVideoVolume}
                 onChange={(event) =>
                   onVideoSettingsChange({
                     volume: Number.parseFloat(event.target.value),
@@ -1126,14 +1182,18 @@ export const OutputPreview = memo(function OutputPreview({
                 }
                 className="h-1.5 w-full accent-muted-foreground"
                 aria-label="Video volume"
-                title={`Volume: ${Math.round(videoSettings.volume * 100)}%`}
+                title={`Volume: ${Math.round(safeVideoVolume * 100)}%`}
               />
             ) : (
               <input
+                key="timer-intensity"
                 type="range"
                 min={0}
                 max={100}
-                defaultValue={100}
+                value={100}
+                onChange={() => {
+                  return;
+                }}
                 className="h-1.5 w-full accent-muted-foreground"
                 aria-label="Timer intensity"
               />

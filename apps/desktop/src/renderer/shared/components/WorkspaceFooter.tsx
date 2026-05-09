@@ -9,6 +9,8 @@ interface WorkspaceFooterProps {
   onViewModeChange: (val: boolean) => void;
   scale: number;
   onScaleChange: (val: number) => void;
+  disableViewModeToggle?: boolean;
+  disableScaleControl?: boolean;
   centerContent?: ReactNode;
   leftContent?: ReactNode;
   className?: string;
@@ -19,6 +21,8 @@ export function WorkspaceFooter({
   onViewModeChange,
   scale,
   onScaleChange,
+  disableViewModeToggle = false,
+  disableScaleControl = false,
   centerContent,
   leftContent,
   className,
@@ -43,9 +47,11 @@ export function WorkspaceFooter({
         <div className="flex items-center gap-1.5 border-r border-border pr-4 mr-1">
           <button
             type="button"
+            disabled={disableViewModeToggle}
             onClick={() => onViewModeChange(true)}
             className={cn(
               "p-1.5 transition rounded-md",
+              disableViewModeToggle && "cursor-not-allowed opacity-45",
               isGridView
                 ? "bg-primary text-primary-foreground shadow-sm"
                 : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
@@ -56,9 +62,11 @@ export function WorkspaceFooter({
           </button>
           <button
             type="button"
+            disabled={disableViewModeToggle}
             onClick={() => onViewModeChange(false)}
             className={cn(
               "p-1.5 transition rounded-md",
+              disableViewModeToggle && "cursor-not-allowed opacity-45",
               !isGridView
                 ? "bg-primary text-primary-foreground shadow-sm"
                 : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
@@ -77,8 +85,14 @@ export function WorkspaceFooter({
               min={30}
               max={110}
               value={scale}
+              disabled={disableScaleControl}
               onChange={(event) => onScaleChange(Number.parseInt(event.target.value, 10))}
-              className="h-1.5 w-32 xl:w-40 accent-primary cursor-pointer transition-all hover:scale-y-110 active:cursor-grabbing"
+              className={cn(
+                "h-1.5 w-32 xl:w-40 accent-primary transition-all",
+                disableScaleControl
+                  ? "cursor-not-allowed opacity-45"
+                  : "cursor-pointer hover:scale-y-110 active:cursor-grabbing",
+              )}
               aria-label="Scale/Zoom Control"
             />
           </div>

@@ -22,4 +22,10 @@ export const mainConfig: Configuration = {
       '@present/backend': path.resolve(__dirname, '../../packages/backend'),
     },
   },
+  // Native modules must NOT be bundled — they use `bindings` which resolves
+  // .node files using __dirname relative to node_modules at runtime.
+  externals: {
+    grandi: 'commonjs grandi',
+    grandiose: 'commonjs grandiose',
+  },
 };

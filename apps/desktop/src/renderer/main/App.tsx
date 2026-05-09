@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { AppHeader } from "../../features/header";
 import type { MediaPanelRef } from "../../features/media";
@@ -12,6 +11,7 @@ import {
   useOrganization,
   usePersistedUIState,
   useGlobalShortcuts,
+  useLooksConfig,
 } from "../shared/hooks";
 import { useWorkspaceStore } from "../../../../../packages/shared/src";
 import { useAppSettings } from "../shared/hooks/useAppSettings";
@@ -19,7 +19,8 @@ import { SettingsScreen } from "../../features/settings/components/SettingsScree
 import { PresentContainer } from "../../features/present/PresentContainer";
 import { BrowserModePanel } from "../../features/browser/BrowserModePanel";
 import { BrowserPreviewSidebar } from "../../features/browser/BrowserPreviewSidebar";
-import type { ContentSource } from "../../shared/types";
+import type { ContentSource, ViewMode } from "../../shared/types";
+import type { OutputTextPosition } from "../../shared/types/output-window";
 import type { HeaderSearchScope } from "../../features/header/AppHeader";
 import {
   ensureFreshDesktopAccessToken,
@@ -28,13 +29,16 @@ import {
 import { api } from "@present/backend/convex/_generated/api";
 import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvider";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
+import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
+import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
+import { LooksWindow } from "../../features/looks/LooksWindow";
+import { ScreenComposerWindow } from "../../features/screen-composer";
 
 export default function Home() {
   const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
   const sessionExpiresAtMs = useDesktopSessionStore(
     (state) => state.sessionExpiresAtMs
   );
-  const authStatus = useDesktopSessionStore((state) => state.authStatus);
   const hasHydratedSession = useDesktopSessionStore(
     (state) => state.hasHydratedSession
   );
@@ -97,19 +101,30 @@ export default function Home() {
       }>
     | undefined;
 
-  const isSettingsWindow = useMemo(() => {
+  const windowType = useMemo(() => {
     if (typeof window === "undefined") {
-      return false;
+      return null;
     }
-
-    return (
-      new URLSearchParams(window.location.search).get("window") === "settings"
-    );
+    return new URLSearchParams(window.location.search).get("window");
   }, []);
 
   useEffect(() => {
     void ensureFontCatalogLoaded(document);
   }, []);
+
+  useEffect(() => {
+    if (!windowType) return;
+    const titleMap: Record<string, string> = {
+      looks: "Looks",
+      "media-stage": "Media Stage",
+      "screen-composer": "Screen Composer",
+      settings: "Settings",
+    };
+    const title = titleMap[windowType];
+    if (title) {
+      document.title = title;
+    }
+  }, [windowType]);
 
   useEffect(() => {
     if (!window.electronAPI?.consumePendingAuthToken) {
@@ -141,6 +156,14 @@ export default function Home() {
       disposed = true;
     };
   }, [clearSession, setAuthStatus, setAuthTokens, setError]);
+
+  useEffect(() => {
+    if (!hasHydratedSession || !sessionToken || !isOnline) {
+      return;
+    }
+
+    void ensureFreshDesktopAccessToken();
+  }, [hasHydratedSession, isOnline, sessionToken]);
 
   useEffect(() => {
     console.info("[Desktop Auth] desktop runtime config", {
@@ -259,23 +282,22 @@ export default function Home() {
     user,
   ]);
 
-  if (authStatus === "loading") {
-    return (
-      <div className="flex h-screen flex-col items-center justify-center bg-background p-6 text-center">
-        <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
-        <p className="mt-3 text-sm text-muted-foreground">Syncing account...</p>
-      </div>
-    );
-  }
+  useOfflineSyncEngine({
+    enabled: hasHydratedSession && Boolean(sessionToken) && isOnline && isConvexAuthReady,
+  });
 
-  return <AuthenticatedApp isSettingsWindow={isSettingsWindow} />;
+  return <AuthenticatedApp windowType={windowType} />;
 }
 
-function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
+function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // Organization & auth
   const { userId } = useOrganization();
   const { type: activeWorkspaceType, id: activeWorkspaceId } =
     useWorkspaceStore();
+  const isSettingsWindow = windowType === "settings";
+  const isMediaStageWindow = windowType === "media-stage";
+  const isLooksWindow = windowType === "looks";
+  const isScreenComposerWindow = windowType === "screen-composer";
 
   // Enforce explicit workspace data isolation
   const effectiveOrgId =
@@ -319,19 +341,176 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
     : isBibleActive
       ? "bible"
       : "services";
-  const [showTextInOutput, setShowTextInOutput] = useState(false);
-  const [showMediaInOutput, setShowMediaInOutput] = useState(true);
-  const [isTimerLayerEnabled, setIsTimerLayerEnabled] = useState(false);
-  const [isMessageLayerEnabled, setIsMessageLayerEnabled] = useState(false);
+  const [availableDisplays, setAvailableDisplays] = useState<Display[]>([]);
+  const [hasLoadedDisplays, setHasLoadedDisplays] = useState(false);
 
   // Shared Data hooks (lifted for Settings vs Present toggling)
   const mediaState = useMediaFolders();
   const { folders, allMediaItems, selectMediaForOutput } = mediaState;
   const settings = useAppSettings({ folders, allMediaItems });
+  const { settingsOutputDisplayId, setSettingsOutputDisplayId } = settings;
+  const { looksConfig, liveLook, setLayerEnabledForLook } = useLooksConfig();
+  const programLooks = liveLook.targets.program;
+  const showTextInOutput =
+    programLooks.layers.slide || programLooks.layers.presentation;
+  const showMediaInOutput =
+    programLooks.layers.media || programLooks.layers.videoInput;
+  const hideBackgroundInOutput = programLooks.layers.mask;
+  const isTimerLayerEnabled = programLooks.layers.props;
+  const isMessageLayerEnabled =
+    programLooks.layers.messages || programLooks.layers.announcements;
+  const outputTextPosition: OutputTextPosition = {
+    ...programLooks.textPosition,
+  };
 
+  const setShowTextInOutput = useCallback(
+    (show: boolean) => {
+      setLayerEnabledForLook(looksConfig.liveLookId, "program", "slide", show);
+      setLayerEnabledForLook(
+        looksConfig.liveLookId,
+        "program",
+        "presentation",
+        show
+      );
+    },
+    [looksConfig.liveLookId, setLayerEnabledForLook]
+  );
+
+  const setShowMediaInOutput = useCallback(
+    (show: boolean) => {
+      setLayerEnabledForLook(looksConfig.liveLookId, "program", "media", show);
+      setLayerEnabledForLook(
+        looksConfig.liveLookId,
+        "program",
+        "videoInput",
+        show
+      );
+    },
+    [looksConfig.liveLookId, setLayerEnabledForLook]
+  );
+
+  const setHideBackgroundInOutput = useCallback(
+    (hide: boolean) => {
+      setLayerEnabledForLook(looksConfig.liveLookId, "program", "mask", hide);
+    },
+    [looksConfig.liveLookId, setLayerEnabledForLook]
+  );
+
+  const setIsTimerLayerEnabled = useCallback(
+    (show: boolean) => {
+      setLayerEnabledForLook(looksConfig.liveLookId, "program", "props", show);
+    },
+    [looksConfig.liveLookId, setLayerEnabledForLook]
+  );
+
+  const setIsMessageLayerEnabled = useCallback(
+    (show: boolean) => {
+      setLayerEnabledForLook(
+        looksConfig.liveLookId,
+        "program",
+        "messages",
+        show
+      );
+      setLayerEnabledForLook(
+        looksConfig.liveLookId,
+        "program",
+        "announcements",
+        show
+      );
+    },
+    [looksConfig.liveLookId, setLayerEnabledForLook]
+  );
   const showsPanelRef = useRef<LibrariesPanelRef>(null);
   const mediaPanelRef = useRef<MediaPanelRef>(null);
   const scripturePanelRef = useRef<ScripturePanelRef>(null);
+
+  const refreshDisplays = useCallback(async () => {
+    if (!window.electronAPI?.getDisplays) {
+      return;
+    }
+    try {
+      const displays = await window.electronAPI.getDisplays();
+      setAvailableDisplays(displays);
+      setHasLoadedDisplays(true);
+    } catch {
+      setAvailableDisplays([]);
+      setHasLoadedDisplays(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI?.setPreferredOutputDisplay) {
+      return;
+    }
+    void window.electronAPI.setPreferredOutputDisplay(
+      settingsOutputDisplayId ?? null
+    );
+  }, [settingsOutputDisplayId]);
+
+  useEffect(() => {
+    if (!hasLoadedDisplays) {
+      return;
+    }
+    if (
+      settingsOutputDisplayId !== null &&
+      !availableDisplays.some(
+        (display) => display.id === settingsOutputDisplayId
+      )
+    ) {
+      setSettingsOutputDisplayId(null);
+    }
+  }, [
+    availableDisplays,
+    hasLoadedDisplays,
+    setSettingsOutputDisplayId,
+    settingsOutputDisplayId,
+  ]);
+
+  useEffect(() => {
+    const initialTimeoutId = window.setTimeout(() => {
+      void refreshDisplays();
+    }, 0);
+    const intervalId = window.setInterval(() => {
+      void refreshDisplays();
+    }, 4000);
+    return () => {
+      window.clearTimeout(initialTimeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [refreshDisplays]);
+
+  const openMediaStageWindow = useCallback(async () => {
+    if (!window.electronAPI?.openMediaStageWindow) {
+      return;
+    }
+    try {
+      await window.electronAPI.openMediaStageWindow();
+    } catch (error) {
+      console.error("Failed to open media stage window:", error);
+    }
+  }, []);
+
+  const openLooksWindow = useCallback(async () => {
+    if (!window.electronAPI?.openLooksWindow) {
+      return;
+    }
+    try {
+      await window.electronAPI.openLooksWindow();
+    } catch (error) {
+      console.error("Failed to open looks window:", error);
+    }
+  }, []);
+
+  const openScreenComposerWindow = useCallback(async () => {
+    if (!window.electronAPI?.openScreenComposerWindow) {
+      return;
+    }
+    try {
+      await window.electronAPI.openScreenComposerWindow();
+    } catch (error) {
+      console.error("Failed to open screen composer window:", error);
+    }
+  }, []);
 
   useGlobalShortcuts({
     enabled: !isSettingsWindow && effectiveViewMode !== "browser",
@@ -340,6 +519,33 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
     mediaPanelRef,
     scripturePanelRef,
   });
+
+  const renderPresentContainer = (mode: ViewMode) => (
+    <PresentContainer
+      orgId={effectiveOrgId}
+      userId={userId as any}
+      viewMode={mode}
+      bottomTab={bottomTab}
+      contentSource={contentSource}
+      mediaState={mediaState}
+      settings={settings}
+      showsPanelRef={showsPanelRef}
+      mediaPanelRef={mediaPanelRef}
+      scripturePanelRef={scripturePanelRef}
+      isAutopilotEnabled={isAutopilotEnabled}
+      showTextInOutput={showTextInOutput}
+      setShowTextInOutput={setShowTextInOutput}
+      showMediaInOutput={showMediaInOutput}
+      setShowMediaInOutput={setShowMediaInOutput}
+      hideBackgroundInOutput={hideBackgroundInOutput}
+      setHideBackgroundInOutput={setHideBackgroundInOutput}
+      outputTextPosition={outputTextPosition}
+      isTimerLayerEnabled={isTimerLayerEnabled}
+      setIsTimerLayerEnabled={setIsTimerLayerEnabled}
+      isMessageLayerEnabled={isMessageLayerEnabled}
+      setIsMessageLayerEnabled={setIsMessageLayerEnabled}
+    />
+  );
 
   if (isSettingsWindow) {
     return (
@@ -354,6 +560,18 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
     );
   }
 
+  if (isMediaStageWindow) {
+    return <StageDisplayWindow />;
+  }
+
+  if (isLooksWindow) {
+    return <LooksWindow />;
+  }
+
+  if (isScreenComposerWindow) {
+    return <ScreenComposerWindow />;
+  }
+
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <AppHeader
@@ -366,6 +584,9 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
           setBottomTab("media");
           setViewMode("show");
         }}
+        onOpenComposer={() => {
+          void openScreenComposerWindow();
+        }}
         onOpenLibraries={() => {
           setBottomTab("shows");
           setViewMode("show");
@@ -377,6 +598,12 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
         onOpenBrowser={() => {
           setViewMode("browser");
         }}
+        onOpenStage={() => {
+          void openMediaStageWindow();
+        }}
+        onOpenLooks={() => {
+          void openLooksWindow();
+        }}
       />
 
       {effectiveViewMode === "browser" ? (
@@ -387,27 +614,7 @@ function AuthenticatedApp({ isSettingsWindow }: { isSettingsWindow: boolean }) {
           <BrowserPreviewSidebar />
         </div>
       ) : (
-        <PresentContainer
-          orgId={effectiveOrgId}
-          userId={userId as any}
-          viewMode={effectiveViewMode}
-          bottomTab={bottomTab}
-          contentSource={contentSource}
-          mediaState={mediaState}
-          settings={settings}
-          showsPanelRef={showsPanelRef}
-          mediaPanelRef={mediaPanelRef}
-          scripturePanelRef={scripturePanelRef}
-          isAutopilotEnabled={isAutopilotEnabled}
-          showTextInOutput={showTextInOutput}
-          setShowTextInOutput={setShowTextInOutput}
-          showMediaInOutput={showMediaInOutput}
-          setShowMediaInOutput={setShowMediaInOutput}
-          isTimerLayerEnabled={isTimerLayerEnabled}
-          setIsTimerLayerEnabled={setIsTimerLayerEnabled}
-          isMessageLayerEnabled={isMessageLayerEnabled}
-          setIsMessageLayerEnabled={setIsMessageLayerEnabled}
-        />
+        renderPresentContainer(effectiveViewMode)
       )}
     </div>
   );

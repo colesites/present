@@ -15,6 +15,7 @@ import type {
   LibraryItemDraft,
   LibrarySlide,
   SlideElement,
+  SlideElementStyle,
   SlideElementType,
 } from "../../shared/types";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
@@ -533,6 +534,64 @@ export const LyricsEditor = memo(function LyricsEditor({
     [applyDraft],
   );
 
+  const setAllTextElementsStyle = useCallback(
+    (stylePatch: Partial<SlideElementStyle>) => {
+      const entries = Object.entries(stylePatch).filter(
+        ([, value]) => value !== undefined,
+      ) as Array<[keyof SlideElementStyle, SlideElementStyle[keyof SlideElementStyle]]>;
+
+      if (entries.length === 0) {
+        return;
+      }
+
+      applyDraft((previous) => ({
+        ...previous,
+        slides: previous.slides.map((slide) => {
+          const currentElements = slide.elements ?? [];
+          if (currentElements.length === 0) {
+            return slide;
+          }
+
+          let didChange = false;
+          const nextElements = currentElements.map((element) => {
+            if (element.type !== "text") {
+              return element;
+            }
+
+            let elementChanged = false;
+            for (const [key, value] of entries) {
+              if ((element.style?.[key] ?? undefined) !== value) {
+                elementChanged = true;
+                break;
+              }
+            }
+
+            if (!elementChanged) {
+              return element;
+            }
+
+            didChange = true;
+            return {
+              ...element,
+              style: { ...(element.style ?? {}), ...stylePatch },
+            };
+          });
+
+          if (!didChange) {
+            return slide;
+          }
+
+          return {
+            ...slide,
+            elements: nextElements,
+            text: getPrimarySlideTextFromElements(nextElements, slide.text),
+          };
+        }),
+      }));
+    },
+    [applyDraft],
+  );
+
   const handleSelectSlide = useCallback(
     (slideId: string | null) => {
       setSelectedSlideId(slideId);
@@ -800,15 +859,20 @@ export const LyricsEditor = memo(function LyricsEditor({
         currentCanvasSize,
         activeDefaultTextStyle,
       );
-      applyDraft(
-        (previous) => ({
-          ...previous,
-          slides: nextSlides,
-          body: nextBody,
-        }),
-        {
-          preserveBody: true,
-        },
+      setDraft((previous) =>
+        buildDraftWithNormalizedContent(
+          {
+            ...previous,
+            slides: nextSlides,
+            body: nextBody,
+          },
+          nextSlides,
+          previous.content,
+          activeDefaultTextStyle,
+          {
+            preserveBody: true,
+          },
+        ),
       );
 
       setSelectedSlideId((current) => {
@@ -820,7 +884,7 @@ export const LyricsEditor = memo(function LyricsEditor({
       setSelectedElementId(null);
       setInspectorTab("slide");
     },
-    [activeDefaultTextStyle, applyDraft, currentCanvasSize, setInspectorTab],
+    [activeDefaultTextStyle, currentCanvasSize, setInspectorTab],
   );
 
   const handleAddSlide = useCallback(() => {
@@ -1017,6 +1081,7 @@ export const LyricsEditor = memo(function LyricsEditor({
               fontItalic={fontItalic}
               fontUnderline={fontUnderline}
               onSetAllTextFontSize={setAllTextElementsFontSize}
+              onSetAllTextStyle={setAllTextElementsStyle}
               onUpdateOutput={handleUpdateOutput}
               onApplyInlineTextFormat={applyInlineTextFormat}
             />

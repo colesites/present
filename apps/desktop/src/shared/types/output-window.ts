@@ -1,4 +1,5 @@
 import type { CanvasSizePreset, SlideElement } from "./index";
+import type { ScreenComposerLayout } from "./screen-composer";
 
 export type VideoSettings = {
   loop: boolean;
@@ -28,6 +29,15 @@ export type ScriptureStyle = {
   footerPosition: ScriptureFooterPosition;
 };
 
+export type OutputTextPosition = {
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+  textAlign: ScriptureTextAlign;
+  verticalAlign: ScriptureVerticalAlign;
+};
+
 // State matching what useOutputBroadcast sends
 export type OutputState = {
   mediaUrl: string | null;
@@ -35,6 +45,8 @@ export type OutputState = {
   mediaId: string | null;
   showText: boolean;
   showMedia: boolean;
+  hideBackground: boolean;
+  textPosition?: OutputTextPosition | null;
   videoSettings: VideoSettings;
   mediaFilterCSS: string;
   isVideoPlaying: boolean;
@@ -66,4 +78,6 @@ export type OutputState = {
     nameBannerColor: string;
     titlePosition: "top" | "bottom";
   };
+  screenComposerEnabled?: boolean;
+  screenComposerLayout?: ScreenComposerLayout | null;
 };

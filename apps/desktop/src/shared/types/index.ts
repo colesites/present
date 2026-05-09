@@ -55,13 +55,43 @@ export type SlideElementStyle = {
   flipY?: boolean;
   objectFit?: "cover" | "contain" | "fill";
   capitalization?:
-    | "none"
-    | "allCaps"
-    | "titleCase"
-    | "lineStart"
-    | "uppercase"
-    | "lowercase"
-    | "capitalize";
+  | "none"
+  | "allCaps"
+  | "titleCase"
+  | "lineStart"
+  | "uppercase"
+  | "lowercase"
+  | "capitalize";
+};
+
+export type SlideTextRun = {
+  text: string;
+  fontFamily?: string;
+  fontSize?: number;
+  fontWeight?: string;
+  fontStyle?: string;
+  color?: string;
+  underline?: boolean;
+  letterSpacing?: number;
+};
+
+export type SlideTextParagraph = {
+  alignment?: "left" | "center" | "right" | "justify";
+  lineHeight?: number;
+  spaceBefore?: number;
+  spaceAfter?: number;
+  runs: SlideTextRun[];
+};
+
+export type SlideTextBody = {
+  insetLeft?: number;
+  insetRight?: number;
+  insetTop?: number;
+  insetBottom?: number;
+  verticalAlign?: "top" | "middle" | "bottom";
+  wrap?: boolean;
+  autoFit?: string;
+  paragraphs: SlideTextParagraph[];
 };
 
 export type SlideElement = {
@@ -73,6 +103,7 @@ export type SlideElement = {
   height: number;
   content: string; // Text string or Image URL
   richTextHtml?: string;
+  textBody?: SlideTextBody;
   isPlaceholder?: boolean;
   contentRole?: "scriptureVerse" | "scriptureFooter";
   style?: SlideElementStyle;

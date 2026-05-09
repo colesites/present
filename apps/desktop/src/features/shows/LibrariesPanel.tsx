@@ -82,6 +82,8 @@ interface LibrariesPanelProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   contentSource: ContentSource;
+  speechLang: string;
+  speechInputDeviceId: string | null;
 }
 
 export interface LibrariesPanelRef {
@@ -110,6 +112,8 @@ export const LibrariesPanel = memo(
       searchQuery,
       onSearchChange,
       contentSource,
+      speechLang,
+      speechInputDeviceId,
     }: LibrariesPanelProps,
     ref,
   ) {
@@ -143,7 +147,8 @@ export const LibrariesPanel = memo(
       stopListening,
     } = useSpeechRecognition({
       sessionToken,
-      lang: "en-US",
+      lang: speechLang,
+      inputDeviceId: speechInputDeviceId,
       onResult: ({ transcript }) => {
         onSearchChange(transcript);
       },
@@ -1010,7 +1015,7 @@ function NewLibraryItemDialog({
 
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">
-            Content
+            Lyrics
           </label>
           <textarea
             value={body}
@@ -1029,7 +1034,7 @@ function NewLibraryItemDialog({
             disabled={isFixing}
             className="flex-1 rounded-md border border-input py-2 text-xs font-medium text-foreground hover:bg-secondary disabled:opacity-50"
           >
-            {isFixing ? "Fixing..." : "Fix body"}
+            {isFixing ? "Fixing..." : "Fix Lyrics"}
           </button>
           <button
             type="button"

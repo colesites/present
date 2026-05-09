@@ -17,7 +17,8 @@ const initialState: BrowserModeState = {
 };
 
 export function BrowserPreviewSidebar() {
-  const [browserState, setBrowserState] = useState<BrowserModeState>(initialState);
+  const [browserState, setBrowserState] =
+    useState<BrowserModeState>(initialState);
 
   useEffect(() => {
     if (!window.electronAPI?.getBrowserModeState) {
@@ -31,16 +32,17 @@ export function BrowserPreviewSidebar() {
       }
     });
 
-    const removeBrowserStateListener =
-      window.electronAPI.onBrowserModeStateChanged((state) => {
+    const removeListener = window.electronAPI.onBrowserModeStateChanged(
+      (state) => {
         if (!disposed) {
           setBrowserState(state);
         }
-      });
+      }
+    );
 
     return () => {
       disposed = true;
-      removeBrowserStateListener?.();
+      removeListener?.();
     };
   }, []);
 
@@ -64,7 +66,9 @@ export function BrowserPreviewSidebar() {
             ) : (
               <Eye className="h-3 w-3" />
             )}
-            {browserState.projectionTarget === "main-output" ? "Live Output" : "Local Preview"}
+            {browserState.projectionTarget === "main-output"
+              ? "Live Output"
+              : "Local Preview"}
           </span>
         </div>
         <p className="mt-1 truncate text-[11px] text-muted-foreground">

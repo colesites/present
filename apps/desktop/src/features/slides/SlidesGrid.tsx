@@ -6,7 +6,7 @@ import { stripBracketsForDisplay } from "../../renderer/shared/lib/lyrics";
 import { getLabelColor } from "../../shared/types";
 import { cn } from "../../renderer/shared/lib/utils";
 import { AutoFitText } from "../../renderer/shared/components/AutoFitText";
-import { LibrarySlideLayer } from "../../renderer/shared/components/LibrarySlideLayer";
+import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -66,6 +66,7 @@ interface SlidesGridProps {
   fontUnderline?: boolean;
   externalScale?: number;
   isGridView?: boolean;
+  forceSingleColumn?: boolean;
 }
 
 export const SlidesGrid = memo(function SlidesGrid({
@@ -82,13 +83,14 @@ export const SlidesGrid = memo(function SlidesGrid({
   fontUnderline,
   externalScale = 60,
   isGridView = true,
+  forceSingleColumn = false,
 }: SlidesGridProps) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const scaleFactor = externalScale / 60;
   const slideHeight = useMemo(
-    () => Math.round(BASE_SLIDE_HEIGHT * scaleFactor),
-    [scaleFactor]
+    () => Math.round((forceSingleColumn ? BASE_SLIDE_HEIGHT * 2 : BASE_SLIDE_HEIGHT) * scaleFactor),
+    [forceSingleColumn, scaleFactor]
   );
   const minSlideWidth = useMemo(
     () => Math.round(BASE_MIN_SLIDE_WIDTH * scaleFactor),
@@ -117,7 +119,9 @@ export const SlidesGrid = memo(function SlidesGrid({
         style={{
           gap: `${gridGap}px`,
           gridTemplateColumns: isGridView
-            ? `repeat(auto-fill, minmax(${minSlideWidth}px, 1fr))`
+            ? forceSingleColumn
+              ? "minmax(0, 1fr)"
+              : `repeat(auto-fill, minmax(${minSlideWidth}px, 1fr))`
             : undefined,
         }}
       >
@@ -298,9 +302,10 @@ const SlideCard = memo(function SlideCard({
           >
             {slide.elements && slide.elements.length > 0 ? (
               <div className="relative h-full w-full overflow-hidden rounded-sm">
-                <LibrarySlideLayer
+                <CanvasSlideLayer
                   text={slide.text}
                   elements={slide.elements}
+                  className="absolute inset-0"
                   libraryStyle={{
                     fontFamily: fontFamily ?? "inherit",
                     fontSize: fontSize ?? 80,
@@ -308,8 +313,6 @@ const SlideCard = memo(function SlideCard({
                     fontItalic: Boolean(fontItalic),
                     fontUnderline: Boolean(fontUnderline),
                   }}
-                  minScale={0.12}
-                  fontSizeScale={0.2}
                 />
               </div>
             ) : (

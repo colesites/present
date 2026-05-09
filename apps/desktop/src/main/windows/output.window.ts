@@ -1,6 +1,10 @@
 import { BrowserWindow, screen } from 'electron';
 import { isDev } from '../utils/app.utils';
-import { getPreferredOutputDisplay, moveOutputWindowToDisplay } from '../services/display.service';
+import {
+  getPreferredOutputDisplay,
+  moveOutputWindowToDisplay,
+  setPreferredOutputDisplayId,
+} from '../services/display.service';
 import { getDesktopAppIcon } from '../services/icon.service';
 
 // Webpack entry points (declared globally by Forge)
@@ -17,7 +21,16 @@ export const getOutputWindow = (): BrowserWindow | null => outputWindow;
 /**
  * Create the output/projector window
  */
-export const createOutputWindow = (mainWindow: BrowserWindow | null): boolean => {
+export const createOutputWindow = (
+  mainWindow: BrowserWindow | null,
+  options?: {
+    displayId?: number | null;
+  },
+): boolean => {
+  if (options?.displayId !== undefined) {
+    setPreferredOutputDisplayId(options.displayId);
+  }
+
   if (outputWindow && !outputWindow.isDestroyed()) {
     outputWindow.focus();
     reconcileOutputWindowDisplay();

@@ -29,7 +29,7 @@ export const createSettingsWindow = (): void => {
     minWidth: 900,
     minHeight: 620,
     show: false,
-    title: 'Present Settings',
+    title: 'Settings',
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       nodeIntegration: false,

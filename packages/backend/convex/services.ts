@@ -101,9 +101,15 @@ export const addItem = mutation({
   args: {
     workspaceId: v.optional(v.string()),
     serviceId: v.string(),
-    type: v.union(v.literal("library"), v.literal("media"), v.literal("scripture")),
+    type: v.union(
+      v.literal("library"),
+      v.literal("media"),
+      v.literal("scripture"),
+      v.literal("presentation"),
+    ),
     refId: v.string(),
     label: v.optional(v.string()),
+    presentation: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const workspace = await validateWorkspace(ctx, args.workspaceId);
@@ -116,10 +122,26 @@ export const addItem = mutation({
     if (workspace.type === "personal" && (service as any).userId !== workspace.userId) throw new Error("Unauthorized");
     if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) throw new Error("Unauthorized");
 
+    const normalizedPresentation =
+      args.type === "presentation" && args.presentation && typeof args.presentation === "object"
+        ? {
+            title:
+              typeof (args.presentation as { title?: unknown }).title === "string"
+                ? (args.presentation as { title: string }).title
+                : args.label ?? "Presentation",
+            sourceType:
+              (args.presentation as { sourceType?: unknown }).sourceType === "pdf" ||
+              (args.presentation as { sourceType?: unknown }).sourceType === "pptx"
+                ? ((args.presentation as { sourceType: "pdf" | "pptx" }).sourceType)
+                : "pptx",
+          }
+        : undefined;
+
     const newItem = {
       type: args.type,
       refId: args.refId,
       label: args.label,
+      presentation: args.type === "presentation" ? normalizedPresentation : undefined,
       addedAt: Date.now(),
     };
 

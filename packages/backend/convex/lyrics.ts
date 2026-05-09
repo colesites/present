@@ -23,7 +23,7 @@ export const fixLyrics = action({
     const openai = createOpenAI({
       apiKey: gatewayKey,
       baseURL:
-        process.env.VERCEL_AI_GATEWAY_URL ?? "https://gateway.ai.vercel.com/v1",
+        process.env.VERCEL_AI_GATEWAY_URL ?? "https://ai-gateway.vercel.sh/v1",
     });
 
     try {

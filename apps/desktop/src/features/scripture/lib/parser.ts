@@ -9,6 +9,132 @@ export interface ParsedReference {
   errors: string[];
 }
 
+const SPOKEN_NUMBER_VALUES = new Map<string, number>([
+  ["zero", 0],
+  ["one", 1],
+  ["two", 2],
+  ["three", 3],
+  ["four", 4],
+  ["five", 5],
+  ["six", 6],
+  ["seven", 7],
+  ["eight", 8],
+  ["nine", 9],
+  ["ten", 10],
+  ["eleven", 11],
+  ["twelve", 12],
+  ["thirteen", 13],
+  ["fourteen", 14],
+  ["fifteen", 15],
+  ["sixteen", 16],
+  ["seventeen", 17],
+  ["eighteen", 18],
+  ["nineteen", 19],
+  ["twenty", 20],
+  ["thirty", 30],
+  ["forty", 40],
+  ["fifty", 50],
+  ["sixty", 60],
+  ["seventy", 70],
+  ["eighty", 80],
+  ["ninety", 90],
+  ["hundred", 100],
+]);
+
+function normalizeBookLookup(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^(first|1st|i)\b/, "1")
+    .replace(/^(second|2nd|ii)\b/, "2")
+    .replace(/^(third|3rd|iii)\b/, "3")
+    .replace(/\s+/g, " ");
+}
+
+function parseSpokenNumberTokens(tokens: string[]): number | null {
+  let current = 0;
+  let hasValue = false;
+
+  for (const token of tokens) {
+    if (token === "and") {
+      continue;
+    }
+
+    const value = SPOKEN_NUMBER_VALUES.get(token);
+    if (value === undefined) {
+      return null;
+    }
+
+    hasValue = true;
+
+    if (value === 100) {
+      current = (current || 1) * value;
+      continue;
+    }
+
+    current += value;
+  }
+
+  return hasValue ? current : null;
+}
+
+function replaceSpokenNumberPhrases(input: string): string {
+  const tokens = input.split(/\s+/);
+  const normalizedTokens: string[] = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]?.toLowerCase().replace(/[^a-z-]/g, "");
+    if (!token || (!SPOKEN_NUMBER_VALUES.has(token) && token !== "and")) {
+      normalizedTokens.push(tokens[index] ?? "");
+      continue;
+    }
+
+    const phraseTokens: string[] = [];
+    let lookahead = index;
+
+    while (lookahead < tokens.length) {
+      const candidate = tokens[lookahead]?.toLowerCase().replace(/[^a-z-]/g, "");
+      if (!candidate || (!SPOKEN_NUMBER_VALUES.has(candidate) && candidate !== "and")) {
+        break;
+      }
+      phraseTokens.push(candidate);
+      lookahead += 1;
+    }
+
+    const parsedNumber = parseSpokenNumberTokens(phraseTokens);
+    if (parsedNumber === null) {
+      normalizedTokens.push(...tokens.slice(index, lookahead));
+      index = lookahead - 1;
+      continue;
+    }
+
+    normalizedTokens.push(String(parsedNumber));
+    index = lookahead - 1;
+  }
+
+  return normalizedTokens.join(" ");
+}
+
+function normalizeReferenceInput(input: string): string {
+  return replaceSpokenNumberPhrases(
+    input
+      .trim()
+      .replace(/[.,]/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/^(first|1st|i)\b/i, "1")
+      .replace(/^(second|2nd|ii)\b/i, "2")
+      .replace(/^(third|3rd|iii)\b/i, "3"),
+  )
+    .replace(/\bchapters?\b/gi, "")
+    .replace(/\bverses?\b\s+(\d+)\s+(?:to|through)\s+(\d+)\b/gi, ":$1-$2")
+    .replace(/\bverses?\b\s+(\d+)\s*-\s*(\d+)\b/gi, ":$1-$2")
+    .replace(/\bverses?\b\s+(\d+)\b/gi, ":$1")
+    .replace(/\s+:/g, ":")
+    .replace(/\s*-\s*/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function parseReference(
   input: string,
   availableBooks: BibleBookRecord[],
@@ -22,7 +148,7 @@ export function parseReference(
     errors: [],
   };
 
-  const trimInput = input.trim();
+  const trimInput = normalizeReferenceInput(input);
   if (!trimInput) return result;
 
   // Regex to match: [Book] [Chapter]:[Verse]-[Verse] [Version]
@@ -37,19 +163,21 @@ export function parseReference(
   const match = trimInput.match(regex);
 
   if (!match) {
-    result.errors.push("Invalid format. Expected: Book Chapter:Verse");
+    result.errors.push(
+      "Invalid format. Expected: Book Chapter or Book Chapter:Verse",
+    );
     return result;
   }
 
   const [, bookRaw, chapterRaw, verseStartRaw, verseEndRaw, versionRaw] = match;
 
   // 1. Resolve Book
-  const bookSearch = bookRaw.trim().toLowerCase();
+  const bookSearch = normalizeBookLookup(bookRaw);
   const book = availableBooks.find(
     (b) =>
-      b.name.toLowerCase() === bookSearch ||
-      b.id.toLowerCase() === bookSearch ||
-      b.abbreviation?.toLowerCase() === bookSearch,
+      normalizeBookLookup(b.name) === bookSearch ||
+      normalizeBookLookup(b.id) === bookSearch ||
+      normalizeBookLookup(b.abbreviation ?? "") === bookSearch,
   );
 
   if (!book) {

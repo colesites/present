@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ScriptureStyle } from "../../../shared/types/output-window";
+import type {
+  OutputTextPosition,
+  ScriptureStyle,
+} from "../../../shared/types/output-window";
 import type { CanvasSizePreset, SlideElement } from "../../../shared/types";
+import type { ScreenComposerLayout } from "../../../shared/types/screen-composer";
 
 type MediaItem =
   | {
@@ -23,6 +27,8 @@ type Params = {
   activeMediaItem: MediaItem;
   showText: boolean;
   showMedia: boolean;
+  hideBackground: boolean;
+  textPosition: OutputTextPosition;
 
   videoSettings: VideoSettings;
   mediaFilterCSS: string;
@@ -49,12 +55,16 @@ type Params = {
     nameBannerColor: string;
     titlePosition: "top" | "bottom";
   };
+  screenComposerEnabled: boolean;
+  screenComposerLayout: ScreenComposerLayout;
 };
 
 export function useOutputBroadcast({
   activeMediaItem,
   showText,
   showMedia,
+  hideBackground,
+  textPosition,
   videoSettings,
   mediaFilterCSS,
   isVideoPlaying,
@@ -63,6 +73,8 @@ export function useOutputBroadcast({
   scriptureStyle,
   libraryStyle,
   timerLayout,
+  screenComposerEnabled,
+  screenComposerLayout,
   activeSlideId,
   slideText,
   slideFooter,
@@ -123,6 +135,8 @@ export function useOutputBroadcast({
       mediaType,
       showText,
       showMedia,
+      hideBackground,
+      textPosition,
       videoSettings,
       mediaFilterCSS,
       isVideoPlaying,
@@ -131,6 +145,8 @@ export function useOutputBroadcast({
       scriptureStyle,
       libraryStyle,
       timerLayout,
+      screenComposerEnabled,
+      screenComposerLayout,
     });
 
     // Send active slide text
@@ -149,6 +165,8 @@ export function useOutputBroadcast({
     activeMediaItem?.type,
     showText,
     showMedia,
+    hideBackground,
+    textPosition,
     videoSettings,
     mediaFilterCSS,
     isVideoPlaying,
@@ -176,6 +194,8 @@ export function useOutputBroadcast({
     timerLayout.nameBannerEnabled,
     timerLayout.nameBannerColor,
     timerLayout.titlePosition,
+    screenComposerEnabled,
+    screenComposerLayout,
     activeSlideId,
     slideText,
     slideFooter,

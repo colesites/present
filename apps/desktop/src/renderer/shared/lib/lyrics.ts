@@ -1,3 +1,10 @@
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "@present/backend/convex/_generated/api";
+
+const DEFAULT_DESKTOP_CONVEX_URL = "https://wary-iguana-735.convex.cloud";
+const convexUrl = process.env.CONVEX_URL ?? DEFAULT_DESKTOP_CONVEX_URL;
+const convex = new ConvexHttpClient(convexUrl);
+
 /**
  * Strip bracket annotations like [Verse 1], [Chorus], etc. from text
  * so it can be displayed cleanly on slides / output preview.
@@ -86,18 +93,12 @@ export function parseLyricsToSlides(
 }
 
 /**
- * Fixes lyrics using the server-side AI endpoint.
+ * Fixes lyrics using the Convex lyrics action.
  * @param lyrics The raw lyrics string to clean up.
  * @returns The cleaned lyrics or original if failed.
  */
 export async function fixLyrics(lyrics: string): Promise<string> {
-  const res = await fetch("/api/lyrics/fix", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ lyrics }),
-  });
-
-  const data = await res.json();
+  const data = await convex.action(api.lyrics.fixLyrics, { lyrics });
 
   if (data.notes?.includes("failed")) {
     throw new Error(data.notes);

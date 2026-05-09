@@ -18,6 +18,7 @@ import {
   MediaState,
 } from "../../features/media/hooks/useMediaFolders";
 import type {
+  OutputTextPosition,
   ScriptureFooterPosition,
   ScriptureTextAlign,
   ScriptureVerticalAlign,
@@ -186,6 +187,9 @@ export interface MainViewOutputState {
   onToggleFreeze: () => void;
   showTextInOutput: boolean;
   setShowTextInOutput: (show: boolean) => void;
+  hideBackgroundInOutput: boolean;
+  setHideBackgroundInOutput: (hide: boolean) => void;
+  outputTextPosition: OutputTextPosition;
   isTimerLayerEnabled: boolean;
   setIsTimerLayerEnabled: (show: boolean) => void;
   isMessageLayerEnabled: boolean;
@@ -196,7 +200,6 @@ interface MainViewProps {
   viewMode: ViewMode;
   bottomTab: BottomTab;
   orgId: Id<"organizations"> | undefined;
-  userId: string | null;
 
   servicesSidebarProps: {
     services: Service[];
@@ -219,36 +222,50 @@ interface MainViewProps {
     onDeleteService: (serviceId: Id<"services">) => Promise<void>;
     onReorderServiceItems: (from: number, to: number) => Promise<void>;
     onReorderServices: (from: number, to: number) => Promise<void>;
+    onAddScriptureToService: (
+      serviceId: Id<"services">,
+      ref: string,
+      text: string,
+    ) => Promise<void>;
   };
 
   presentState: MainViewPresentState;
   mediaState: MainViewMediaState;
   libraryState: MainViewLibraryState;
   styleState: MainViewStyleState;
+  speechSettings: {
+    lang: string;
+    inputDeviceId: string | null;
+  };
   panelRefs: MainViewPanelRefs;
   outputState: MainViewOutputState;
   contentSource: ContentSource;
+  isPptxSelection?: boolean;
 }
 
 export function MainView({
   viewMode,
   bottomTab,
   orgId,
-  userId,
   servicesSidebarProps,
   presentState,
   mediaState,
   libraryState,
   styleState,
+  speechSettings,
   panelRefs,
   outputState,
   contentSource,
+  isPptxSelection = false,
 }: MainViewProps) {
   const {
     isFrozen: isOutputFrozen,
     onToggleFreeze,
     showTextInOutput,
     setShowTextInOutput,
+    hideBackgroundInOutput,
+    setHideBackgroundInOutput,
+    outputTextPosition,
     isTimerLayerEnabled,
     setIsTimerLayerEnabled,
     isMessageLayerEnabled,
@@ -357,6 +374,7 @@ export function MainView({
     onDeleteService: deleteService,
     onReorderServiceItems: reorderServiceItems,
     onReorderServices: reorderServices,
+    onAddScriptureToService,
   } = servicesSidebarProps;
 
   const { showsPanelRef, mediaPanelRef, scripturePanelRef } = panelRefs;
@@ -426,6 +444,8 @@ export function MainView({
       searchQuery,
       onSearchChange: setSearchQuery,
       contentSource,
+      speechLang: speechSettings.lang,
+      speechInputDeviceId: speechSettings.inputDeviceId,
     }),
     [
       categories,
@@ -443,6 +463,8 @@ export function MainView({
       selectedCategoryId,
       selectedLibraryId,
       selectedServiceId,
+      speechSettings.inputDeviceId,
+      speechSettings.lang,
       setSearchQuery,
       setSelectedCategoryId,
       setSelectedLibraryId,
@@ -460,6 +482,10 @@ export function MainView({
   const handleToggleMediaInOutput = React.useCallback(() => {
     setShowMediaInOutput(!showMediaInOutput);
   }, [setShowMediaInOutput, showMediaInOutput]);
+
+  const handleToggleHideBackground = React.useCallback(() => {
+    setHideBackgroundInOutput(!hideBackgroundInOutput);
+  }, [hideBackgroundInOutput, setHideBackgroundInOutput]);
 
   const handleClearOutputMedia = React.useCallback(() => {
     onClearMedia();
@@ -501,8 +527,11 @@ export function MainView({
       onToggleVideoPlayback,
       showText: showTextInOutput,
       showMedia: showMediaInOutput,
+      hideBackground: hideBackgroundInOutput,
+      textPosition: outputTextPosition,
       onToggleText: handleToggleTextInOutput,
       onToggleMedia: handleToggleMediaInOutput,
+      onToggleHideBackground: handleToggleHideBackground,
       onClearMedia: handleClearOutputMedia,
       mediaFilters,
       onMediaFiltersChange: updateMediaFilters,
@@ -530,10 +559,12 @@ export function MainView({
       fontSize,
       fontUnderline,
       handleClearOutputMedia,
+      handleToggleHideBackground,
       handleToggleMediaInOutput,
       handleToggleMessageLayer,
       handleToggleTextInOutput,
       handleToggleTimerLayer,
+      hideBackgroundInOutput,
       isMessageLayerEnabled,
       isOutputFrozen,
       isTimerLayerEnabled,
@@ -552,6 +583,7 @@ export function MainView({
       scriptureVerticalAlign,
       showMediaInOutput,
       showTextInOutput,
+      outputTextPosition,
       slideGroups,
       timerLayout,
       onToggleVideoPlayback,
@@ -658,9 +690,12 @@ export function MainView({
                   showsPanelRef={showsPanelRef}
                   scripturePanelRef={scripturePanelRef}
                   showsPanelProps={showsPanelProps}
+                  speechLang={speechSettings.lang}
+                  speechInputDeviceId={speechSettings.inputDeviceId}
                   onSendScripture={handleScriptureOutput}
-                  orgId={orgId ?? null}
-                  userId={userId}
+                  selectedServiceId={selectedServiceId}
+                  onAddScriptureToService={onAddScriptureToService}
+                  lockSingleSlideView={isPptxSelection}
                 />
               </ResizablePanel>
             </ResizablePanelGroup>
@@ -728,9 +763,12 @@ export function MainView({
         showsPanelRef={showsPanelRef}
         scripturePanelRef={scripturePanelRef}
         showsPanelProps={showsPanelProps}
+        speechLang={speechSettings.lang}
+        speechInputDeviceId={speechSettings.inputDeviceId}
         onSendScripture={handleScriptureOutput}
-        orgId={orgId ?? null}
-        userId={userId}
+        selectedServiceId={selectedServiceId}
+        onAddScriptureToService={onAddScriptureToService}
+        lockSingleSlideView={isPptxSelection}
       />
     </div>
   );

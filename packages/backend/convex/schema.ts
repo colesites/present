@@ -66,10 +66,12 @@ export default defineSchema({
         type: v.union(
           v.literal("library"),
           v.literal("media"),
-          v.literal("scripture")
+          v.literal("scripture"),
+          v.literal("presentation"),
         ),
         refId: v.string(),
         label: v.optional(v.string()),
+        presentation: v.optional(v.any()),
         addedAt: v.number(),
       })
     ),
@@ -137,9 +139,15 @@ export default defineSchema({
     order: v.optional(v.number()),
     items: v.array(
       v.object({
-        type: v.union(v.literal("library"), v.literal("media"), v.literal("scripture")),
+        type: v.union(
+          v.literal("library"),
+          v.literal("media"),
+          v.literal("scripture"),
+          v.literal("presentation"),
+        ),
         refId: v.string(),
         label: v.optional(v.string()),
+        presentation: v.optional(v.any()),
         addedAt: v.number(),
       }),
     ),

@@ -120,18 +120,28 @@ export function useLibrary(
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
-    setLibraryItems(
-      readOrgLibraryItems(workspaceId).map((item) =>
-        normalizeLibraryItem(item, defaultTextStyle),
-      ),
-    );
+    const timerId = window.setTimeout(() => {
+      setLibraryItems(
+        readOrgLibraryItems(workspaceId).map((item) =>
+          normalizeLibraryItem(item, defaultTextStyle),
+        ),
+      );
+    }, 0);
+    return () => {
+      window.clearTimeout(timerId);
+    };
   }, [defaultTextStyle, workspaceId]);
 
   useEffect(() => {
     if (selectedItemId) {
       const exists = libraryItems.some((s) => s._id === selectedItemId);
       if (!exists) {
-        setSelectedItemId(null);
+        const timerId = window.setTimeout(() => {
+          setSelectedItemId(null);
+        }, 0);
+        return () => {
+          window.clearTimeout(timerId);
+        };
       }
     }
   }, [libraryItems, selectedItemId]);

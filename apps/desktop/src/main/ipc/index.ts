@@ -11,6 +11,7 @@ import { registerPermissionsIPC } from './permissions.ipc';
 import { registerBrowserIPC } from './browser.ipc';
 import { registerFontIPC } from './font.ipc';
 import { registerPptxIPC } from './pptx.ipc';
+import { registerNdiIPC } from './ndi.ipc';
 
 /**
  * Register all IPC handlers
@@ -25,4 +26,5 @@ export const registerAllIPC = (): void => {
   registerBrowserIPC();
   registerFontIPC();
   registerPptxIPC();
+  registerNdiIPC();
 };

@@ -5,6 +5,7 @@ import type { ParsedPptxPresentation } from "./pptx";
 declare global {
 interface Display {
   id: number;
+  label?: string;
   bounds: { x: number; y: number; width: number; height: number };
   workArea: { x: number; y: number; width: number; height: number };
   scaleFactor: number;
@@ -99,9 +100,17 @@ interface PptxAPI {
 }
 
 interface ElectronAPI {
-  openOutputWindow: () => Promise<boolean>;
+  openOutputWindow: (displayId?: number | null) => Promise<boolean>;
   closeOutputWindow: () => Promise<boolean>;
+  openMediaStageWindow: () => Promise<boolean>;
+  closeMediaStageWindow: () => Promise<boolean>;
+  openLooksWindow: () => Promise<boolean>;
+  closeLooksWindow: () => Promise<boolean>;
+  openScreenComposerWindow: () => Promise<boolean>;
+  closeScreenComposerWindow: () => Promise<boolean>;
   getDisplays: () => Promise<Display[]>;
+  setPreferredOutputDisplay: (displayId: number | null) => Promise<boolean>;
+  getPreferredOutputDisplay: () => Promise<number | null>;
   onOutputWindowClosed: (callback: () => void) => void;
   selectFolder: () => Promise<{ id: string; name: string; path: string } | null>;
   readFolder: (folderPath: string) => Promise<{ name: string; lastModified: number }[]>;
@@ -117,6 +126,38 @@ interface ElectronAPI {
   onOutputData: (callback: (data: unknown) => void) => void;
   notifyOutputReady: () => void;
   onOutputReady: (callback: () => void) => void;
+  sendToStage: (data: unknown) => void;
+  onStageData: (callback: (data: unknown) => void) => void;
+  notifyStageReady: () => void;
+  onStageReady: (callback: () => void) => () => void;
+
+  // NDI Native Transport
+  startNdiOutput: (
+    sourceName: string,
+    groupName: string,
+  ) => Promise<{
+    ok: boolean;
+    error?: string;
+    status: {
+      running: boolean;
+      sourceName: string;
+      groupName: string;
+      lastError: string | null;
+      libraryLoaded: boolean;
+      framesSent: number;
+      usingFallbackFrame: boolean;
+    };
+  }>;
+  stopNdiOutput: () => Promise<void>;
+  getNdiStatus: () => Promise<{
+    running: boolean;
+    sourceName: string;
+    groupName: string;
+    lastError: string | null;
+    libraryLoaded: boolean;
+    framesSent: number;
+    usingFallbackFrame: boolean;
+  }>;
 
   // Auth & System URLs
   beginAuthFlow: () => Promise<{ ok: boolean; error?: string }>;

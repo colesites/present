@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
+import { fixLyrics as fixLyricsAction } from "../lib/lyrics";
 
 interface FixLyricsResponse {
   cleanedLyrics: string;
@@ -8,18 +9,8 @@ interface FixLyricsResponse {
 }
 
 async function fixLyricsApi(lyrics: string): Promise<FixLyricsResponse> {
-  const res = await fetch("/api/lyrics/fix", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ lyrics }),
-  });
-
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({}));
-    throw new Error(error.notes || `Failed to fix lyrics (${res.status})`);
-  }
-
-  return res.json();
+  const cleanedLyrics = await fixLyricsAction(lyrics);
+  return { cleanedLyrics };
 }
 
 export function useLyricsFix() {

@@ -16,7 +16,7 @@ const DEFAULT_SCRIPTURE_TEXT_ALIGN: ScriptureTextAlign = "left";
 const DEFAULT_SCRIPTURE_VERTICAL_ALIGN: ScriptureVerticalAlign = "middle";
 const DEFAULT_SCRIPTURE_FOOTER_ALIGN: ScriptureTextAlign = "center";
 const DEFAULT_SCRIPTURE_FOOTER_POSITION: ScriptureFooterPosition = "bottom";
-const DEFAULT_SCRIPTURE_FOOTER_FONT_SIZE = 28;
+const DEFAULT_SCRIPTURE_FOOTER_FONT_SIZE = 70;
 const DEFAULT_LIBRARY_FONT_SIZE = 80;
 const DEFAULT_LIBRARY_FONT_WEIGHT = "400";
 const DEFAULT_TIMER_X = 82;
@@ -27,6 +27,20 @@ const DEFAULT_TIMER_CLOCK_COLOR = "#ffffff";
 const DEFAULT_TIMER_NAME_COLOR = "#ffffff";
 const DEFAULT_TIMER_NAME_BANNER_ENABLED = false;
 const DEFAULT_TIMER_NAME_BANNER_COLOR = "#ffffff";
+const DEFAULT_OUTPUT_DISPLAY_ID: number | null = null;
+const DEFAULT_NDI_ENABLED = false;
+const DEFAULT_NDI_SOURCE_NAME = "Present Main Output";
+const DEFAULT_NDI_GROUP_NAME = "Public";
+const swallowAsyncError = (): null => null;
+const DEFAULT_NDI_RUNTIME_STATUS = {
+  running: false,
+  sourceName: DEFAULT_NDI_SOURCE_NAME,
+  groupName: DEFAULT_NDI_GROUP_NAME,
+  lastError: null as string | null,
+  libraryLoaded: false,
+  framesSent: 0,
+  usingFallbackFrame: false,
+};
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -43,11 +57,11 @@ function clampTimerLayout(layout: {
 
 function normalizeScriptureFontSize(value: number) {
   const legacyAdjusted = value <= 30 ? value * 4 : value;
-  return Math.min(Math.max(Math.round(legacyAdjusted), 24), 400);
+  return Math.max(Math.round(legacyAdjusted), 12);
 }
 
 function normalizeScriptureFooterFontSize(value: number) {
-  return Math.min(Math.max(Math.round(value), 8), 220);
+  return Math.max(Math.round(value), 8);
 }
 
 function deriveScriptureFooterFontSize(scriptureFontSize: number) {
@@ -57,12 +71,20 @@ function deriveScriptureFooterFontSize(scriptureFontSize: number) {
 }
 
 function normalizeLibraryFontSize(value: number) {
-  return Math.min(Math.max(Math.round(value), 24), 400);
+  return Math.max(Math.round(value), 24);
 }
 
 function normalizeFontWeight(value: string) {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : "400";
+}
+
+function normalizeNdiGroupName(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return DEFAULT_NDI_GROUP_NAME;
+  }
+  return trimmed.toLowerCase() === "public" ? "Public" : trimmed;
 }
 
 interface UseAppSettingsProps {
@@ -73,6 +95,9 @@ interface UseAppSettingsProps {
 export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) {
   const lastSettingsRawRef = useRef<string | null>(null);
   const [settingsLang, setSettingsLang] = useState("en-US");
+  const [settingsSpeechInputDeviceId, setSettingsSpeechInputDeviceId] = useState<
+    string | null
+  >(null);
   const [settingsScriptureBackgroundId, setSettingsScriptureBackgroundId] =
     useState<string | null>(null);
   const [settingsScriptureFontSize, setSettingsScriptureFontSize] =
@@ -120,6 +145,21 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   const [settingsTimerTitlePosition, setSettingsTimerTitlePosition] = useState<
     "top" | "bottom"
   >("bottom");
+  const [settingsOutputDisplayId, setSettingsOutputDisplayId] = useState<
+    number | null
+  >(DEFAULT_OUTPUT_DISPLAY_ID);
+  const [settingsNdiEnabled, setSettingsNdiEnabled] = useState(
+    DEFAULT_NDI_ENABLED
+  );
+  const [settingsNdiSourceName, setSettingsNdiSourceName] = useState(
+    DEFAULT_NDI_SOURCE_NAME
+  );
+  const [settingsNdiGroupName, setSettingsNdiGroupName] = useState(
+    DEFAULT_NDI_GROUP_NAME
+  );
+  const [settingsNdiRuntimeStatus, setSettingsNdiRuntimeStatus] = useState(
+    DEFAULT_NDI_RUNTIME_STATUS
+  );
   const [settingsHydrated, setSettingsHydrated] = useState(false);
 
   const [settingsMediaFolderId, setSettingsMediaFolderId] = useState<
@@ -141,6 +181,13 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
 
     if (typeof parsed.scriptureSpeechLang === "string") {
       setSettingsLang(parsed.scriptureSpeechLang);
+    }
+    if (typeof parsed.speechInputDeviceId === "string") {
+      const normalized = parsed.speechInputDeviceId.trim();
+      setSettingsSpeechInputDeviceId(normalized.length > 0 ? normalized : null);
+    }
+    if (parsed.speechInputDeviceId === null) {
+      setSettingsSpeechInputDeviceId(null);
     }
     if (typeof parsed.scriptureBackgroundMediaId === "string") {
       setSettingsScriptureBackgroundId(parsed.scriptureBackgroundMediaId);
@@ -235,6 +282,23 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     if (parsed.timerTitlePosition === "top" || parsed.timerTitlePosition === "bottom") {
       setSettingsTimerTitlePosition(parsed.timerTitlePosition);
     }
+    if (parsed.outputDisplayId === null) {
+      setSettingsOutputDisplayId(null);
+    } else if (isFiniteNumber(parsed.outputDisplayId)) {
+      setSettingsOutputDisplayId(Math.round(parsed.outputDisplayId));
+    }
+    if (typeof parsed.ndiEnabled === "boolean") {
+      setSettingsNdiEnabled(parsed.ndiEnabled);
+    }
+    if (typeof parsed.ndiSourceName === "string") {
+      const normalized = parsed.ndiSourceName.trim();
+      setSettingsNdiSourceName(
+        normalized.length > 0 ? normalized : DEFAULT_NDI_SOURCE_NAME
+      );
+    }
+    if (typeof parsed.ndiGroupName === "string") {
+      setSettingsNdiGroupName(normalizeNdiGroupName(parsed.ndiGroupName));
+    }
   }, []);
 
   const syncFromStorage = useCallback(() => {
@@ -295,6 +359,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
       });
       const next: Settings = {
         scriptureSpeechLang: settingsLang,
+        speechInputDeviceId: settingsSpeechInputDeviceId,
         scriptureBackgroundMediaId: settingsScriptureBackgroundId ?? null,
         scriptureFontSize: settingsScriptureFontSize,
         scriptureFooterFontSize: normalizeScriptureFooterFontSize(
@@ -318,6 +383,11 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         timerNameBannerEnabled: settingsTimerNameBannerEnabled,
         timerNameBannerColor: settingsTimerNameBannerColor,
         timerTitlePosition: settingsTimerTitlePosition,
+        outputDisplayId: settingsOutputDisplayId,
+        ndiEnabled: settingsNdiEnabled,
+        ndiSourceName:
+          settingsNdiSourceName.trim() || DEFAULT_NDI_SOURCE_NAME,
+        ndiGroupName: normalizeNdiGroupName(settingsNdiGroupName),
       };
       const serialized = JSON.stringify(next);
       localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
@@ -328,6 +398,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   }, [
     settingsHydrated,
     settingsLang,
+    settingsSpeechInputDeviceId,
     settingsScriptureBackgroundId,
     settingsScriptureFontSize,
     settingsScriptureFooterFontSize,
@@ -349,6 +420,10 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsTimerNameBannerEnabled,
     settingsTimerNameBannerColor,
     settingsTimerTitlePosition,
+    settingsOutputDisplayId,
+    settingsNdiEnabled,
+    settingsNdiSourceName,
+    settingsNdiGroupName,
   ]);
 
   useEffect(() => {
@@ -357,9 +432,71 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsMediaFolderId(folders[0].id);
   }, [folders, settingsMediaFolderId]);
 
+  useEffect(() => {
+    if (!settingsHydrated) return;
+
+    if (settingsNdiEnabled && window.electronAPI?.startNdiOutput) {
+      void window.electronAPI
+        .startNdiOutput(settingsNdiSourceName, settingsNdiGroupName)
+        .then((result) => {
+          setSettingsNdiRuntimeStatus(result.status);
+        })
+        .catch(() => {
+          setSettingsNdiRuntimeStatus((previous) => ({
+            ...previous,
+            running: false,
+            lastError: "Failed to start NDI output",
+          }));
+        });
+    } else if (!settingsNdiEnabled && window.electronAPI?.stopNdiOutput) {
+      void window.electronAPI
+        .stopNdiOutput()
+        .then(() => {
+          setSettingsNdiRuntimeStatus((previous) => ({
+            ...previous,
+            running: false,
+            lastError: null,
+          }));
+        })
+        .catch(swallowAsyncError);
+    }
+  }, [settingsNdiEnabled, settingsNdiSourceName, settingsNdiGroupName, settingsHydrated]);
+
+  useEffect(() => {
+    if (!settingsHydrated || !window.electronAPI?.getNdiStatus) {
+      return;
+    }
+    let mounted = true;
+    const refreshStatus = async () => {
+      try {
+        const status = await window.electronAPI.getNdiStatus();
+        if (mounted) {
+          setSettingsNdiRuntimeStatus(status);
+        }
+      } catch {
+        if (mounted) {
+          setSettingsNdiRuntimeStatus((previous) => ({
+            ...previous,
+            lastError: "Unable to read NDI status",
+          }));
+        }
+      }
+    };
+    void refreshStatus();
+    const intervalId = window.setInterval(() => {
+      void refreshStatus();
+    }, 1000);
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [settingsHydrated]);
+
   return {
     settingsLang,
     setSettingsLang,
+    settingsSpeechInputDeviceId,
+    setSettingsSpeechInputDeviceId,
     settingsScriptureBackgroundId,
     setSettingsScriptureBackgroundId,
     settingsScriptureFontSize,
@@ -402,6 +539,15 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsTimerNameBannerColor,
     settingsTimerTitlePosition,
     setSettingsTimerTitlePosition,
+    settingsOutputDisplayId,
+    setSettingsOutputDisplayId,
+    settingsNdiEnabled,
+    setSettingsNdiEnabled,
+    settingsNdiSourceName,
+    setSettingsNdiSourceName,
+    settingsNdiGroupName,
+    setSettingsNdiGroupName,
+    settingsNdiRuntimeStatus,
     settingsHydrated,
     settingsMediaFolderId,
     setSettingsMediaFolderId,

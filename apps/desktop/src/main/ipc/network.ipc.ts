@@ -1,5 +1,5 @@
 import { ipcMain, net } from 'electron';
-import { getWebAppBaseUrl } from '../utils/app.utils';
+import { getWebAppBaseUrl, getWebAppBaseUrlCandidates } from '../utils/app.utils';
 
 /**
  * Fetch JSON following redirects
@@ -28,33 +28,46 @@ async function fetchJsonFollowingRedirects(url: string, maxRedirects = 5): Promi
 }
 
 async function fetchAssemblyAiToken(sessionToken: string, maxRedirects = 5): Promise<unknown> {
-  let currentUrl = new URL('/api/assemblyai/token', getWebAppBaseUrl()).toString();
+  const baseUrls = getWebAppBaseUrlCandidates();
+  let lastError: unknown = null;
 
-  for (let i = 0; i <= maxRedirects; i += 1) {
-    const response = await net.fetch(currentUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${sessionToken}`,
-      },
-    });
+  for (const baseUrl of baseUrls) {
+    let currentUrl = new URL('/api/assemblyai/token', baseUrl).toString();
 
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
-      if (!location) {
-        throw new Error(`Redirect without location header (${response.status})`);
+    try {
+      for (let i = 0; i <= maxRedirects; i += 1) {
+        const response = await net.fetch(currentUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${sessionToken}`,
+          },
+        });
+
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get('location');
+          if (!location) {
+            throw new Error(`Redirect without location header (${response.status})`);
+          }
+          currentUrl = new URL(location, currentUrl).toString();
+          continue;
+        }
+
+        if (!response.ok) {
+          const message = await response.text().catch(() => '');
+          throw new Error(message || `Request failed (${response.status})`);
+        }
+
+        return await response.json();
       }
-      currentUrl = new URL(location, currentUrl).toString();
+    } catch (error) {
+      lastError = error;
       continue;
     }
-
-    if (!response.ok) {
-      const message = await response.text().catch(() => '');
-      throw new Error(message || `Request failed (${response.status})`);
-    }
-
-    return await response.json();
   }
 
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
   throw new Error('Too many redirects');
 }
 
@@ -116,7 +129,12 @@ export const registerNetworkIPC = (): void => {
       return await fetchAssemblyAiToken(sessionToken);
     } catch (error) {
       console.error('Failed to request AssemblyAI token', error);
-      return null;
+      return {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to request AssemblyAI token',
+      };
     }
   });
 

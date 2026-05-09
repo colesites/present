@@ -1,5 +1,5 @@
 import { useLiveQuery } from "dexie-react-hooks";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { toast } from "sonner";
 import type { MediaPanelRef } from "../media";
@@ -25,10 +25,12 @@ import {
   useOutputBroadcast,
   usePlayback,
   usePresentMediaFlow,
+  useStageBroadcast,
   useShowVideoSync,
 } from "../../renderer/shared/hooks";
 import type { useAppSettings } from "../../renderer/shared/hooks/useAppSettings";
 import { MediaState, MediaItem } from "../media/hooks/useMediaFolders";
+import type { OutputTextPosition } from "../../shared/types/output-window";
 import {
   getActiveLibrarySlide,
   getActiveSlideText,
@@ -52,6 +54,11 @@ import {
   buildScriptureEditorLibraryItem,
   scriptureDraftToSlides,
 } from "../scripture/lib/editor";
+import {
+  createScriptureLayoutTemplate,
+} from "../scripture/lib/layout-template";
+import { useScriptureLayoutTemplateStore } from "../scripture/lib/layout-template-state";
+import { useScreenComposerState } from "../screen-composer";
 
 type EditedOutputSnapshot = {
   slideId: string;
@@ -70,6 +77,12 @@ type OutputSlideContent = {
 };
 
 const IMPORT_ERROR_DURATION_MS = 6000;
+
+function normalizeSlideElements(
+  elements: SlideElement[] | null | undefined,
+): SlideElement[] | null {
+  return Array.isArray(elements) && elements.length > 0 ? elements : null;
+}
 
 function buildServicePresentationLibraryItem(
   refId: string,
@@ -107,6 +120,9 @@ interface PresentContainerProps {
   setShowTextInOutput: (show: boolean) => void;
   showMediaInOutput: boolean;
   setShowMediaInOutput: (show: boolean) => void;
+  hideBackgroundInOutput: boolean;
+  setHideBackgroundInOutput: (hide: boolean) => void;
+  outputTextPosition: OutputTextPosition;
   isTimerLayerEnabled: boolean;
   setIsTimerLayerEnabled: (show: boolean) => void;
   isMessageLayerEnabled: boolean;
@@ -129,6 +145,9 @@ export function PresentContainer({
   setShowTextInOutput,
   showMediaInOutput,
   setShowMediaInOutput,
+  hideBackgroundInOutput,
+  setHideBackgroundInOutput,
+  outputTextPosition,
   isTimerLayerEnabled,
   setIsTimerLayerEnabled,
   isMessageLayerEnabled,
@@ -173,6 +192,8 @@ export function PresentContainer({
     settingsLibraryFontFamily,
     settingsLibraryFontSize,
     settingsLibraryFontWeight,
+    settingsLang,
+    settingsSpeechInputDeviceId,
   } = settings;
 
   const libraryTextDefaults = useMemo(
@@ -240,6 +261,7 @@ export function PresentContainer({
     addPresentationToService,
     updatePresentationInService,
     addMediaToService,
+    addScriptureToService,
     removeFromService,
     reorderServiceItems,
     reorderServices,
@@ -271,6 +293,10 @@ export function PresentContainer({
   const [isOutputFrozen, setIsOutputFrozen] = useState(false);
   const [editedOutputSnapshot, setEditedOutputSnapshot] =
     useState<EditedOutputSnapshot | null>(null);
+  const screenComposer = useScreenComposerState();
+  const setScriptureLayoutTemplate = useScriptureLayoutTemplateStore(
+    (state) => state.setTemplate,
+  );
 
   const servicePresentationLibraryItems = useMemo(
     () =>
@@ -303,6 +329,8 @@ export function PresentContainer({
   );
   const selectedDeckItem = selectedLibraryItem ?? selectedPresentationItem;
   const selectedDeckLibraryId = selectedLibraryId ?? selectedPresentationLibraryId;
+  const selectedPresentationSourceType =
+    selectedServicePresentationItem?.presentation?.sourceType ?? null;
   const handleSetSelectedDeckLibraryId = useCallback(
     (id: string | null) => {
       if (id && id.startsWith("presentation_")) {
@@ -351,6 +379,7 @@ export function PresentContainer({
       return scriptureSlides.map((item, i) => ({
         slide: { text: item.content, label: item.label, footer: item.footer },
         index: i,
+        id: undefined as string | undefined,
         libraryItem: null as LibraryItem | null,
       }));
     }
@@ -413,7 +442,9 @@ export function PresentContainer({
         ? {
             text: slide.content,
             footer: slide.footer,
-            elements: slide.elements ?? null,
+            // Only use element/canvas rendering when the slide actually has authored elements.
+            // Plain generated scripture should use the scripture text layer path.
+            elements: normalizeSlideElements(slide.elements),
             canvasSize: slide.canvasSize ?? "1920x1080",
             backgroundColor:
               slide.useBackgroundColor ? slide.backgroundColor ?? null : null,
@@ -427,7 +458,7 @@ export function PresentContainer({
     if (activeLibrarySlide) {
       return {
         text: activeLibrarySlide.slide.text,
-        elements: activeLibrarySlide.slide.elements ?? null,
+        elements: normalizeSlideElements(activeLibrarySlide.slide.elements),
         canvasSize:
           activeLibrarySlide.item.content?.presentation?.canvasSize ?? null,
         backgroundColor: getSlideBackgroundColor(
@@ -438,7 +469,11 @@ export function PresentContainer({
     }
     const text = getActiveSlideText(activeSlideId, availableSlideDeckItems);
     return text ? { text, elements: null, canvasSize: null } : null;
-  }, [activeSlideId, availableSlideDeckItems, scriptureSlides]);
+  }, [
+    activeSlideId,
+    availableSlideDeckItems,
+    scriptureSlides,
+  ]);
 
   const outputSlideContent = useMemo<OutputSlideContent | null>(
     () =>
@@ -446,7 +481,7 @@ export function PresentContainer({
         ? {
             text: editedOutputSnapshot.text,
             footer: undefined,
-            elements: editedOutputSnapshot.elements,
+            elements: normalizeSlideElements(editedOutputSnapshot.elements),
             canvasSize: editedOutputSnapshot.canvasSize,
             backgroundColor: editedOutputSnapshot.backgroundColor,
           }
@@ -456,6 +491,37 @@ export function PresentContainer({
 
   const outputActiveSlideId =
     editedOutputSnapshot?.slideId ?? activeSlideId ?? null;
+  const lastAutoEnabledSlideRef = useRef<string | null>(null);
+  const previousOutputActiveSlideRef = useRef<string | null>(null);
+
+  const stageSequence = useMemo(
+    () =>
+      slidesForGrid.map((entry) => ({
+        id:
+          entry.id
+          ?? (entry.libraryItem
+            ? `${entry.libraryItem._id}:${'id' in entry.slide && entry.slide.id != null ? entry.slide.id : entry.index}`
+            : `scripture:${entry.index}`),
+        text: entry.slide.text ?? null,
+        footer: ('footer' in entry.slide ? entry.slide.footer : undefined) ?? null,
+      })),
+    [slidesForGrid],
+  );
+
+  const stageActiveIndex = useMemo(() => {
+    if (outputActiveSlideId) {
+      const byIdIndex = stageSequence.findIndex((entry) => entry.id === outputActiveSlideId);
+      if (byIdIndex >= 0) {
+        return byIdIndex;
+      }
+    }
+    if (selected && selected.index >= 0 && selected.index < stageSequence.length) {
+      return selected.index;
+    }
+    return -1;
+  }, [outputActiveSlideId, selected, stageSequence]);
+
+  const stageNextSlide = stageActiveIndex >= 0 ? stageSequence[stageActiveIndex + 1] ?? null : null;
 
   const slideGroups = useMemo(
     () => getSlideGroups(selectedDeckItem),
@@ -525,11 +591,22 @@ export function PresentContainer({
   const handleSaveScriptureEditor = useCallback(
     async (draft: LibraryItemDraft) => {
       setEditedOutputSnapshot(null);
-      setScriptureSlides((previousSlides) =>
-        scriptureDraftToSlides(draft, previousSlides),
+      const draftSlides = scriptureDraftToSlides(draft, scriptureSlides);
+      const templateSlide =
+        draft.slides[selected?.index ?? -1] ??
+        draft.slides.find((slide) => (slide.elements?.length ?? 0) > 0) ??
+        draft.slides[0] ??
+        null;
+
+      setScriptureSlides(draftSlides);
+      setScriptureLayoutTemplate(
+        createScriptureLayoutTemplate({
+          slide: templateSlide,
+          canvasSize: draft.content?.presentation?.canvasSize,
+        }),
       );
     },
-    [],
+    [scriptureSlides, selected, setScriptureLayoutTemplate],
   );
 
   const handleUpdateScriptureEditedSlideOutput = useCallback(
@@ -545,6 +622,16 @@ export function PresentContainer({
       }
 
       setEditedOutputSnapshot(null);
+      setScriptureLayoutTemplate(
+        createScriptureLayoutTemplate({
+          slide: {
+            elements: payload.elements,
+            backgroundColor: payload.backgroundColor ?? undefined,
+            useBackgroundColor: Boolean(payload.backgroundColor),
+          },
+          canvasSize: payload.canvasSize,
+        }),
+      );
       setScriptureSlides((previousSlides) =>
         previousSlides.map((slide, slideIndex) => {
           if (slideIndex !== index) {
@@ -578,7 +665,7 @@ export function PresentContainer({
         }),
       );
     },
-    [],
+    [setScriptureLayoutTemplate],
   );
 
   const handleLiveSlideSelect = useCallback(
@@ -670,6 +757,31 @@ export function PresentContainer({
     });
   };
 
+  const selectMediaForOutputWithComposer = useCallback(
+    (item: MediaItem | null) => {
+      if (screenComposer.enabled && screenComposer.selectedRegion) {
+        if (screenComposer.selectedRegion.source === "video") {
+          screenComposer.updateRegion(screenComposer.selectedRegion.id, {
+            mediaUrl: item?.url ?? null,
+            mediaType: item?.type ?? null,
+            mediaLabel: item?.name ?? null,
+          });
+        }
+
+        if (screenComposer.selectedRegion.source === "slides") {
+          screenComposer.updateRegion(screenComposer.selectedRegion.id, {
+            backgroundMediaUrl: item?.url ?? null,
+            backgroundMediaType: item?.type ?? null,
+            backgroundMediaLabel: item?.name ?? null,
+          });
+        }
+      }
+
+      selectMediaForOutput(item);
+    },
+    [screenComposer, selectMediaForOutput],
+  );
+
   const {
     showViewMedia,
     onSelectServiceItem: handleSelectServiceItem,
@@ -682,7 +794,7 @@ export function PresentContainer({
     activeMediaItem,
     setServiceItemIndex,
     setSelectedLibraryId,
-    selectMediaForOutput,
+    selectMediaForOutput: selectMediaForOutputWithComposer,
     setShouldAutoPlay,
     onSelectScripture: (refId: string) => {
       setEditedOutputSnapshot(null);
@@ -707,6 +819,61 @@ export function PresentContainer({
       setSelectedPresentationLibraryId(null);
     },
   });
+
+  useEffect(() => {
+    if (
+      !screenComposer.enabled ||
+      !screenComposer.selectedRegion ||
+      screenComposer.selectedRegion.source !== "slides"
+    ) {
+      return;
+    }
+
+    const currentRegion = screenComposer.selectedRegion;
+    const nextSlideId = outputActiveSlideId ?? null;
+    const nextSlideText = outputSlideContent?.text ?? null;
+    const nextSlideFooter = outputSlideContent?.footer ?? null;
+    const nextSlideElements = outputSlideContent?.elements ?? null;
+    const nextSlideCanvasSize = outputSlideContent?.canvasSize ?? null;
+    const nextSlideBackgroundColor = outputSlideContent?.backgroundColor ?? null;
+
+    const isRegionInSync =
+      (currentRegion.slideId ?? null) === nextSlideId &&
+      (currentRegion.slideText ?? null) === nextSlideText &&
+      (currentRegion.slideFooter ?? null) === nextSlideFooter &&
+      (currentRegion.slideElements ?? null) === nextSlideElements &&
+      (currentRegion.slideCanvasSize ?? null) === nextSlideCanvasSize &&
+      (currentRegion.slideBackgroundColor ?? null) === nextSlideBackgroundColor;
+
+    if (isRegionInSync) {
+      return;
+    }
+
+    if (!outputActiveSlideId && !outputSlideContent) {
+      screenComposer.updateRegion(screenComposer.selectedRegion.id, {
+        slideId: null,
+        slideText: null,
+        slideFooter: null,
+        slideElements: null,
+        slideCanvasSize: null,
+        slideBackgroundColor: null,
+      });
+      return;
+    }
+
+    screenComposer.updateRegion(screenComposer.selectedRegion.id, {
+      slideId: nextSlideId,
+      slideText: nextSlideText,
+      slideFooter: nextSlideFooter,
+      slideElements: nextSlideElements,
+      slideCanvasSize: nextSlideCanvasSize,
+      slideBackgroundColor: nextSlideBackgroundColor,
+    });
+  }, [
+    screenComposer,
+    outputActiveSlideId,
+    outputSlideContent,
+  ]);
 
   // Coordination Hooks
   useSpeechAutopilot({
@@ -737,10 +904,45 @@ export function PresentContainer({
     forcePlay: isScriptureActive && effectiveActiveMediaItem?.type === "video",
   });
 
+  useStageBroadcast({
+    currentText: outputSlideContent?.text ?? null,
+    currentFooter: outputSlideContent?.footer ?? null,
+    nextText: stageNextSlide?.text ?? null,
+    nextFooter: stageNextSlide?.footer ?? null,
+  });
+
+  useEffect(() => {
+    if (previousOutputActiveSlideRef.current === outputActiveSlideId) {
+      return;
+    }
+    previousOutputActiveSlideRef.current = outputActiveSlideId;
+
+    const hasSlideText = Boolean(outputSlideContent?.text?.trim());
+    if (!hasSlideText || showTextInOutput) {
+      return;
+    }
+    if (!outputActiveSlideId) {
+      return;
+    }
+    if (lastAutoEnabledSlideRef.current === outputActiveSlideId) {
+      return;
+    }
+
+    setShowTextInOutput(true);
+    lastAutoEnabledSlideRef.current = outputActiveSlideId;
+  }, [
+    outputActiveSlideId,
+    outputSlideContent?.text,
+    setShowTextInOutput,
+    showTextInOutput,
+  ]);
+
   useOutputBroadcast({
     activeMediaItem: effectiveActiveMediaItem,
     showText: showTextInOutput,
     showMedia: showMediaInOutput,
+    hideBackground: hideBackgroundInOutput,
+    textPosition: outputTextPosition,
     videoSettings,
     mediaFilterCSS,
     isVideoPlaying:
@@ -777,6 +979,8 @@ export function PresentContainer({
       nameBannerColor: settingsTimerNameBannerColor,
       titlePosition: settingsTimerTitlePosition,
     },
+    screenComposerEnabled: screenComposer.enabled,
+    screenComposerLayout: screenComposer.liveLayout,
     activeSlideId: outputActiveSlideId,
     slideText: outputSlideContent?.text ?? null,
     slideFooter: outputSlideContent?.footer ?? null,
@@ -917,12 +1121,11 @@ export function PresentContainer({
 
   return (
     <>
-      <MainView
+        <MainView
       viewMode={viewMode}
       bottomTab={bottomTab}
       contentSource={contentSource}
       orgId={orgId}
-      userId={userId}
       servicesSidebarProps={{
         services,
         isLoading: servicesLoading,
@@ -946,6 +1149,7 @@ export function PresentContainer({
               reorderServiceItems(selectedServiceId, from, to)
           : () => Promise.resolve(),
         onReorderServices: reorderServices,
+        onAddScriptureToService: addScriptureToService,
       }}
       presentState={{
         slidesForGrid,
@@ -986,7 +1190,7 @@ export function PresentContainer({
         updateVideoSettings,
         showMediaInOutput,
         setShowMediaInOutput,
-        onClearMedia: () => selectMediaForOutput(null),
+        onClearMedia: () => selectMediaForOutputWithComposer(null),
         mediaFilters,
         onMediaFiltersChange: updateMediaFilters,
         onResetFilters: resetMediaFilters,
@@ -1050,6 +1254,11 @@ export function PresentContainer({
         },
         updateFontStyle,
       }}
+      speechSettings={{
+        lang: settingsLang,
+        inputDeviceId: settingsSpeechInputDeviceId,
+      }}
+      isPptxSelection={selectedPresentationSourceType === "pptx"}
       panelRefs={{
         showsPanelRef,
         mediaPanelRef,
@@ -1060,6 +1269,9 @@ export function PresentContainer({
         onToggleFreeze: () => setIsOutputFrozen((prev) => !prev),
         showTextInOutput,
         setShowTextInOutput,
+        hideBackgroundInOutput,
+        setHideBackgroundInOutput,
+        outputTextPosition,
         isTimerLayerEnabled,
         setIsTimerLayerEnabled,
         isMessageLayerEnabled,

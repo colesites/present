@@ -1,4 +1,4 @@
-import { BrowserView, shell, type Rectangle } from 'electron';
+import { BrowserView, shell, nativeImage, type Rectangle } from 'electron';
 import { createOutputWindow, getOutputWindow } from '../windows/output.window';
 import { getMainWindow } from '../windows/main.window';
 
@@ -166,10 +166,34 @@ const capturePreviewFromMainView = (): void => {
       }
 
       const sourceSize = image.getSize();
-      const previewWidth =
-        sourceSize.width > 0 ? Math.min(360, sourceSize.width) : 360;
+      if (sourceSize.width <= 0 || sourceSize.height <= 0) {
+        return;
+      }
+
+      const expectedAspect =
+        mainBrowserBounds.width > 0 && mainBrowserBounds.height > 0
+          ? mainBrowserBounds.width / mainBrowserBounds.height
+          : sourceSize.width / sourceSize.height;
+      const sourceAspect = sourceSize.width / sourceSize.height;
+      const shouldCropByWidth = sourceAspect > expectedAspect;
+      const cropWidth = shouldCropByWidth
+        ? Math.round(sourceSize.height * expectedAspect)
+        : sourceSize.width;
+      const cropHeight = shouldCropByWidth
+        ? sourceSize.height
+        : Math.round(sourceSize.width / expectedAspect);
+      const cropX = Math.max(0, Math.round((sourceSize.width - cropWidth) / 2));
+      const cropY = Math.max(0, Math.round((sourceSize.height - cropHeight) / 2));
+      const cropped =
+        cropWidth > 0 && cropHeight > 0
+          ? image.crop({ x: cropX, y: cropY, width: cropWidth, height: cropHeight })
+          : image;
+      const previewWidth = Math.min(360, cropped.getSize().width);
       const previewImage =
-        previewWidth === sourceSize.width ? image : image.resize({ width: previewWidth });
+        previewWidth > 0 ? cropped.resize({ width: previewWidth }) : nativeImage.createEmpty();
+      if (previewImage.isEmpty()) {
+        return;
+      }
 
       browserState = {
         ...browserState,

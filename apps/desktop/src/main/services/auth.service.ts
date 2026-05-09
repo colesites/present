@@ -14,11 +14,6 @@ let pendingAuthPayload: DesktopAuthPayload | null = null;
 export const consumePendingAuthToken = (): DesktopAuthPayload | null => {
   const payload = pendingAuthPayload;
   pendingAuthPayload = null;
-  console.info('[Desktop Auth] token consumed in main process', {
-    hasAccessToken: Boolean(payload?.accessToken),
-    hasSessionToken: Boolean(payload?.sessionToken),
-    sessionTokenLength: payload?.sessionToken.length ?? 0,
-  });
   return payload;
 };
 

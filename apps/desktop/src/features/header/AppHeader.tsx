@@ -9,6 +9,8 @@ import {
   BookOpenText,
   LibraryBig,
   Globe,
+  Check,
+  Monitor,
 } from "lucide-react";
 import { AuthControls } from "../../renderer/shared/components/AuthControls";
 import { ProjectButton } from "../../renderer/shared/components/ProjectButton";
@@ -26,9 +28,12 @@ interface AppHeaderProps {
   searchScope: HeaderSearchScope;
   onViewModeChange: (mode: ViewMode) => void;
   onOpenShow: () => void;
+  onOpenComposer: () => void;
   onOpenLibraries: () => void;
   onOpenBible: () => void;
   onOpenBrowser: () => void;
+  onOpenStage: () => void;
+  onOpenLooks: () => void;
 }
 
 export const AppHeader = memo(function AppHeader({
@@ -38,9 +43,12 @@ export const AppHeader = memo(function AppHeader({
   searchScope,
   onViewModeChange,
   onOpenShow,
+  onOpenComposer,
   onOpenLibraries,
   onOpenBible,
   onOpenBrowser,
+  onOpenStage,
+  onOpenLooks,
 }: AppHeaderProps) {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -111,7 +119,9 @@ export const AppHeader = memo(function AppHeader({
               onClick={onOpenShow}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] font-medium transition",
-                viewMode === "show" && !isBibleActive && !isLibrariesActive
+                viewMode === "show" &&
+                  !isBibleActive &&
+                  !isLibrariesActive
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
@@ -178,10 +188,32 @@ export const AppHeader = memo(function AppHeader({
           <ProjectButton className="h-8 px-2.5 py-0 text-[11px] font-medium" />
           <button
             type="button"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-secondary/30 px-2.5 text-[11px] font-medium text-foreground transition hover:bg-secondary"
+            onClick={onOpenStage}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium transition",
+              viewMode === "stage"
+                ? "border-primary/60 bg-primary/15 text-primary"
+                : "border-border bg-secondary/30 text-foreground hover:bg-secondary"
+            )}
           >
             <Layers3 className="h-3.5 w-3.5" />
             Media Stage
+          </button>
+          <button
+            type="button"
+            onClick={onOpenLooks}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-secondary/30 px-2.5 text-[11px] font-medium text-foreground transition hover:bg-secondary"
+          >
+            <Check className="h-3.5 w-3.5" />
+            Looks
+          </button>
+          <button
+            type="button"
+            onClick={onOpenComposer}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-secondary/30 px-2.5 text-[11px] font-medium text-foreground transition hover:bg-secondary"
+          >
+            <Monitor className="h-3.5 w-3.5" />
+            Screen Composer
           </button>
           <AuthControls />
         </div>

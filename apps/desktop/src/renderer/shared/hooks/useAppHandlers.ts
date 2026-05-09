@@ -11,6 +11,8 @@ import {
   mergeScriptureSlides,
 } from "../../../features/scripture/lib/slides";
 import type { BibleVerse, BibleBookRecord } from "../../../features/scripture/lib/db";
+import { applyScriptureLayoutTemplate } from "../../../features/scripture/lib/layout-template";
+import { useScriptureLayoutTemplateStore } from "../../../features/scripture/lib/layout-template-state";
 
 interface UseAppHandlersProps {
   // State Setters
@@ -170,10 +172,14 @@ export function useAppHandlers({
 
   const handleScriptureOutput = useCallback(
     async (slides: ScriptureSlide[]) => {
+      const template = useScriptureLayoutTemplateStore.getState().template;
       setShowTextInOutput(true);
       setSelectedLibraryId(null);
       setScriptureSlides((previousSlides) =>
-        mergeScriptureSlides(previousSlides, slides),
+        mergeScriptureSlides(
+          previousSlides,
+          slides.map((slide) => applyScriptureLayoutTemplate(slide, template)),
+        ),
       );
 
       if (slides.length > 0) {

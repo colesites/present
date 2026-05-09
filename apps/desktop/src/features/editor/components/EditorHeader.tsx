@@ -50,7 +50,7 @@ export const EditorHeader = memo(function EditorHeader({
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              Source
+              Lyrics
             </button>
           </div>
         </div>
@@ -62,7 +62,7 @@ export const EditorHeader = memo(function EditorHeader({
             disabled={isFixing}
             className="rounded-full border border-border bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
           >
-            {isFixing ? "Cleaning..." : "Clean text"}
+            {isFixing ? "Fixing..." : "Fix Lyrics"}
           </button>
           <button
             type="button"

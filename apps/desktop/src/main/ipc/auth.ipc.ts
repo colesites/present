@@ -1,6 +1,6 @@
 import { ipcMain, net, shell } from 'electron';
 import { beginAuthFlow, consumePendingAuthToken } from '../services/auth.service';
-import { getWebAppBaseUrl } from '../utils/app.utils';
+import { getWebAppBaseUrlCandidates } from '../utils/app.utils';
 import {
   clearStoredDesktopSession,
   loadStoredDesktopSession,
@@ -12,34 +12,47 @@ async function refreshDesktopSessionViaWeb(
   sessionToken: string,
   maxRedirects = 5,
 ): Promise<unknown> {
-  let currentUrl = new URL('/api/auth/desktop/refresh-session', getWebAppBaseUrl()).toString();
+  const baseUrls = getWebAppBaseUrlCandidates();
+  let lastError: unknown = null;
 
-  for (let i = 0; i <= maxRedirects; i += 1) {
-    const response = await net.fetch(currentUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ sessionToken }),
-    });
+  for (const baseUrl of baseUrls) {
+    let currentUrl = new URL('/api/auth/desktop/refresh-session', baseUrl).toString();
 
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
-      if (!location) {
-        throw new Error(`Redirect without location header (${response.status})`);
+    try {
+      for (let i = 0; i <= maxRedirects; i += 1) {
+        const response = await net.fetch(currentUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ sessionToken }),
+        });
+
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get('location');
+          if (!location) {
+            throw new Error(`Redirect without location header (${response.status})`);
+          }
+          currentUrl = new URL(location, currentUrl).toString();
+          continue;
+        }
+
+        if (!response.ok) {
+          const message = await response.text().catch(() => '');
+          throw new Error(message || `Desktop refresh failed (${response.status})`);
+        }
+
+        return await response.json();
       }
-      currentUrl = new URL(location, currentUrl).toString();
+    } catch (error) {
+      lastError = error;
       continue;
     }
-
-    if (!response.ok) {
-      const message = await response.text().catch(() => '');
-      throw new Error(message || `Desktop refresh failed (${response.status})`);
-    }
-
-    return await response.json();
   }
 
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
   throw new Error('Too many redirects while refreshing desktop session');
 }
 

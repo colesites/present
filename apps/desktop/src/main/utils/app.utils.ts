@@ -23,6 +23,29 @@ export const getWebAppBaseUrl = (): string => {
     : 'https://present-gha.vercel.app';
 };
 
+export const getWebAppBaseUrlCandidates = (): string[] => {
+  const configuredWebUrl = process.env.WEB_APP_URL?.trim();
+  const candidates = new Set<string>();
+
+  if (configuredWebUrl) {
+    candidates.add(configuredWebUrl);
+    if (configuredWebUrl === 'http://localhost:3000') {
+      candidates.add('http://localhost:3001');
+    }
+    if (configuredWebUrl === 'http://localhost:3001') {
+      candidates.add('http://localhost:3000');
+    }
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    candidates.add('http://localhost:3001');
+    candidates.add('http://localhost:3000');
+  }
+
+  candidates.add('https://present-gha.vercel.app');
+  return Array.from(candidates);
+};
+
 /**
  * Check if running in development mode
  */

@@ -1,9 +1,19 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  openOutputWindow: () => ipcRenderer.invoke('open-output-window'),
+  openOutputWindow: (displayId?: number | null) =>
+    ipcRenderer.invoke('open-output-window', displayId ?? null),
   closeOutputWindow: () => ipcRenderer.invoke('close-output-window'),
+  openMediaStageWindow: () => ipcRenderer.invoke('open-media-stage-window'),
+  closeMediaStageWindow: () => ipcRenderer.invoke('close-media-stage-window'),
+  openLooksWindow: () => ipcRenderer.invoke('open-looks-window'),
+  closeLooksWindow: () => ipcRenderer.invoke('close-looks-window'),
+  openScreenComposerWindow: () => ipcRenderer.invoke("open-screen-composer-window"),
+  closeScreenComposerWindow: () => ipcRenderer.invoke("close-screen-composer-window"),
   getDisplays: () => ipcRenderer.invoke('get-displays'),
+  setPreferredOutputDisplay: (displayId: number | null) =>
+    ipcRenderer.invoke('set-preferred-output-display', displayId),
+  getPreferredOutputDisplay: () => ipcRenderer.invoke('get-preferred-output-display'),
   onOutputWindowClosed: (callback: () => void) => {
     ipcRenderer.on('output-window-closed', () => callback());
   },
@@ -34,6 +44,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onOutputReady: (callback: () => void) => {
     ipcRenderer.on('output-ready', () => callback());
   },
+  sendToStage: (data: unknown) => ipcRenderer.send('send-to-stage', data),
+  onStageData: (callback: (data: unknown) => void) => {
+    ipcRenderer.on('stage-data', (_event, data) => callback(data));
+  },
+  notifyStageReady: () => ipcRenderer.send('stage-ready'),
+  onStageReady: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('stage-ready', listener);
+    return () => {
+      ipcRenderer.removeListener('stage-ready', listener);
+    };
+  },
+
+  // NDI Native Transport
+  startNdiOutput: (sourceName: string, groupName: string) =>
+    ipcRenderer.invoke('ndi:start', { sourceName, groupName }),
+  stopNdiOutput: () => ipcRenderer.invoke('ndi:stop'),
+  getNdiStatus: () => ipcRenderer.invoke('ndi:status'),
 
   // Auth & System URLs
   beginAuthFlow: () => ipcRenderer.invoke('begin-auth-flow'),

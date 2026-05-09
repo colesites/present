@@ -51,7 +51,13 @@ export function ProjectButton({ className }: ProjectButtonProps) {
         throw new Error("Electron API not available");
       }
 
-      const success = await window.electronAPI.openOutputWindow();
+      const preferredDisplayId =
+        window.electronAPI.getPreferredOutputDisplay
+          ? await window.electronAPI.getPreferredOutputDisplay()
+          : null;
+      const success = await window.electronAPI.openOutputWindow(
+        preferredDisplayId
+      );
       
       if (success) {
         setIsLive(true);

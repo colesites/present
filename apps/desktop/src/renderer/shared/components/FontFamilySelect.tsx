@@ -62,12 +62,14 @@ export const FontFamilySelect = memo(function FontFamilySelect({
       const target = event.target;
       if (!(target instanceof Node) || !rootRef.current?.contains(target)) {
         setOpen(false);
+        setQuery("");
       }
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setOpen(false);
+        setQuery("");
       }
     };
 
@@ -80,10 +82,7 @@ export const FontFamilySelect = memo(function FontFamilySelect({
   }, [open]);
 
   useEffect(() => {
-    if (!open) {
-      setQuery("");
-      return;
-    }
+    if (!open) return;
 
     const timerId = window.setTimeout(() => {
       searchInputRef.current?.focus();

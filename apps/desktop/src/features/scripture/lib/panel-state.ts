@@ -39,12 +39,10 @@ const INITIAL_SCRIPTURE_PANEL_STATE: Pick<
 
 const INITIAL_SCRIPTURE_TRANSIENT_STATE: Pick<
   ScripturePanelState,
-  "lookupValue" | "suggestion" | "liveTranscript" | "textSearchQuery" | "textSearchResults"
+  "suggestion" | "liveTranscript" | "textSearchResults"
 > = {
-  lookupValue: "",
   suggestion: null,
   liveTranscript: "",
-  textSearchQuery: "",
   textSearchResults: [],
 };
 
@@ -64,7 +62,9 @@ export const useScripturePanelStore = create<ScripturePanelState>()(
     {
       name: "present-scripture-panel-state",
       partialize: (state) => ({
+        lookupValue: state.lookupValue,
         selectedVersionCode: state.selectedVersionCode,
+        textSearchQuery: state.textSearchQuery,
       }),
     },
   ),

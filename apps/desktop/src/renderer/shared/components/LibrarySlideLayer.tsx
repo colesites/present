@@ -310,6 +310,7 @@ export const LibrarySlideLayer = memo(function LibrarySlideLayer({
               padding: "3% 4%",
             };
         const shouldClipTextContent = !hasExplicitTextPadding;
+        const hasRichTextHtml = Boolean(element.richTextHtml?.trim());
 
         return (
           <div
@@ -358,7 +359,9 @@ export const LibrarySlideLayer = memo(function LibrarySlideLayer({
                 >
                   <div
                     className={cn(
-                      "pointer-events-none w-full select-none whitespace-pre-wrap break-words leading-[1.2] text-white drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]",
+                      "pointer-events-none w-full select-none whitespace-pre-wrap break-words leading-[1.2] text-white",
+                      !hasRichTextHtml &&
+                        "drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]",
                       shouldClipTextContent && "overflow-hidden",
                       textClassName,
                     )}

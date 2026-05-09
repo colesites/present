@@ -17,9 +17,6 @@ export interface PresentationImportSource {
 
 export type PresentationImportMode = "presentation" | "images";
 
-const PPTX_IMPORT_WIDTH = 1920;
-const PPTX_IMPORT_HEIGHT = 1080;
-
 function getFileStem(fileName: string) {
   return fileName.replace(/\.[^.]+$/, "").trim() || "Imported presentation";
 }
@@ -49,185 +46,6 @@ function createServicePresentation(
   };
 }
 
-function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-}
-
-function utf8ToBase64(value: string): string {
-  const utf8Bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of utf8Bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
-}
-
-function htmlToPlainText(value: string): string {
-  if (!value.trim()) {
-    return "";
-  }
-
-  const parser = new DOMParser();
-  const document = parser.parseFromString(value, "text/html");
-  return (document.body.textContent ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-async function importPptxAsFidelityHtml(
-  file: PresentationImportSource,
-): Promise<ServicePresentation | null> {
-  if (!file.bytes?.length) {
-    return null;
-  }
-
-  const { pptxToHtml } = await import("@jvmr/pptx-to-html");
-  const slidesHtml = await pptxToHtml(bytesToArrayBuffer(file.bytes), {
-    width: PPTX_IMPORT_WIDTH,
-    height: PPTX_IMPORT_HEIGHT,
-    scaleToFit: true,
-    letterbox: true,
-  });
-
-  if (!slidesHtml.length) {
-    return null;
-  }
-
-  const slides = slidesHtml.map((slideHtml, index) =>
-    normalizeLibrarySlide(
-      {
-        text: htmlToPlainText(slideHtml) || `Slide ${index + 1}`,
-        label: `Slide ${index + 1}`,
-        backgroundColor: undefined,
-        useBackgroundColor: false,
-        elements: [
-          {
-            id: `pptx_web_${index + 1}`,
-            type: "web",
-            x: 0,
-            y: 0,
-            width: PPTX_IMPORT_WIDTH,
-            height: PPTX_IMPORT_HEIGHT,
-            content: slideHtml,
-            isLocked: true,
-            style: {
-              backgroundColor: "#000000",
-              borderRadius: 0,
-              opacity: 1,
-            },
-          },
-        ],
-      },
-      DEFAULT_CANVAS_SIZE,
-    ),
-  );
-
-  return createServicePresentation(getFileStem(file.name), "pptx", slides);
-}
-
-function createSvgForeignObjectMarkup(slideHtml: string): string {
-  return `
-<svg xmlns="http://www.w3.org/2000/svg" width="${PPTX_IMPORT_WIDTH}" height="${PPTX_IMPORT_HEIGHT}" viewBox="0 0 ${PPTX_IMPORT_WIDTH} ${PPTX_IMPORT_HEIGHT}">
-  <foreignObject x="0" y="0" width="100%" height="100%">
-    <div xmlns="http://www.w3.org/1999/xhtml" style="width:${PPTX_IMPORT_WIDTH}px;height:${PPTX_IMPORT_HEIGHT}px;overflow:hidden;">
-      ${slideHtml}
-    </div>
-  </foreignObject>
-</svg>
-`.trim();
-}
-
-async function svgMarkupToPngDataUrl(svgMarkup: string): Promise<string> {
-  const svgDataUrl = `data:image/svg+xml;base64,${utf8ToBase64(svgMarkup)}`;
-
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = PPTX_IMPORT_WIDTH;
-      canvas.height = PPTX_IMPORT_HEIGHT;
-      const context = canvas.getContext("2d");
-      if (!context) {
-        reject(new Error("Unable to create canvas for PPTX image import."));
-        return;
-      }
-
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL("image/png"));
-    };
-    image.onerror = () => {
-      reject(new Error("Failed to rasterize PPTX slide to PNG."));
-    };
-    image.src = svgDataUrl;
-  });
-}
-
-async function importPptxAsImageSlides(
-  file: PresentationImportSource,
-): Promise<ServicePresentation | null> {
-  if (!file.bytes?.length) {
-    return null;
-  }
-
-  const { pptxToHtml } = await import("@jvmr/pptx-to-html");
-  const slidesHtml = await pptxToHtml(bytesToArrayBuffer(file.bytes), {
-    width: PPTX_IMPORT_WIDTH,
-    height: PPTX_IMPORT_HEIGHT,
-    scaleToFit: true,
-    letterbox: true,
-  });
-
-  if (!slidesHtml.length) {
-    return null;
-  }
-
-  const slides: LibrarySlide[] = [];
-  for (let index = 0; index < slidesHtml.length; index += 1) {
-    const slideHtml = slidesHtml[index];
-    const svgMarkup = createSvgForeignObjectMarkup(slideHtml);
-    let imageDataUrl = "";
-
-    try {
-      imageDataUrl = await svgMarkupToPngDataUrl(svgMarkup);
-    } catch {
-      imageDataUrl = `data:image/svg+xml;base64,${utf8ToBase64(svgMarkup)}`;
-    }
-
-    slides.push(
-      normalizeLibrarySlide(
-        {
-          text: `Slide ${index + 1}`,
-          label: `Slide ${index + 1}`,
-          elements: [
-            {
-              id: `pptx_image_${index + 1}`,
-              type: "image",
-              x: 0,
-              y: 0,
-              width: PPTX_IMPORT_WIDTH,
-              height: PPTX_IMPORT_HEIGHT,
-              content: imageDataUrl,
-              isLocked: true,
-              style: {
-                opacity: 1,
-                borderRadius: 0,
-                objectFit: "fill",
-              },
-            },
-          ],
-        },
-        DEFAULT_CANVAS_SIZE,
-      ),
-    );
-  }
-
-  return createServicePresentation(getFileStem(file.name), "pptx", slides);
-}
-
 function convertParsedPptxToPresentation(
   parsedPresentation: ParsedPptxPresentation,
 ): ServicePresentation {
@@ -250,18 +68,9 @@ function convertParsedPptxToPresentation(
 async function importPptxFile(
   file: PresentationImportSource,
 ): Promise<ServicePresentation> {
-  try {
-    const fidelityPresentation = await importPptxAsFidelityHtml(file);
-    if (fidelityPresentation) {
-      return fidelityPresentation;
-    }
-  } catch {
-    // Fall back to editable parser pipeline below.
-  }
-
   if (!file.path || !window.pptxAPI?.parseFile) {
     throw new Error(
-      "PPTX import is unavailable in this build (fidelity and editable parsers failed).",
+      "PPTX import requires native parser support (file path + desktop parser API).",
     );
   }
 
@@ -369,16 +178,9 @@ export async function importServicePresentationFile(
 
   if (extension === "pptx") {
     if (mode === "images") {
-      try {
-        const imagesPresentation = await importPptxAsImageSlides(file);
-        if (imagesPresentation) {
-          return imagesPresentation;
-        }
-      } catch {
-        throw new Error(
-          `Failed to import ${file.name} as image slides. Try normal presentation import.`,
-        );
-      }
+      throw new Error(
+        "PPTX image mode is disabled. Use normal PPTX import with native canvas renderer.",
+      );
     }
 
     return importPptxFile(file);

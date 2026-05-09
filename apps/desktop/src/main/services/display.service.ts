@@ -1,5 +1,7 @@
 import { screen, type BrowserWindow } from 'electron';
 
+let preferredOutputDisplayId: number | null = null;
+
 /**
  * Get the display area (width * height)
  */
@@ -13,6 +15,14 @@ const getDisplayArea = (display: Electron.Display): number => {
 export const getPreferredOutputDisplay = (): Electron.Display => {
   const displays = screen.getAllDisplays();
   const primary = screen.getPrimaryDisplay();
+
+  if (preferredOutputDisplayId !== null) {
+    const explicitDisplay = displays.find((display) => display.id === preferredOutputDisplayId);
+    if (explicitDisplay) {
+      return explicitDisplay;
+    }
+  }
+
   const externals = displays.filter((d) => d.id !== primary.id);
 
   if (externals.length === 0) {
@@ -23,6 +33,18 @@ export const getPreferredOutputDisplay = (): Electron.Display => {
   externals.sort((a, b) => getDisplayArea(b) - getDisplayArea(a));
   return externals[0];
 };
+
+/**
+ * Set explicit preferred output display.
+ */
+export const setPreferredOutputDisplayId = (displayId: number | null): void => {
+  preferredOutputDisplayId = Number.isFinite(displayId as number) ? displayId : null;
+};
+
+/**
+ * Get explicit preferred output display id.
+ */
+export const getPreferredOutputDisplayId = (): number | null => preferredOutputDisplayId;
 
 /**
  * Move output window to a specific display

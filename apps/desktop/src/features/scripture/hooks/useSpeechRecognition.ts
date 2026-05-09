@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { ensureFreshDesktopAccessToken } from "../../../renderer/shared/store/desktopSession";
 
 interface ScriptRecognitionResult {
   transcript: string;
@@ -13,6 +14,7 @@ interface UseSpeechRecognitionOptions {
   continuous?: boolean;
   interimResults?: boolean;
   lang?: string;
+  inputDeviceId?: string | null;
   sessionToken?: string | null;
   keyterms?: string[];
 }
@@ -188,6 +190,46 @@ const formatSpeechError = (error: unknown): string => {
   return "Voice input failed to start.";
 };
 
+const resolveInputDeviceConstraint = async (
+  preferredInputDeviceId: string | null,
+): Promise<MediaTrackConstraints> => {
+  const baseConstraints: MediaTrackConstraints = {
+    channelCount: 1,
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  };
+
+  const normalizedDeviceId = preferredInputDeviceId?.trim();
+  if (
+    !normalizedDeviceId ||
+    normalizedDeviceId === "default" ||
+    normalizedDeviceId === "communications" ||
+    !navigator.mediaDevices?.enumerateDevices
+  ) {
+    return baseConstraints;
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const matchingDevice = devices.find(
+      (device) =>
+        device.kind === "audioinput" && device.deviceId === normalizedDeviceId,
+    );
+
+    if (!matchingDevice) {
+      return baseConstraints;
+    }
+
+    return {
+      ...baseConstraints,
+      deviceId: { exact: normalizedDeviceId },
+    };
+  } catch {
+    return baseConstraints;
+  }
+};
+
 const mapRecognitionError = (error: string): string => {
   switch (error) {
     case "not-allowed":
@@ -213,6 +255,7 @@ export function useSpeechRecognition(
     continuous = true,
     interimResults = true,
     lang = "en-US",
+    inputDeviceId = null,
     sessionToken = null,
     keyterms,
   } = options;
@@ -228,6 +271,8 @@ export function useSpeechRecognition(
   const isStoppingRef = useRef(false);
   const finalTranscriptRef = useRef("");
   const activeModeRef = useRef<"assemblyai" | "webspeech" | null>(null);
+  const isElectronRuntime =
+    typeof window !== "undefined" && Boolean(window.electronAPI);
 
   const hasBrowserSpeechRecognition =
     typeof window !== "undefined" &&
@@ -406,9 +451,14 @@ export function useSpeechRecognition(
       throw new Error("Sign in to use voice search.");
     }
 
+    const authBearer =
+      (typeof window !== "undefined" && window.electronAPI
+        ? await ensureFreshDesktopAccessToken()
+        : null) ?? sessionToken;
+
     if (
       cachedAssemblyAiToken &&
-      cachedAssemblyAiToken.sessionToken === sessionToken &&
+      cachedAssemblyAiToken.sessionToken === authBearer &&
       cachedAssemblyAiToken.expiresAt > Date.now() + ASSEMBLYAI_TOKEN_REFRESH_BUFFER_MS
     ) {
       return {
@@ -421,7 +471,7 @@ export function useSpeechRecognition(
     }
 
     if (window.electronAPI?.requestAssemblyAiToken) {
-      const payload = await window.electronAPI.requestAssemblyAiToken(sessionToken) as
+      const payload = await window.electronAPI.requestAssemblyAiToken(authBearer) as
         | AssemblyAiTokenResponse
         | AssemblyAiTokenErrorPayload
         | null;
@@ -436,7 +486,7 @@ export function useSpeechRecognition(
       }
 
       cachedAssemblyAiToken = {
-        sessionToken,
+        sessionToken: authBearer,
         token: payload.token,
         expiresAt:
           Date.now() +
@@ -451,7 +501,7 @@ export function useSpeechRecognition(
     const response = await fetch(`${resolveWebBaseUrl()}${ASSEMBLYAI_TOKEN_PATH}`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${sessionToken}`,
+        Authorization: `Bearer ${authBearer}`,
       },
       cache: "no-store",
     });
@@ -475,7 +525,7 @@ export function useSpeechRecognition(
     }
 
     cachedAssemblyAiToken = {
-      sessionToken,
+      sessionToken: authBearer,
       token: payload.token,
       expiresAt:
         Date.now() +
@@ -498,14 +548,11 @@ export function useSpeechRecognition(
       throw new Error("Audio capture is unavailable in this desktop session.");
     }
 
+    const audioConstraints = await resolveInputDeviceConstraint(inputDeviceId);
+
     const [mediaStreamResult, tokenResult] = await Promise.allSettled([
       navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: audioConstraints,
       }),
       fetchAssemblyAiToken(),
     ]);
@@ -529,7 +576,7 @@ export function useSpeechRecognition(
       throw new Error("Audio capture is unavailable in this desktop session.");
     }
 
-    const audioContext = new AudioContextCtor({ sampleRate: 16000 });
+    const audioContext = new AudioContextCtor();
     const source = audioContext.createMediaStreamSource(mediaStream);
     const processor = audioContext.createScriptProcessor(4096, 1, 1);
     const silenceSink = audioContext.createGain();
@@ -693,6 +740,7 @@ export function useSpeechRecognition(
   }, [
     fetchAssemblyAiToken,
     hasStreamingSupport,
+    inputDeviceId,
     keyterms,
     lang,
     requestMicrophonePermission,
@@ -716,9 +764,10 @@ export function useSpeechRecognition(
         await startAssemblyAiListening();
         return;
       } catch (error) {
+        console.error("[Speech] live transcription startup failed", error);
         stopStreamingSession();
         activeModeRef.current = null;
-        if (!hasBrowserSpeechRecognition) {
+        if (isElectronRuntime || !hasBrowserSpeechRecognition) {
           setIsStarting(false);
           setError(formatSpeechError(error));
           return;
@@ -745,6 +794,7 @@ export function useSpeechRecognition(
     sessionToken,
     hasBrowserSpeechRecognition,
     hasStreamingSupport,
+    isElectronRuntime,
     isListening,
     isStarting,
     requestMicrophonePermission,

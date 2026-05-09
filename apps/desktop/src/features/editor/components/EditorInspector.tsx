@@ -198,6 +198,7 @@ interface EditorInspectorProps {
   fontItalic: boolean;
   fontUnderline: boolean;
   onSetAllTextFontSize: (fontSize: number) => void;
+  onSetAllTextStyle: (style: Partial<SlideElementStyle>) => void;
   onUpdateOutput: () => void;
   onApplyInlineTextFormat: (
     command: "bold" | "italic" | "underline" | "strikeThrough",
@@ -221,6 +222,7 @@ export const EditorInspector = memo(function EditorInspector({
   fontItalic,
   fontUnderline,
   onSetAllTextFontSize,
+  onSetAllTextStyle,
   onUpdateOutput,
   onApplyInlineTextFormat,
 }: EditorInspectorProps) {
@@ -251,6 +253,7 @@ export const EditorInspector = memo(function EditorInspector({
     selectedTextStyle?.fontUnderline !== undefined ||
     selectedTextStyle?.textDecoration !== undefined;
   const selectedTextFontFamily = selectedTextStyle?.fontFamily ?? fontFamily;
+  const selectedTextFontSize = selectedTextStyle?.fontSize ?? fontSize;
   const regularTextWeight = resolveFontWeightForFamily(
     fontFaces,
     selectedTextFontFamily,
@@ -288,9 +291,19 @@ export const EditorInspector = memo(function EditorInspector({
     (selectedTextStyle?.fontUnderline ?? (hasExplicitUnderline ? false : fontUnderline));
   const isTextStrikeThrough =
     selectedTextDecorationTokens.has("line-through");
+  const resolvedTextDecoration = (() => {
+    const tokens: string[] = [];
+    if (isTextUnderline) {
+      tokens.push("underline");
+    }
+    if (isTextStrikeThrough) {
+      tokens.push("line-through");
+    }
+    return tokens.length > 0 ? tokens.join(" ") : "none";
+  })();
   const selectedTextColor = selectedTextStyle?.color ?? "#FFFFFF";
   const selectedTextColorSelectValue = resolveTextColorSelectValue(selectedTextColor);
-  const selectedTextFontSize = selectedTextStyle?.fontSize ?? fontSize;
+  const selectedTextFillMode = selectedTextStyle?.textFillMode ?? "solid";
   const selectedGradientFrom =
     selectedTextStyle?.gradientFromColor ?? "#2563EB";
   const selectedGradientTo =
@@ -847,6 +860,43 @@ export const EditorInspector = memo(function EditorInspector({
                         className="h-8 rounded-md border border-border/70 bg-muted/25 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/85 transition hover:bg-muted/45"
                       >
                         Apply size to all slides
+                      </button>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onSetAllTextStyle({
+                            fontFamily: selectedTextFontFamily,
+                            fontSize: selectedTextFontSize,
+                            fontWeight: resolvedTextWeight,
+                            fontBold: isTextBold,
+                            fontUnderline: isTextUnderline,
+                            fontStyle: isTextItalic ? "italic" : "normal",
+                            textDecoration: resolvedTextDecoration,
+                            color: selectedTextColor,
+                            textAlign: selectedTextStyle?.textAlign,
+                            verticalAlign: selectedTextStyle?.verticalAlign,
+                            textFillMode: selectedTextFillMode,
+                            gradientFromColor:
+                              selectedTextFillMode === "gradient"
+                                ? selectedGradientFrom
+                                : undefined,
+                            gradientToColor:
+                              selectedTextFillMode === "gradient"
+                                ? selectedGradientTo
+                                : undefined,
+                            gradientAngle:
+                              selectedTextFillMode === "gradient"
+                                ? selectedGradientAngle
+                                : undefined,
+                            capitalization: selectedTextStyle?.capitalization,
+                          })
+                        }
+                        className="h-8 rounded-md border border-border/70 bg-muted/25 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/85 transition hover:bg-muted/45"
+                      >
+                        Apply text style to all slides
                       </button>
                     </div>
 

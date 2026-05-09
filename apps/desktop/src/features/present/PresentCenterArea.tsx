@@ -4,7 +4,6 @@ import { memo, useMemo, useState } from "react";
 import type { ComponentProps } from "react";
 import type { BottomTab, ViewMode } from "../../shared/types";
 import type { SlideData } from "../../features/slides";
-import type { Id } from "@present/backend/convex/_generated/dataModel";
 
 import { SlidesGrid } from "../../features/slides";
 import { LyricsEditor } from "../../features/editor";
@@ -19,10 +18,12 @@ import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFoote
 
 type EditorProps = ComponentProps<typeof LyricsEditor>;
 type ShowsProps = ComponentProps<typeof LibrariesPanel>;
+type ScriptureProps = ComponentProps<typeof ScripturePanel>;
 
 type Props = {
   viewMode: ViewMode;
   bottomTab: BottomTab;
+  lockSingleSlideView?: boolean;
 
   slidesForGrid: SlideData[];
   activeSlideId: string | null;
@@ -75,10 +76,12 @@ type Props = {
   showsPanelRef: React.RefObject<LibrariesPanelRef | null>;
   scripturePanelRef: React.RefObject<ScripturePanelRef | null>;
   showsPanelProps: ShowsProps;
+  speechLang: string;
+  speechInputDeviceId: string | null;
 
   onSendScripture: (slides: ScriptureSlide[]) => void;
-  orgId: Id<"organizations"> | null;
-  userId: string | null;
+  selectedServiceId: ScriptureProps["selectedServiceId"];
+  onAddScriptureToService: ScriptureProps["onAddScriptureToService"];
 };
 
 // Keep tabs mounted but freeze hidden tab renders to avoid UI switch lag.
@@ -127,13 +130,18 @@ export function PresentCenterArea({
   showsPanelRef,
   scripturePanelRef,
   showsPanelProps,
+  speechLang,
+  speechInputDeviceId,
   onSendScripture,
-  orgId,
-  userId,
+  selectedServiceId,
+  onAddScriptureToService,
+  lockSingleSlideView = false,
 }: Props) {
   // Footer state
   const [scale, setScale] = useState(60);
   const [isGridView, setIsGridView] = useState(true);
+  const effectiveScale = lockSingleSlideView ? 100 : scale;
+  const effectiveIsGridView = lockSingleSlideView ? true : isGridView;
 
   const mediaPane = useMemo(
     () => (
@@ -173,8 +181,9 @@ export function PresentCenterArea({
             onSelectSlide={onSelectSlide}
             onEditSlide={onEditSlide}
             onReorderSlides={selectedLibraryItem ? onReorderSlides : undefined}
-            externalScale={scale}
-            isGridView={isGridView}
+            externalScale={effectiveScale}
+            isGridView={effectiveIsGridView}
+            forceSingleColumn={lockSingleSlideView}
             {...editorProps}
           />
         )}
@@ -183,7 +192,9 @@ export function PresentCenterArea({
     [
       activeSlideId,
       editorProps,
-      isGridView,
+      effectiveIsGridView,
+      effectiveScale,
+      lockSingleSlideView,
       onEditSlide,
       onOutputPreviewMedia,
       onReorderSlides,
@@ -192,7 +203,6 @@ export function PresentCenterArea({
       onVideoPause,
       onVideoPlay,
       onVideoSeeked,
-      scale,
       selectedIndex,
       selectedLibraryId,
       selectedLibraryItem,
@@ -218,13 +228,24 @@ export function PresentCenterArea({
         <ScripturePanel
           ref={scripturePanelRef}
           onSendToOutput={onSendScripture}
-          orgId={orgId}
-          userId={userId}
+          selectedServiceId={selectedServiceId}
+          onAddScriptureToService={onAddScriptureToService}
           isActive={viewMode === "show" && bottomTab === "scripture"}
+          speechLang={speechLang}
+          speechInputDeviceId={speechInputDeviceId}
         />
       </div>
     ),
-    [bottomTab, onSendScripture, orgId, scripturePanelRef, userId, viewMode],
+    [
+      bottomTab,
+      onAddScriptureToService,
+      onSendScripture,
+      speechInputDeviceId,
+      speechLang,
+      scripturePanelRef,
+      selectedServiceId,
+      viewMode,
+    ],
   );
 
   const editPane = useMemo(
@@ -281,10 +302,12 @@ export function PresentCenterArea({
       {/* Footer Area - Reusable Workspace Footer */}
       {viewMode === "show" && (
         <WorkspaceFooter 
-          isGridView={isGridView}
+          isGridView={effectiveIsGridView}
           onViewModeChange={setIsGridView}
-          scale={scale}
+          scale={effectiveScale}
           onScaleChange={setScale}
+          disableViewModeToggle={lockSingleSlideView}
+          disableScaleControl={lockSingleSlideView}
         />
       )}
     </div>

@@ -6,6 +6,7 @@ import type {
 
 export type Settings = {
   scriptureSpeechLang: string;
+  speechInputDeviceId?: string | null;
   scriptureBackgroundMediaId?: string | null;
   scriptureFontSize: number;
   scriptureFooterFontSize: number;
@@ -27,6 +28,10 @@ export type Settings = {
   timerNameBannerEnabled: boolean;
   timerNameBannerColor: string;
   timerTitlePosition: "top" | "bottom";
+  outputDisplayId?: number | null;
+  ndiEnabled?: boolean;
+  ndiSourceName?: string;
+  ndiGroupName?: string;
 };
 
 export const SETTINGS_STORAGE_KEY = "present-settings";

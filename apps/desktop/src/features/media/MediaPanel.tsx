@@ -2,6 +2,7 @@
 
 import {
   memo,
+  useEffect,
   useState,
   useMemo,
   forwardRef,
@@ -80,12 +81,38 @@ const MediaItemCard = memo(function MediaItemCard({
   isInsideService: boolean;
   isGridView?: boolean;
 }) {
+  const cardRef = useRef<HTMLButtonElement | null>(null);
+  const [isInView, setIsInView] = useState(false);
+
+  useEffect(() => {
+    const element = cardRef.current;
+    if (!element || isInView) {
+      return;
+    }
+
+    const root = element.closest("[data-media-scroll]") as Element | null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          setIsInView(true);
+          observer.disconnect();
+        }
+      },
+      { root, rootMargin: "200px" },
+    );
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [isInView]);
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
     <button
       type="button"
       onClick={() => onSelect(item)}
+      ref={cardRef}
       className={cn(
         "group relative overflow-hidden rounded-lg border bg-black transition",
         isGridView ? "aspect-video w-full" : "flex h-16 w-full flex-row items-center",
@@ -103,16 +130,25 @@ const MediaItemCard = memo(function MediaItemCard({
                 src={item.url}
                 alt={item.name}
                 className="h-full w-full object-cover"
-                loading="eager"
+                loading="lazy"
               />
             ) : (
               <video
                 src={item.url}
                 className="h-full w-full object-cover"
                 muted
-                preload="metadata"
+                preload={isInView ? "metadata" : "none"}
+                playsInline
                 onLoadedMetadata={(e) => {
-                  e.currentTarget.currentTime = 0.1;
+                  if (!isInView) {
+                    return;
+                  }
+                  try {
+                    e.currentTarget.currentTime = 0.01;
+                    e.currentTarget.pause();
+                  } catch {
+                    // Ignore seek errors for unsupported formats.
+                  }
                 }}
               />
             )}
@@ -236,9 +272,10 @@ export const MediaPanel = memo(
 
     // Compute filtered items based on folder and search query
     const filteredItems = useMemo(() => {
-      let items = selectedFolderId
+      const baseItems = selectedFolderId
         ? allMediaItems.filter((item) => item.folderId === selectedFolderId)
         : allMediaItems;
+      let items = [...baseItems];
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -629,7 +666,10 @@ export const MediaPanel = memo(
                   </div>
                 ) : (
                   <>
-                    <div className={cn("absolute inset-0 overflow-auto p-3", filter !== "all" && "hidden")}>
+                    <div
+                      className={cn("absolute inset-0 overflow-auto p-3", filter !== "all" && "hidden")}
+                      data-media-scroll
+                    >
                       <div 
                         className={cn("pb-8", isGridView ? "grid" : "flex flex-col")}
                         style={{
@@ -660,7 +700,10 @@ export const MediaPanel = memo(
                         </div>
                       )}
                     </div>
-                    <div className={cn("absolute inset-0 overflow-auto p-3", filter !== "images" && "hidden")}>
+                    <div
+                      className={cn("absolute inset-0 overflow-auto p-3", filter !== "images" && "hidden")}
+                      data-media-scroll
+                    >
                       <div 
                          className={cn("pb-8", isGridView ? "grid" : "flex flex-col")}
                          style={{
@@ -693,7 +736,10 @@ export const MediaPanel = memo(
                         </div>
                       )}
                     </div>
-                    <div className={cn("absolute inset-0 overflow-auto p-3", filter !== "videos" && "hidden")}>
+                    <div
+                      className={cn("absolute inset-0 overflow-auto p-3", filter !== "videos" && "hidden")}
+                      data-media-scroll
+                    >
                       <div 
                          className={cn("pb-8", isGridView ? "grid" : "flex flex-col")}
                          style={{

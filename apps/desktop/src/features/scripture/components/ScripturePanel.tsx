@@ -16,7 +16,6 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
 import { cn } from "../../../renderer/shared/lib/utils";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import { useServices } from "../../../features/services/hooks";
 import { useScripture, type HostedBibleVersion } from "../hooks/useScripture";
 import { generateBibleSlides, type ScriptureSlide } from "../lib/slides";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
@@ -52,39 +51,31 @@ import {
 
 interface ScripturePanelProps {
   onSendToOutput: (slides: ScriptureSlide[]) => void;
-  orgId: Id<"organizations"> | null;
-  userId: string | null;
+  selectedServiceId: Id<"services"> | null;
+  onAddScriptureToService: (
+    serviceId: Id<"services">,
+    ref: string,
+    text: string,
+  ) => Promise<void>;
   isActive?: boolean;
+  speechLang: string;
+  speechInputDeviceId: string | null;
 }
 
 export interface ScripturePanelRef {
   focusSearch: () => void;
 }
 
-const DEFAULT_SPEECH_LANGUAGE = "en-US";
-
-const readInitialSpeechLanguage = (): string => {
-  if (typeof window === "undefined") {
-    return DEFAULT_SPEECH_LANGUAGE;
-  }
-
-  try {
-    const raw = localStorage.getItem("present-settings");
-    if (!raw) {
-      return DEFAULT_SPEECH_LANGUAGE;
-    }
-
-    const parsed = JSON.parse(raw) as { scriptureSpeechLang?: string };
-    return parsed.scriptureSpeechLang || DEFAULT_SPEECH_LANGUAGE;
-  } catch (err) {
-    console.error("Failed to load settings:", err);
-    return DEFAULT_SPEECH_LANGUAGE;
-  }
-};
-
 export const ScripturePanel = memo(
   forwardRef<ScripturePanelRef, ScripturePanelProps>(function ScripturePanel(
-    { onSendToOutput, orgId, userId, isActive = true },
+    {
+      onSendToOutput,
+      selectedServiceId,
+      onAddScriptureToService,
+      isActive = true,
+      speechLang,
+      speechInputDeviceId,
+    },
     ref,
   ) {
     const inputRef = useRef<ScriptureInputRef>(null);
@@ -108,8 +99,6 @@ export const ScripturePanel = memo(
     const liveVersions = useLiveQuery(() => db.versions.toArray());
     const availableVersions = useMemo(() => liveVersions ?? [], [liveVersions]);
     const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
-
-    const { addScriptureToService, selectedServiceId } = useServices({ orgId, userId }, []);
 
     const {
       activeImport,
@@ -159,7 +148,6 @@ export const ScripturePanel = memo(
       errors: [],
     });
     const [isIdentifying, setIsIdentifying] = useState(false);
-    const [speechLang] = useState(readInitialSpeechLanguage);
     const [isTextSearching, setIsTextSearching] = useState(false);
     const wasActiveRef = useRef(isActive);
 
@@ -377,6 +365,7 @@ export const ScripturePanel = memo(
       useSpeechRecognition({
         onResult: onSpeechResult,
         lang: speechLang,
+        inputDeviceId: speechInputDeviceId,
         sessionToken,
       });
 
@@ -520,7 +509,7 @@ export const ScripturePanel = memo(
         }
 
         if (selectedServiceId) {
-          await addScriptureToService(selectedServiceId, refText, refText);
+          await onAddScriptureToService(selectedServiceId, refText, refText);
         }
       },
       [
@@ -530,7 +519,7 @@ export const ScripturePanel = memo(
         lookupRef,
         onSendToOutput,
         selectedServiceId,
-        addScriptureToService,
+        onAddScriptureToService,
       ],
     );
 
@@ -554,7 +543,7 @@ export const ScripturePanel = memo(
         onSendToOutput(slides);
 
         if (selectedServiceId) {
-          await addScriptureToService(selectedServiceId, reference, reference);
+          await onAddScriptureToService(selectedServiceId, reference, reference);
         }
       },
       [
@@ -563,7 +552,7 @@ export const ScripturePanel = memo(
         lookupRef,
         onSendToOutput,
         selectedServiceId,
-        addScriptureToService,
+        onAddScriptureToService,
         setSuggestion,
         syncLookupFromReference,
       ],
@@ -667,9 +656,9 @@ export const ScripturePanel = memo(
         }
         const versionCode = resolveVersionCode(verse.version);
         const reference = `${verse.bookName} ${verse.chapter}:${verse.verse}${versionCode ? ` ${versionCode}` : ""}`;
-        await addScriptureToService(selectedServiceId, reference, reference);
+        await onAddScriptureToService(selectedServiceId, reference, reference);
       },
-      [addScriptureToService, resolveVersionCode, selectedServiceId],
+      [onAddScriptureToService, resolveVersionCode, selectedServiceId],
     );
 
     const handleManualImport = useCallback(
@@ -1004,7 +993,7 @@ export const ScripturePanel = memo(
               onAddToService={
                 selectedServiceId
                   ? (reference: string, text: string) =>
-                      addScriptureToService(selectedServiceId, reference, text)
+                      onAddScriptureToService(selectedServiceId, reference, text)
                   : undefined
               }
             />

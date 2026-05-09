@@ -19,7 +19,7 @@ import {
 } from "../../library/lib/library-items";
 import type { ScriptureSlide } from "./slides";
 
-type ScriptureEditorDefaults = {
+export type ScriptureEditorDefaults = {
   canvasSize?: CanvasSizePreset;
   fontFamily: string;
   fontSize: number;
@@ -59,27 +59,21 @@ function createScriptureTextElements(
   const canvasSize = slide.canvasSize ?? defaults.canvasSize ?? DEFAULT_CANVAS_SIZE;
   const { width, height } = getCanvasSizeDimensions(canvasSize);
   const slideId = resolveScriptureSlideId(slide, index);
-  const footerHeight = Math.max(72, Math.round(height * 0.11));
-  const footerWidth = Math.round(width * 0.78);
-  const footerMargin = Math.round(height * 0.06);
-  const footerY =
-    defaults.footerPosition === "top"
-      ? footerMargin
-      : height - footerHeight - footerMargin;
-  const verseX = Math.round(width * 0.05);
-  const verseY =
-    defaults.footerPosition === "top"
-      ? footerY + footerHeight + Math.round(height * 0.04)
-      : Math.round(height * 0.08);
-  const verseWidth = Math.round(width * 0.9);
-  const verseBottomPadding =
-    defaults.footerPosition === "bottom"
-      ? footerHeight + footerMargin + Math.round(height * 0.04)
-      : Math.round(height * 0.1);
-  const verseHeight = Math.max(
-    Math.round(height * 0.48),
-    height - verseY - verseBottomPadding,
+  const footerHeight = Math.min(
+    Math.round(height * 0.55),
+    Math.max(
+      Math.round(defaults.footerFontSize * 1.8),
+      Math.round(height * 0.30),
+    ),
   );
+  const verseX = 0;
+  const verseY = defaults.footerPosition === "top" ? footerHeight : 0;
+  const verseWidth = width;
+  const verseHeight = Math.max(
+    0,
+    height - footerHeight,
+  );
+  const footerY = defaults.footerPosition === "top" ? 0 : verseY + verseHeight;
 
   const verseElement: SlideElement = {
     id: `${slideId}_verse`,
@@ -104,9 +98,9 @@ function createScriptureTextElements(
     id: `${slideId}_footer`,
     type: "text",
     contentRole: "scriptureFooter",
-    x: Math.round((width - footerWidth) / 2),
+    x: 0,
     y: footerY,
-    width: footerWidth,
+    width: width,
     height: footerHeight,
     content: slide.footer,
     style: {
@@ -120,6 +114,14 @@ function createScriptureTextElements(
   };
 
   return [verseElement, footerElement];
+}
+
+export function ensureScriptureSlideElements(
+  slide: ScriptureSlide,
+  index: number,
+  defaults: ScriptureEditorDefaults,
+): SlideElement[] {
+  return createScriptureTextElements(slide, index, defaults);
 }
 
 function getScriptureTextElements(elements: SlideElement[] | undefined | null) {
