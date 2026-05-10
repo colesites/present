@@ -48,6 +48,7 @@ import {
 import {
   importServicePresentationFile,
   type PresentationImportMode,
+  type PresentationImportProgress,
   type PresentationImportSource,
 } from "../library/lib/import-documents";
 import {
@@ -74,6 +75,13 @@ type OutputSlideContent = {
   elements?: SlideElement[] | null;
   canvasSize?: CanvasSizePreset | null;
   backgroundColor?: string | null;
+};
+
+type PresentationImportUiState = {
+  isVisible: boolean;
+  title: string;
+  detail: string;
+  progress: number | null;
 };
 
 const IMPORT_ERROR_DURATION_MS = 6000;
@@ -293,6 +301,13 @@ export function PresentContainer({
   const [isOutputFrozen, setIsOutputFrozen] = useState(false);
   const [editedOutputSnapshot, setEditedOutputSnapshot] =
     useState<EditedOutputSnapshot | null>(null);
+  const [presentationImportState, setPresentationImportState] =
+    useState<PresentationImportUiState>({
+      isVisible: false,
+      title: "Importing presentation",
+      detail: "",
+      progress: null,
+    });
   const screenComposer = useScreenComposerState();
   const setScriptureLayoutTemplate = useScriptureLayoutTemplateStore(
     (state) => state.setTemplate,
@@ -375,7 +390,10 @@ export function PresentContainer({
         id: `${selectedPresentationItem._id}:${slide.id ?? index}`,
       }));
     }
-    if (bottomTab === "scripture" && scriptureSlides.length > 0) {
+    if (
+      scriptureSlides.length > 0 &&
+      (bottomTab === "scripture" || activeSlideId?.startsWith("scripture:"))
+    ) {
       return scriptureSlides.map((item, i) => ({
         slide: { text: item.content, label: item.label, footer: item.footer },
         index: i,
@@ -384,7 +402,13 @@ export function PresentContainer({
       }));
     }
     return [];
-  }, [bottomTab, selectedLibraryItem, selectedPresentationItem, scriptureSlides]);
+  }, [
+    activeSlideId,
+    bottomTab,
+    selectedLibraryItem,
+    selectedPresentationItem,
+    scriptureSlides,
+  ]);
 
   const scriptureEditorItem = useMemo(
     () =>
@@ -579,6 +603,17 @@ export function PresentContainer({
     isOutputFrozen,
     availableBooks,
     lookupRef,
+    scriptureEditorDefaults: {
+      canvasSize: "1920x1080",
+      fontFamily: settingsScriptureFontFamily,
+      fontSize: settingsScriptureFontSize,
+      footerFontSize: settingsScriptureFooterFontSize,
+      fontWeight: settingsScriptureFontWeight,
+      textAlign: settingsScriptureTextAlign,
+      verticalAlign: settingsScriptureVerticalAlign,
+      footerAlign: settingsScriptureFooterAlign,
+      footerPosition: settingsScriptureFooterPosition,
+    },
   });
 
   const handleUpdateEditedSlideOutput = useCallback(
@@ -1016,33 +1051,77 @@ export function PresentContainer({
 
       let importedCount = 0;
 
-      for (const file of files) {
-        try {
-          const presentation = await importServicePresentationFile(file, mode);
-          const refId = await addPresentationToService(
-            selectedServiceId,
-            presentation,
-          );
-          if (!refId) {
-            throw new Error(`Failed to import ${file.name}.`);
-          }
+      try {
+        for (const file of files) {
+          try {
+            const fileLabel = `${file.name} (${importedCount + 1} of ${files.length})`;
+            setPresentationImportState({
+              isVisible: true,
+              title: mode === "images" ? "Importing presentation images" : "Importing presentation",
+              detail: `Preparing ${fileLabel}`,
+              progress:
+                files.length > 0
+                  ? (importedCount / files.length) * 100
+                  : null,
+            });
 
-          importedCount += 1;
-          const presentationLibraryId = `presentation_${refId}`;
-          setServiceItemIndex(serviceItems.length + importedCount - 1);
-          setSelectedLibraryId(null);
-          setSelectedPresentationLibraryId(presentationLibraryId);
-          setSelected({ libraryId: presentationLibraryId, index: 0 });
-        } catch (error) {
-          toast.error(
-            error instanceof Error
-              ? error.message
-              : `Failed to import ${file.name}.`,
-            {
-              duration: IMPORT_ERROR_DURATION_MS,
-            },
-          );
+            const presentation = await importServicePresentationFile(
+              file,
+              mode,
+              (progress: PresentationImportProgress) => {
+                const fileBaseProgress = files.length > 0 ? (importedCount / files.length) * 100 : 0;
+                const fileWeight = files.length > 0 ? 100 / files.length : 100;
+                const nextProgress =
+                  progress.percent == null
+                    ? null
+                    : Math.min(
+                        99,
+                        fileBaseProgress + (progress.percent / 100) * fileWeight,
+                      );
+
+                setPresentationImportState({
+                  isVisible: true,
+                  title:
+                    mode === "images"
+                      ? "Importing presentation images"
+                      : "Importing presentation",
+                  detail: `${progress.detail ?? "Processing file"} • ${fileLabel}`,
+                  progress: nextProgress,
+                });
+              },
+            );
+            const refId = await addPresentationToService(
+              selectedServiceId,
+              presentation,
+            );
+            if (!refId) {
+              throw new Error(`Failed to import ${file.name}.`);
+            }
+
+            importedCount += 1;
+            const presentationLibraryId = `presentation_${refId}`;
+            setServiceItemIndex(serviceItems.length + importedCount - 1);
+            setSelectedLibraryId(null);
+            setSelectedPresentationLibraryId(presentationLibraryId);
+            setSelected({ libraryId: presentationLibraryId, index: 0 });
+          } catch (error) {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : `Failed to import ${file.name}.`,
+              {
+                duration: IMPORT_ERROR_DURATION_MS,
+              },
+            );
+          }
         }
+      } finally {
+        setPresentationImportState({
+          isVisible: false,
+          title: "Importing presentation",
+          detail: "",
+          progress: null,
+        });
       }
 
       if (importedCount > 0) {
@@ -1218,6 +1297,7 @@ export function PresentContainer({
         searchQuery,
         setSearchQuery,
         contentSource,
+        presentationImportState,
       }}
       styleState={{
         fontFamily,

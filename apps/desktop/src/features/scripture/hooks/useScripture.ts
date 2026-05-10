@@ -199,6 +199,14 @@ const getFileNameFromPath = (filePath: string): string => {
   return parts[parts.length - 1] || "bible.xml";
 };
 
+const SEARCH_SCAN_CHUNK_SIZE = 400;
+
+async function yieldToRenderer() {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
 export function useScripture() {
   const versions = useLiveQuery(() => db.versions.toArray());
   const [activeImport, setActiveImport] = useState<ImportProgress | null>(null);
@@ -438,7 +446,12 @@ export function useScripture() {
       const pool = await getSearchPool(targetVersion.id);
       const matches: Array<{ verse: BibleVerse; score: number }> = [];
 
-      for (const candidate of pool) {
+      for (let index = 0; index < pool.length; index += 1) {
+        if (index > 0 && index % SEARCH_SCAN_CHUNK_SIZE === 0) {
+          await yieldToRenderer();
+        }
+
+        const candidate = pool[index];
         let score = 0;
         const exactIndex = candidate.normalizedText.indexOf(normalizedQuery);
         if (exactIndex !== -1) {
@@ -513,7 +526,12 @@ export function useScripture() {
 
       let bestMatch: { verse: BibleVerse; score: number } | null = null;
 
-      for (const candidate of pool) {
+      for (let index = 0; index < pool.length; index += 1) {
+        if (index > 0 && index % SEARCH_SCAN_CHUNK_SIZE === 0) {
+          await yieldToRenderer();
+        }
+
+        const candidate = pool[index];
         let score = 0;
         const exactIndex = candidate.normalizedText.indexOf(normalizedQuery);
 
@@ -571,6 +589,7 @@ export function useScripture() {
       if (!targetVersion) {
         return;
       }
+      await yieldToRenderer();
       await getSearchPool(targetVersion.id);
     },
     [getSearchPool, resolveVersion],

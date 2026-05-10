@@ -17,6 +17,12 @@ export interface PresentationImportSource {
 
 export type PresentationImportMode = "presentation" | "images";
 
+export interface PresentationImportProgress {
+  phase: "parsing" | "rendering" | "finalizing";
+  percent: number | null;
+  detail?: string;
+}
+
 function getFileStem(fileName: string) {
   return fileName.replace(/\.[^.]+$/, "").trim() || "Imported presentation";
 }
@@ -67,6 +73,7 @@ function convertParsedPptxToPresentation(
 
 async function importPptxFile(
   file: PresentationImportSource,
+  onProgress?: (progress: PresentationImportProgress) => void,
 ): Promise<ServicePresentation> {
   if (!file.path || !window.pptxAPI?.parseFile) {
     throw new Error(
@@ -74,17 +81,33 @@ async function importPptxFile(
     );
   }
 
+  onProgress?.({
+    phase: "parsing",
+    percent: 15,
+    detail: "Parsing PowerPoint slides",
+  });
   const parsedPresentation = await window.pptxAPI.parseFile(file.path);
+  onProgress?.({
+    phase: "finalizing",
+    percent: 95,
+    detail: "Building presentation",
+  });
   return convertParsedPptxToPresentation(parsedPresentation);
 }
 
 async function importPdfFile(
   file: PresentationImportSource,
+  onProgress?: (progress: PresentationImportProgress) => void,
 ): Promise<ServicePresentation> {
   if (!file.bytes?.length) {
     throw new Error("PDF data was not available for import.");
   }
 
+  onProgress?.({
+    phase: "parsing",
+    percent: 10,
+    detail: "Opening PDF",
+  });
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL(
     "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
@@ -100,6 +123,11 @@ async function importPdfFile(
   const slides: LibrarySlide[] = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    onProgress?.({
+      phase: "rendering",
+      percent: Math.round((pageNumber / pdf.numPages) * 90),
+      detail: `Rendering page ${pageNumber} of ${pdf.numPages}`,
+    });
     const page = await pdf.getPage(pageNumber);
     const baseViewport = page.getViewport({ scale: 1 });
     const pageScale = Math.min(width / baseViewport.width, height / baseViewport.height);
@@ -167,12 +195,18 @@ async function importPdfFile(
     );
   }
 
+  onProgress?.({
+    phase: "finalizing",
+    percent: 95,
+    detail: "Building presentation",
+  });
   return createServicePresentation(getFileStem(file.name), "pdf", slides);
 }
 
 export async function importServicePresentationFile(
   file: PresentationImportSource,
   mode: PresentationImportMode = "presentation",
+  onProgress?: (progress: PresentationImportProgress) => void,
 ): Promise<ServicePresentation> {
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
 
@@ -183,11 +217,11 @@ export async function importServicePresentationFile(
       );
     }
 
-    return importPptxFile(file);
+    return importPptxFile(file, onProgress);
   }
 
   if (extension === "pdf") {
-    return importPdfFile(file);
+    return importPdfFile(file, onProgress);
   }
 
   throw new Error("Unsupported file type. Import a PDF or PPTX file.");

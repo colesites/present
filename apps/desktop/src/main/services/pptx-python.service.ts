@@ -100,10 +100,14 @@ function escapeHtml(value: string): string {
 
 function readPathCandidates(filePath: string): string[] {
   return [
+    path.resolve(process.resourcesPath, filePath),
+    path.resolve(process.resourcesPath, "app.asar.unpacked", filePath),
+    path.resolve(process.cwd(), "apps", "desktop", filePath),
     path.resolve(process.cwd(), filePath),
     path.resolve(process.cwd(), "..", filePath),
     path.resolve(process.cwd(), "..", "..", filePath),
     path.resolve(process.cwd(), "..", "..", "..", filePath),
+    path.resolve(__dirname, "..", "..", "..", "..", filePath),
     path.resolve(__dirname, "..", "..", "..", "..", "..", "..", filePath),
     path.resolve(__dirname, "..", "..", "..", "..", "..", "..", "..", filePath),
   ];

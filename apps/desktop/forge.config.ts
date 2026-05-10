@@ -24,6 +24,7 @@ const config: ForgeConfig = {
     extraResource: [
       path.resolve(__dirname, 'bible'),
       path.resolve(__dirname, 'assets/icons'),
+      path.resolve(__dirname, 'parse_pptx.py'),
     ],
     icon: iconBasePath,
     extendInfo: {

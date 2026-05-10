@@ -2,6 +2,7 @@
 
 import { memo, useMemo, useState } from "react";
 import type { ComponentProps } from "react";
+import { Loader2, Presentation } from "lucide-react";
 import type { BottomTab, ViewMode } from "../../shared/types";
 import type { SlideData } from "../../features/slides";
 
@@ -24,6 +25,12 @@ type Props = {
   viewMode: ViewMode;
   bottomTab: BottomTab;
   lockSingleSlideView?: boolean;
+  importOverlay?: {
+    isVisible: boolean;
+    title: string;
+    detail: string;
+    progress: number | null;
+  };
 
   slidesForGrid: SlideData[];
   activeSlideId: string | null;
@@ -136,6 +143,7 @@ export function PresentCenterArea({
   selectedServiceId,
   onAddScriptureToService,
   lockSingleSlideView = false,
+  importOverlay,
 }: Props) {
   // Footer state
   const [scale, setScale] = useState(60);
@@ -280,6 +288,47 @@ export function PresentCenterArea({
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-background">
+      {importOverlay?.isVisible ? (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/72 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-border/70 bg-card/95 p-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-xl bg-primary/10 p-2 text-primary">
+                <Presentation className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-foreground">
+                    {importOverlay.title}
+                  </p>
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {importOverlay.detail}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              <div className="h-2 overflow-hidden rounded-full bg-secondary/70">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+                  style={{
+                    width: `${Math.max(8, importOverlay.progress ?? 18)}%`,
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>Importing presentation</span>
+                <span>
+                  {importOverlay.progress != null
+                    ? `${Math.min(100, Math.max(0, Math.round(importOverlay.progress)))}%`
+                    : "Working..."}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {/* Scrollable Content Area */}
       <div className="relative flex-1 overflow-hidden">
         <Activity mode={viewMode === "show" && bottomTab === "media" ? "visible" : "hidden"}>

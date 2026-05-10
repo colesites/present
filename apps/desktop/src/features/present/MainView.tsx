@@ -138,6 +138,12 @@ export interface MainViewLibraryState {
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   contentSource: ContentSource;
+  presentationImportState?: {
+    isVisible: boolean;
+    title: string;
+    detail: string;
+    progress: number | null;
+  };
 }
 
 export interface MainViewStyleState {
@@ -333,6 +339,7 @@ export function MainView({
     createNewCategory,
     searchQuery,
     setSearchQuery,
+    presentationImportState,
   } = libraryState;
 
   const {
@@ -696,6 +703,7 @@ export function MainView({
                   selectedServiceId={selectedServiceId}
                   onAddScriptureToService={onAddScriptureToService}
                   lockSingleSlideView={isPptxSelection}
+                  importOverlay={presentationImportState}
                 />
               </ResizablePanel>
             </ResizablePanelGroup>

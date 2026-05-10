@@ -13,6 +13,10 @@ import {
 import type { BibleVerse, BibleBookRecord } from "../../../features/scripture/lib/db";
 import { applyScriptureLayoutTemplate } from "../../../features/scripture/lib/layout-template";
 import { useScriptureLayoutTemplateStore } from "../../../features/scripture/lib/layout-template-state";
+import {
+  ensureScriptureSlideElements,
+  type ScriptureEditorDefaults,
+} from "../../../features/scripture/lib/editor";
 
 interface UseAppHandlersProps {
   // State Setters
@@ -42,6 +46,7 @@ interface UseAppHandlersProps {
   isOutputFrozen: boolean;
   availableBooks: BibleBookRecord[];
   lookupRef: (parsed: ParsedReference) => Promise<BibleVerse[]>;
+  scriptureEditorDefaults: ScriptureEditorDefaults;
 }
 
 export function useAppHandlers({
@@ -62,6 +67,7 @@ export function useAppHandlers({
   isOutputFrozen,
   availableBooks,
   lookupRef,
+  scriptureEditorDefaults,
 }: UseAppHandlersProps) {
   const resolveLibrarySlideIndex = useCallback(
     (libraryId: string, slideToken: string): number | null => {
@@ -173,24 +179,56 @@ export function useAppHandlers({
   const handleScriptureOutput = useCallback(
     async (slides: ScriptureSlide[]) => {
       const template = useScriptureLayoutTemplateStore.getState().template;
+      const nextSlides = slides.map((slide, index) => {
+        const templatedSlide = applyScriptureLayoutTemplate(slide, template);
+        const canvasSize =
+          templatedSlide.canvasSize ?? scriptureEditorDefaults.canvasSize;
+        const elements =
+          templatedSlide.elements && templatedSlide.elements.length > 0
+            ? templatedSlide.elements
+            : ensureScriptureSlideElements(
+                {
+                  ...templatedSlide,
+                  canvasSize,
+                },
+                index,
+                {
+                  ...scriptureEditorDefaults,
+                  canvasSize,
+                },
+              );
+
+        return {
+          ...templatedSlide,
+          canvasSize,
+          elements,
+        };
+      });
+
       setShowTextInOutput(true);
       setSelectedLibraryId(null);
       setScriptureSlides((previousSlides) =>
         mergeScriptureSlides(
           previousSlides,
-          slides.map((slide) => applyScriptureLayoutTemplate(slide, template)),
+          nextSlides,
         ),
       );
 
-      if (slides.length > 0) {
+      if (nextSlides.length > 0) {
         await handleSelectSlide(
           `scripture:0`,
-          slides[0].content,
-          slides[0].footer
+          nextSlides[0].content,
+          nextSlides[0].footer,
         );
       }
     },
-    [handleSelectSlide, setSelectedLibraryId, setShowTextInOutput, setScriptureSlides]
+    [
+      handleSelectSlide,
+      scriptureEditorDefaults,
+      setSelectedLibraryId,
+      setShowTextInOutput,
+      setScriptureSlides,
+    ]
   );
 
   const handleSelectScripture = useCallback(

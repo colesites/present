@@ -9,7 +9,7 @@ import {
 } from "../lib/slides";
 import { type ParsedReference } from "../lib/parser";
 import { Button } from "../../../renderer/shared/components/ui/button";
-import { Monitor, Plus, Settings2 } from "lucide-react";
+import { Monitor, Plus } from "lucide-react";
 import { type BibleVerse } from "../lib/db";
 
 interface ScriptureResultsProps {
@@ -34,6 +34,8 @@ export function ScriptureResults({
   };
 
   useEffect(() => {
+    let isCancelled = false;
+
     async function fetchVerses() {
       if (
         parsedRef.book &&
@@ -42,13 +44,21 @@ export function ScriptureResults({
       ) {
         setIsLoading(true);
         const results = await lookupRef(parsedRef);
+        if (isCancelled) {
+          return;
+        }
         setVerses(results);
         setIsLoading(false);
       } else {
         setVerses([]);
       }
     }
-    fetchVerses();
+
+    void fetchVerses();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [parsedRef, lookupRef]);
 
   const getVersionName = (versionId: string) => {
@@ -142,7 +152,7 @@ export function ScriptureResults({
             <div
               key={v.pk}
               onClick={() => handleSendVerse(v)}
-              className="text-left w-full p-2 rounded hover:bg-accent transition-colors group relative cursor-pointer"
+              className="group relative w-full cursor-pointer rounded p-2 text-left transition-colors hover:bg-accent [content-visibility:auto] [contain-intrinsic-size:72px]"
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1">

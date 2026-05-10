@@ -12,13 +12,10 @@
     "esModuleInterop": true,
     "noImplicitAny": true,
     "sourceMap": true,
-    "baseUrl": ".",
-    "outDir": "dist",
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "jsx": "react-jsx",
     "paths": {
-      "@/*": ["./src/*"],
       "@present/backend/*": ["../../packages/backend/*"]
     }
   },

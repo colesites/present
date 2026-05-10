@@ -459,7 +459,22 @@ export const ScripturePanel = memo(
       if (!effectiveSelectedVersionCode) {
         return;
       }
-      void prewarmSearchPool(effectiveSelectedVersionCode);
+
+      const prewarm = () => {
+        void prewarmSearchPool(effectiveSelectedVersionCode);
+      };
+
+      if (typeof window.requestIdleCallback === "function") {
+        const idleId = window.requestIdleCallback(prewarm, { timeout: 1200 });
+        return () => {
+          window.cancelIdleCallback(idleId);
+        };
+      }
+
+      const timeoutId = window.setTimeout(prewarm, 180);
+      return () => {
+        window.clearTimeout(timeoutId);
+      };
     }, [effectiveSelectedVersionCode, prewarmSearchPool]);
 
     const handleRefChange = useCallback((nextRef: ParsedReference) => {
@@ -588,6 +603,7 @@ export const ScripturePanel = memo(
 
       return () => {
         window.clearTimeout(timeoutId);
+        setIsTextSearching(false);
       };
     }, [
       isActive,
@@ -1009,14 +1025,14 @@ export const ScripturePanel = memo(
                 {textSearchResults.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No matches found.</p>
                 ) : (
-                  <div className="space-y-1">
+                  <div className="max-h-[320px] space-y-1 overflow-y-auto pr-1 custom-scrollbar">
                     {textSearchResults.map((verse) => {
                       const versionCode = resolveVersionCode(verse.version);
                       const verseRef = `${verse.bookName} ${verse.chapter}:${verse.verse}${versionCode ? ` ${versionCode}` : ""}`;
                       return (
                         <div
                           key={verse.pk}
-                          className="group rounded-md border border-border/60 bg-background/40 px-2 py-1.5 transition hover:border-primary/40 hover:bg-accent/20"
+                          className="group rounded-md border border-border/60 bg-background/40 px-2 py-1.5 transition hover:border-primary/40 hover:bg-accent/20 [content-visibility:auto] [contain-intrinsic-size:80px]"
                         >
                           <div className="flex items-start justify-between gap-2">
                             <button
