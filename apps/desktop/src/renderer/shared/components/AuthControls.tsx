@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ChevronsUpDown, Plus, User } from "lucide-react";
 import { useDesktopSessionStore } from "../store/desktopSession";
+import { useSpeechUsageStore } from "../store/speechUsage";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,17 +33,63 @@ const resolveWebBaseUrl = (): string => {
   }
   return process.env.NODE_ENV === "development"
     ? "http://localhost:3001"
-    : "https://present-gha.vercel.app";
+    : "https://present.c-technology-inc.com";
+};
+
+const formatUsageDuration = (
+  seconds: number,
+  options?: { roundUpMinutes?: boolean },
+): string => {
+  const normalizedSeconds = Math.max(0, Math.round(seconds));
+  if (normalizedSeconds === 0) {
+    return "0 min";
+  }
+
+  if (normalizedSeconds < 60) {
+    return `${normalizedSeconds} sec`;
+  }
+
+  const totalMinutes = options?.roundUpMinutes
+    ? Math.ceil(normalizedSeconds / 60)
+    : Math.floor(normalizedSeconds / 60);
+  if (totalMinutes < 60) {
+    return `${totalMinutes} min`;
+  }
+
+  const hours = totalMinutes / 60;
+  return Number.isInteger(hours) ? `${hours} hr` : `${hours.toFixed(1)} hr`;
 };
 
 export function AuthControls() {
   const [isOpening, setIsOpening] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const authStatus = useDesktopSessionStore((state) => state.authStatus);
   const user = useDesktopSessionStore((state) => state.user);
   const orgId = useDesktopSessionStore((state) => state.orgId);
   const organizations = useDesktopSessionStore((state) => state.organizations);
   const setOrgId = useDesktopSessionStore((state) => state.setOrgId);
   const clearSession = useDesktopSessionStore((state) => state.clearSession);
+  const billing = useDesktopSessionStore((state) => state.user?.billing);
+  const activeSpeechSessionStartedAtMs = useSpeechUsageStore(
+    (state) => state.activeSessionStartedAtMs,
+  );
+  const pendingCommittedUsageSeconds = useSpeechUsageStore(
+    (state) => state.pendingCommittedUsageSeconds,
+  );
+
+  useEffect(() => {
+    if (!activeSpeechSessionStartedAtMs) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeSpeechSessionStartedAtMs]);
 
   const isSignedIn =
     authStatus === "authenticated" &&
@@ -89,6 +136,26 @@ export function AuthControls() {
     organizations[0];
   const webBaseUrl = resolveWebBaseUrl();
 
+  const effectiveUsedSeconds = billing
+    ? Math.min(
+        billing.quotaSeconds,
+        billing.usedSeconds +
+          pendingCommittedUsageSeconds +
+          (activeSpeechSessionStartedAtMs
+            ? Math.max(0, Math.ceil((nowMs - activeSpeechSessionStartedAtMs) / 1000))
+            : 0),
+      )
+    : 0;
+  const effectiveRemainingSeconds = billing
+    ? Math.max(0, billing.quotaSeconds - effectiveUsedSeconds)
+    : 0;
+  const usageSummary = billing
+    ? `${formatUsageDuration(effectiveUsedSeconds, { roundUpMinutes: true })} / ${formatUsageDuration(billing.quotaSeconds)} used`
+    : null;
+  const usageRemainder = billing
+    ? `${formatUsageDuration(effectiveRemainingSeconds)} left this month`
+    : null;
+
   const realOrganizations = organizations.filter(org => org.type !== "personal");
 
   return (
@@ -123,6 +190,16 @@ export function AuthControls() {
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="end" className="w-[320px] p-0">
+        <div className="border-b border-border/70 px-3 py-3">
+          <p className="truncate text-sm font-semibold text-foreground">{user.name}</p>
+          <p className="truncate text-[11px] text-muted-foreground">{user.email}</p>
+          {usageSummary && usageRemainder ? (
+            <div className="mt-2 space-y-0.5">
+              <p className="text-[11px] font-medium text-foreground">{usageSummary}</p>
+              <p className="text-[10px] text-muted-foreground">{usageRemainder}</p>
+            </div>
+          ) : null}
+        </div>
         <DropdownMenuLabel className="px-3 py-3 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
           Organizations
         </DropdownMenuLabel>

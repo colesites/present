@@ -18,7 +18,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('output-window-closed', () => callback());
   },
   selectFolder: () => ipcRenderer.invoke('select-folder'),
+  selectLibraryExportDestination: (suggestedName?: string) =>
+    ipcRenderer.invoke('select-library-export-destination', suggestedName),
   readFolder: (folderPath: string) => ipcRenderer.invoke('read-folder', folderPath),
+  exportLibraryBundle: (
+    destinationPath: string,
+    items: unknown[],
+  ) => ipcRenderer.invoke('export-library-bundle', destinationPath, items),
+  importLibraryBundle: (folderPath: string) =>
+    ipcRenderer.invoke('import-library-bundle', folderPath),
   selectMediaFile: () => ipcRenderer.invoke('select-media-file'),
   selectPresentationFiles: () => ipcRenderer.invoke('select-presentation-files'),
   copyMediaFile: (source: string, target: string) => ipcRenderer.invoke('copy-media-file', source, target),
@@ -30,8 +38,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('fetch-hosted-bible-catalog', catalogUrl),
   fetchBrowserSuggestions: (query: string) =>
     ipcRenderer.invoke('fetch-browser-suggestions', query),
-  requestAssemblyAiToken: (sessionToken: string) =>
-    ipcRenderer.invoke('request-assemblyai-token', sessionToken),
+  requestAssemblyAiToken: (
+    sessionToken: string,
+    source: "bible" | "library",
+  ) => ipcRenderer.invoke('request-assemblyai-token', sessionToken, source),
   requestMicrophoneAccess: () => ipcRenderer.invoke('request-microphone-access'),
 
   // Output window IPC - send state from main window to output window

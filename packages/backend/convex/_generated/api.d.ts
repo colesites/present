@@ -9,6 +9,7 @@
  */
 
 import type * as authUtils from "../authUtils.js";
+import type * as billing from "../billing.js";
 import type * as categories from "../categories.js";
 import type * as debug from "../debug.js";
 import type * as http from "../http.js";
@@ -31,6 +32,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   authUtils: typeof authUtils;
+  billing: typeof billing;
   categories: typeof categories;
   debug: typeof debug;
   http: typeof http;

@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ensureFreshDesktopAccessToken } from "../../../renderer/shared/store/desktopSession";
+import {
+  ensureFreshDesktopAccessToken,
+  updateDesktopBillingSnapshot,
+  type DesktopBillingSnapshot,
+} from "../../../renderer/shared/store/desktopSession";
+import { useSpeechUsageStore } from "../../../renderer/shared/store/speechUsage";
 
 interface ScriptRecognitionResult {
   transcript: string;
@@ -17,6 +22,7 @@ interface UseSpeechRecognitionOptions {
   inputDeviceId?: string | null;
   sessionToken?: string | null;
   keyterms?: string[];
+  usageSource?: "bible" | "library";
 }
 
 interface UseSpeechRecognitionReturn {
@@ -25,6 +31,7 @@ interface UseSpeechRecognitionReturn {
   isSupported: boolean;
   transcript: string;
   interimTranscript: string;
+  activeSessionStartedAtMs: number | null;
   startListening: () => Promise<void>;
   stopListening: () => void;
   error: string | null;
@@ -83,6 +90,9 @@ declare global {
 interface AssemblyAiTokenResponse {
   token: string;
   expiresInSeconds?: number;
+  sessionId?: string;
+  allowedDurationSeconds?: number;
+  billing?: DesktopBillingSnapshot;
 }
 
 interface AssemblyAiTokenErrorPayload {
@@ -101,27 +111,27 @@ interface AssemblyAiMessage {
   message?: string;
 }
 
+interface AssemblyAiUsageResponse {
+  sessionId?: string;
+  usedSeconds?: number;
+  billing?: DesktopBillingSnapshot;
+}
+
 interface StreamingSession {
+  billingSessionId: string | null;
   socket: WebSocket;
   mediaStream: MediaStream;
   audioContext: AudioContext;
   source: MediaStreamAudioSourceNode;
   processor: ScriptProcessorNode;
   silenceSink: GainNode;
+  startedAtMs: number;
+  maxDurationSeconds: number;
 }
 
-const DEFAULT_WEB_APP_URL = "https://present-gha.vercel.app";
+const DEFAULT_WEB_APP_URL = "https://present.c-technology-inc.com";
 const ASSEMBLYAI_STREAM_URL = "wss://streaming.assemblyai.com/v3/ws";
 const ASSEMBLYAI_TOKEN_PATH = "/api/assemblyai/token";
-const ASSEMBLYAI_TOKEN_REFRESH_BUFFER_MS = 15_000;
-
-let cachedAssemblyAiToken:
-  | {
-      sessionToken: string;
-      token: string;
-      expiresAt: number;
-    }
-  | null = null;
 
 const resolveWebBaseUrl = (): string => {
   const configured = process.env.WEB_APP_URL;
@@ -188,6 +198,19 @@ const formatSpeechError = (error: unknown): string => {
   }
 
   return "Voice input failed to start.";
+};
+
+const computeBoundedSessionUsageSeconds = (input: {
+  startedAtMs: number;
+  maxDurationSeconds: number;
+  endedAtMs?: number;
+}): number => {
+  const elapsedSeconds = Math.max(
+    0,
+    Math.ceil(((input.endedAtMs ?? Date.now()) - input.startedAtMs) / 1000),
+  );
+
+  return Math.min(input.maxDurationSeconds, elapsedSeconds);
 };
 
 const resolveInputDeviceConstraint = async (
@@ -258,6 +281,7 @@ export function useSpeechRecognition(
     inputDeviceId = null,
     sessionToken = null,
     keyterms,
+    usageSource = "bible",
   } = options;
 
   const [isListening, setIsListening] = useState(false);
@@ -265,6 +289,13 @@ export function useSpeechRecognition(
   const [transcript, setTranscript] = useState("");
   const [interimTranscript, setInterimTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [activeSessionStartedAtMs, setActiveSessionStartedAtMs] = useState<number | null>(null);
+  const setSharedActiveSessionStartedAtMs = useSpeechUsageStore(
+    (state) => state.setActiveSessionStartedAtMs,
+  );
+  const setPendingCommittedUsageSeconds = useSpeechUsageStore(
+    (state) => state.setPendingCommittedUsageSeconds,
+  );
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const streamingSessionRef = useRef<StreamingSession | null>(null);
@@ -409,6 +440,54 @@ export function useSpeechRecognition(
     }
 
     session.processor.onaudioprocess = null;
+    const endedAtMs = Date.now();
+    const localUsedSeconds = computeBoundedSessionUsageSeconds({
+      startedAtMs: session.startedAtMs,
+      maxDurationSeconds: session.maxDurationSeconds,
+      endedAtMs,
+    });
+    setPendingCommittedUsageSeconds(localUsedSeconds);
+
+    if (session.billingSessionId) {
+      const authBearerPromise =
+        typeof window !== "undefined" && window.electronAPI
+          ? ensureFreshDesktopAccessToken().catch((): null => null)
+          : Promise.resolve(sessionToken);
+
+      void authBearerPromise.then((authBearer) => {
+        if (!authBearer) {
+          return;
+        }
+
+        void fetch(`${resolveWebBaseUrl()}/api/assemblyai/usage`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${authBearer}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            sessionId: session.billingSessionId,
+            endedAtMs,
+          }),
+          cache: "no-store",
+        })
+          .then(async (response): Promise<void> => {
+            if (!response.ok) {
+              return;
+            }
+
+            const payload = (await response.json().catch((): null => null)) as AssemblyAiUsageResponse | null;
+            if (payload?.billing) {
+              updateDesktopBillingSnapshot(payload.billing);
+            }
+            setPendingCommittedUsageSeconds(0);
+          })
+          .catch((): void => undefined);
+      });
+    }
+
+    setActiveSessionStartedAtMs(null);
+    setSharedActiveSessionStartedAtMs(null);
 
     try {
       if (session.socket.readyState === WebSocket.OPEN) {
@@ -444,7 +523,7 @@ export function useSpeechRecognition(
 
     session.mediaStream.getTracks().forEach((track) => track.stop());
     void session.audioContext.close().catch((): void => undefined);
-  }, []);
+  }, [sessionToken, setPendingCommittedUsageSeconds]);
 
   const fetchAssemblyAiToken = useCallback(async (): Promise<AssemblyAiTokenResponse> => {
     if (!sessionToken) {
@@ -456,22 +535,11 @@ export function useSpeechRecognition(
         ? await ensureFreshDesktopAccessToken()
         : null) ?? sessionToken;
 
-    if (
-      cachedAssemblyAiToken &&
-      cachedAssemblyAiToken.sessionToken === authBearer &&
-      cachedAssemblyAiToken.expiresAt > Date.now() + ASSEMBLYAI_TOKEN_REFRESH_BUFFER_MS
-    ) {
-      return {
-        token: cachedAssemblyAiToken.token,
-        expiresInSeconds: Math.max(
-          0,
-          Math.floor((cachedAssemblyAiToken.expiresAt - Date.now()) / 1000),
-        ),
-      };
-    }
-
     if (window.electronAPI?.requestAssemblyAiToken) {
-      const payload = await window.electronAPI.requestAssemblyAiToken(authBearer) as
+      const payload = await window.electronAPI.requestAssemblyAiToken(
+        authBearer,
+        usageSource,
+      ) as
         | AssemblyAiTokenResponse
         | AssemblyAiTokenErrorPayload
         | null;
@@ -484,17 +552,9 @@ export function useSpeechRecognition(
           ?? "Live transcription could not start.",
         );
       }
-
-      cachedAssemblyAiToken = {
-        sessionToken: authBearer,
-        token: payload.token,
-        expiresAt:
-          Date.now() +
-          (typeof payload.expiresInSeconds === "number"
-            ? payload.expiresInSeconds
-            : 300) *
-            1000,
-      };
+      if (payload.billing) {
+        updateDesktopBillingSnapshot(payload.billing);
+      }
       return payload;
     }
 
@@ -502,7 +562,9 @@ export function useSpeechRecognition(
       method: "POST",
       headers: {
         Authorization: `Bearer ${authBearer}`,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify({ source: usageSource }),
       cache: "no-store",
     });
 
@@ -523,19 +585,11 @@ export function useSpeechRecognition(
         ?? raw;
       throw new Error(message || "Live transcription could not start.");
     }
-
-    cachedAssemblyAiToken = {
-      sessionToken: authBearer,
-      token: payload.token,
-      expiresAt:
-        Date.now() +
-        (typeof payload.expiresInSeconds === "number"
-          ? payload.expiresInSeconds
-          : 300) *
-          1000,
-    };
+    if (payload.billing) {
+      updateDesktopBillingSnapshot(payload.billing);
+    }
     return payload;
-  }, [sessionToken]);
+  }, [sessionToken, usageSource]);
 
   const startAssemblyAiListening = useCallback(async () => {
     if (!hasStreamingSupport) {
@@ -599,16 +653,22 @@ export function useSpeechRecognition(
       socket.binaryType = "arraybuffer";
 
       const session: StreamingSession = {
+        billingSessionId: tokenResult.value.sessionId ?? null,
         socket,
         mediaStream,
         audioContext,
         source,
         processor,
         silenceSink,
+        startedAtMs: Date.now(),
+        maxDurationSeconds:
+          tokenResult.value.allowedDurationSeconds ?? Number.MAX_SAFE_INTEGER,
       };
 
       streamingSessionRef.current = session;
       activeModeRef.current = "assemblyai";
+      setActiveSessionStartedAtMs(session.startedAtMs);
+      setSharedActiveSessionStartedAtMs(session.startedAtMs);
 
       await new Promise<void>((resolve, reject) => {
         const handleOpen = () => {
@@ -663,6 +723,9 @@ export function useSpeechRecognition(
         if (payload.type === "Error" || payload.error || payload.message) {
           setIsStarting(false);
           setError(payload.error ?? payload.message ?? "Live transcription failed.");
+          setActiveSessionStartedAtMs(null);
+          setSharedActiveSessionStartedAtMs(null);
+          setPendingCommittedUsageSeconds(0);
           return;
         }
 
@@ -671,6 +734,9 @@ export function useSpeechRecognition(
             setIsStarting(false);
             setIsListening(false);
             setInterimTranscript("");
+            setActiveSessionStartedAtMs(null);
+            setSharedActiveSessionStartedAtMs(null);
+            setPendingCommittedUsageSeconds(0);
           }
           return;
         }
@@ -702,14 +768,19 @@ export function useSpeechRecognition(
         console.error("[AssemblyAI] websocket error", event);
         setIsStarting(false);
         setError("Live transcription connection failed.");
+        setActiveSessionStartedAtMs(null);
+        setSharedActiveSessionStartedAtMs(null);
+        setPendingCommittedUsageSeconds(0);
       };
 
       socket.onclose = (event) => {
-        console.error("[AssemblyAI] websocket closed", {
-          code: event.code,
-          reason: event.reason,
-          wasClean: event.wasClean,
-        });
+        if (!isStoppingRef.current && !(event.wasClean && event.code === 1005)) {
+          console.error("[AssemblyAI] websocket closed", {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+          });
+        }
 
         if (streamingSessionRef.current?.socket === socket) {
           stopStreamingSession();
@@ -717,6 +788,9 @@ export function useSpeechRecognition(
         setIsStarting(false);
         setIsListening(false);
         setInterimTranscript("");
+        setActiveSessionStartedAtMs(null);
+        setSharedActiveSessionStartedAtMs(null);
+        setPendingCommittedUsageSeconds(0);
 
         if (!isStoppingRef.current) {
           const closeMessage = event.reason
@@ -744,6 +818,8 @@ export function useSpeechRecognition(
     keyterms,
     lang,
     requestMicrophonePermission,
+    setSharedActiveSessionStartedAtMs,
+    setPendingCommittedUsageSeconds,
     stopStreamingSession,
   ]);
 
@@ -770,6 +846,8 @@ export function useSpeechRecognition(
         if (isElectronRuntime || !hasBrowserSpeechRecognition) {
           setIsStarting(false);
           setError(formatSpeechError(error));
+          setSharedActiveSessionStartedAtMs(null);
+          setPendingCommittedUsageSeconds(0);
           return;
         }
       }
@@ -778,6 +856,8 @@ export function useSpeechRecognition(
     if (!recognitionRef.current) {
       setIsStarting(false);
       setError("Voice input is unavailable in this runtime.");
+      setSharedActiveSessionStartedAtMs(null);
+      setPendingCommittedUsageSeconds(0);
       return;
     }
 
@@ -789,6 +869,9 @@ export function useSpeechRecognition(
       .catch((e) => {
         setIsStarting(false);
         setError(formatSpeechError(e));
+        setActiveSessionStartedAtMs(null);
+        setSharedActiveSessionStartedAtMs(null);
+        setPendingCommittedUsageSeconds(0);
       });
   }, [
     sessionToken,
@@ -798,6 +881,8 @@ export function useSpeechRecognition(
     isListening,
     isStarting,
     requestMicrophonePermission,
+    setSharedActiveSessionStartedAtMs,
+    setPendingCommittedUsageSeconds,
     startAssemblyAiListening,
     stopStreamingSession,
   ]);
@@ -805,6 +890,9 @@ export function useSpeechRecognition(
   const stopListening = useCallback(() => {
     isStoppingRef.current = true;
     setIsStarting(false);
+    setActiveSessionStartedAtMs(null);
+    setSharedActiveSessionStartedAtMs(null);
+    setPendingCommittedUsageSeconds(0);
     if (activeModeRef.current === "assemblyai") {
       stopStreamingSession();
       activeModeRef.current = null;
@@ -824,7 +912,11 @@ export function useSpeechRecognition(
     activeModeRef.current = null;
     setIsListening(false);
     setInterimTranscript("");
-  }, [stopStreamingSession]);
+  }, [
+    setPendingCommittedUsageSeconds,
+    setSharedActiveSessionStartedAtMs,
+    stopStreamingSession,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -838,6 +930,7 @@ export function useSpeechRecognition(
     isSupported,
     transcript: transcript.trim(),
     interimTranscript,
+    activeSessionStartedAtMs,
     startListening,
     stopListening,
     error,

@@ -9,7 +9,7 @@ import * as dotenv from 'dotenv';
 const lifecycleEvent = process.env.npm_lifecycle_event;
 const isDevStart = lifecycleEvent === 'start' || process.env.NODE_ENV === 'development';
 const DEFAULT_DESKTOP_CONVEX_URL = 'https://wary-iguana-735.convex.cloud';
-const DEFAULT_DESKTOP_WEB_APP_URL = 'https://present-gha.vercel.app';
+const DEFAULT_DESKTOP_WEB_APP_URL = 'https://present.c-technology-inc.com';
 const preferredEnvFile = isDevStart ? '.env.local' : '.env.production';
 const preferredEnvPath = path.resolve(__dirname, preferredEnvFile);
 const fallbackEnvPath = path.resolve(__dirname, '.env');

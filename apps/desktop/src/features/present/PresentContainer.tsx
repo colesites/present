@@ -241,6 +241,7 @@ export function PresentContainer({
     setSearchQuery,
     createNewItem: createNewLibraryItem,
     createComposedItem: createComposedLibraryItem,
+    createItemFromDraft: createLibraryItemFromDraft,
     saveExistingItem: updateExistingLibraryItem,
     reorderItemSlides,
     deleteItem: deleteLibraryItem,
@@ -1284,6 +1285,9 @@ export function PresentContainer({
         setSelectedCategoryId,
         createNewLibraryItem: async (title, body, categoryId) => {
           await createNewLibraryItem(title, body, categoryId);
+        },
+        createLibraryItemFromDraft: async (draft, categoryId) => {
+          await createLibraryItemFromDraft(draft, categoryId);
         },
         createComposedLibraryItem: async (title, itemIds, categoryId) => {
           await createComposedLibraryItem(title, itemIds, categoryId);

@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { getPresentPlanDefinition } from "../../shared/src/billing";
 
 export const getCurrentUser = query({
   args: {},
@@ -49,11 +50,55 @@ export const getCurrentUser = query({
       (organization) => organization !== null,
     );
 
+    const billingRecord = await ctx.db
+      .query("userBilling")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    const fallbackPlan = getPresentPlanDefinition("free");
+    const activeBilling = billingRecord ?? {
+      planKey: fallbackPlan.key,
+      planLabel: fallbackPlan.label,
+      planSlug: fallbackPlan.key,
+      status: "active",
+      quotaSeconds: fallbackPlan.monthlySpeechLimitSeconds,
+      periodStartMs: 0,
+      periodEndMs: 0,
+      updatedAt: 0,
+    };
+    const billingPeriodKey = `${activeBilling.periodStartMs}:${activeBilling.periodEndMs}`;
+    const speechSessions = await ctx.db
+      .query("speechUsageSessions")
+      .withIndex("by_user_period", (q) =>
+        q.eq("userId", userId).eq("periodKey", billingPeriodKey),
+      )
+      .collect();
+    const usedSeconds = speechSessions.reduce((total, session) => {
+      const endMs =
+        typeof session.endedAtMs === "number" ? session.endedAtMs : Date.now();
+      const elapsedSeconds = Math.max(
+        0,
+        Math.ceil((endMs - session.startedAtMs) / 1000),
+      );
+      return total + Math.min(session.maxDurationSeconds, elapsedSeconds);
+    }, 0);
+
     return {
       user: {
         id: userId,
         name: identity.name ?? "Account",
         email: identity.email ?? "",
+        billing: {
+          planKey: activeBilling.planKey,
+          planLabel: activeBilling.planLabel,
+          planSlug: activeBilling.planSlug ?? null,
+          status: activeBilling.status,
+          isPaid: activeBilling.planKey !== "free",
+          quotaSeconds: activeBilling.quotaSeconds,
+          usedSeconds,
+          remainingSeconds: Math.max(0, activeBilling.quotaSeconds - usedSeconds),
+          periodStartMs: activeBilling.periodStartMs,
+          periodEndMs: activeBilling.periodEndMs,
+        },
       },
       organizations: filteredOrganizations,
       currentOrgId: filteredOrganizations[0]?.id ?? null,

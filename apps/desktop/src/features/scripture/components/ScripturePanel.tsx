@@ -361,12 +361,20 @@ export const ScripturePanel = memo(
       [availableBooks, handleAiQueryChange, identifyScripture],
     );
 
-    const { isListening, isStarting, isSupported, startListening, stopListening, error: speechError } =
+    const {
+      isListening,
+      isStarting,
+      isSupported,
+      startListening,
+      stopListening,
+      error: speechError,
+    } =
       useSpeechRecognition({
         onResult: onSpeechResult,
         lang: speechLang,
         inputDeviceId: speechInputDeviceId,
         sessionToken,
+        usageSource: "bible",
       });
 
     useEffect(() => {
@@ -927,7 +935,7 @@ export const ScripturePanel = memo(
 
               <div className="space-y-1">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Speak to Search
+                  Speech to Search
                 </p>
                 <div className="flex items-center gap-1.5">
                   {isSupported ? (

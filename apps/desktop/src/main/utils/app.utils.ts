@@ -20,7 +20,7 @@ export const getWebAppBaseUrl = (): string => {
 
   return process.env.NODE_ENV === 'development'
     ? 'http://localhost:3001'
-    : 'https://present-gha.vercel.app';
+    : 'https://present.c-technology-inc.com';
 };
 
 export const getWebAppBaseUrlCandidates = (): string[] => {
@@ -42,7 +42,7 @@ export const getWebAppBaseUrlCandidates = (): string[] => {
     candidates.add('http://localhost:3000');
   }
 
-  candidates.add('https://present-gha.vercel.app');
+  candidates.add('https://present.c-technology-inc.com');
   return Array.from(candidates);
 };
 

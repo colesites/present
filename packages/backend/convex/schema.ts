@@ -27,6 +27,33 @@ export default defineSchema({
     .index("by_slug", ["slug"])
     .index("by_clerk_org", ["clerkOrgId"]),
 
+  userBilling: defineTable({
+    userId: v.string(),
+    planKey: v.string(),
+    planLabel: v.string(),
+    planSlug: v.optional(v.string()),
+    status: v.string(),
+    quotaSeconds: v.number(),
+    periodStartMs: v.number(),
+    periodEndMs: v.number(),
+    clerkSubscriptionId: v.optional(v.string()),
+    clerkSubscriptionItemId: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
+
+  speechUsageSessions: defineTable({
+    userId: v.string(),
+    source: v.string(),
+    periodKey: v.string(),
+    startedAtMs: v.number(),
+    endedAtMs: v.optional(v.number()),
+    maxDurationSeconds: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_period", ["userId", "periodKey"]),
+
   // Categories for organizing library items (Songs, Flows, Hymns, custom)
   categories: defineTable({
     orgId: v.id("organizations"),

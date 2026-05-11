@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Check } from "lucide-react";
 import { useRef, useEffect } from "react";
 import gsap from "gsap";
@@ -9,35 +10,50 @@ gsap.registerPlugin(ScrollTrigger);
 
 const PLANS = [
   {
-    name: "Community",
+    name: "Free",
     price: "Free",
-    description: "Perfect for starting your modern worship journey.",
+    description: "For churches getting started with Present.",
     features: [
-      "Up to 2 Screens",
-      "Unlimited Songs",
-      "Local Media Storage",
-      "Standard Transitions",
-      "Remote App Access",
+      "1 hour/month speech to search",
+      "Bible verse search",
+      "Library search",
+      "Desktop app access",
+      "Core presentation workflow",
     ],
     buttonText: "Get Started",
     accent: "white/10",
   },
   {
-    name: "Professional",
-    price: "₦10,000",
+    name: "Pro",
+    price: "Premium",
     period: "/month",
-    description: "The complete suite for elite church productions.",
+    description: "For teams that rely on live speech search every week.",
     features: [
-      "Up to 8 Screens",
-      "Cloud Sync & Backup",
-      "Team Collaboration",
-      "Cinematic Motion Graphics",
-      "Priority Live Support",
-      "AI Lyric Restructuring",
+      "15 hours/month speech to search",
+      "Bible speech search",
+      "Library speech search",
+      "Faster rehearsal workflow",
+      "Paid plan billing in Clerk",
+      "Everything in Free",
     ],
     buttonText: "Go Pro",
     accent: "primary",
     recommended: true,
+  },
+  {
+    name: "Power",
+    price: "Advanced",
+    period: "/month",
+    description: "For heavy weekly usage across Bible and library search.",
+    features: [
+      "30 hours/month speech to search",
+      "Bible speech search",
+      "Library speech search",
+      "Best fit for power users",
+      "Everything in Pro",
+    ],
+    buttonText: "Go Power",
+    accent: "white/10",
   },
 ];
 
@@ -85,7 +101,7 @@ export function Pricing() {
           </p>
         </div>
 
-        <div ref={cardsRef} className="grid md:grid-cols-2 gap-10 max-w-6xl mx-auto">
+        <div ref={cardsRef} className="grid gap-10 lg:grid-cols-3 max-w-6xl mx-auto">
           {PLANS.map((plan, i) => (
             <div 
               key={i} 
@@ -121,13 +137,16 @@ export function Pricing() {
                 ))}
               </div>
 
-              <button className={`w-full py-4 rounded-xl font-bold text-sm transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] ${
-                plan.recommended 
-                  ? "bg-primary text-white shadow-[0_15px_40px_rgba(var(--primary),0.3)] hover:shadow-[0_20px_50px_rgba(var(--primary),0.4)]" 
-                  : "bg-white/5 text-white hover:bg-white/10"
-              }`}>
+              <Link
+                href="/pricing"
+                className={`block w-full rounded-xl py-4 text-center text-sm font-bold transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] ${
+                  plan.recommended
+                    ? "bg-primary text-white shadow-[0_15px_40px_rgba(var(--primary),0.3)] hover:shadow-[0_20px_50px_rgba(var(--primary),0.4)]"
+                    : "bg-white/5 text-white hover:bg-white/10"
+                }`}
+              >
                 {plan.buttonText}
-              </button>
+              </Link>
               
               {/* Shine effect */}
               <div className="absolute inset-0 bg-linear-to-br from-white/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />

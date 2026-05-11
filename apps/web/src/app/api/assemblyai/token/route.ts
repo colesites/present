@@ -1,50 +1,19 @@
-import { auth, verifyToken } from "@clerk/nextjs/server";
-import { verifyDesktopSessionToken } from "../../../../lib/server/desktop-auth";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "../../../../../../../packages/backend/convex/_generated/api";
+import { resolveRequestAuthContext } from "@/lib/server/request-auth";
+import { syncUserBillingToConvex } from "@/lib/server/billing-sync";
 
 const DEFAULT_ALLOWED_ORIGINS = new Set([
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  "https://present-gha.vercel.app",
+  "https://present.c-technology-inc.com",
   "https://present.app",
   "app://app",
   "null",
 ]);
 
-const readBearerToken = (authorizationHeader: string | null): string | null => {
-  if (!authorizationHeader) {
-    return null;
-  }
-
-  const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
-  return match?.[1] ?? null;
-};
-
-const isAuthorizedRequest = async (request: Request): Promise<boolean> => {
-  const bearerToken = readBearerToken(request.headers.get("authorization"));
-  if (bearerToken) {
-    const desktopSession = verifyDesktopSessionToken(bearerToken);
-    if (desktopSession) {
-      return true;
-    }
-
-    const clerkSecretKey = process.env.CLERK_SECRET_KEY;
-    if (!clerkSecretKey) {
-      return false;
-    }
-
-    try {
-      await verifyToken(bearerToken, {
-        secretKey: clerkSecretKey,
-        audience: "convex",
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  const authState = await auth();
-  return Boolean(authState.userId);
+type AssemblyAiTokenRequestBody = {
+  source?: "bible" | "library";
 };
 
 const isAllowedOrigin = (origin: string): boolean => {
@@ -71,6 +40,7 @@ const buildCorsHeaders = (request: Request): Headers => {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
     "Access-Control-Max-Age": "86400",
+    "Cache-Control": "no-store",
     Vary: "Origin",
   });
 
@@ -106,52 +76,76 @@ export async function POST(request: Request) {
     });
   }
 
-  if (!(await isAuthorizedRequest(request))) {
-    return new Response("Not authenticated", {
-      status: 401,
-      headers,
+  try {
+    const { userId, convexToken } = await resolveRequestAuthContext(request);
+    await syncUserBillingToConvex({ userId, convexToken });
+
+    const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+    const assemblyAiApiKey = process.env.ASSEMBLYAI_API_KEY;
+    if (!convexUrl || !assemblyAiApiKey) {
+      return new Response("AssemblyAI is not configured", {
+        status: 500,
+        headers,
+      });
+    }
+
+    const body = (await request.json().catch(() => ({}))) as AssemblyAiTokenRequestBody;
+    const source = body.source === "library" ? "library" : "bible";
+
+    const convex = new ConvexHttpClient(convexUrl, { auth: convexToken });
+    const speechSession = await convex.mutation(api.billing.startSpeechUsageSession, {
+      source,
+      requestedMaxDurationSeconds: 15 * 60,
     });
-  }
 
-  const assemblyAiApiKey = process.env.ASSEMBLYAI_API_KEY;
-  if (!assemblyAiApiKey) {
-    return new Response("AssemblyAI is not configured", {
-      status: 500,
-      headers,
+    const tokenUrl = new URL("https://streaming.assemblyai.com/v3/token");
+    tokenUrl.searchParams.set("expires_in_seconds", "300");
+    tokenUrl.searchParams.set(
+      "max_session_duration_seconds",
+      String(speechSession.allowedDurationSeconds),
+    );
+
+    const response = await fetch(tokenUrl, {
+      method: "GET",
+      headers: {
+        Authorization: assemblyAiApiKey,
+      },
+      cache: "no-store",
     });
-  }
 
-  const tokenUrl = new URL("https://streaming.assemblyai.com/v3/token");
-  tokenUrl.searchParams.set("expires_in_seconds", "300");
-  tokenUrl.searchParams.set("max_session_duration_seconds", "900");
+    const payload = (await response.json().catch(() => null)) as
+      | { token?: string; expires_in_seconds?: number; error?: string; message?: string }
+      | null;
 
-  const response = await fetch(tokenUrl, {
-    method: "GET",
-    headers: {
-      Authorization: assemblyAiApiKey,
-    },
-    cache: "no-store",
-  });
+    if (!response.ok || !payload?.token) {
+      const message =
+        payload?.error ??
+        payload?.message ??
+        "Failed to create AssemblyAI streaming token";
+      return new Response(message, {
+        status: response.ok ? 502 : response.status,
+        headers,
+      });
+    }
 
-  const payload = await response.json().catch(() => null) as
-    | { token?: string; expires_in_seconds?: number; error?: string; message?: string }
-    | null;
-
-  if (!response.ok || !payload?.token) {
+    return Response.json(
+      {
+        token: payload.token,
+        expiresInSeconds: payload.expires_in_seconds ?? 300,
+        sessionId: speechSession.sessionId,
+        allowedDurationSeconds: speechSession.allowedDurationSeconds,
+        billing: speechSession.billing,
+      },
+      { headers },
+    );
+  } catch (error) {
     const message =
-      payload?.error
-      ?? payload?.message
-      ?? "Failed to create AssemblyAI streaming token";
+      error instanceof Error ? error.message : "Live transcription could not start.";
+    const status = /quota exhausted/i.test(message) ? 402 : 401;
+
     return new Response(message, {
-      status: response.ok ? 502 : response.status,
+      status,
       headers,
     });
   }
-
-  return Response.json({
-    token: payload.token,
-    expiresInSeconds: payload.expires_in_seconds ?? 300,
-  }, {
-    headers,
-  });
 }

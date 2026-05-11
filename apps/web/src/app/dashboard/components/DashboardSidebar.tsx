@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   BookOpenText,
   CalendarRange,
+  CreditCard,
   LayoutDashboard,
   Library,
   Settings,
@@ -37,6 +38,7 @@ const navItems = [
   { label: "Services", href: "/dashboard/services", section: "services", icon: CalendarRange },
   { label: "Library", href: "/dashboard/library", section: "library", icon: Library },
   { label: "Bible", href: "/dashboard/bible", section: "bible", icon: BookOpenText },
+  { label: "Pricing", href: "/dashboard/pricing", section: "pricing", icon: CreditCard },
   { label: "Accounts", href: "/dashboard/accounts", section: "accounts", icon: UserRoundCog },
   { label: "Settings", href: "/dashboard/settings", section: "settings", icon: Settings },
 ] as const satisfies ReadonlyArray<{

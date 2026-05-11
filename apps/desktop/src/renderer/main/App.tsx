@@ -79,7 +79,23 @@ export default function Home() {
     sessionToken && isOnline && isConvexAuthReady ? {} : "skip"
   ) as
     | {
-        user: { id: string; name: string; email: string };
+        user: {
+          id: string;
+          name: string;
+          email: string;
+          billing?: {
+            planKey: string;
+            planLabel: string;
+            planSlug?: string | null;
+            status: string;
+            isPaid: boolean;
+            quotaSeconds: number;
+            usedSeconds: number;
+            remainingSeconds: number;
+            periodStartMs: number;
+            periodEndMs: number;
+          };
+        };
         organizations: Array<{
           id: string;
           name: string;
@@ -244,6 +260,7 @@ export default function Home() {
             id: currentUser._id,
             name: typeof legacyName === "string" ? legacyName : "Account",
             email: typeof legacyEmail === "string" ? legacyEmail : "",
+            billing: undefined,
           },
           organizations: normalizedOrganizations,
           currentOrgId: normalizedOrganizations[0]?.id ?? "personal",

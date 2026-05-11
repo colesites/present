@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { PricingTable } from "@clerk/nextjs";
 import {
   ArrowUpRight,
   BookOpenText,
   CalendarRange,
+  CreditCard,
   LayoutDashboard,
   Library,
   Settings,
@@ -76,6 +78,21 @@ const sectionConfig: Record<
       "Scripture presentation settings stay consistent per team context.",
     ],
   },
+  pricing: {
+    title: "Pricing",
+    eyebrow: "Billing",
+    description:
+      "Manage your Present plan and speech-to-search quota from one billing screen.",
+    focusTitle: "Plans, billing, and speech search access",
+    actionDescription:
+      "Upgrade or review your plan so your team has the right amount of speech-to-search time for Bible and library workflows.",
+    icon: CreditCard,
+    summary: [
+      "Free includes 1 hour per month of speech-to-search.",
+      "Pro includes 15 hours per month for growing teams.",
+      "Power includes 30 hours per month for heavier weekly usage.",
+    ],
+  },
   accounts: {
     title: "Accounts",
     eyebrow: "Access",
@@ -117,6 +134,77 @@ export function DashboardSectionView({
   const config = sectionConfig[section];
   const Icon = config.icon;
   const hasOrganization = Boolean(currentOrg);
+
+  if (section === "pricing") {
+    return (
+      <div className="min-h-full px-18 py-14 text-[#232946]">
+        <div className="max-w-4xl">
+          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.34em] text-primary/65">
+            {config.eyebrow}
+          </p>
+          <h1 className="mt-5 text-[4.1rem] font-semibold leading-none tracking-[-0.07em] text-[#232946]">
+            {config.title}
+          </h1>
+          <p className="mt-5 max-w-3xl text-[1.08rem] leading-7 text-[#7d8798]">
+            {config.description}
+          </p>
+        </div>
+
+        <div className="mt-12 rounded-[34px] border border-primary/10 bg-primary/4 px-8 py-8">
+          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl">
+              <p className="text-[0.72rem] font-semibold uppercase tracking-[0.32em] text-primary/65">
+                Workspace focus
+              </p>
+              <h2 className="mt-4 text-[2.2rem] font-semibold tracking-[-0.06em] text-[#232946]">
+                {config.focusTitle}
+              </h2>
+              <p className="mt-4 max-w-xl text-[1rem] leading-7 text-[#7d8798]">
+                {config.actionDescription}
+              </p>
+            </div>
+
+            <div className="rounded-[24px] border border-primary/10 bg-white px-5 py-4">
+              <div className="flex h-11 w-11 items-center justify-center rounded-[16px] bg-primary/10 text-primary">
+                <Icon className="h-5 w-5" />
+              </div>
+              <p className="mt-3 text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-primary/60">
+                Current workspace
+              </p>
+              <p className="mt-2 text-[1.15rem] font-semibold tracking-[-0.04em] text-[#232946]">
+                {currentOrg?.name ?? "Personal"}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-8 grid gap-4 md:grid-cols-3">
+            {config.summary.map((item, index) => (
+              <div
+                key={item}
+                className="rounded-[24px] border border-primary/10 bg-white px-5 py-5"
+              >
+                <p className="text-[0.72rem] font-semibold uppercase tracking-[0.28em] text-primary/60">
+                  Plan {index + 1}
+                </p>
+                <p className="mt-4 text-[0.98rem] leading-7 text-[#7f8898]">
+                  {item}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-12 rounded-[34px] border border-primary/10 bg-white px-8 py-8">
+          <PricingTable
+            for="user"
+            collapseFeatures={false}
+            ctaPosition="bottom"
+            newSubscriptionRedirectUrl="/dashboard/pricing"
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-full flex-col text-[#232946] xl:items-start xl:flex-row">

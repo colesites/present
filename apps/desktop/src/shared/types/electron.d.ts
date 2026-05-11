@@ -113,12 +113,47 @@ interface ElectronAPI {
   getPreferredOutputDisplay: () => Promise<number | null>;
   onOutputWindowClosed: (callback: () => void) => void;
   selectFolder: () => Promise<{ id: string; name: string; path: string } | null>;
+  selectLibraryExportDestination: (suggestedName?: string) => Promise<string | null>;
   readFolder: (folderPath: string) => Promise<{ name: string; lastModified: number }[]>;
+  exportLibraryBundle: (
+    destinationPath: string,
+    items: Array<{
+      title: string;
+      body: string;
+      categoryName?: string | null;
+      author?: string | null;
+      artist?: string | null;
+      type?: "song" | "scripture" | "slide" | "note" | null;
+      content?: unknown;
+      slides?: unknown[];
+      createdAt?: number;
+      updatedAt?: number;
+    }>,
+  ) => Promise<{ path: string; itemCount: number }>;
+  importLibraryBundle: (folderPath: string) => Promise<{
+    path: string;
+    itemCount: number;
+    items: Array<{
+      title: string;
+      body: string;
+      categoryName?: string | null;
+      author?: string | null;
+      artist?: string | null;
+      type?: "song" | "scripture" | "slide" | "note" | null;
+      content?: unknown;
+      slides?: unknown[];
+      createdAt?: number | null;
+      updatedAt?: number | null;
+    }>;
+  }>;
   listBundledBibles: () => Promise<BundledBibleFile[]>;
   readBundledBible: (filePath: string) => Promise<Uint8Array | null>;
   fetchHostedBibleCatalog: (catalogUrl: string) => Promise<unknown | null>;
   fetchBrowserSuggestions: (query: string) => Promise<BrowserSuggestionsResponse | null>;
-  requestAssemblyAiToken: (sessionToken: string) => Promise<unknown | null>;
+  requestAssemblyAiToken: (
+    sessionToken: string,
+    source: "bible" | "library",
+  ) => Promise<unknown | null>;
   requestMicrophoneAccess: () => Promise<MediaAccessResult>;
 
   // Output window IPC

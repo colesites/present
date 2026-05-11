@@ -144,7 +144,11 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
   // Allow navigation to Clerk domains
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     // Allow Clerk authentication popups
-    if (url.includes('clerk.accounts.dev') || url.includes('clerk.com')) {
+    if (
+      url.includes('clerk.accounts.dev') ||
+      url.includes('clerk.com') ||
+      url.includes('clerk.present.c-technology-inc.com')
+    ) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {

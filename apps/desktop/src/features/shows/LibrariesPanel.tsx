@@ -7,12 +7,12 @@ import {
   useImperativeHandle,
   useRef,
   useMemo,
-  type ChangeEvent,
 } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
-import type { LibraryItem, Category, ContentSource } from "../../shared/types";
+import type { LibraryItem, Category, ContentSource, LibraryItemDraft } from "../../shared/types";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import { Input } from "../../renderer/shared/components/ui/input";
+import { toast } from "sonner";
 import {
   Select,
   SelectContent,
@@ -32,8 +32,8 @@ import {
   Layers3,
   ArrowUp,
   ArrowDown,
-  Download,
-  Upload,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   LayoutGrid,
   List,
   Loader2,
@@ -67,6 +67,10 @@ interface LibrariesPanelProps {
   onCreateLibraryItem: (
     title: string,
     body: string,
+    categoryId?: string,
+  ) => Promise<unknown>;
+  onCreateLibraryItemFromDraft: (
+    draft: LibraryItemDraft,
     categoryId?: string,
   ) => Promise<unknown>;
   onCreateComposedLibraryItem: (
@@ -103,6 +107,7 @@ export const LibrariesPanel = memo(
       onSelectLibraryItem,
       onSelectCategory,
       onCreateLibraryItem,
+      onCreateLibraryItemFromDraft,
       onCreateComposedLibraryItem,
       onRenameLibraryItem,
       onDeleteLibraryItem,
@@ -135,7 +140,6 @@ export const LibrariesPanel = memo(
     const [selectedComposeIds, setSelectedComposeIds] = useState<string[]>([]);
 
     const searchInputRef = useRef<HTMLInputElement>(null);
-    const importInputRef = useRef<HTMLInputElement>(null);
     const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
 
     const {
@@ -149,6 +153,7 @@ export const LibrariesPanel = memo(
       sessionToken,
       lang: speechLang,
       inputDeviceId: speechInputDeviceId,
+      usageSource: "library",
       onResult: ({ transcript }) => {
         onSearchChange(transcript);
       },
@@ -202,27 +207,47 @@ export const LibrariesPanel = memo(
       void startListening();
     };
 
-    const handleExportLibraries = () => {
-      const payload = {
-        exportedAt: new Date().toISOString(),
-        version: 1,
-        items: libraryItems.map((item) => ({
-          title: item.title,
-          body: item.body,
-          categoryId: item.categoryId ?? null,
-        })),
-      };
+    const handleExportLibraries = async () => {
+      if (
+        !window.electronAPI?.selectLibraryExportDestination ||
+        !window.electronAPI.exportLibraryBundle
+      ) {
+        toast.error("Library export is unavailable in this build.");
+        return;
+      }
 
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json",
-      });
-      const fileName = `present-libraries-${new Date().toISOString().slice(0, 10)}.json`;
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = fileName;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      const destinationPath = await window.electronAPI.selectLibraryExportDestination(
+        `present-library-export-${new Date().toISOString().slice(0, 10)}`,
+      );
+      if (!destinationPath) {
+        return;
+      }
+
+      try {
+        const categoryNameById = new Map(
+          categories.map((category) => [String(category._id), category.name]),
+        );
+        const result = await window.electronAPI.exportLibraryBundle(
+          destinationPath,
+          libraryItems.map((item) => ({
+            title: item.title,
+            body: item.body,
+            categoryName: item.categoryId
+              ? (categoryNameById.get(String(item.categoryId)) ?? null)
+              : null,
+            author: item.content?.presentation?.author ?? null,
+            artist: item.content?.presentation?.artist ?? null,
+            type: item.type ?? "song",
+            content: item.content ?? null,
+            slides: item.slides ?? [],
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+          })),
+        );
+        toast.success(`Exported ${result.itemCount} libraries to ${result.path}`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to export libraries");
+      }
     };
 
     const toggleComposeSelection = (itemId: string) => {
@@ -233,54 +258,79 @@ export const LibrariesPanel = memo(
       );
     };
 
-    const handleImportLibraries = async (event: ChangeEvent<HTMLInputElement>) => {
-      const input = event.target;
-      const file = input.files?.[0];
-      if (!file) {
+    const handleImportLibraries = async () => {
+      if (!window.electronAPI?.selectFolder || !window.electronAPI.importLibraryBundle) {
+        toast.error("Library import is unavailable in this build.");
         return;
       }
 
-      let items: Array<{
-        title?: string;
-        body?: string;
-        lyrics?: string;
-        categoryId?: Id<"categories"> | null;
-      }> = [];
-      let parsedItems: unknown;
+      const selectedFolder = await window.electronAPI.selectFolder();
+      if (!selectedFolder) {
+        return;
+      }
 
       try {
-        const text = await file.text();
-        const parsed = JSON.parse(text) as {
-          items?: Array<{
-            title?: string;
-            body?: string;
-            lyrics?: string; // fallback
-            categoryId?: Id<"categories"> | null;
-          }>;
-        };
-        parsedItems = parsed.items;
-      } catch (error) {
-        console.error("Failed to import libraries:", error);
-        input.value = "";
-        return;
-      }
+        const imported = await window.electronAPI.importLibraryBundle(selectedFolder.path);
+        const categoryIdByName = new Map(
+          categories.map((category) => [category.name.trim().toLowerCase(), String(category._id)]),
+        );
 
-      if (Array.isArray(parsedItems)) {
-        items = parsedItems;
-      }
+        let importedCount = 0;
+        for (const item of imported.items) {
+          const title = item.title.trim();
+          if (!title) {
+            continue;
+          }
 
-      for (const item of items) {
-        const title = typeof item.title === "string" ? item.title.trim() : "";
-        const body = typeof item.body === "string"
-          ? item.body
-          : (typeof item.lyrics === "string" ? item.lyrics : "");
-        if (!title) {
-          continue;
+          let categoryId: string | undefined;
+          const normalizedCategoryName = item.categoryName?.trim().toLowerCase();
+          if (normalizedCategoryName) {
+            categoryId = categoryIdByName.get(normalizedCategoryName);
+            if (!categoryId) {
+              const created = await onCreateCategory(item.categoryName!.trim());
+              if (typeof created === "string") {
+                categoryId = created;
+                categoryIdByName.set(normalizedCategoryName, created);
+              }
+            }
+          }
+
+          const importedContent = (
+            item.content && typeof item.content === "object"
+              ? item.content
+              : {}
+          ) as LibraryItemDraft["content"];
+          const nextPresentation = {
+            ...(importedContent?.presentation ?? {}),
+            author:
+              typeof item.author === "string"
+                ? item.author
+                : importedContent?.presentation?.author ?? "",
+            artist:
+              typeof item.artist === "string"
+                ? item.artist
+                : importedContent?.presentation?.artist ?? "",
+          };
+
+          await onCreateLibraryItemFromDraft(
+            {
+              title,
+              body: item.body,
+              slides: Array.isArray(item.slides) ? (item.slides as LibraryItemDraft["slides"]) : [],
+              content: {
+                ...importedContent,
+                presentation: nextPresentation,
+              },
+            },
+            categoryId,
+          );
+          importedCount += 1;
         }
-        await onCreateLibraryItem(title, body, item.categoryId ?? undefined);
-      }
 
-      input.value = "";
+        toast.success(`Imported ${importedCount} libraries from ${selectedFolder.name}`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to import libraries");
+      }
     };
 
     return (
@@ -454,30 +504,25 @@ export const LibrariesPanel = memo(
 
                 <button
                   type="button"
-                  onClick={handleExportLibraries}
+                  onClick={() => {
+                    void handleExportLibraries();
+                  }}
                   className="flex h-10 w-10 items-center justify-center rounded-xl border border-input bg-background text-muted-foreground shadow-sm transition hover:bg-secondary"
                   title="Export libraries"
                 >
-                  <Download className="h-4 w-4" />
+                  <ArrowUpFromLine className="h-4 w-4" />
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => importInputRef.current?.click()}
+                  onClick={() => {
+                    void handleImportLibraries();
+                  }}
                   className="flex h-10 w-10 items-center justify-center rounded-xl border border-input bg-background text-muted-foreground shadow-sm transition hover:bg-secondary"
                   title="Import libraries"
                 >
-                  <Upload className="h-4 w-4" />
+                  <ArrowDownToLine className="h-4 w-4" />
                 </button>
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept="application/json"
-                  className="hidden"
-                  onChange={(event) => {
-                    void handleImportLibraries(event);
-                  }}
-                />
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

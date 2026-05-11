@@ -1,3 +1,7 @@
+declare const process: {
+  env: Record<string, string | undefined>;
+};
+
 import { AuthConfig } from "convex/server";
 
 export default {

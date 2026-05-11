@@ -1,5 +1,6 @@
-const DEFAULT_WEB_PROD_URL = "https://present-gha.vercel.app";
+const DEFAULT_WEB_PROD_URL = "https://present.c-technology-inc.com";
 const DEFAULT_WEB_PUBLIC_URL = "https://present.app";
+const DEFAULT_CLERK_PROD_URL = "https://clerk.present.c-technology-inc.com";
 const DEFAULT_CONVEX_DEV_URL = "https://wary-badger-863.convex.cloud";
 const DEFAULT_CONVEX_PROD_URL = "https://wary-iguana-735.convex.cloud";
 
@@ -62,6 +63,7 @@ export const buildDesktopContentSecurityPolicy = (): string => {
       "'unsafe-inline'",
       "https://*.clerk.accounts.dev",
       "https://certain-goat-83.clerk.accounts.dev",
+      DEFAULT_CLERK_PROD_URL,
     ]),
     joinDirective("worker-src", ["'self'", "blob:"]),
     joinDirective("connect-src", unique([
@@ -84,6 +86,7 @@ export const buildDesktopContentSecurityPolicy = (): string => {
       "https://*.clerk.accounts.dev",
       "https://certain-goat-83.clerk.accounts.dev",
       "https://clerk.certain-goat-83.accounts.dev",
+      DEFAULT_CLERK_PROD_URL,
       "https://clerk-telemetry.com",
       "wss://streaming.assemblyai.com",
       "wss://streaming.eu.assemblyai.com",
@@ -106,6 +109,7 @@ export const buildDesktopContentSecurityPolicy = (): string => {
       "https://*.clerk.accounts.dev",
       "https://certain-goat-83.clerk.accounts.dev",
       "https://clerk.certain-goat-83.accounts.dev",
+      DEFAULT_CLERK_PROD_URL,
     ]),
   ].join(" ");
 };

@@ -8,7 +8,21 @@ export interface DesktopUser {
   id: string;
   name: string;
   email: string;
+  billing?: {
+    planKey: string;
+    planLabel: string;
+    planSlug?: string | null;
+    status: string;
+    isPaid: boolean;
+    quotaSeconds: number;
+    usedSeconds: number;
+    remainingSeconds: number;
+    periodStartMs: number;
+    periodEndMs: number;
+  };
 }
+
+export type DesktopBillingSnapshot = NonNullable<DesktopUser["billing"]>;
 
 export interface DesktopOrganization {
   id: string;
@@ -75,7 +89,7 @@ const resolveDesktopWebBaseUrl = (): string => {
   }
   return process.env.NODE_ENV === "development"
     ? "http://localhost:3001"
-    : "https://present-gha.vercel.app";
+    : "https://present.c-technology-inc.com";
 };
 
 const decodeBase64UrlSegment = (value: string): string | null => {
@@ -424,6 +438,26 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
   }
 
   return desktopAccessTokenRefreshPromise;
+};
+
+export const updateDesktopBillingSnapshot = (
+  billing: DesktopBillingSnapshot | null | undefined,
+): void => {
+  useDesktopSessionStore.setState((previous) => {
+    if (!previous.user) {
+      return {};
+    }
+
+    return {
+      user: {
+        ...previous.user,
+        billing: billing ?? undefined,
+      },
+    };
+  });
+
+  const snapshot = useDesktopSessionStore.getState();
+  void persistSessionSnapshot(snapshot);
 };
 
 export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) => ({

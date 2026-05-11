@@ -123,6 +123,10 @@ export interface MainViewLibraryState {
     body: string,
     categoryId?: string
   ) => Promise<void>;
+  createLibraryItemFromDraft: (
+    draft: LibraryItemDraft,
+    categoryId?: string,
+  ) => Promise<void>;
   createComposedLibraryItem: (
     title: string,
     itemIds: string[],
@@ -332,6 +336,7 @@ export function MainView({
     selectedCategoryId,
     setSelectedCategoryId,
     createNewLibraryItem,
+    createLibraryItemFromDraft,
     createComposedLibraryItem,
     handleRenameLibraryItem,
     deleteLibraryItem,
@@ -442,6 +447,7 @@ export function MainView({
       onSelectLibraryItem: setSelectedLibraryId,
       onSelectCategory: setSelectedCategoryId,
       onCreateLibraryItem: createNewLibraryItem,
+      onCreateLibraryItemFromDraft: createLibraryItemFromDraft,
       onCreateComposedLibraryItem: createComposedLibraryItem,
       onRenameLibraryItem: handleRenameLibraryItem,
       onDeleteLibraryItem: deleteLibraryItem,
@@ -458,6 +464,7 @@ export function MainView({
       categories,
       contentSource,
       createComposedLibraryItem,
+      createLibraryItemFromDraft,
       createNewCategory,
       createNewLibraryItem,
       deleteLibraryItem,
