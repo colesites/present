@@ -1,42 +1,33 @@
-import { PricingTable, SignInButton } from "@clerk/nextjs";
 import Link from "next/link";
+
+import { PricingShowcase } from "@/components/pricing/PricingShowcase";
 
 export default function PricingPage() {
   return (
-    <main className="min-h-screen bg-background px-6 py-16 text-foreground">
-      <div className="mx-auto flex max-w-6xl flex-col gap-10">
-        <div className="space-y-4">
-          <Link href="/" className="text-sm text-muted-foreground transition hover:text-foreground">
+    <main className="relative min-h-screen overflow-hidden bg-background px-6 py-16 text-foreground">
+      <div className="relative mx-auto flex max-w-7xl flex-col gap-12">
+        <div className="space-y-5">
+          <Link
+            href="/"
+            className="inline-flex text-sm text-white/55 transition hover:text-white"
+          >
             Back to home
           </Link>
-          <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary/70">
+
+          <div className="max-w-3xl space-y-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-primary/70">
               Pricing
             </p>
-            <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
-              Speech search plans for Present
+            <h1 className="text-4xl font-semibold tracking-[-0.07em] text-white sm:text-5xl lg:text-6xl">
+              Built for every stage
             </h1>
-            <p className="max-w-3xl text-base text-muted-foreground sm:text-lg">
-              Free includes 1 hour per month of speech-to-search. Pro includes 15
-              hours. Power includes 30 hours.
+            <p className="text-base leading-7 text-white/55 sm:text-lg">
+              Choose the plan that fits your congregation. From local small groups to global cathedrals.
             </p>
           </div>
         </div>
 
-        <div className="flex justify-end">
-          <SignInButton mode="modal">
-            <button className="rounded-full border border-border px-4 py-2 text-sm transition hover:border-primary hover:text-primary">
-              Sign in to subscribe
-            </button>
-          </SignInButton>
-        </div>
-
-        <PricingTable
-          for="user"
-          collapseFeatures={false}
-          ctaPosition="bottom"
-          newSubscriptionRedirectUrl="/pricing"
-        />
+        <PricingShowcase redirectUrl="/pricing" />
       </div>
     </main>
   );

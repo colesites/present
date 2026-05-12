@@ -32,6 +32,7 @@
   --font-inter: var(--font-inter);
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);
+  --font-stretch: "Stretch Sans", sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -99,10 +100,7 @@
 
 @layer base {
   body {
-    background-color: var(--background);
-    color: var(--foreground);
-    font-family: var(--font-inter), sans-serif;
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-inter;
   }
   * {
     @apply border-border outline-ring/50;
@@ -148,200 +146,115 @@
 
 @layer components {
   .hero-legacy-wrap {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding-inline: 0.06em;
+    @apply relative inline-flex items-center justify-center px-[0.06em];
   }
 
   .hero-legacy-fragment {
-    font-family: Georgia, "Times New Roman", serif;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    color: rgb(255 255 255 / 0.58);
+    @apply font-serif font-bold tracking-[-0.02em] text-white/58;
   }
 
   .hero-present-reveal {
-    display: inline-block;
-    margin-inline: 0.05em;
+    @apply inline-block mx-[0.05em];
   }
 
   .hero-marker {
-    position: absolute;
-    left: -6%;
-    top: 52%;
-    width: 112%;
-    height: 62%;
-    transform: translateY(-50%) rotate(-1.8deg);
-    pointer-events: none;
+    @apply absolute -left-[6%] top-[52%] w-[112%] h-[62%] -translate-y-1/2 -rotate-[1.8deg] pointer-events-none;
   }
 
   .hero-marker-path {
-    fill: none;
-    stroke: var(--primary);
+    @apply fill-none stroke-primary drop-shadow-[0_0_8px_rgba(80,95,255,0.42)];
     stroke-linecap: round;
     stroke-linejoin: round;
-    filter: drop-shadow(0 0 8px rgba(80, 95, 255, 0.42));
   }
 
   /* ── Stretch Sans display class ─────────────────────────────────────── */
   .font-stretch {
-    font-family: "Stretch Sans", sans-serif;
+    @apply font-stretch;
   }
 
   /* ── Hero image card (smaller, centered, ProPresenter-style) ─────────── */
-  @media (min-width: 768px) {
-    .hero-img-card {
-      position: relative;
-      width: 100%;
-      max-width: 960px;
-      aspect-ratio: 16 / 9;
-      border-radius: 16px;
-      padding: 10px;
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.02) 100%);
-      box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
-      backdrop-filter: blur(10px);
-      margin: 0 auto;
-      overflow: hidden;
-    }
-
-    .hero-img-inner {
-      position: relative;
-      width: 100%;
-      height: 100%;
-      border-radius: 8px;
-      overflow: hidden;
-      background: #000;
-    }
+  .hero-img-card {
+    @apply md:relative md:w-full md:max-w-[960px] md:aspect-video md:rounded-[16px] md:p-[10px] 
+           md:bg-gradient-to-br md:from-white/10 md:to-white/2 
+           md:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.8),0_0_0_1px_rgba(255,255,255,0.05)] 
+           md:backdrop-blur-[10px] md:mx-auto md:overflow-hidden
+           max-md:absolute max-md:inset-0 max-md:w-full max-md:h-full max-md:z-0 max-md:pointer-events-none max-md:overflow-hidden;
   }
 
-  @media (max-width: 767px) {
-    .hero-img-card {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 0;
-      pointer-events: none;
-      overflow: hidden;
-    }
-
-    .hero-img-inner {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-    }
+  .hero-img-inner {
+    @apply md:relative md:w-full md:h-full md:rounded-[8px] md:overflow-hidden md:bg-black
+           max-md:absolute max-md:inset-0 max-md:w-full max-md:h-full;
   }
 
   /* ── Bento card shine sweep ──────────────────────────────────────────── */
   .bento-shine {
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: linear-gradient(
-      135deg,
-      rgba(255 255 255 / 0) 0%,
-      rgba(255 255 255 / 0.06) 50%,
-      rgba(255 255 255 / 0) 100%
-    );
-    background-size: 200% 200%;
-    background-position: 200% 200%;
-    opacity: 0;
-    transition: opacity 0.3s ease, background-position 0.6s ease;
-    pointer-events: none;
+    @apply absolute inset-0 rounded-[inherit] opacity-0 pointer-events-none
+           bg-gradient-to-br from-white/0 via-white/6 to-white/0
+           bg-[length:200%_200%] bg-[position:200%_200%]
+           transition-[opacity,background-position] duration-300 ease-in-out;
   }
 
   .bento-card:hover .bento-shine {
-    opacity: 1;
-    background-position: 0% 0%;
+    @apply opacity-100 bg-[position:0%_0%];
   }
 
   /* ── Feature full-bleed row images ─────────────────────────────────── */
   .feature-img {
-    position: relative;
-    width: 100%;
-    overflow: hidden;
-    border-radius: 1rem;
-    background: hsl(0 0% 6%);
+    @apply relative w-full overflow-hidden rounded-2xl bg-black/90;
   }
 
   .feature-img img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-    transition: transform 0.7s ease;
+    @apply w-full h-full object-cover block transition-transform duration-700 ease-in-out;
   }
 
   .feature-row:hover .feature-img img {
-    transform: scale(1.04);
+    @apply scale-[1.04];
   }
 
   /* ── Horizontal drag scroll track ───────────────────────────────────── */
   .h-scroll-track {
-    display: flex;
-    gap: 2rem;
-    cursor: grab;
-    user-select: none;
-    -webkit-overflow-scrolling: touch;
+    @apply flex gap-8 cursor-grab select-none;
   }
 
   .h-scroll-track:active {
-    cursor: grabbing;
+    @apply cursor-grabbing;
   }
 
   .h-scroll-card {
-    flex-shrink: 0;
-    width: clamp(280px, 30vw, 420px);
-    border-radius: 1.25rem;
-    overflow: hidden;
-    border: 1px solid rgba(255 255 255 / 0.07);
-    background: hsl(0 0% 5%);
-    transition: border-color 0.3s ease;
+    @apply shrink-0 w-[clamp(280px,30vw,420px)] rounded-[1.25rem] overflow-hidden 
+           border border-white/7 bg-white/5 transition-colors duration-300;
   }
 
   .h-scroll-card:hover {
-    border-color: rgba(255 255 255 / 0.15);
+    @apply border-white/15;
   }
 
   /* ── Large section divider number ───────────────────────────────────── */
   .section-num {
-    font-family: "Stretch Sans", sans-serif;
-    font-size: clamp(5rem, 14vw, 11rem);
-    line-height: 1;
-    color: #fff; /* opacities are handled by GSAP */
-    letter-spacing: -0.04em;
-    pointer-events: none;
-    user-select: none;
+    @apply font-stretch text-[clamp(5rem,14vw,11rem)] leading-none text-white 
+           tracking-[-0.04em] pointer-events-none select-none;
   }
 
   /* ── Clip reveal line animation ─────────────────────────────────────── */
   .line-clip {
-    overflow: hidden;
-    display: block;
+    @apply overflow-hidden block pb-[0.15em] -mb-[0.15em];
   }
 
   .line-inner {
-    display: block;
-    transform: translateY(110%);
+    @apply block translate-y-[110%];
   }
 
   /* ── Features section subtle grid bg ────────────────────────────────── */
   .features-grid-bg {
-    background-image:
-      radial-gradient(circle at 50% 0%, rgba(99 102 241 / 0.05) 0%, transparent 50%),
-      linear-gradient(rgba(255 255 255 / 0.018) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255 255 255 / 0.018) 1px, transparent 1px);
-    background-size: 100% 100%, 64px 64px, 64px 64px;
+    @apply bg-[radial-gradient(circle_at_50%_0%,rgba(99,102,241,0.05)_0%,transparent_50%),linear-gradient(rgba(255,255,255,0.018)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.018)_1px,transparent_1px)]
+           bg-[length:100%_100%,64px_64px,64px_64px];
   }
 
   /* Clerk Organization Switcher - Force white text on "Create organization" button */
   .cl-organizationSwitcherPopoverActionButton,
   .cl-organizationSwitcherPopoverActionButton__organizationSwitcher,
   .cl-organizationSwitcherPopoverActionButtonText {
-    color: #ffffff !important;
+    @apply text-white!;
   }
 }
 

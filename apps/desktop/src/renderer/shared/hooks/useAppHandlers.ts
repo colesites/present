@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import type React from "react";
+import type { Dispatch, SetStateAction } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { LibraryItem, LibraryItemDraft } from "../../../shared/types";
 import type { ScriptureSlide } from "../../../features/scripture/lib/slides";
@@ -23,7 +23,7 @@ interface UseAppHandlersProps {
   setSelected: (selected: { libraryId: string | null; index: number } | null) => void;
   setViewMode: (mode: "show" | "edit" | "settings") => void;
   setSelectedLibraryId: (id: string | null) => void;
-  setScriptureSlides: React.Dispatch<React.SetStateAction<ScriptureSlide[]>>;
+  setScriptureSlides: Dispatch<SetStateAction<ScriptureSlide[]>>;
   setShowTextInOutput: (show: boolean) => void;
   setEditScrollToSlide: (index: number | null) => void;
   
@@ -207,7 +207,7 @@ export function useAppHandlers({
 
       setShowTextInOutput(true);
       setSelectedLibraryId(null);
-      setScriptureSlides((previousSlides) =>
+      setScriptureSlides((previousSlides: ScriptureSlide[]) =>
         mergeScriptureSlides(
           previousSlides,
           nextSlides,

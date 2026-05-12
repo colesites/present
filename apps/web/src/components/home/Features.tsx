@@ -469,7 +469,7 @@ function SectionIntro() {
         </span>
       </p>
       <h2
-        className="text-5xl md:text-7xl lg:text-8xl font-bold text-white leading-[0.95] mb-8"
+        className="text-5xl md:text-7xl lg:text-8xl font-bold text-white leading-[1.1] mb-8"
         style={{ letterSpacing: "-0.03em" }}
       >
         <span className="line-clip block">

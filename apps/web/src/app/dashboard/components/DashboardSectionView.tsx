@@ -199,7 +199,7 @@ export function DashboardSectionView({
             for="user"
             collapseFeatures={false}
             ctaPosition="bottom"
-            newSubscriptionRedirectUrl="/dashboard/pricing"
+            newSubscriptionRedirectUrl="/pricing"
           />
         </div>
       </div>

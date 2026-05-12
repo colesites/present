@@ -76,6 +76,15 @@ const resolveMappedId = (
   return idMap[entityType]?.[orgId]?.[localId] ?? localId;
 };
 
+const getMappedId = (
+  idMap: SyncIdMap,
+  entityType: SyncEntityType,
+  orgId: string,
+  localId: string,
+): string | null => {
+  return idMap[entityType]?.[orgId]?.[localId] ?? null;
+};
+
 const setMappedId = (
   idMap: SyncIdMap,
   entityType: SyncEntityType,
@@ -275,12 +284,15 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
       try {
         if (item.entityType === "library") {
           if (item.operation === "delete") {
-            const remoteId = resolveMappedId(
+            const remoteId = getMappedId(
               idMapRef.current,
               "library",
               item.orgId,
               entityId,
             );
+            if (!remoteId) {
+              return "ok";
+            }
             await convex.mutation(api.libraries.remove, {
               workspaceId,
               libraryId: remoteId,
@@ -350,12 +362,15 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
           }
 
           if (item.operation === "delete") {
-            const remoteId = resolveMappedId(
+            const remoteId = getMappedId(
               idMapRef.current,
               "service",
               item.orgId,
               entityId,
             );
+            if (!remoteId) {
+              return "ok";
+            }
             await convex.mutation(api.services.remove, {
               workspaceId,
               serviceId: remoteId,

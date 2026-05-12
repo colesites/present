@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 
@@ -196,6 +196,15 @@ export function Testimonials() {
     return () => ctx.revert();
   }, []);
 
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
+
   return (
     <section id="testimonials" ref={containerRef} className="relative w-full bg-black py-48 overflow-hidden min-h-[1200px] flex items-center justify-center">
       {/* Subtle aceternity dotted background layout */}
@@ -226,15 +235,15 @@ export function Testimonials() {
             text="Loved by churches across the world"
             fontFamily="Stretch Sans"
             fontUrl="https://res.cloudinary.com/dr6lvwubh/raw/upload/v1529908256/CompressaPRO-GX.woff2"
-            flex={true}
+            flex={!isMobile}
             alpha={false}
             stroke={false}
-            width={true}
-            weight={true}
-            italic={true}
+            width={!isMobile}
+            weight={!isMobile}
+            italic={!isMobile}
             textColor="#ffffff"
             strokeColor="#5227FF"
-            minFontSize={80}
+            minFontSize={isMobile ? 40 : 80}
             className="drop-shadow-[0_0_20px_rgba(255,255,255,0.1)]"
           />
         </div>
