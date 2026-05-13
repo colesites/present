@@ -43,7 +43,7 @@ jobs:
         env:
           DEBUG: electron-forge:*,electron-windows-installer*
           CONVEX_URL: https://wary-iguana-735.convex.cloud
-          WEB_APP_URL: https://present-gha.vercel.app
+          WEB_APP_URL: https://present.c-technology-inc.com
         run: pnpm --filter @present/desktop run make:windows
 
       - name: Validate packaged renderer bundle

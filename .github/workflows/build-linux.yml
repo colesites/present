@@ -47,7 +47,7 @@ jobs:
       - name: Build Present for Linux
         env:
           CONVEX_URL: https://wary-iguana-735.convex.cloud
-          WEB_APP_URL: https://present-gha.vercel.app
+          WEB_APP_URL: https://present.c-technology-inc.com
         run: pnpm --filter @present/desktop run make:linux
 
       - name: Validate packaged renderer bundle
