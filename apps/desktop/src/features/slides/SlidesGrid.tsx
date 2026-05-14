@@ -266,24 +266,27 @@ const SlideCard = memo(function SlideCard({
       }
     : undefined;
 
-  // Strip bracket annotations (e.g. [x3], [2x], [repeat]) from element content for display
+  // Strip bracket annotations (e.g. [x3], [2x], [repeat]) from element content for display.
+  // Skip for scripture — Bible verses can have meaningful brackets like [a] or [1].
   const displayElements = useMemo(() => {
-    if (!slide.elements?.length) return slide.elements;
+    if (isScripture || !slide.elements?.length) return slide.elements;
     return slide.elements.map((el) => {
       if (el.type !== "text") return el;
       const cleanContent = stripBracketsForDisplay(el.content);
       if (cleanContent === el.content) return el;
       return { ...el, content: cleanContent };
     });
-  }, [slide.elements]);
+  }, [slide.elements, isScripture]);
 
-  // Extract inline bracket content as modifier for footer when not already set
+  // Extract inline bracket content as modifier for footer when not already set.
+  // Skip for scripture — brackets in Bible text are not instructions.
   const displayModifier = useMemo(() => {
+    if (isScripture) return slide.modifier || "";
     if (slide.modifier) return slide.modifier;
     const matches = slide.text.match(/\[([^\]]+)\]/g);
     if (!matches) return "";
     return matches.map((m) => m.slice(1, -1)).join(" ");
-  }, [slide.text, slide.modifier]);
+  }, [slide.text, slide.modifier, isScripture]);
 
   return (
     <ContextMenu>
@@ -319,7 +322,7 @@ const SlideCard = memo(function SlideCard({
             )}
             style={{ backgroundColor: backgroundColor ?? "#000000" }}
           >
-            {displayElements && displayElements.length > 0 ? (
+            {!isScripture && displayElements && displayElements.length > 0 ? (
               <div className="relative h-full w-full overflow-hidden rounded-sm">
                 <CanvasSlideLayer
                   text={stripBracketsForDisplay(slide.text)}
@@ -336,23 +339,20 @@ const SlideCard = memo(function SlideCard({
               </div>
             ) : (
               <AutoFitText
-                text={stripBracketsForDisplay(slide.text)}
+                text={isScripture ? slide.text : stripBracketsForDisplay(slide.text)}
                 className={cn(
                   "pointer-events-none select-none text-white",
                   fontBold && "font-bold",
                   fontItalic && "italic",
                   fontUnderline && "underline"
                 )}
-                style={{
-                  fontFamily,
-                  fontSize: isScripture ? "18vh" : undefined,
-                }}
+                style={{ fontFamily }}
                 maxFontSize={
-                  isGridView 
-                    ? (isScripture ? undefined : fontSize ? fontSize * 0.2 : 24)
+                  isGridView
+                    ? (isScripture ? 12 : fontSize ? fontSize * 0.2 : 24)
                     : 14
                 }
-                minScale={isGridView ? (isScripture ? 0.1 : 0.5) : 0.8}
+                minScale={isGridView ? (isScripture ? 0.6 : 0.5) : 0.8}
               />
             )}
           </div>

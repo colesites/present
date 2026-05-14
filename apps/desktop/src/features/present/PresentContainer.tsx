@@ -60,6 +60,7 @@ import {
 } from "../scripture/lib/layout-template";
 import { useScriptureLayoutTemplateStore } from "../scripture/lib/layout-template-state";
 import { useScreenComposerState } from "../screen-composer";
+import { useGlobalSearchStore } from "../../renderer/shared/store/globalSearchStore";
 
 type EditedOutputSnapshot = {
   slideId: string;
@@ -282,6 +283,19 @@ export function PresentContainer({
     orgId: orgId ?? null,
     userId,
   });
+
+  // Sync data into the global search store for the AppHeader command palette
+  const setGlobalServices = useGlobalSearchStore((s) => s.setServices);
+  const setGlobalLibraryItems = useGlobalSearchStore((s) => s.setLibraryItems);
+  const setGlobalActions = useGlobalSearchStore((s) => s.setActions);
+
+  useEffect(() => {
+    setGlobalServices(services);
+  }, [services, setGlobalServices]);
+
+  useEffect(() => {
+    setGlobalLibraryItems(libraryItems);
+  }, [libraryItems, setGlobalLibraryItems]);
 
   const [shouldAutoPlay, setShouldAutoPlay] = useState(false);
 
@@ -616,6 +630,19 @@ export function PresentContainer({
       footerPosition: settingsScriptureFooterPosition,
     },
   });
+
+  useEffect(() => {
+    setGlobalActions({
+      onSelectService: enterService,
+      onSelectLibraryItem: handleSetSelectedDeckLibraryId,
+      onSelectScripture: handleSelectScripture,
+    });
+  }, [
+    enterService,
+    handleSetSelectedDeckLibraryId,
+    handleSelectScripture,
+    setGlobalActions,
+  ]);
 
   const handleUpdateEditedSlideOutput = useCallback(
     (payload: EditedOutputSnapshot) => {

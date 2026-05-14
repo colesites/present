@@ -425,9 +425,13 @@ export function useSpeechRecognition(
       return;
     }
 
-    const mediaAccess = await window.electronAPI?.requestMicrophoneAccess?.();
+    const mediaAccess = await window.electronAPI?.requestMicrophoneAccess?.() as { granted: boolean; status: string } | undefined;
     if (mediaAccess && !mediaAccess.granted) {
-      throw new Error("Microphone access was denied.");
+      console.error("[Speech] OS microphone access denied:", mediaAccess);
+      if (mediaAccess.status === "denied" || mediaAccess.status === "restricted") {
+        throw new Error("Microphone access is blocked by macOS. Please enable it in System Settings > Privacy & Security > Microphone.");
+      }
+      throw new Error(`Microphone access was denied (Status: ${mediaAccess.status}).`);
     }
   }, []);
 
@@ -523,7 +527,12 @@ export function useSpeechRecognition(
 
     session.mediaStream.getTracks().forEach((track) => track.stop());
     void session.audioContext.close().catch((): void => undefined);
-  }, [sessionToken, setPendingCommittedUsageSeconds]);
+  }, [
+    sessionToken,
+    setPendingCommittedUsageSeconds,
+    setActiveSessionStartedAtMs,
+    setSharedActiveSessionStartedAtMs,
+  ]);
 
   const fetchAssemblyAiToken = useCallback(async (): Promise<AssemblyAiTokenResponse> => {
     if (!sessionToken) {

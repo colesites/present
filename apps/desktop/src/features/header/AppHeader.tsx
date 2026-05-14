@@ -1,6 +1,13 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Search,
   Layers3,
@@ -11,15 +18,28 @@ import {
   Globe,
   Check,
   Monitor,
+  FileText,
+  Music,
+  LayoutList,
 } from "lucide-react";
 import { AuthControls } from "../../renderer/shared/components/AuthControls";
 import { ProjectButton } from "../../renderer/shared/components/ProjectButton";
 import { cn } from "../../renderer/shared/lib/utils";
-import { Dialog } from "../../renderer/shared/components/Dialog";
-import { Input } from "../../renderer/shared/components/ui/input";
 import type { ViewMode } from "../../shared/types";
+import { useGlobalSearchStore } from "../../renderer/shared/store/globalSearchStore";
 
 export type HeaderSearchScope = "services" | "libraries" | "bible";
+
+type SearchResultCategory = "service" | "library" | "scripture";
+
+interface SearchResult {
+  id: string;
+  label: string;
+  sublabel?: string;
+  category: SearchResultCategory;
+  /** Raw data reference for navigation */
+  data: { serviceId?: string; libraryId?: string; reference?: string };
+}
 
 interface AppHeaderProps {
   viewMode: ViewMode;
@@ -34,7 +54,32 @@ interface AppHeaderProps {
   onOpenBrowser: () => void;
   onOpenStage: () => void;
   onOpenLooks: () => void;
+  /** Navigation callbacks from global search */
+  onSelectService?: (serviceId: string) => void;
+  onSelectLibraryItem?: (libraryId: string) => void;
+  onSelectScripture?: (reference: string) => void;
 }
+
+const CATEGORY_ORDER: SearchResultCategory[] = [
+  "service",
+  "library",
+  "scripture",
+];
+const CATEGORY_LABELS: Record<SearchResultCategory, string> = {
+  service: "Services",
+  library: "Library",
+  scripture: "Scripture",
+};
+const CATEGORY_ICONS: Record<
+  SearchResultCategory,
+  React.ComponentType<{ className?: string }>
+> = {
+  service: LayoutList,
+  library: Music,
+  scripture: BookOpenText,
+};
+
+const MAX_RESULTS_PER_CATEGORY = 5;
 
 export const AppHeader = memo(function AppHeader({
   viewMode,
@@ -50,51 +95,175 @@ export const AppHeader = memo(function AppHeader({
   onOpenStage,
   onOpenLooks,
 }: AppHeaderProps) {
+  // Read search data from the global store (populated by PresentContainer)
+  const services = useGlobalSearchStore((s) => s.services);
+  const libraryItems = useGlobalSearchStore((s) => s.libraryItems);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [activeSearchTab, setActiveSearchTab] = useState<HeaderSearchScope>(searchScope);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
-  const openSearchModal = () => {
-    setActiveSearchTab(searchScope);
-    setIsSearchOpen(true);
-  };
-
+  // ── Keyboard shortcut: Cmd/Ctrl + K ──
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "k"
+      ) {
         event.preventDefault();
-        setActiveSearchTab(searchScope);
         setIsSearchOpen(true);
+        setQuery("");
+        setActiveIndex(0);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [searchScope]);
+  }, []);
 
-  const searchTabHint = useMemo(() => {
-    if (activeSearchTab === "services") {
-      return "Search services";
+  // ── Auto-focus input when opened ──
+  useEffect(() => {
+    if (isSearchOpen) {
+      requestAnimationFrame(() => inputRef.current?.focus());
     }
-    if (activeSearchTab === "libraries") {
-      return "Search libraries";
+  }, [isSearchOpen]);
+
+  // ── Build search results ──
+  const results = useMemo<SearchResult[]>(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+
+    const out: SearchResult[] = [];
+
+    // Services
+    for (const svc of services) {
+      if (out.filter((r) => r.category === "service").length >= MAX_RESULTS_PER_CATEGORY) break;
+      if (svc.deleted) continue;
+      if (svc.name.toLowerCase().includes(q)) {
+        out.push({
+          id: `service:${svc._id}`,
+          label: svc.name,
+          sublabel: svc.date ?? undefined,
+          category: "service",
+          data: { serviceId: String(svc._id) },
+        });
+      }
     }
-    return "Search bible";
-  }, [activeSearchTab]);
 
-  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (activeSearchTab === "services") {
-      onOpenShow();
-    } else if (activeSearchTab === "libraries") {
-      onOpenLibraries();
-    } else {
-      onOpenBible();
+    // Library items
+    for (const item of libraryItems) {
+      if (out.filter((r) => r.category === "library").length >= MAX_RESULTS_PER_CATEGORY) break;
+      if (item.deleted) continue;
+      const titleMatch = item.title.toLowerCase().includes(q);
+      const bodyMatch = !titleMatch && item.body?.toLowerCase().includes(q);
+      if (titleMatch || bodyMatch) {
+        out.push({
+          id: `library:${item._id}`,
+          label: item.title,
+          sublabel: item.type
+            ? item.type.charAt(0).toUpperCase() + item.type.slice(1)
+            : undefined,
+          category: "library",
+          data: { libraryId: String(item._id) },
+        });
+      }
     }
 
-    setIsSearchOpen(false);
+    // Scripture hint — if input looks like a Bible reference, offer it
+    const scripturePattern =
+      /^[1-3]?\s*[a-z]+\s+\d+/i;
+    if (scripturePattern.test(query.trim())) {
+      out.push({
+        id: `scripture:${query.trim()}`,
+        label: query.trim(),
+        sublabel: "Look up scripture",
+        category: "scripture",
+        data: { reference: query.trim() },
+      });
+    }
+
+    return out;
+  }, [query, services, libraryItems]);
+
+  // ── Grouped results ──
+  const groupedResults = useMemo(() => {
+    const groups: { category: SearchResultCategory; items: SearchResult[] }[] =
+      [];
+    for (const cat of CATEGORY_ORDER) {
+      const items = results.filter((r) => r.category === cat);
+      if (items.length > 0) {
+        groups.push({ category: cat, items });
+      }
+    }
+    return groups;
+  }, [results]);
+
+  const flatResults = useMemo(
+    () => groupedResults.flatMap((g) => g.items),
+    [groupedResults],
+  );
+
+  // ── Selection ──
+  const handleSelect = useCallback(
+    (result: SearchResult) => {
+      setIsSearchOpen(false);
+      setQuery("");
+
+      const { onSelectService, onSelectLibraryItem, onSelectScripture } = useGlobalSearchStore.getState();
+
+      if (result.category === "service" && result.data.serviceId) {
+        onSelectService?.(result.data.serviceId);
+      } else if (result.category === "library" && result.data.libraryId) {
+        onSelectLibraryItem?.(result.data.libraryId);
+      } else if (result.category === "scripture" && result.data.reference) {
+        onSelectScripture?.(result.data.reference);
+      }
+    },
+    [],
+  );
+
+  // ── Keyboard navigation inside the palette ──
+  const handleInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveIndex((i) => Math.min(i + 1, flatResults.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveIndex((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const selected = flatResults[activeIndex];
+        if (selected) {
+          handleSelect(selected);
+        }
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setIsSearchOpen(false);
+      }
+    },
+    [activeIndex, flatResults, handleSelect],
+  );
+
+  // Scroll active item into view
+  useEffect(() => {
+    if (!listRef.current) return;
+    const activeEl = listRef.current.querySelector(
+      `[data-index="${activeIndex}"]`,
+    );
+    activeEl?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+
+  const openSearchModal = () => {
+    setQuery("");
+    setActiveIndex(0);
+    setIsSearchOpen(true);
   };
+
+  const isMac =
+    typeof navigator !== "undefined" &&
+    navigator.platform.toLowerCase().includes("mac");
 
   return (
     <>
@@ -104,14 +273,17 @@ export const AppHeader = memo(function AppHeader({
             type="button"
             onClick={openSearchModal}
             className={cn(
-              "inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-secondary/30 transition",
+              "inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-secondary/30 px-2 transition",
               isSearchOpen
                 ? "border-primary/60 bg-primary/15 text-primary"
                 : "text-muted-foreground hover:text-foreground",
             )}
-            title="Search (⌘F)"
+            title={`Search (${isMac ? "⌘" : "Ctrl+"}K)`}
           >
             <Search className="h-3.5 w-3.5" />
+            <span className="text-[10px] font-medium opacity-60">
+              {isMac ? "⌘K" : "Ctrl+K"}
+            </span>
           </button>
           <div className="flex items-center rounded-md border border-border bg-secondary/40 p-1">
             <button
@@ -219,56 +391,152 @@ export const AppHeader = memo(function AppHeader({
         </div>
       </header>
 
-      {isSearchOpen ? (
-        <Dialog title="Search" onClose={() => setIsSearchOpen(false)}>
-          <div className="space-y-3">
-            <div className="flex items-center rounded-md border border-border bg-secondary/30 p-1">
-              {(["services", "libraries", "bible"] as HeaderSearchScope[]).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setActiveSearchTab(tab)}
-                  className={cn(
-                    "inline-flex flex-1 items-center justify-center rounded-sm px-2 py-1 text-[11px] font-medium capitalize transition",
-                    activeSearchTab === tab
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {tab}
-                </button>
-              ))}
+      {/* ── Global Search Command Palette ── */}
+      {isSearchOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/60"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsSearchOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Global search"
+          >
+            {/* Search input */}
+            <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+              <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setActiveIndex(0);
+                }}
+                onKeyDown={handleInputKeyDown}
+                placeholder="Search services, libraries, or scripture…"
+                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <kbd className="hidden sm:inline-flex items-center rounded border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                ESC
+              </kbd>
             </div>
 
-            <form onSubmit={handleSearchSubmit} className="space-y-2">
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={searchTabHint}
-                autoFocus
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Active scope: <span className="capitalize text-foreground">{activeSearchTab}</span>
-              </p>
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsSearchOpen(false)}
-                  className="rounded-md border border-input px-3 py-1.5 text-xs text-foreground hover:bg-secondary"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
-                >
-                  Open
-                </button>
+            {/* Results */}
+            <div
+              ref={listRef}
+              className="max-h-[360px] overflow-y-auto overscroll-contain p-1.5"
+            >
+              {query.trim() && flatResults.length === 0 && (
+                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                  No results for &ldquo;{query}&rdquo;
+                </div>
+              )}
+
+              {!query.trim() && (
+                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                  Type to search across services, libraries, and scripture
+                </div>
+              )}
+
+              {groupedResults.map((group) => {
+                const Icon = CATEGORY_ICONS[group.category];
+                return (
+                  <div key={group.category} className="mb-1 last:mb-0">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      <Icon className="h-3 w-3" />
+                      {CATEGORY_LABELS[group.category]}
+                    </div>
+                    {group.items.map((result) => {
+                      const flatIdx = flatResults.indexOf(result);
+                      const isActive = flatIdx === activeIndex;
+                      return (
+                        <button
+                          key={result.id}
+                          type="button"
+                          data-index={flatIdx}
+                          className={cn(
+                            "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                            isActive
+                              ? "bg-primary/10 text-foreground"
+                              : "text-foreground/80 hover:bg-secondary/60",
+                          )}
+                          onMouseEnter={() => setActiveIndex(flatIdx)}
+                          onClick={() => handleSelect(result)}
+                        >
+                          <ResultIcon category={result.category} />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-medium text-[13px]">
+                              {result.label}
+                            </div>
+                            {result.sublabel && (
+                              <div className="truncate text-[11px] text-muted-foreground">
+                                {result.sublabel}
+                              </div>
+                            )}
+                          </div>
+                          {isActive && (
+                            <span className="shrink-0 text-[10px] text-muted-foreground">
+                              ↵
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center gap-1">
+                  <kbd className="rounded border border-border bg-secondary/60 px-1 py-0.5 font-mono text-[10px]">↑↓</kbd>
+                  navigate
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <kbd className="rounded border border-border bg-secondary/60 px-1 py-0.5 font-mono text-[10px]">↵</kbd>
+                  open
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <kbd className="rounded border border-border bg-secondary/60 px-1 py-0.5 font-mono text-[10px]">esc</kbd>
+                  close
+                </span>
               </div>
-            </form>
+            </div>
           </div>
-        </Dialog>
-      ) : null}
+        </div>
+      )}
     </>
   );
 });
+
+/** Per-result icon based on category */
+function ResultIcon({ category }: { category: SearchResultCategory }) {
+  switch (category) {
+    case "service":
+      return (
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-500/15 text-blue-400">
+          <LayoutList className="h-3.5 w-3.5" />
+        </div>
+      );
+    case "library":
+      return (
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-violet-500/15 text-violet-400">
+          <FileText className="h-3.5 w-3.5" />
+        </div>
+      );
+    case "scripture":
+      return (
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-amber-400">
+          <BookOpenText className="h-3.5 w-3.5" />
+        </div>
+      );
+  }
+}

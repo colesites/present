@@ -30,8 +30,8 @@ export function useGlobalShortcuts({
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
       if (!isCmdOrCtrl) return;
 
-      // Cmd/Ctrl + K: Shows
-      if (e.key.toLowerCase() === "k") {
+      // Cmd/Ctrl + L: Libraries
+      if (e.key.toLowerCase() === "l") {
         e.preventDefault();
         setBottomTab("shows");
         requestAnimationFrame(() => {

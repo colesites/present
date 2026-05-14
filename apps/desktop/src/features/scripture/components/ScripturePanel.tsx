@@ -387,6 +387,7 @@ export const ScripturePanel = memo(
         return;
       }
 
+      // Cancel any in-flight async requests so stale results don't land later
       if (identifyTimeoutRef.current !== null) {
         window.clearTimeout(identifyTimeoutRef.current);
         identifyTimeoutRef.current = null;
@@ -399,19 +400,8 @@ export const ScripturePanel = memo(
       setIsIdentifying(false);
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsTextSearching(false);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSpeechSearchResults([]);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setParsedRef({
-        book: null,
-        chapter: null,
-        verseStart: null,
-        verseEnd: null,
-        versionCode: null,
-        errors: [],
-      });
-      resetSearchState();
 
+      // Stop speech recognition when leaving the tab (mic should not stay active)
       if (isListening || isStarting) {
         stopListening();
       }
@@ -421,9 +411,10 @@ export const ScripturePanel = memo(
       isActive,
       isListening,
       isStarting,
-      resetSearchState,
       stopListening,
     ]);
+
+
 
     useEffect(() => {
       if (!isActive) {

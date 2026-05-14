@@ -778,10 +778,19 @@ export const OutputPreview = memo(function OutputPreview({
 
       <div className="shrink-0">
         <div className="flex items-stretch gap-2">
-          <div
-            ref={outputFrameRef}
-            className="relative min-w-0 flex-1 aspect-video overflow-hidden rounded-sm border border-border/60 bg-black"
+          {/* TV Outer Box */}
+          <div 
+            className="flex-1 min-w-0 flex items-center justify-center rounded-md bg-secondary/10 p-1 border border-border/40"
+            style={{ containerType: "size" }}
           >
+            <div
+              ref={outputFrameRef}
+              className="relative overflow-hidden rounded-sm border border-border/60 bg-black shadow-lg ring-1 ring-black/5"
+              style={{
+                width: "min(100cqw, 100cqh * 16 / 9)",
+                height: "min(100cqh, 100cqw * 9 / 16)",
+              }}
+            >
             {!hideBackground &&
               showMedia &&
               activeMediaItem &&
@@ -940,6 +949,7 @@ export const OutputPreview = memo(function OutputPreview({
                 <p className="text-xs text-zinc-600">No content</p>
               </div>
               )}
+            </div>
           </div>
 
           <div className="grid w-24 shrink-0 grid-cols-[2.8rem_1fr] text-muted-foreground pr-2">

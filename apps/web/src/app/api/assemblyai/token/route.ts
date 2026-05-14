@@ -21,6 +21,11 @@ const isAllowedOrigin = (origin: string): boolean => {
     return true;
   }
 
+  // Allow subdomains of the production domain
+  if (origin.endsWith(".present.c-technology-inc.com")) {
+    return true;
+  }
+
   const configuredWebAppUrl = process.env.WEB_APP_URL;
   if (configuredWebAppUrl) {
     try {
@@ -139,6 +144,7 @@ export async function POST(request: Request) {
       { headers },
     );
   } catch (error) {
+    console.error("[AssemblyAI Token Route] Error:", error);
     const message =
       error instanceof Error ? error.message : "Live transcription could not start.";
     const status = /quota exhausted/i.test(message) ? 402 : 401;
