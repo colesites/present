@@ -266,6 +266,25 @@ const SlideCard = memo(function SlideCard({
       }
     : undefined;
 
+  // Strip bracket annotations (e.g. [x3], [2x], [repeat]) from element content for display
+  const displayElements = useMemo(() => {
+    if (!slide.elements?.length) return slide.elements;
+    return slide.elements.map((el) => {
+      if (el.type !== "text") return el;
+      const cleanContent = stripBracketsForDisplay(el.content);
+      if (cleanContent === el.content) return el;
+      return { ...el, content: cleanContent };
+    });
+  }, [slide.elements]);
+
+  // Extract inline bracket content as modifier for footer when not already set
+  const displayModifier = useMemo(() => {
+    if (slide.modifier) return slide.modifier;
+    const matches = slide.text.match(/\[([^\]]+)\]/g);
+    if (!matches) return "";
+    return matches.map((m) => m.slice(1, -1)).join(" ");
+  }, [slide.text, slide.modifier]);
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -300,11 +319,11 @@ const SlideCard = memo(function SlideCard({
             )}
             style={{ backgroundColor: backgroundColor ?? "#000000" }}
           >
-            {slide.elements && slide.elements.length > 0 ? (
+            {displayElements && displayElements.length > 0 ? (
               <div className="relative h-full w-full overflow-hidden rounded-sm">
                 <CanvasSlideLayer
-                  text={slide.text}
-                  elements={slide.elements}
+                  text={stripBracketsForDisplay(slide.text)}
+                  elements={displayElements}
                   className="absolute inset-0"
                   libraryStyle={{
                     fontFamily: fontFamily ?? "inherit",
@@ -357,7 +376,7 @@ const SlideCard = memo(function SlideCard({
               <span className="opacity-60">{index + 1}</span>
               <span>{slide.label || ""}</span>
             </div>
-            <span>{slide.modifier || ""}</span>
+            <span>{displayModifier || ""}</span>
           </div>
         </button>
       </ContextMenuTrigger>

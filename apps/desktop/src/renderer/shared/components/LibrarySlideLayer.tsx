@@ -323,7 +323,7 @@ export const LibrarySlideLayer = memo(function LibrarySlideLayer({
               element.contentRole === "scriptureFooter" ? (
                 <AutoFitText
                   text={applyCapitalization(
-                    stripBracketsForDisplay(element.content),
+                    element.content,
                     style.capitalization,
                   )}
                   className={cn(

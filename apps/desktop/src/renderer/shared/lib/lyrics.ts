@@ -46,6 +46,7 @@ export function parseLyricsToSlides(
     let label = pendingLabel;
     let modifier = pendingModifier;
     let textStartIndex = 0;
+    let foundLabel = false;
 
     for (let index = 0; index < lines.length; index += 1) {
       const trimmedLine = lines[index]?.trim() ?? "";
@@ -57,8 +58,15 @@ export function parseLyricsToSlides(
       const labelMatch = trimmedLine.match(/^\[([^\]]+)\]\s*$/);
       if (labelMatch) {
         const parts = labelMatch[1].split(":");
-        label = parts[0]?.trim() || label;
-        modifier = parts[1]?.trim() || modifier;
+        const bracketLabel = parts[0]?.trim();
+        const bracketModifier = parts[1]?.trim();
+        if (!foundLabel) {
+          label = bracketLabel || label;
+          foundLabel = true;
+          if (bracketModifier) modifier = bracketModifier;
+        } else {
+          modifier = bracketLabel || modifier;
+        }
         textStartIndex = index + 1;
         continue;
       }
@@ -73,7 +81,7 @@ export function parseLyricsToSlides(
       break;
     }
 
-    const text = lines.slice(textStartIndex).join("\n").trim();
+    let text = lines.slice(textStartIndex).join("\n").trim();
 
     if (!text && textStartIndex >= lines.length) {
       pendingLabel = label;
@@ -81,7 +89,16 @@ export function parseLyricsToSlides(
       continue;
     }
 
-    pendingLabel = undefined;
+    const inlineBrackets = text.match(/\[([^\]]+)\]/g);
+    if (inlineBrackets) {
+      const modValues = inlineBrackets.map((m) => m.slice(1, -1));
+      const uniqueMods = [...new Set(modValues)];
+      const combinedMod = uniqueMods.join(" ");
+      modifier = combinedMod;
+      text = text.replace(/\[[^\]]*\]/g, "").split("\n").map((l) => l.trim()).join("\n").trim();
+    }
+
+    pendingLabel = label;
     pendingModifier = undefined;
 
     if (text) {

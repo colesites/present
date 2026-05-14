@@ -1,7 +1,6 @@
 "use client";
 
 import { AutoFitText } from "./AutoFitText";
-import { stripBracketsForDisplay } from "../lib/lyrics";
 import { cn } from "../lib/utils";
 import type {
   ScriptureFooterPosition,
@@ -96,7 +95,7 @@ export function ScriptureTextLayer({
       {footerPosition === "top" ? footerNode : null}
       <div className={cn("min-h-0 w-full flex-1", bodyClassName)}>
         <AutoFitText
-          text={stripBracketsForDisplay(text)}
+          text={text}
           className={textClassName}
           style={{
             fontFamily,

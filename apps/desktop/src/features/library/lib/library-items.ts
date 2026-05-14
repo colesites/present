@@ -293,12 +293,10 @@ export function slidesToBody(slides: LibrarySlide[]): string {
     const label = cleanOptionalText(slide.label);
     const modifier = cleanOptionalText(slide.modifier);
 
-    if (label && modifier) {
-      lines.push(`[${label}: ${modifier}]`);
-    } else if (label) {
+    // Always emit label WITHOUT modifier in the bracket header.
+    // Modifiers are per-slide inline annotations and must stay in the text.
+    if (label) {
       lines.push(`[${label}]`);
-    } else if (modifier) {
-      lines.push(`(${modifier})`);
     }
 
     const primaryTextElement =
@@ -311,7 +309,17 @@ export function slidesToBody(slides: LibrarySlide[]): string {
       slide.elements?.find(
         (element) => element.type === "text" && !element.isPlaceholder,
       );
-    lines.push((primaryTextElement?.content ?? slide.text).trim());
+    let slideText = (primaryTextElement?.content ?? slide.text).trim();
+
+    // Append modifier as inline bracket at the end of the first line
+    // so round-tripping through parseLyricsToSlides preserves it correctly.
+    if (modifier && !slideText.includes(`[${modifier}]`)) {
+      const textLines = slideText.split("\n");
+      textLines[0] = `${textLines[0]} [${modifier}]`;
+      slideText = textLines.join("\n");
+    }
+
+    lines.push(slideText);
     return lines.join("\n").trim();
   });
 
@@ -324,10 +332,26 @@ export function normalizeLibraryItem(
 ): LibraryItem {
   const content = normalizeLibraryContent(item.content, item.slides ?? []);
   const canvasSize = content.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE;
-  const baseSlides =
-    Array.isArray(item.slides) && item.slides.length > 0
-      ? item.slides
-      : buildSlidesFromBody(item.body ?? "", canvasSize, textDefaults);
+  const hasStoredSlides = Array.isArray(item.slides) && item.slides.length > 0;
+  let baseSlides = hasStoredSlides
+    ? item.slides
+    : buildSlidesFromBody(item.body ?? "", canvasSize, textDefaults);
+
+  // Always re-derive labels and modifiers from body text.
+  // This fixes legacy data where modifiers were incorrectly accumulated
+  // across slides (e.g. slide 2 got "3x x2" instead of just "x2").
+  const bodyText = item.body?.trim() ?? "";
+  if (bodyText && hasStoredSlides) {
+    const freshParsed = parseLyricsToSlides(bodyText);
+    if (freshParsed.length === baseSlides.length) {
+      baseSlides = baseSlides.map((slide, i) => ({
+        ...slide,
+        label: freshParsed[i]?.label ?? slide.label,
+        modifier: freshParsed[i]?.modifier,
+      }));
+    }
+  }
+
   const slides = baseSlides.map((slide) =>
     normalizeLibrarySlide(slide, canvasSize, textDefaults),
   );
