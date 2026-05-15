@@ -1,146 +1,154 @@
 import "server-only";
 
-import { clerkClient } from "@clerk/nextjs/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../packages/backend/convex/_generated/api";
+import { getStripe } from "./stripe";
 import {
   getPresentPlanDefinition,
   resolvePresentPlanKey,
 } from "../../../../../packages/shared/src/billing";
 
-type ClerkSubscriptionItem = {
-  id?: string | null;
-  status?: string | null;
-  periodStart?: number | Date | string | null;
-  periodEnd?: number | Date | string | null;
-  plan?: {
-    slug?: string | null;
-    name?: string | null;
-  } | null;
-};
-
-const toTimestampMs = (
-  value: number | Date | string | null | undefined,
-): number | null => {
-  if (!value) {
-    return null;
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : null;
-};
-
-const getFallbackPeriodWindow = () => {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return {
-    periodStartMs: start.getTime(),
-    periodEndMs: end.getTime(),
-  };
-};
-
-const pickPrimarySubscriptionItem = (
-  items: ClerkSubscriptionItem[],
-): ClerkSubscriptionItem | null => {
-  const active =
-    items.find((item) => item.status === "active") ??
-    items.find((item) => item.status === "canceled") ??
-    items.find((item) => item.status === "past_due") ??
-    items[0];
-
-  return active ?? null;
-};
-
+/**
+ * Syncs a user's Stripe subscription state to Convex.
+ *
+ * Called from the AssemblyAI token route so the billing record is fresh
+ * before we check speech-to-search quotas.
+ */
 export const syncUserBillingToConvex = async (input: {
   userId: string;
   convexToken: string;
 }) => {
-  const client = await clerkClient();
-  const subscription = await client.billing.getUserBillingSubscription(input.userId);
-  const selectedItem = pickPrimarySubscriptionItem(
-    (((subscription as unknown) as { subscriptionItems?: ClerkSubscriptionItem[] }).subscriptionItems ??
-      []) as ClerkSubscriptionItem[],
-  );
-
-  const planSlug = selectedItem?.plan?.slug ?? null;
-  const planLabel = selectedItem?.plan?.name ?? null;
-  const planKey = resolvePresentPlanKey(planSlug ?? planLabel);
-  const plan = getPresentPlanDefinition(planKey);
-  const fallbackPeriod = getFallbackPeriodWindow();
-  const periodStartMs =
-    toTimestampMs(selectedItem?.periodStart) ?? fallbackPeriod.periodStartMs;
-  const periodEndMs =
-    toTimestampMs(selectedItem?.periodEnd) ?? fallbackPeriod.periodEndMs;
-
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!convexUrl) {
     throw new Error("Missing NEXT_PUBLIC_CONVEX_URL");
   }
 
+  const stripe = getStripe();
+
+  // Look up the Stripe customer by the Clerk user ID stored in metadata
+  const customers = await stripe.customers.search({
+    limit: 1,
+    expand: ["data.subscriptions"],
+    query: `metadata["userId"]:"${input.userId}"`,
+  });
+
+  const customer = customers.data[0] ?? null;
+
+  if (!customer) {
+    // No Stripe customer → free plan
+    const freePlan = getPresentPlanDefinition("free");
+    const fallbackPeriod = getFallbackPeriodWindow();
+
+    const convex = new ConvexHttpClient(convexUrl, { auth: input.convexToken });
+    await convex.mutation(api.billing.syncUserBillingFromServer, {
+      userId: input.userId,
+      planSlug: freePlan.key,
+      planLabel: freePlan.label,
+      status: "active",
+      periodStartMs: fallbackPeriod.periodStartMs,
+      periodEndMs: fallbackPeriod.periodEndMs,
+    });
+    return;
+  }
+
+  // Find the most relevant subscription
+  const subscriptions = customer.subscriptions?.data ?? [];
+  const sub =
+    subscriptions.find((s) => s.status === "active") ??
+    subscriptions.find((s) => s.status === "trialing") ??
+    subscriptions.find((s) => s.status === "past_due") ??
+    subscriptions[0] ??
+    null;
+
+  if (!sub) {
+    // Customer exists but no subscription → free plan
+    const freePlan = getPresentPlanDefinition("free");
+    const fallbackPeriod = getFallbackPeriodWindow();
+
+    const convex = new ConvexHttpClient(convexUrl, { auth: input.convexToken });
+    await convex.mutation(api.billing.syncUserBillingFromServer, {
+      userId: input.userId,
+      planSlug: freePlan.key,
+      planLabel: freePlan.label,
+      status: "active",
+      periodStartMs: fallbackPeriod.periodStartMs,
+      periodEndMs: fallbackPeriod.periodEndMs,
+      stripeSubscriptionId: undefined,
+      stripeCustomerId: customer.id,
+    });
+    return;
+  }
+
+  // Extract the plan from the first subscription item's price lookup_key
+  const item = sub.items.data[0];
+  const lookupKey = item?.price?.lookup_key ?? null;
+  const productName =
+    typeof item?.price?.product === "object" && item.price.product !== null
+      ? (item.price.product as { name?: string }).name ?? null
+      : null;
+
+  const planKey = resolvePresentPlanKey(lookupKey ?? productName);
+  const plan = getPresentPlanDefinition(planKey);
+
+  const periodStartMs = (item?.current_period_start ?? 0) * 1000;
+  const periodEndMs = (item?.current_period_end ?? 0) * 1000;
+
   const convex = new ConvexHttpClient(convexUrl, { auth: input.convexToken });
   await convex.mutation(api.billing.syncUserBillingFromServer, {
     userId: input.userId,
-    planSlug: planSlug ?? plan.key,
-    planLabel: planLabel ?? plan.label,
-    status: selectedItem?.status ?? "active",
+    planSlug: plan.key,
+    planLabel: plan.label,
+    status: sub.status,
     periodStartMs,
     periodEndMs,
-    clerkSubscriptionId:
-      (subscription as { id?: string | null }).id ?? undefined,
-    clerkSubscriptionItemId: selectedItem?.id ?? undefined,
+    stripeSubscriptionId: sub.id,
+    stripeCustomerId: customer.id,
   });
 };
 
+/**
+ * Syncs billing from a Stripe webhook event (no auth token needed).
+ */
 export const syncUserBillingToConvexFromWebhook = async (input: {
   userId: string;
+  stripeCustomerId: string;
+  stripeSubscriptionId: string | null;
+  status: string;
+  planLookupKey: string | null;
+  periodStartMs: number;
+  periodEndMs: number;
 }) => {
-  const webhookSecret = process.env.CLERK_BILLING_SYNC_SECRET;
+  const webhookSecret = process.env.STRIPE_BILLING_SYNC_SECRET;
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!webhookSecret || !convexUrl) {
-    throw new Error("Missing Clerk billing sync configuration");
+    throw new Error("Missing Stripe billing sync configuration");
   }
 
-  const client = await clerkClient();
-  const subscription = await client.billing.getUserBillingSubscription(input.userId);
-  const selectedItem = pickPrimarySubscriptionItem(
-    (((subscription as unknown) as { subscriptionItems?: ClerkSubscriptionItem[] }).subscriptionItems ??
-      []) as ClerkSubscriptionItem[],
-  );
-
-  const planSlug = selectedItem?.plan?.slug ?? null;
-  const planLabel = selectedItem?.plan?.name ?? null;
-  const planKey = resolvePresentPlanKey(planSlug ?? planLabel);
+  const planKey = resolvePresentPlanKey(input.planLookupKey);
   const plan = getPresentPlanDefinition(planKey);
-  const fallbackPeriod = getFallbackPeriodWindow();
-  const periodStartMs =
-    toTimestampMs(selectedItem?.periodStart) ?? fallbackPeriod.periodStartMs;
-  const periodEndMs =
-    toTimestampMs(selectedItem?.periodEnd) ?? fallbackPeriod.periodEndMs;
 
   const convex = new ConvexHttpClient(convexUrl);
   await convex.mutation(api.billing.syncUserBillingFromWebhook, {
     secret: webhookSecret,
     userId: input.userId,
-    planSlug: planSlug ?? plan.key,
-    planLabel: planLabel ?? plan.label,
-    status: selectedItem?.status ?? "active",
-    periodStartMs,
-    periodEndMs,
-    clerkSubscriptionId:
-      (subscription as { id?: string | null }).id ?? undefined,
-    clerkSubscriptionItemId: selectedItem?.id ?? undefined,
+    planSlug: plan.key,
+    planLabel: plan.label,
+    status: input.status,
+    periodStartMs: input.periodStartMs,
+    periodEndMs: input.periodEndMs,
+    stripeSubscriptionId: input.stripeSubscriptionId ?? undefined,
+    stripeCustomerId: input.stripeCustomerId,
   });
 };
+
+function getFallbackPeriodWindow() {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+  );
+  return {
+    periodStartMs: start.getTime(),
+    periodEndMs: end.getTime(),
+  };
+}

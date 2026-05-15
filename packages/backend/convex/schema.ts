@@ -36,6 +36,9 @@ export default defineSchema({
     quotaSeconds: v.number(),
     periodStartMs: v.number(),
     periodEndMs: v.number(),
+    stripeSubscriptionId: v.optional(v.string()),
+    stripeCustomerId: v.optional(v.string()),
+    // Deprecated Clerk fields kept temporarily for migration
     clerkSubscriptionId: v.optional(v.string()),
     clerkSubscriptionItemId: v.optional(v.string()),
     updatedAt: v.number(),

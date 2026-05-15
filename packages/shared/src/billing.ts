@@ -38,9 +38,9 @@ export const PRESENT_PLAN_DEFINITIONS: Record<
   },
 };
 
-const FREE_ALIASES = ["free", "community", "starter"];
-const PRO_ALIASES = ["pro", "professional"];
-const POWER_ALIASES = ["power", "enterprise", "team"];
+const FREE_ALIASES = ["free", "free_plan", "free_plan_yr", "community", "starter"];
+const PRO_ALIASES = ["pro", "pro_plan", "pro_plan_yr", "professional"];
+const POWER_ALIASES = ["power", "power_plan", "power_plan_yr", "enterprise", "team"];
 
 const normalizePlanToken = (value: string | null | undefined): string => {
   return value?.trim().toLowerCase() ?? "";

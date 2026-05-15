@@ -32,7 +32,7 @@ function getPeriodKey(periodStartMs: number, periodEndMs: number) {
 }
 
 function assertBillingSyncSecret(secret: string | undefined) {
-  const expected = process.env.CLERK_BILLING_SYNC_SECRET;
+  const expected = process.env.STRIPE_BILLING_SYNC_SECRET;
   if (!expected || secret !== expected) {
     throw new ConvexError("Unauthorized billing sync.");
   }
@@ -79,8 +79,8 @@ async function resolveUserBillingState(
     quotaSeconds: freePlan.monthlySpeechLimitSeconds,
     periodStartMs,
     periodEndMs,
-    clerkSubscriptionId: undefined,
-    clerkSubscriptionItemId: undefined,
+    stripeSubscriptionId: undefined,
+    stripeCustomerId: undefined,
     updatedAt: 0,
   };
 }
@@ -157,8 +157,8 @@ export const syncUserBillingFromServer = mutation({
     status: v.string(),
     periodStartMs: v.number(),
     periodEndMs: v.number(),
-    clerkSubscriptionId: v.optional(v.string()),
-    clerkSubscriptionItemId: v.optional(v.string()),
+    stripeSubscriptionId: v.optional(v.string()),
+    stripeCustomerId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -182,8 +182,8 @@ export const syncUserBillingFromServer = mutation({
       quotaSeconds: plan.monthlySpeechLimitSeconds,
       periodStartMs: args.periodStartMs,
       periodEndMs: args.periodEndMs,
-      clerkSubscriptionId: args.clerkSubscriptionId,
-      clerkSubscriptionItemId: args.clerkSubscriptionItemId,
+      stripeSubscriptionId: args.stripeSubscriptionId,
+      stripeCustomerId: args.stripeCustomerId,
       updatedAt: Date.now(),
     };
 
@@ -205,8 +205,8 @@ export const syncUserBillingFromWebhook = mutation({
     status: v.string(),
     periodStartMs: v.number(),
     periodEndMs: v.number(),
-    clerkSubscriptionId: v.optional(v.string()),
-    clerkSubscriptionItemId: v.optional(v.string()),
+    stripeSubscriptionId: v.optional(v.string()),
+    stripeCustomerId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     assertBillingSyncSecret(args.secret);
@@ -227,8 +227,8 @@ export const syncUserBillingFromWebhook = mutation({
       quotaSeconds: plan.monthlySpeechLimitSeconds,
       periodStartMs: args.periodStartMs,
       periodEndMs: args.periodEndMs,
-      clerkSubscriptionId: args.clerkSubscriptionId,
-      clerkSubscriptionItemId: args.clerkSubscriptionItemId,
+      stripeSubscriptionId: args.stripeSubscriptionId,
+      stripeCustomerId: args.stripeCustomerId,
       updatedAt: Date.now(),
     };
 
