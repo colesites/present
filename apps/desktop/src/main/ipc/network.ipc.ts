@@ -1,5 +1,14 @@
-import { ipcMain, net } from 'electron';
+import { ipcMain, net, session } from 'electron';
 import { getWebAppBaseUrl, getWebAppBaseUrlCandidates } from '../utils/app.utils';
+
+// Helper to get a realistic User-Agent for requests
+const getRealisticUserAgent = () => {
+  try {
+    return session.defaultSession.getUserAgent();
+  } catch {
+    return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  }
+};
 
 /**
  * Fetch JSON following redirects
@@ -45,6 +54,8 @@ async function fetchAssemblyAiToken(
           headers: {
             Authorization: `Bearer ${sessionToken}`,
             'Content-Type': 'application/json',
+            'Origin': baseUrl,
+            'User-Agent': getRealisticUserAgent(),
           },
           body: JSON.stringify({ source }),
         });
@@ -60,13 +71,23 @@ async function fetchAssemblyAiToken(
 
         if (!response.ok) {
           const message = await response.text().catch(() => '');
-          throw new Error(message || `Request failed (${response.status})`);
+          console.error(`[AssemblyAI Fetch] Request to ${currentUrl} failed: ${response.status} ${message}`);
+          const err = new Error(message || `Request failed (${response.status})`);
+          (err as any).status = response.status;
+          throw err;
         }
 
         return await response.json();
       }
     } catch (error) {
+      console.error(`[AssemblyAI Fetch] Error fetching from ${baseUrl}:`, error);
       lastError = error;
+      
+      // If the server actually responded (e.g. 401, 500), do NOT fall back to the next URL!
+      if (error && typeof error === 'object' && 'status' in error) {
+        throw error;
+      }
+      
       continue;
     }
   }

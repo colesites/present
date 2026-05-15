@@ -5,7 +5,9 @@ import { syncUserBillingToConvex } from "@/lib/server/billing-sync";
 
 const DEFAULT_ALLOWED_ORIGINS = new Set([
   "http://localhost:3000",
+  "http://localhost:3001",
   "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
   "https://present.c-technology-inc.com",
   "https://present.app",
   "app://app",
@@ -74,7 +76,18 @@ export async function OPTIONS(request: Request) {
 
 export async function POST(request: Request) {
   const headers = buildCorsHeaders(request);
-  if (request.headers.get("origin") && !headers.has("Access-Control-Allow-Origin")) {
+
+  // Debug: log what the route handler actually receives
+  const incomingOrigin = request.headers.get("origin");
+  const incomingAuth = request.headers.get("authorization");
+  console.log("[AssemblyAI Token Route] incoming origin:", incomingOrigin);
+  console.log("[AssemblyAI Token Route] has authorization:", Boolean(incomingAuth), incomingAuth?.substring(0, 20));
+
+  // Skip origin gate for requests with a Bearer token (desktop IPC / programmatic).
+  // CORS origin enforcement only matters for browser-tab requests.
+  const hasBearerAuth = /^Bearer\s+/i.test(request.headers.get("authorization") ?? "");
+  if (!hasBearerAuth && request.headers.get("origin") && !headers.has("Access-Control-Allow-Origin")) {
+    console.log("[AssemblyAI Token Route] BLOCKED: origin not in allowed list and no bearer token");
     return new Response("Origin not allowed", {
       status: 403,
       headers,

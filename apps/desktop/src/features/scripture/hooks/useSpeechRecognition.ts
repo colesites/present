@@ -420,19 +420,12 @@ export function useSpeechRecognition(
     };
   }, [hasBrowserSpeechRecognition, continuous, interimResults, lang]);
 
-  const requestMicrophonePermission = useCallback(async () => {
+  const checkMicrophonePermission = useCallback(async () => {
     if (typeof window === "undefined") {
-      return;
+      return { granted: true, status: "unknown" };
     }
-
     const mediaAccess = await window.electronAPI?.requestMicrophoneAccess?.() as { granted: boolean; status: string } | undefined;
-    if (mediaAccess && !mediaAccess.granted) {
-      console.error("[Speech] OS microphone access denied:", mediaAccess);
-      if (mediaAccess.status === "denied" || mediaAccess.status === "restricted") {
-        throw new Error("Microphone access is blocked by macOS. Please enable it in System Settings > Privacy & Security > Microphone.");
-      }
-      throw new Error(`Microphone access was denied (Status: ${mediaAccess.status}).`);
-    }
+    return mediaAccess ?? { granted: true, status: "unknown" };
   }, []);
 
   const stopStreamingSession = useCallback(() => {
@@ -539,10 +532,14 @@ export function useSpeechRecognition(
       throw new Error("Sign in to use voice search.");
     }
 
+    // For IPC (Electron), always send the HMAC sessionToken — the server
+    // verifies it via verifyDesktopSessionToken and mints a fresh Convex JWT
+    // server-side.  Sending a Clerk JWT here causes kid-mismatch errors when
+    // the JWT was issued by a different Clerk instance (e.g. prod fallback).
     const authBearer =
-      (typeof window !== "undefined" && window.electronAPI
-        ? await ensureFreshDesktopAccessToken()
-        : null) ?? sessionToken;
+      (typeof window !== "undefined" && window.electronAPI)
+        ? sessionToken
+        : sessionToken;
 
     if (window.electronAPI?.requestAssemblyAiToken) {
       const payload = await window.electronAPI.requestAssemblyAiToken(
@@ -605,7 +602,10 @@ export function useSpeechRecognition(
       throw new Error("Live transcription is unavailable in this runtime.");
     }
 
-    await requestMicrophonePermission();
+    const osPermission = await checkMicrophonePermission();
+    if (!osPermission.granted && osPermission.status !== "not-determined") {
+      console.warn("[Speech] OS reports microphone access is not granted:", osPermission);
+    }
 
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Audio capture is unavailable in this desktop session.");
@@ -621,6 +621,9 @@ export function useSpeechRecognition(
     ]);
 
     if (mediaStreamResult.status === "rejected") {
+      if (!osPermission.granted) {
+        throw new Error("Microphone access is blocked by macOS. Please enable it in System Settings > Privacy & Security > Microphone.");
+      }
       throw mediaStreamResult.reason;
     }
 
@@ -826,7 +829,7 @@ export function useSpeechRecognition(
     inputDeviceId,
     keyterms,
     lang,
-    requestMicrophonePermission,
+    checkMicrophonePermission,
     setSharedActiveSessionStartedAtMs,
     setPendingCommittedUsageSeconds,
     stopStreamingSession,
@@ -871,11 +874,14 @@ export function useSpeechRecognition(
     }
 
     activeModeRef.current = "webspeech";
-    return requestMicrophonePermission()
-      .then(() => {
+    return checkMicrophonePermission()
+      .then((osPermission) => {
+        if (!osPermission.granted && osPermission.status !== "not-determined") {
+          console.warn("[Speech] OS reports microphone access is not granted:", osPermission);
+        }
         recognitionRef.current?.start();
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         setIsStarting(false);
         setError(formatSpeechError(e));
         setActiveSessionStartedAtMs(null);
@@ -889,7 +895,7 @@ export function useSpeechRecognition(
     isElectronRuntime,
     isListening,
     isStarting,
-    requestMicrophonePermission,
+    checkMicrophonePermission,
     setSharedActiveSessionStartedAtMs,
     setPendingCommittedUsageSeconds,
     startAssemblyAiListening,
