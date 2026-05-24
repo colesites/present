@@ -8,12 +8,25 @@ import {
   type DesktopStoredSession,
 } from '../services/session-storage.service';
 
+type DesktopRefreshOutcome =
+  | { ok: true; data: unknown }
+  | { ok: false; status: number; error: string };
+
+class DesktopRefreshHttpError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function refreshDesktopSessionViaWeb(
   sessionToken: string,
   maxRedirects = 5,
-): Promise<unknown> {
+): Promise<DesktopRefreshOutcome> {
   const baseUrls = getWebAppBaseUrlCandidates();
   let lastError: unknown = null;
+  let lastHttpStatus = 0;
 
   for (const baseUrl of baseUrls) {
     let currentUrl = new URL('/api/auth/desktop/refresh-session', baseUrl).toString();
@@ -22,16 +35,17 @@ async function refreshDesktopSessionViaWeb(
       for (let i = 0; i <= maxRedirects; i += 1) {
         const response = await net.fetch(currentUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionToken }),
         });
 
         if (response.status >= 300 && response.status < 400) {
           const location = response.headers.get('location');
           if (!location) {
-            throw new Error(`Redirect without location header (${response.status})`);
+            throw new DesktopRefreshHttpError(
+              `Redirect without location header (${response.status})`,
+              response.status,
+            );
           }
           currentUrl = new URL(location, currentUrl).toString();
           continue;
@@ -39,21 +53,34 @@ async function refreshDesktopSessionViaWeb(
 
         if (!response.ok) {
           const message = await response.text().catch(() => '');
-          throw new Error(message || `Desktop refresh failed (${response.status})`);
+          // 4xx is a definitive server response — don't retry other base URLs.
+          if (response.status >= 400 && response.status < 500) {
+            return {
+              ok: false,
+              status: response.status,
+              error: message || `Desktop refresh failed (${response.status})`,
+            };
+          }
+          throw new DesktopRefreshHttpError(
+            message || `Desktop refresh failed (${response.status})`,
+            response.status,
+          );
         }
 
-        return await response.json();
+        return { ok: true, data: await response.json() };
       }
     } catch (error) {
       lastError = error;
+      if (error instanceof DesktopRefreshHttpError) {
+        lastHttpStatus = error.status;
+      }
       continue;
     }
   }
 
-  if (lastError instanceof Error) {
-    throw lastError;
-  }
-  throw new Error('Too many redirects while refreshing desktop session');
+  const message =
+    lastError instanceof Error ? lastError.message : 'Network error refreshing desktop session';
+  return { ok: false, status: lastHttpStatus || 0, error: message };
 }
 
 /**
@@ -83,14 +110,15 @@ export const registerAuthIPC = (): void => {
   });
 
   ipcMain.handle('refresh-desktop-session', async (_, sessionToken: string) => {
+    if (typeof sessionToken !== 'string' || sessionToken.trim().length === 0) {
+      return { ok: false, status: 400, error: 'Missing session token' };
+    }
     try {
-      if (typeof sessionToken !== 'string' || sessionToken.trim().length === 0) {
-        throw new Error('Missing session token');
-      }
       return await refreshDesktopSessionViaWeb(sessionToken);
     } catch (error) {
       console.error('[Desktop Auth] failed to refresh session via IPC', error);
-      return null;
+      const message = error instanceof Error ? error.message : 'Network error';
+      return { ok: false, status: 0, error: message };
     }
   });
 

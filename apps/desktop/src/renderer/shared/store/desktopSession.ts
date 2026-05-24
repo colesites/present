@@ -271,11 +271,33 @@ export const getStoredDesktopToken = async (): Promise<string | null> => {
   return auth?.token ?? null;
 };
 
+type DesktopRefreshIpcOutcome =
+  | { ok: true; data: DesktopRefreshResponse | null }
+  | { ok: false; status: number; error: string };
+
+const isStructuredOutcome = (value: unknown): value is DesktopRefreshIpcOutcome => {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "ok" in (value as Record<string, unknown>) &&
+    typeof (value as { ok: unknown }).ok === "boolean"
+  );
+};
+
 const fetchDesktopRefreshPayload = async (
   sessionToken: string
 ): Promise<DesktopRefreshResponse | null> => {
   if (window.electronAPI?.refreshDesktopSession) {
-    return (await window.electronAPI.refreshDesktopSession(sessionToken)) as DesktopRefreshResponse | null;
+    const result: unknown = await window.electronAPI.refreshDesktopSession(sessionToken);
+    if (isStructuredOutcome(result)) {
+      if (result.ok === true) {
+        return result.data;
+      }
+      const failure = result as { ok: false; status: number; error: string };
+      throw new DesktopRefreshError(failure.error, failure.status || 0);
+    }
+    // Backwards-compat: old IPC returned the raw payload or null.
+    return (result ?? null) as DesktopRefreshResponse | null;
   }
 
   const response = await fetch(
@@ -300,6 +322,16 @@ const fetchDesktopRefreshPayload = async (
   }
 
   return (await response.json()) as DesktopRefreshResponse | null;
+};
+
+const isAuthFailureStatus = (status: number): boolean => {
+  return status === 401 || status === 403;
+};
+
+const isTransientNetworkStatus = (status: number): boolean => {
+  // 0 = network/fetch failure surfaced by IPC; 5xx = upstream blip; 408/429 = retryable.
+  if (status === 0 || status === 408 || status === 429) return true;
+  return status >= 500 && status < 600;
 };
 
 const refreshDesktopAccessToken = async (
@@ -417,20 +449,53 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
         return payload.accessToken;
       })
       .catch((error) => {
-        console.error("[Desktop Auth] token refresh failed", error);
-        if (error instanceof DesktopRefreshError && error.status === 401) {
+        console.warn("[Desktop Auth] token refresh failed", error);
+
+        // Only a definitive 401/403 from the auth server means the session is
+        // truly invalid — that is the only case where we sign the user out.
+        if (
+          error instanceof DesktopRefreshError &&
+          isAuthFailureStatus(error.status)
+        ) {
           return persistTokenFailure("Session expired. Please sign in again.", true);
         }
 
-        if (fallbackToken && !isTimestampExpired(fallbackTokenExpiryMs)) {
-          return fallbackToken;
-        }
+        // Transient: network blip, 5xx, timeout. Keep the existing session and
+        // let the next refresh attempt succeed. Surface a soft error message
+        // but DO NOT flip authStatus — that's what was logging users out.
+        const status =
+          error instanceof DesktopRefreshError ? error.status : 0;
+        const transient =
+          !isOnline() ||
+          isTransientNetworkStatus(status) ||
+          !(error instanceof DesktopRefreshError);
 
-        if (!isOnline()) {
+        if (transient) {
+          const currentState = useDesktopSessionStore.getState();
+          currentState.setError(
+            isOnline()
+              ? "Reconnecting to Present services…"
+              : "You're offline. Reconnect to sync your account."
+          );
+          if (fallbackToken && !isTimestampExpired(fallbackTokenExpiryMs)) {
+            return fallbackToken;
+          }
           return null;
         }
 
-        return persistTokenFailure("Session refresh failed. Please sign in again.", false);
+        // Definitive non-auth failure (e.g. 4xx other than 401/403): keep the
+        // session but flag an error. Still don't auto sign out — the user can
+        // decide to re-auth manually if it persists.
+        const currentState = useDesktopSessionStore.getState();
+        currentState.setError(
+          error instanceof Error
+            ? error.message
+            : "Session refresh failed."
+        );
+        if (fallbackToken && !isTimestampExpired(fallbackTokenExpiryMs)) {
+          return fallbackToken;
+        }
+        return null;
       })
       .finally(() => {
         desktopAccessTokenRefreshPromise = null;

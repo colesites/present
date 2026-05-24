@@ -7,50 +7,6 @@ type LoadedNdiLibrary = {
   lib: Record<string, unknown>;
 };
 
-let loadedNdiLibrary: LoadedNdiLibrary | null = null;
-let hasLoggedNdiLibraryLoadFailure = false;
-let lastNdiLibraryLoadError: string | null = null;
-
-const loadNdiLibrary = (): LoadedNdiLibrary | null => {
-  if (loadedNdiLibrary) {
-    return loadedNdiLibrary;
-  }
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const grandi = require('grandi') as Record<string, unknown>;
-    loadedNdiLibrary = {
-      kind: 'grandi',
-      lib: grandi,
-    };
-    lastNdiLibraryLoadError = null;
-    return loadedNdiLibrary;
-  } catch (err) {
-    lastNdiLibraryLoadError = err instanceof Error ? err.message : String(err);
-  }
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const grandiose = require('grandiose') as Record<string, unknown>;
-    loadedNdiLibrary = {
-      kind: 'grandiose',
-      lib: grandiose,
-    };
-    lastNdiLibraryLoadError = null;
-    return loadedNdiLibrary;
-  } catch (err) {
-    const grandioseError = err instanceof Error ? err.message : String(err);
-    lastNdiLibraryLoadError =
-      lastNdiLibraryLoadError
-        ? `grandi: ${lastNdiLibraryLoadError}; grandiose: ${grandioseError}`
-        : `grandiose: ${grandioseError}`;
-    if (!hasLoggedNdiLibraryLoadFailure) {
-      hasLoggedNdiLibraryLoadFailure = true;
-      console.error('[NDI] Failed to load an NDI native module:', err);
-    }
-    return null;
-  }
-};
-
 interface GrandioseSender {
   video: (frame: VideoFrame) => Promise<void>;
   destroy?: () => void;
@@ -70,19 +26,6 @@ interface VideoFrame {
   colorFormat?: number;
 }
 
-let ndiSender: GrandioseSender | null = null;
-let captureInterval: NodeJS.Timeout | null = null;
-let isBroadcasting = false;
-let sourceName = 'Present Main Output';
-let groupName = 'Public';
-let lastError: string | null = null;
-let framesSent = 0;
-let isFrameInFlight = false;
-let usingFallbackFrame = false;
-
-// Target 30 FPS
-const INTERVAL_MS = Math.floor(1000 / 30);
-
 type NdiStatus = {
   running: boolean;
   sourceName: string;
@@ -93,9 +36,91 @@ type NdiStatus = {
   usingFallbackFrame: boolean;
 };
 
+let loadedNdiLibrary: LoadedNdiLibrary | null = null;
+let ndiLibraryLoadPromise: Promise<LoadedNdiLibrary | null> | null = null;
+let lastNdiLibraryLoadError: string | null = null;
+let hasLoggedNdiLibraryLoadFailure = false;
+
+let ndiSender: GrandioseSender | null = null;
+let captureInterval: NodeJS.Timeout | null = null;
+let isBroadcasting = false;
+let sourceName = 'Present Main Output';
+let groupName = 'Public';
+let lastError: string | null = null;
+let framesSent = 0;
+let isFrameInFlight = false;
+let usingFallbackFrame = false;
+
+const INTERVAL_MS = Math.floor(1000 / 30);
 const FALLBACK_WIDTH = 1280;
 const FALLBACK_HEIGHT = 720;
 const fallbackFrameBuffer = Buffer.alloc(FALLBACK_WIDTH * FALLBACK_HEIGHT * 4);
+
+// grandi ships ESM-only (main: dist/index.mjs); CommonJS `require()` is
+// unreliable inside Electron's main process even on Node 22.x. Dynamic import
+// hits Node's real ESM loader. webpackIgnore keeps the literal import in the
+// bundled output so webpack does not try to resolve it at build time.
+const importGrandi = async (): Promise<Record<string, unknown>> =>
+  (await import(/* webpackIgnore: true */ 'grandi')) as Record<string, unknown>;
+
+const importGrandiose = async (): Promise<Record<string, unknown>> =>
+  // @ts-expect-error grandiose is an optional NDI backend; not installed by default.
+  (await import(/* webpackIgnore: true */ 'grandiose')) as Record<string, unknown>;
+
+const normalizeNamespace = (mod: Record<string, unknown>): Record<string, unknown> => {
+  const defaultExport = mod['default'];
+  if (defaultExport && typeof defaultExport === 'object') {
+    return { ...(defaultExport as Record<string, unknown>), ...mod };
+  }
+  return mod;
+};
+
+const loadNdiLibrary = async (): Promise<LoadedNdiLibrary | null> => {
+  if (loadedNdiLibrary) {
+    return loadedNdiLibrary;
+  }
+  if (ndiLibraryLoadPromise) {
+    return ndiLibraryLoadPromise;
+  }
+
+  ndiLibraryLoadPromise = (async () => {
+    const errors: string[] = [];
+
+    try {
+      const mod = normalizeNamespace(await importGrandi());
+      if (typeof mod['send'] !== 'function') {
+        throw new Error('grandi loaded but no `send` export');
+      }
+      loadedNdiLibrary = { kind: 'grandi', lib: mod };
+      lastNdiLibraryLoadError = null;
+      console.log('[NDI] Loaded grandi backend.');
+      return loadedNdiLibrary;
+    } catch (err) {
+      errors.push(`grandi: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    try {
+      const mod = normalizeNamespace(await importGrandiose());
+      loadedNdiLibrary = { kind: 'grandiose', lib: mod };
+      lastNdiLibraryLoadError = null;
+      console.log('[NDI] Loaded grandiose backend.');
+      return loadedNdiLibrary;
+    } catch (err) {
+      errors.push(`grandiose: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    lastNdiLibraryLoadError = errors.join(' | ');
+    if (!hasLoggedNdiLibraryLoadFailure) {
+      hasLoggedNdiLibraryLoadFailure = true;
+      console.error('[NDI] Failed to load any NDI native module:', lastNdiLibraryLoadError);
+    }
+    return null;
+  })().finally(() => {
+    ndiLibraryLoadPromise = null;
+  });
+
+  return ndiLibraryLoadPromise;
+};
 
 const normalizeSourceName = (value: string): string => {
   const normalized = value.trim();
@@ -117,13 +142,8 @@ const createVideoFrame = (
   library: LoadedNdiLibrary,
 ): VideoFrame => {
   if (library.kind === 'grandi') {
-    const fourCC =
-      (library.lib['FourCC'] as { BGRA?: number } | undefined)?.BGRA
-      ?? ((library.lib['default'] as { FOURCC_BGRA?: number } | undefined)?.FOURCC_BGRA);
-    const frameFormatType =
-      (library.lib['FrameType'] as { Progressive?: number } | undefined)?.Progressive
-      ?? ((library.lib['default'] as { FORMAT_TYPE_PROGRESSIVE?: number } | undefined)
-        ?.FORMAT_TYPE_PROGRESSIVE);
+    const fourCCEnum = library.lib['FourCC'] as { BGRA?: number } | undefined;
+    const frameTypeEnum = library.lib['FrameType'] as { Progressive?: number } | undefined;
     return {
       xres: width,
       yres: height,
@@ -132,8 +152,8 @@ const createVideoFrame = (
       frameRateD: 1000,
       pictureAspectRatio: width / height,
       lineStrideBytes: width * 4,
-      frameFormatType: Number.isFinite(frameFormatType) ? frameFormatType : 1,
-      fourCC: Number.isFinite(fourCC) ? fourCC : 1,
+      frameFormatType: frameTypeEnum?.Progressive ?? 1,
+      fourCC: fourCCEnum?.BGRA ?? 1095911234,
     };
   }
   return {
@@ -169,14 +189,10 @@ export const startNdiOutput = async (
     await stopNdiOutput();
   }
 
-  const library = loadNdiLibrary();
+  const library = await loadNdiLibrary();
   if (!library) {
-    lastError = `Failed to load NDI backend. ${lastNdiLibraryLoadError ?? 'Install dependencies and restart the app.'}`;
-    return {
-      ok: false,
-      error: lastError,
-      status: getNdiStatus(),
-    };
+    lastError = `Failed to load NDI backend. ${lastNdiLibraryLoadError ?? 'Install grandi or grandiose and restart the app.'}`;
+    return { ok: false, error: lastError, status: await getNdiStatusAsync() };
   }
 
   try {
@@ -184,12 +200,8 @@ export const startNdiOutput = async (
       library.kind === 'grandi' ? library.lib['send'] : library.lib['sender']
     ) as ((opts: Record<string, unknown>) => Promise<GrandioseSender>) | undefined;
     if (typeof senderFn !== 'function') {
-      lastError = `Loaded NDI backend (${library.kind}) does not expose a sender function.`;
-      return {
-        ok: false,
-        error: lastError,
-        status: getNdiStatus(),
-      };
+      lastError = `NDI backend (${library.kind}) does not expose a sender function.`;
+      return { ok: false, error: lastError, status: await getNdiStatusAsync() };
     }
 
     ndiSender = await senderFn({
@@ -210,23 +222,19 @@ export const startNdiOutput = async (
       void (async () => {
         if (!isBroadcasting || !ndiSender || isFrameInFlight) return;
         isFrameInFlight = true;
-
         try {
           const outputWindow = getOutputWindow();
           if (!outputWindow || outputWindow.isDestroyed()) {
             await sendFallbackFrame(library);
             return;
           }
-
           const image = await outputWindow.webContents.capturePage();
           const size = image.getSize();
           if (size.width === 0 || size.height === 0) {
             await sendFallbackFrame(library);
             return;
           }
-
           const bitmap = image.toBitmap();
-
           await ndiSender.video(createVideoFrame(size.width, size.height, bitmap, library));
           framesSent += 1;
           usingFallbackFrame = false;
@@ -238,11 +246,7 @@ export const startNdiOutput = async (
           try {
             await sendFallbackFrame(library);
           } catch (fallbackError) {
-            const fallbackMessage =
-              fallbackError instanceof Error
-                ? fallbackError.message
-                : String(fallbackError);
-            lastError = fallbackMessage;
+            lastError = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
             console.error('[NDI] Fallback frame send error:', fallbackError);
           }
         } finally {
@@ -251,17 +255,13 @@ export const startNdiOutput = async (
       })();
     }, INTERVAL_MS);
 
-    return { ok: true, status: getNdiStatus() };
+    return { ok: true, status: await getNdiStatusAsync() };
   } catch (error) {
     console.error('[NDI] Failed to create sender:', error);
     isBroadcasting = false;
     ndiSender = null;
     lastError = error instanceof Error ? error.message : String(error);
-    return {
-      ok: false,
-      error: lastError,
-      status: getNdiStatus(),
-    };
+    return { ok: false, error: lastError, status: await getNdiStatusAsync() };
   }
 };
 
@@ -269,19 +269,14 @@ export const stopNdiOutput = async (): Promise<void> => {
   isBroadcasting = false;
   isFrameInFlight = false;
   usingFallbackFrame = false;
-
   if (captureInterval) {
     clearInterval(captureInterval);
     captureInterval = null;
   }
-
   if (ndiSender) {
     try {
-      if (typeof ndiSender.destroy === 'function') {
-        ndiSender.destroy();
-      } else if (typeof ndiSender.quit === 'function') {
-        ndiSender.quit();
-      }
+      if (typeof ndiSender.destroy === 'function') ndiSender.destroy();
+      else if (typeof ndiSender.quit === 'function') ndiSender.quit();
     } catch {
       void 0;
     }
@@ -290,12 +285,14 @@ export const stopNdiOutput = async (): Promise<void> => {
   }
 };
 
-export const getNdiStatus = (): NdiStatus => ({
+const getNdiStatusAsync = async (): Promise<NdiStatus> => ({
   running: isBroadcasting,
   sourceName,
   groupName,
   lastError,
-  libraryLoaded: loadNdiLibrary() !== null,
+  libraryLoaded: (await loadNdiLibrary()) !== null,
   framesSent,
   usingFallbackFrame,
 });
+
+export const getNdiStatus = async (): Promise<NdiStatus> => getNdiStatusAsync();

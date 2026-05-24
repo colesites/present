@@ -13,7 +13,7 @@ export const registerNdiIPC = (): void => {
     await stopNdiOutput();
   });
 
-  ipcMain.handle('ndi:status', () => {
+  ipcMain.handle('ndi:status', async () => {
     return getNdiStatus();
   });
 };

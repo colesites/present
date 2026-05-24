@@ -270,8 +270,21 @@ export default function Home() {
         return;
       }
 
-      clearSession();
+      // Convex returned a null user. This can happen either because the
+      // session is genuinely invalid OR because the query is mid-flight after a
+      // reconnect. Only force a sign-out when we have a cached user already
+      // (proving the session was once valid) AND Convex actively rejected.
+      // For first-load null responses we keep waiting instead of bouncing the
+      // user to sign-in.
+      if (user) {
+        console.warn(
+          "[Desktop Auth] Convex returned null user despite cached identity; treating as transient.",
+        );
+        setAuthStatus("loading");
+        return;
+      }
       console.error("[Desktop Auth] Convex rejected token");
+      clearSession();
       setError("Session expired. Please sign in again.");
       return;
     }

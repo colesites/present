@@ -63,6 +63,10 @@ interface DesktopRefreshSessionResponse {
   token?: string;
 }
 
+type DesktopRefreshSessionOutcome =
+  | { ok: true; data: DesktopRefreshSessionResponse | null }
+  | { ok: false; status: number; error: string };
+
 interface BrowserSuggestionsResponse {
   suggestions: string[];
 }
@@ -202,7 +206,7 @@ interface ElectronAPI {
   clearStoredAuthSession: () => Promise<boolean>;
   refreshDesktopSession: (
     sessionToken: string,
-  ) => Promise<DesktopRefreshSessionResponse | null>;
+  ) => Promise<DesktopRefreshSessionOutcome | DesktopRefreshSessionResponse | null>;
   openExternalBrowser: (url: string) => Promise<boolean>;
   onAuthCallback: (callback: (payload: DesktopAuthPayload) => void) => void;
   onOpenSettingsFromMenu: (callback: () => void) => void;
