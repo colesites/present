@@ -27,6 +27,17 @@ export default defineSchema({
     .index("by_slug", ["slug"])
     .index("by_clerk_org", ["clerkOrgId"]),
 
+  // Per-user, cross-device workspace preference (so the active organization
+  // selection follows the user from machine to machine). Without this every
+  // new login defaults to "the first organization the server happened to
+  // return", which hides data the user actually had on another device.
+  userPreferences: defineTable({
+    userId: v.string(), // Clerk user ID
+    workspaceType: v.union(v.literal("personal"), v.literal("organization")),
+    workspaceOrgId: v.optional(v.id("organizations")),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
+
   userBilling: defineTable({
     userId: v.string(),
     planKey: v.string(),

@@ -115,6 +115,13 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
     width: 1560,
     minWidth: 1180,
     minHeight: 760,
+    // Defer initial paint so users never see the default white Electron
+    // background before our renderer mounts. The hex matches our app
+    // background (hsl(238 30% 10%) ≈ #12131c) so the transition into the UI
+    // is seamless and avoids the "white flash" / "looks like it's about to
+    // crash" perception.
+    show: false,
+    backgroundColor: '#12131c',
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       nodeIntegration: false,
@@ -122,7 +129,15 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
       webSecurity: true,
       // Required for Clerk to work in Electron
       webviewTag: true,
+      // Avoid throttling timers/animations when the window is in the
+      // background (this is what causes momentary blanking when the window
+      // is restored from minimized/hidden on macOS).
+      backgroundThrottling: false,
     },
+  });
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
   });
 
   const url = getMainRendererUrl();
@@ -170,6 +185,52 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
 
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     console.error('[Main Window] Failed to load:', errorCode, errorDescription);
+  });
+
+  // Renderer process crashes — this is the #1 source of the "white flash /
+  // looks like the app is about to crash" symptom in production. Without
+  // handling it, Electron leaves a blank white window and the user has no
+  // signal anything is wrong. We log structured diagnostics and try to
+  // recover by reloading the window once. If the crash repeats immediately,
+  // we stop auto-reloading to avoid an infinite crash loop.
+  let lastCrashAt = 0;
+  let crashRecoveryAttempts = 0;
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    const now = Date.now();
+    const sinceLast = now - lastCrashAt;
+    lastCrashAt = now;
+    console.error('[Main Window] Renderer process gone:', {
+      reason: details.reason,
+      exitCode: details.exitCode,
+      sinceLastCrashMs: sinceLast,
+      attempts: crashRecoveryAttempts,
+    });
+
+    // "clean-exit" happens during normal teardown — ignore it.
+    if (details.reason === 'clean-exit') {
+      return;
+    }
+
+    if (sinceLast < 10_000 && crashRecoveryAttempts >= 2) {
+      console.error('[Main Window] Repeated renderer crashes — leaving the window in place for inspection.');
+      return;
+    }
+
+    crashRecoveryAttempts += 1;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.webContents.reload();
+      } catch (err) {
+        console.error('[Main Window] Failed to reload after crash:', err);
+      }
+    }
+  });
+
+  mainWindow.webContents.on('unresponsive', () => {
+    console.warn('[Main Window] Renderer became unresponsive');
+  });
+  mainWindow.webContents.on('responsive', () => {
+    console.info('[Main Window] Renderer responsive again');
   });
 
   mainWindow.webContents.on('did-finish-load', () => {

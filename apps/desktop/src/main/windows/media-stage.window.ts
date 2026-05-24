@@ -23,11 +23,13 @@ export const createMediaStageWindow = (): boolean => {
     show: false,
     title: 'Media Stage',
     icon: getDesktopAppIcon(),
+    backgroundColor: '#12131c',
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true,
+      backgroundThrottling: false,
     },
   });
 

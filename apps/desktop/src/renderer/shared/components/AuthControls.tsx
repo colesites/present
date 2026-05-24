@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Check, ChevronsUpDown, Plus, User } from "lucide-react";
+import { useMutation } from "convex/react";
+import { api } from "@present/backend/convex/_generated/api";
+import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { useDesktopSessionStore } from "../store/desktopSession";
 import { useSpeechUsageStore } from "../store/speechUsage";
 import {
@@ -69,6 +72,36 @@ export function AuthControls() {
   const organizations = useDesktopSessionStore((state) => state.organizations);
   const setOrgId = useDesktopSessionStore((state) => state.setOrgId);
   const clearSession = useDesktopSessionStore((state) => state.clearSession);
+  const persistCurrentWorkspace = useMutation(api.users.setCurrentWorkspace);
+
+  // Switch the active organization both locally (instant UI) and on the
+  // server (so the choice follows the user to other devices).
+  const handleSelectOrganization = useCallback(
+    (organization: { id: string; type: "personal" | "organization" }) => {
+      setOrgId(organization.id);
+      if (organization.type === "organization") {
+        void persistCurrentWorkspace({
+          workspaceType: "organization",
+          workspaceOrgId: organization.id as Id<"organizations">,
+        }).catch((error) => {
+          console.warn(
+            "[Desktop Auth] failed to persist workspace preference",
+            error,
+          );
+        });
+      } else {
+        void persistCurrentWorkspace({ workspaceType: "personal" }).catch(
+          (error) => {
+            console.warn(
+              "[Desktop Auth] failed to persist workspace preference",
+              error,
+            );
+          },
+        );
+      }
+    },
+    [persistCurrentWorkspace, setOrgId],
+  );
   const billing = useDesktopSessionStore((state) => state.user?.billing);
   const activeSpeechSessionStartedAtMs = useSpeechUsageStore(
     (state) => state.activeSessionStartedAtMs,
@@ -207,7 +240,7 @@ export function AuthControls() {
           {realOrganizations.map((organization) => (
             <DropdownMenuItem
               key={organization.id}
-              onClick={() => setOrgId(organization.id)}
+              onClick={() => handleSelectOrganization(organization)}
               className="mx-1 my-0.5 flex items-center justify-between rounded-md px-2 py-2"
             >
               <div className="flex min-w-0 items-center gap-2">

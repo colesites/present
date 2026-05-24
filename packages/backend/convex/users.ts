@@ -82,6 +82,36 @@ export const getCurrentUser = query({
       return total + Math.min(session.maxDurationSeconds, elapsedSeconds);
     }, 0);
 
+    // Pull the user's saved workspace preference (the active org selection
+    // that should follow them across devices). If it doesn't exist yet, or
+    // points to an organization they're no longer a member of, fall back to
+    // the first available org. "personal" is always valid for any signed-in
+    // user.
+    const preference = await ctx.db
+      .query("userPreferences")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+
+    const memberOrgIds = new Set(filteredOrganizations.map((o) => o.id));
+    let currentWorkspaceType: "personal" | "organization" =
+      filteredOrganizations.length === 0 ? "personal" : "organization";
+    let currentWorkspaceOrgId: string | null =
+      filteredOrganizations[0]?.id ?? null;
+
+    if (preference) {
+      if (preference.workspaceType === "personal") {
+        currentWorkspaceType = "personal";
+        currentWorkspaceOrgId = null;
+      } else if (
+        preference.workspaceType === "organization" &&
+        preference.workspaceOrgId &&
+        memberOrgIds.has(preference.workspaceOrgId)
+      ) {
+        currentWorkspaceType = "organization";
+        currentWorkspaceOrgId = preference.workspaceOrgId;
+      }
+    }
+
     return {
       user: {
         id: userId,
@@ -101,8 +131,67 @@ export const getCurrentUser = query({
         },
       },
       organizations: filteredOrganizations,
-      currentOrgId: filteredOrganizations[0]?.id ?? null,
+      // Legacy field kept so older builds still pick *something*.
+      currentOrgId: currentWorkspaceOrgId,
+      // New: the workspace that should be active across devices.
+      currentWorkspace: {
+        type: currentWorkspaceType,
+        orgId: currentWorkspaceOrgId,
+      },
     };
+  },
+});
+
+// Persist the user's active workspace selection. Called whenever the user
+// switches organization (or to/from Personal) so the choice follows them to
+// other devices.
+export const setCurrentWorkspace = mutation({
+  args: {
+    workspaceType: v.union(v.literal("personal"), v.literal("organization")),
+    workspaceOrgId: v.optional(v.id("organizations")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("Not authenticated");
+    }
+    const userId = identity.subject;
+
+    if (args.workspaceType === "organization") {
+      if (!args.workspaceOrgId) {
+        throw new ConvexError("workspaceOrgId is required for organization workspace");
+      }
+      // Verify the user is actually a member of this org before persisting.
+      const membership = await ctx.db
+        .query("userProfiles")
+        .withIndex("by_user_org", (q) =>
+          q.eq("userId", userId).eq("orgId", args.workspaceOrgId as Id<"organizations">),
+        )
+        .first();
+      if (!membership) {
+        throw new ConvexError("User is not a member of this organization");
+      }
+    }
+
+    const existing = await ctx.db
+      .query("userPreferences")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+
+    const patch = {
+      userId,
+      workspaceType: args.workspaceType,
+      workspaceOrgId:
+        args.workspaceType === "organization" ? args.workspaceOrgId : undefined,
+      updatedAt: Date.now(),
+    };
+
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+      return { _id: existing._id };
+    }
+    const _id = await ctx.db.insert("userPreferences", patch);
+    return { _id };
   },
 });
 

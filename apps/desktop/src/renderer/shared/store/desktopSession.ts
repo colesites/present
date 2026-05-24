@@ -54,6 +54,10 @@ interface DesktopSessionState {
     user: DesktopUser;
     organizations: DesktopOrganization[];
     currentOrgId?: string | null;
+    currentWorkspace?: {
+      type: "personal" | "organization";
+      orgId: string | null;
+    } | null;
   }) => void;
   setAuthStatus: (status: DesktopAuthStatus) => void;
   setError: (error: string | null) => void;
@@ -664,31 +668,59 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
     user,
     organizations,
     currentOrgId,
+    currentWorkspace,
   }: {
     user: DesktopUser;
     organizations: DesktopOrganization[];
     currentOrgId?: string | null;
+    currentWorkspace?: {
+      type: "personal" | "organization";
+      orgId: string | null;
+    } | null;
   }) => {
-    const selectedOrg =
-      (currentOrgId
-        ? organizations.find((org) => org.id === currentOrgId)
-        : null) ??
-      organizations[0] ??
-      null;
+    // Prefer the server-persisted workspace selection (which follows the user
+    // across devices). If absent, fall back to currentOrgId, then the first
+    // organization, then personal.
+    let workspaceType: "personal" | "organization" = "personal";
+    let workspaceOrgId: string | null = null;
+    let resolvedOrgId: string | null = null;
 
-    if (selectedOrg) {
-      useWorkspaceStore
-        .getState()
-        .setWorkspace(
-          selectedOrg.type === "personal" ? "personal" : "organization",
-          selectedOrg.type === "personal" ? null : selectedOrg.id
-        );
+    if (currentWorkspace) {
+      if (
+        currentWorkspace.type === "organization" &&
+        currentWorkspace.orgId &&
+        organizations.some((org) => org.id === currentWorkspace.orgId)
+      ) {
+        workspaceType = "organization";
+        workspaceOrgId = currentWorkspace.orgId;
+        resolvedOrgId = currentWorkspace.orgId;
+      } else if (currentWorkspace.type === "personal") {
+        workspaceType = "personal";
+        workspaceOrgId = null;
+        resolvedOrgId = null;
+      }
     }
+
+    if (workspaceType === "personal" && !currentWorkspace) {
+      const fallbackOrg =
+        (currentOrgId
+          ? organizations.find((org) => org.id === currentOrgId)
+          : null) ??
+        organizations.find((org) => org.type === "organization") ??
+        null;
+      if (fallbackOrg) {
+        workspaceType = "organization";
+        workspaceOrgId = fallbackOrg.id;
+        resolvedOrgId = fallbackOrg.id;
+      }
+    }
+
+    useWorkspaceStore.getState().setWorkspace(workspaceType, workspaceOrgId);
 
     set({
       authStatus: "authenticated",
       error: null,
-      orgId: selectedOrg?.id ?? null,
+      orgId: resolvedOrgId,
       organizations,
       user,
     });

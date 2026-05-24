@@ -49,9 +49,33 @@ export const createOutputWindow = (
     fullscreen: !isPrimary,
     icon: appIcon,
     autoHideMenuBar: true,
+    // The output window goes to the audience screen — a white flash here is
+    // catastrophic. Force a black background and only show after the first
+    // paint is ready.
+    backgroundColor: '#000000',
+    show: false,
     webPreferences: {
       preload: OUTPUT_WINDOW_PRELOAD_WEBPACK_ENTRY,
+      // Keep frame timing stable; without this the output can throttle when
+      // the main window steals focus, which manifests as a brief blank/white
+      // frame on the projector.
+      backgroundThrottling: false,
     },
+  });
+
+  outputWindow.once('ready-to-show', () => {
+    outputWindow?.show();
+  });
+
+  outputWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Output Window] Renderer gone:', details);
+    if (details.reason !== 'clean-exit' && outputWindow && !outputWindow.isDestroyed()) {
+      try {
+        outputWindow.webContents.reload();
+      } catch (err) {
+        console.error('[Output Window] reload after crash failed:', err);
+      }
+    }
   });
 
   if (isDev()) {

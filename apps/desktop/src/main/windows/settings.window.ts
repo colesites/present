@@ -30,11 +30,13 @@ export const createSettingsWindow = (): void => {
     minHeight: 620,
     show: false,
     title: 'Settings',
+    backgroundColor: '#12131c',
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true,
+      backgroundThrottling: false,
     },
   });
 

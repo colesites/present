@@ -103,6 +103,10 @@ export default function Home() {
           logo?: string;
         }>;
         currentOrgId: string | null;
+        currentWorkspace?: {
+          type: "personal" | "organization";
+          orgId: string | null;
+        };
       }
     | null
     | undefined;
@@ -293,6 +297,7 @@ export default function Home() {
       user: currentUser.user,
       organizations: currentUser.organizations,
       currentOrgId: currentUser.currentOrgId,
+      currentWorkspace: currentUser.currentWorkspace,
     });
     setAuthStatus("authenticated");
     setError(null);
