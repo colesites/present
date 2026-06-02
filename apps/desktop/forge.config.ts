@@ -13,6 +13,13 @@ import { mainConfig } from './webpack.main.config';
 import { rendererConfig } from './webpack.renderer.config';
 import { preloadConfig } from './webpack.preload.config';
 import { buildDesktopContentSecurityPolicy } from './csp';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { stageNdiModules, STAGE_NODE_MODULES } = require(
+  path.resolve(__dirname, 'scripts/stage-ndi.cjs'),
+) as {
+  stageNdiModules: () => boolean;
+  STAGE_NODE_MODULES: string;
+};
 
 const iconBasePath = path.resolve(__dirname, 'assets/icons/present');
 const linuxIconPath = path.resolve(__dirname, 'assets/icons/present.png');
@@ -25,6 +32,10 @@ const config: ForgeConfig = {
       path.resolve(__dirname, 'bible'),
       path.resolve(__dirname, 'assets/icons'),
       path.resolve(__dirname, 'parse_pptx.py'),
+      // Native NDI backend, shipped UNPACKED (outside app.asar) so the .node
+      // addon loads and the ESM entry resolves by absolute path at runtime.
+      // Populated by the prePackage hook below → Resources/node_modules.
+      STAGE_NODE_MODULES,
     ],
     icon: iconBasePath,
     extendInfo: {
@@ -43,6 +54,13 @@ const config: ForgeConfig = {
     ],
   },
   rebuildConfig: {},
+  hooks: {
+    // Stage the native NDI packages before packaging so the extraResource
+    // copy picks them up into Resources/node_modules.
+    prePackage: async () => {
+      stageNdiModules();
+    },
+  },
   makers: [
     new MakerSquirrel({
       // Squirrel uses this as the NuGet package id, so it cannot contain the

@@ -1,0 +1,57 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Present">
+  <defs>
+    <linearGradient id="tile" x1="64" y1="32" x2="448" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C4DFF"/>
+      <stop offset="0.55" stop-color="#5227FF"/>
+      <stop offset="1" stop-color="#3A12C8"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.3" cy="0.14" r="0.95">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="play" x1="232" y1="196" x2="232" y2="316" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#E3D8FF"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="9" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Tile -->
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#tile)"/>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#sheen)"/>
+  <rect x="24.5" y="24.5" width="463" height="463" rx="111.5" fill="none" stroke="#ffffff" stroke-opacity="0.12"/>
+
+  <!-- Radiant light rays behind the screen (worship light) -->
+  <g stroke="#ffffff" stroke-opacity="0.22" stroke-width="10" stroke-linecap="round">
+    <line x1="256" y1="118" x2="256" y2="70"/>
+    <line x1="343" y1="140" x2="372" y2="100"/>
+    <line x1="169" y1="140" x2="140" y2="100"/>
+    <line x1="396" y1="214" x2="440" y2="196"/>
+    <line x1="116" y1="214" x2="72" y2="196"/>
+  </g>
+  <!-- Soft halo glow -->
+  <circle cx="256" cy="252" r="150" fill="url(#halo)" opacity="0.5"/>
+
+  <!-- Screen / slide -->
+  <rect x="126" y="158" width="260" height="188" rx="34"
+        fill="#ffffff" fill-opacity="0.14"
+        stroke="#ffffff" stroke-opacity="0.55" stroke-width="6"/>
+
+  <!-- Play (presentation) triangle, rounded -->
+  <g filter="url(#soft)">
+    <path d="M232 212 L300 252 L232 292 Z"
+          fill="url(#play)" stroke="url(#play)" stroke-width="26"
+          stroke-linejoin="round" stroke-linecap="round"/>
+  </g>
+</svg>

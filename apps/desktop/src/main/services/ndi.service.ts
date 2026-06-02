@@ -1,3 +1,7 @@
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { app } from 'electron';
 import { getOutputWindow } from '../windows/output.window';
 
 type NdiLibraryKind = 'grandi' | 'grandiose';
@@ -56,16 +60,57 @@ const FALLBACK_WIDTH = 1280;
 const FALLBACK_HEIGHT = 720;
 const fallbackFrameBuffer = Buffer.alloc(FALLBACK_WIDTH * FALLBACK_HEIGHT * 4);
 
-// grandi ships ESM-only (main: dist/index.mjs); CommonJS `require()` is
-// unreliable inside Electron's main process even on Node 22.x. Dynamic import
-// hits Node's real ESM loader. webpackIgnore keeps the literal import in the
-// bundled output so webpack does not try to resolve it at build time.
-const importGrandi = async (): Promise<Record<string, unknown>> =>
-  (await import(/* webpackIgnore: true */ 'grandi')) as Record<string, unknown>;
+// grandi ships ESM-only (main: dist/index.mjs) and bundles a native .node
+// addon, so it can't live inside app.asar. In production it's staged into
+// `Resources/node_modules` (see forge.config.ts prePackage hook) and imported
+// by absolute file:// URL. In dev we resolve it from node_modules normally.
+//
+// webpackIgnore keeps the dynamic import out of the webpack graph so the
+// literal survives into the bundle and hits Node's real ESM loader at runtime.
+const resolvePackagedNdiEntry = (pkg: string): string | null => {
+  try {
+    const base = path.join(process.resourcesPath, 'node_modules', pkg);
+    const manifestPath = path.join(base, 'package.json');
+    if (!existsSync(manifestPath)) {
+      return null;
+    }
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      main?: string;
+      module?: string;
+    };
+    const entry = manifest.module ?? manifest.main ?? 'index.js';
+    return path.join(base, entry);
+  } catch {
+    return null;
+  }
+};
 
-const importGrandiose = async (): Promise<Record<string, unknown>> =>
-  // @ts-expect-error grandiose is an optional NDI backend; not installed by default.
-  (await import(/* webpackIgnore: true */ 'grandiose')) as Record<string, unknown>;
+const importNdiPackage = async (
+  pkg: 'grandi' | 'grandiose',
+): Promise<Record<string, unknown>> => {
+  if (app.isPackaged) {
+    const entry = resolvePackagedNdiEntry(pkg);
+    if (!entry || !existsSync(entry)) {
+      throw new Error(
+        `${pkg} was not found in the packaged app resources. ` +
+          `Expected it under Resources/node_modules/${pkg}.`,
+      );
+    }
+    const specifier = pathToFileURL(entry).href;
+    return (await import(/* webpackIgnore: true */ specifier)) as Record<
+      string,
+      unknown
+    >;
+  }
+  // Development: resolve from the workspace node_modules.
+  return (await import(/* webpackIgnore: true */ pkg)) as Record<string, unknown>;
+};
+
+const importGrandi = (): Promise<Record<string, unknown>> =>
+  importNdiPackage('grandi');
+
+const importGrandiose = (): Promise<Record<string, unknown>> =>
+  importNdiPackage('grandiose');
 
 const normalizeNamespace = (mod: Record<string, unknown>): Record<string, unknown> => {
   const defaultExport = mod['default'];

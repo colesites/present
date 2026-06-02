@@ -5,9 +5,13 @@ import { StaggeredMenu } from "@/components/StaggeredMenu";
 
 const Logo = () => (
   <Link href="/" className="flex items-center gap-3 group pointer-events-auto">
-    <div className="h-10 w-10 rounded bg-primary flex items-center justify-center font-bold text-white text-xl rounded-tl-xl rounded-br-xl shadow-[0_0_20px_rgba(var(--primary),0.5)] transition-transform group-hover:scale-105">
-      P
-    </div>
+    <img
+      src="/present-mark.svg"
+      alt="Present"
+      width={40}
+      height={40}
+      className="h-10 w-10 rounded-[11px] shadow-[0_0_22px_rgba(82,39,255,0.45)] transition-transform group-hover:scale-105"
+    />
     <span className="text-2xl font-bold tracking-tight text-white group-hover:text-primary transition-colors">Present</span>
   </Link>
 );
