@@ -9,6 +9,51 @@ export type ViewMode = "show" | "edit" | "stage" | "settings" | "browser";
 export type BottomTab = "shows" | "media" | "scripture";
 export type ContentSource = "my-creations" | "community";
 
+// The right-side tabbed rail (Audio / Text / Timer / Messages / Layers /
+// Masters). Distinct from `BottomTab` which is a legacy concept for the
+// center-area content (libraries vs media grid vs scripture).
+//
+// Note: the [M] tab is "Masters" (slide templates the operator can drop in
+// instantly — Blank Stream, Main Worship, Pre-Service, etc.), NOT the
+// photo/video media panel. Photo/video media keeps its own home in the
+// main-area bottom row.
+export type SidebarTab =
+  | "audio"
+  | "text"
+  | "timer"
+  | "messages"
+  | "layers"
+  | "masters";
+
+export const SIDEBAR_TABS: readonly SidebarTab[] = [
+  "audio",
+  "text",
+  "timer",
+  "messages",
+  "layers",
+  "masters",
+] as const;
+
+// Banner message that appears on the audience output as a top/bottom strip.
+export type MessageOverlayPosition = "top" | "bottom";
+export type MessageOverlayDismiss = "manual" | "after-10s" | "after-30s";
+export type MessageOverlayAnimation =
+  | "static"
+  | "marquee-left"
+  | "marquee-right";
+
+export type MessageOverlay = {
+  id: string;
+  text: string; // Already token-substituted by the time it reaches output.
+  position: MessageOverlayPosition;
+  themeKey: string;
+  shownAtMs: number;
+  dismissMode: MessageOverlayDismiss;
+  animation: MessageOverlayAnimation;
+  // Seconds for one full marquee pass. Ignored when animation === "static".
+  speedSeconds: number;
+};
+
 export type RenameTarget = {
   type: "service" | "category" | "library";
   id: string;

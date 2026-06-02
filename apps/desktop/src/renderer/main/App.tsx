@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { AppHeader } from "../../features/header";
 import type { MediaPanelRef } from "../../features/media";
 import { useMediaFolders } from "../../features/media/hooks";
@@ -28,6 +28,8 @@ import {
 } from "../shared/store/desktopSession";
 import { api } from "@present/backend/convex/_generated/api";
 import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvider";
+import { ThemesModal } from "../../features/themes";
+import { useThemesModalStore } from "../shared/store/themesModal";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
 import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
@@ -55,6 +57,7 @@ export default function Home() {
   const setError = useDesktopSessionStore((state) => state.setError);
   const clearSession = useDesktopSessionStore((state) => state.clearSession);
   const isConvexAuthReady = useDesktopConvexAuthReady();
+  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const [isOnline, setIsOnline] = useState(() =>
     typeof navigator === "undefined" ? true : navigator.onLine
   );
@@ -76,7 +79,9 @@ export default function Home() {
 
   const currentUser = useQuery(
     api.users.getCurrentUser,
-    sessionToken && isOnline && isConvexAuthReady ? {} : "skip"
+    sessionToken && isOnline && isConvexAuthReady && isConvexAuthenticated
+      ? {}
+      : "skip"
   ) as
     | {
         user: {
@@ -112,7 +117,9 @@ export default function Home() {
     | undefined;
   const organizationsFallback = useQuery(
     api.users.listMyOrganizations,
-    sessionToken && isOnline && isConvexAuthReady ? {} : "skip"
+    sessionToken && isOnline && isConvexAuthReady && isConvexAuthenticated
+      ? {}
+      : "skip"
   ) as
     | Array<{
         id: string;
@@ -186,6 +193,26 @@ export default function Home() {
   }, [hasHydratedSession, isOnline, sessionToken]);
 
   useEffect(() => {
+    if (!hasHydratedSession || !sessionToken || user) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const state = useDesktopSessionStore.getState();
+      if (
+        state.sessionToken &&
+        !state.user &&
+        state.authStatus === "loading"
+      ) {
+        state.setAuthStatus("unauthenticated");
+        state.setError("Unable to restore your desktop session. Please sign in again.");
+      }
+    }, 15_000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [hasHydratedSession, sessionToken, user]);
+
+  useEffect(() => {
     console.info("[Desktop Auth] desktop runtime config", {
       convexUrl: process.env.CONVEX_URL ?? null,
     });
@@ -221,12 +248,20 @@ export default function Home() {
       return;
     }
 
-    if (!isConvexAuthReady) {
+    if (!isConvexAuthReady || !isConvexAuthenticated) {
+      if (user) {
+        setAuthStatus("authenticated");
+        return;
+      }
       setAuthStatus("loading");
       return;
     }
 
     if (typeof currentUser === "undefined") {
+      if (user) {
+        setAuthStatus("authenticated");
+        return;
+      }
       setAuthStatus("loading");
       return;
     }
@@ -282,9 +317,9 @@ export default function Home() {
       // user to sign-in.
       if (user) {
         console.warn(
-          "[Desktop Auth] Convex returned null user despite cached identity; treating as transient.",
+          "[Desktop Auth] Convex returned null user despite cached identity; keeping cached session while sync retries.",
         );
-        setAuthStatus("loading");
+        setAuthStatus("authenticated");
         return;
       }
       console.error("[Desktop Auth] Convex rejected token");
@@ -307,6 +342,7 @@ export default function Home() {
     hasHydratedSession,
     isOnline,
     isConvexAuthReady,
+    isConvexAuthenticated,
     organizations,
     organizationsFallback,
     setAuthStatus,
@@ -553,6 +589,8 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     showsPanelRef,
     mediaPanelRef,
     scripturePanelRef,
+    showTextInOutput,
+    setShowTextInOutput,
   });
 
   const renderPresentContainer = (mode: ViewMode) => (
@@ -651,6 +689,16 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       ) : (
         renderPresentContainer(effectiveViewMode)
       )}
+
+      {/* Themes modal lives at the top of the tree so any view (editor or
+          show mode) can open it. The editor watches the modal's "pending"
+          payload and applies it to the selected slide. */}
+      <ThemesModal
+        orgId={effectiveOrgId ?? null}
+        onApplyTheme={(payload) =>
+          useThemesModalStore.getState().dispatchApply(payload)
+        }
+      />
     </div>
   );
 }

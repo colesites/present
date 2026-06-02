@@ -319,6 +319,18 @@ export function OutputWindow() {
               ? msg.timerVisible
               : prev.timerVisible,
         }));
+      } else if (msg.type === "message-overlay") {
+        const overlay = msg.overlay as OutputState["messageOverlay"];
+        setState((prev) => ({
+          ...prev,
+          messageOverlay: overlay ?? null,
+        }));
+      } else if (msg.type === "props-overlay") {
+        const props = msg.props as OutputState["propsOverlay"];
+        setState((prev) => ({
+          ...prev,
+          propsOverlay: Array.isArray(props) ? props : null,
+        }));
       } else if (msg.type === "clear") {
         setState((prev) => ({
           ...prev,
@@ -669,8 +681,188 @@ export function OutputWindow() {
           </div>
         </div>
       ))}
+      <PropsOverlayLayer items={state.propsOverlay ?? null} />
+      <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
     </div>
   );
+}
+
+// Banner-style overlay rendered above the slide regions. Positioned top or
+// bottom; styled by themeKey. Supports static and marquee animations.
+// Auto-dismiss timing is handled by the operator's renderer (which clears
+// the overlay broadcast); the audience output is purely presentational.
+function MessageOverlayLayer({
+  overlay,
+}: {
+  overlay: OutputState["messageOverlay"];
+}) {
+  if (!overlay || !overlay.text.trim()) {
+    return null;
+  }
+
+  const positionStyle: React.CSSProperties =
+    overlay.position === "top"
+      ? { top: 0, left: 0, right: 0 }
+      : { bottom: 0, left: 0, right: 0 };
+  const themeStyle = getOverlayThemeStyle(overlay.themeKey);
+
+  const isMarquee =
+    overlay.animation === "marquee-left" ||
+    overlay.animation === "marquee-right";
+
+  if (isMarquee) {
+    const direction =
+      overlay.animation === "marquee-left"
+        ? "presentMarqueeLeft"
+        : "presentMarqueeRight";
+    const duration = Math.max(2, overlay.speedSeconds || 12);
+
+    return (
+      <div
+        className="pointer-events-none absolute z-50 overflow-hidden whitespace-nowrap py-4"
+        style={{ ...positionStyle, ...themeStyle }}
+      >
+        <style>
+          {`
+            @keyframes presentMarqueeLeft {
+              0%   { transform: translateX(100%); }
+              100% { transform: translateX(-100%); }
+            }
+            @keyframes presentMarqueeRight {
+              0%   { transform: translateX(-100%); }
+              100% { transform: translateX(100%); }
+            }
+          `}
+        </style>
+        <span
+          className="inline-block font-semibold leading-tight"
+          style={{
+            fontSize: "min(5vw, 56px)",
+            animation: `${direction} ${duration}s linear infinite`,
+            willChange: "transform",
+            paddingLeft: "100%",
+          }}
+        >
+          {overlay.text}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="pointer-events-none absolute z-50 flex items-center justify-center px-12 py-6"
+      style={{ ...positionStyle, ...themeStyle }}
+    >
+      <span
+        className="text-center font-semibold leading-tight"
+        style={{ fontSize: "min(6vw, 64px)" }}
+      >
+        {overlay.text}
+      </span>
+    </div>
+  );
+}
+
+// Image / text props composited above the live slide. Each prop is
+// positioned by preset slot (corners, center, or full screen).
+function PropsOverlayLayer({
+  items,
+}: {
+  items: OutputState["propsOverlay"];
+}) {
+  if (!items || items.length === 0) return null;
+  return (
+    <>
+      {items.map((item) => {
+        const slotStyle = getPropSlotStyle(item.position, item.sizePercent);
+        const baseStyle: React.CSSProperties = {
+          ...slotStyle,
+          opacity: item.opacity,
+        };
+        if (item.kind === "image" && item.imageUrl) {
+          return (
+            <img
+              key={item.id}
+              src={item.imageUrl}
+              alt=""
+              className="pointer-events-none absolute z-40 object-contain"
+              style={baseStyle}
+            />
+          );
+        }
+        if (item.kind === "text" && item.text) {
+          return (
+            <div
+              key={item.id}
+              className="pointer-events-none absolute z-40 flex items-center justify-center text-center"
+              style={baseStyle}
+            >
+              <span
+                className="font-semibold leading-tight"
+                style={{
+                  color: item.color ?? "white",
+                  fontSize: `${item.fontSize ?? 48}px`,
+                  textShadow: "0 2px 8px rgba(0,0,0,0.6)",
+                }}
+              >
+                {item.text}
+              </span>
+            </div>
+          );
+        }
+        return null;
+      })}
+    </>
+  );
+}
+
+function getPropSlotStyle(
+  position: NonNullable<OutputState["propsOverlay"]>[number]["position"],
+  sizePercent: number,
+): React.CSSProperties {
+  const sz = `${Math.max(5, Math.min(100, sizePercent))}%`;
+  const inset = "3%";
+  switch (position) {
+    case "top-left":
+      return { top: inset, left: inset, width: sz };
+    case "top-right":
+      return { top: inset, right: inset, width: sz };
+    case "bottom-left":
+      return { bottom: inset, left: inset, width: sz };
+    case "bottom-right":
+      return { bottom: inset, right: inset, width: sz };
+    case "center":
+      return {
+        top: "50%",
+        left: "50%",
+        width: sz,
+        transform: "translate(-50%, -50%)",
+      };
+    case "full":
+    default:
+      return { top: 0, left: 0, right: 0, bottom: 0 };
+  }
+}
+
+function getOverlayThemeStyle(themeKey: string): React.CSSProperties {
+  switch (themeKey) {
+    case "warning":
+      return { background: "rgba(245, 158, 11, 0.92)", color: "#111" };
+    case "info":
+      return { background: "rgba(37, 99, 235, 0.92)", color: "white" };
+    case "danger":
+      return { background: "rgba(220, 38, 38, 0.92)", color: "white" };
+    case "transparent":
+      return {
+        background: "transparent",
+        color: "white",
+        textShadow: "0 2px 12px rgba(0,0,0,0.85)",
+      };
+    case "default":
+    default:
+      return { background: "rgba(15, 15, 18, 0.85)", color: "white" };
+  }
 }
 
 function cn(...classes: Array<string | undefined | null | false>) {

@@ -15,13 +15,17 @@ import type * as debug from "../debug.js";
 import type * as http from "../http.js";
 import type * as libraries from "../libraries.js";
 import type * as lyrics from "../lyrics.js";
+import type * as messages from "../messages.js";
 import type * as orgScopes from "../orgScopes.js";
 import type * as organizations from "../organizations.js";
 import type * as personalCategories from "../personalCategories.js";
 import type * as playback from "../playback.js";
 import type * as playlists from "../playlists.js";
+import type * as props from "../props.js";
 import type * as reset from "../reset.js";
 import type * as services from "../services.js";
+import type * as slideMasters from "../slideMasters.js";
+import type * as themes from "../themes.js";
 import type * as users from "../users.js";
 
 import type {
@@ -38,13 +42,17 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   libraries: typeof libraries;
   lyrics: typeof lyrics;
+  messages: typeof messages;
   orgScopes: typeof orgScopes;
   organizations: typeof organizations;
   personalCategories: typeof personalCategories;
   playback: typeof playback;
   playlists: typeof playlists;
+  props: typeof props;
   reset: typeof reset;
   services: typeof services;
+  slideMasters: typeof slideMasters;
+  themes: typeof themes;
   users: typeof users;
 }>;
 

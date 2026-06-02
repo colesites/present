@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importLibraryBundle: (folderPath: string) =>
     ipcRenderer.invoke('import-library-bundle', folderPath),
   selectMediaFile: () => ipcRenderer.invoke('select-media-file'),
+  selectAudioFiles: () => ipcRenderer.invoke('select-audio-files'),
+  selectPropImage: () => ipcRenderer.invoke('select-prop-image'),
   selectPresentationFiles: () => ipcRenderer.invoke('select-presentation-files'),
   copyMediaFile: (source: string, target: string) => ipcRenderer.invoke('copy-media-file', source, target),
   createDirectory: (parent: string, name: string) => ipcRenderer.invoke('create-directory', parent, name),

@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { LibraryItem, Category, ContentSource, LibraryItemDraft } from "../../shared/types";
+import type { LibrarySearchMode } from "../library/hooks";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import { Input } from "../../renderer/shared/components/ui/input";
 import { toast } from "sonner";
@@ -29,6 +30,9 @@ import {
   Search,
   ArrowUpDown,
   Check,
+  ChevronDown,
+  ChevronUp,
+  GripVertical,
   Layers3,
   ArrowUp,
   ArrowDown,
@@ -37,8 +41,15 @@ import {
   LayoutGrid,
   List,
   Loader2,
+  Library,
   Mic,
   MicOff,
+  Music2,
+  BookOpenText,
+  FileText,
+  Pencil,
+  Plus,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -69,6 +80,9 @@ interface LibrariesPanelProps {
     body: string,
     categoryId?: string,
   ) => Promise<unknown>;
+  // Creates an empty library item and opens it directly in the editor
+  // (Lyrics view). Used by the "New library item" buttons instead of a modal.
+  onNewLibraryItem: () => Promise<void>;
   onCreateLibraryItemFromDraft: (
     draft: LibraryItemDraft,
     categoryId?: string,
@@ -77,6 +91,7 @@ interface LibrariesPanelProps {
     title: string,
     itemIds: string[],
     categoryId?: string,
+    slideSelections?: Record<string, number[]>,
   ) => Promise<unknown>;
   onRenameLibraryItem: (id: string, title: string) => Promise<void>;
   onDeleteLibraryItem: (id: string) => Promise<void>;
@@ -85,6 +100,8 @@ interface LibrariesPanelProps {
   onFixLyrics: (lyrics: string) => Promise<string>;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  searchMode: LibrarySearchMode;
+  onSearchModeChange: (mode: LibrarySearchMode) => void;
   contentSource: ContentSource;
   speechLang: string;
   speechInputDeviceId: string | null;
@@ -106,23 +123,23 @@ export const LibrariesPanel = memo(
       isLoading = false,
       onSelectLibraryItem,
       onSelectCategory,
-      onCreateLibraryItem,
+      onNewLibraryItem,
       onCreateLibraryItemFromDraft,
       onCreateComposedLibraryItem,
       onRenameLibraryItem,
       onDeleteLibraryItem,
       onAddToService,
       onCreateCategory,
-      onFixLyrics,
       searchQuery,
       onSearchChange,
+      searchMode,
+      onSearchModeChange,
       contentSource,
       speechLang,
       speechInputDeviceId,
     }: LibrariesPanelProps,
     ref,
   ) {
-    const [showNewLibraryItemDialog, setShowNewLibraryItemDialog] = useState(false);
     const [showNewCategoryDialog, setShowNewCategoryDialog] = useState(false);
     const [showComposeDialog, setShowComposeDialog] = useState(false);
     const [renameTarget, setRenameTarget] = useState<{
@@ -137,7 +154,10 @@ export const LibrariesPanel = memo(
     const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
     const [layoutMode, setLayoutMode] = useState<"grid" | "list">("list");
-    const [selectedComposeIds, setSelectedComposeIds] = useState<string[]>([]);
+    // Selection state was removed from the library list — flow composition
+    // now happens entirely inside the Create Flow wizard. Kept the dialog's
+    // mount as `showComposeDialog`.
+
 
     const searchInputRef = useRef<HTMLInputElement>(null);
     const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
@@ -190,7 +210,6 @@ export const LibrariesPanel = memo(
     }, [libraryItems, searchQuery, selectedCategoryId, sortBy, sortOrder]);
 
     const hasActiveSearch = searchQuery.trim().length > 0;
-    const composeSelectionCount = selectedComposeIds.length;
 
     const handleSpeechToggle = () => {
       searchInputRef.current?.focus();
@@ -248,14 +267,6 @@ export const LibrariesPanel = memo(
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to export libraries");
       }
-    };
-
-    const toggleComposeSelection = (itemId: string) => {
-      setSelectedComposeIds((previous) =>
-        previous.includes(itemId)
-          ? previous.filter((currentId) => currentId !== itemId)
-          : [...previous, itemId],
-      );
     };
 
     const handleImportLibraries = async () => {
@@ -344,47 +355,75 @@ export const LibrariesPanel = memo(
             <button
               type="button"
               onClick={() => setShowNewCategoryDialog(true)}
-              className="mt-3 flex w-full items-center justify-between rounded-xl border border-dashed border-border/80 px-3 py-2 text-[11px] font-medium text-muted-foreground transition hover:border-primary/50 hover:text-primary"
+              className="mt-3 flex w-full items-center justify-between rounded-xl border border-dashed border-border/80 px-3 py-2 text-[11px] font-medium text-muted-foreground transition hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
             >
               New library
-              <span className="text-sm leading-none">+</span>
+              <Plus className="h-3.5 w-3.5" strokeWidth={2} />
             </button>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-auto p-2">
             <button
               type="button"
               onClick={() => onSelectCategory(null)}
               className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
+                "group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs transition",
                 !selectedCategoryId
-                  ? "bg-primary text-primary-foreground"
-                  : "text-foreground hover:bg-secondary"
+                  ? "bg-primary/[0.10] font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground",
               )}
             >
+              {!selectedCategoryId && (
+                <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-primary" />
+              )}
+              <Library
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0",
+                  !selectedCategoryId ? "text-primary" : "text-muted-foreground",
+                )}
+                strokeWidth={1.8}
+              />
               <span className="min-w-0 flex-1 truncate">All Libraries</span>
-              <span className="shrink-0 text-[10px] opacity-70">
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums",
+                  !selectedCategoryId
+                    ? "bg-primary/15 text-primary"
+                    : "bg-secondary text-muted-foreground",
+                )}
+              >
                 {libraryItems.length}
               </span>
             </button>
 
             {categories.map((cat) => {
               const count = libraryItems.filter(item => item.categoryId === cat._id).length;
+              const isActive = selectedCategoryId === cat._id;
               return (
                 <button
                   key={cat._id}
                   type="button"
                   onClick={() => onSelectCategory(cat._id)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
-                    selectedCategoryId === cat._id
-                      ? "bg-primary text-primary-foreground"
-                      : "text-foreground hover:bg-secondary"
+                    "group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs transition",
+                    isActive
+                      ? "bg-primary/[0.10] font-medium text-foreground"
+                      : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground",
                   )}
                 >
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-primary" />
+                  )}
                   <span className="min-w-0 flex-1 truncate">{cat.name}</span>
                   {count > 0 && (
-                    <span className="shrink-0 text-[10px] opacity-70">
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums",
+                        isActive
+                          ? "bg-primary/15 text-primary"
+                          : "bg-secondary text-muted-foreground",
+                      )}
+                    >
                       {count}
                     </span>
                   )}
@@ -407,10 +446,37 @@ export const LibrariesPanel = memo(
                       ref={searchInputRef}
                       value={searchQuery}
                       onChange={(e) => onSearchChange(e.target.value)}
-                      placeholder="Search title or lyrics..."
+                      placeholder={
+                        searchMode === "exact"
+                          ? "Search exact phrase..."
+                          : "Search title or lyrics..."
+                      }
                       className="h-10 w-full rounded-xl border-border/80 bg-background/90 pl-9 pr-3 text-xs shadow-sm"
                     />
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onSearchModeChange(
+                        searchMode === "exact" ? "broad" : "exact",
+                      )
+                    }
+                    aria-pressed={searchMode === "exact"}
+                    title={
+                      searchMode === "exact"
+                        ? "Exact match: finds the whole phrase as typed. Click for broad match."
+                        : "Broad match: finds items containing each word. Click for exact match."
+                    }
+                    className={cn(
+                      "h-10 shrink-0 rounded-xl border px-3 text-xs font-medium transition-colors",
+                      searchMode === "exact"
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-input bg-background text-muted-foreground hover:bg-secondary",
+                    )}
+                  >
+                    Exact
+                  </button>
 
                   <button
                     type="button"
@@ -477,30 +543,12 @@ export const LibrariesPanel = memo(
                 <button
                   type="button"
                   onClick={() => setShowComposeDialog(true)}
-                  disabled={composeSelectionCount < 2}
-                  className={cn(
-                    "inline-flex h-10 items-center gap-2 rounded-xl px-3 text-xs font-semibold shadow-sm transition",
-                    composeSelectionCount >= 2
-                      ? "border border-[#ff6f59]/30 bg-[#ff6f59]/12 text-[#ff6f59] hover:bg-[#ff6f59]/18"
-                      : "border border-input bg-background text-muted-foreground",
-                  )}
-                  title="Create one flow from selected library items"
+                  className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#ff6f59]/30 bg-[#ff6f59]/12 px-3 text-xs font-semibold text-[#ff6f59] shadow-sm transition hover:bg-[#ff6f59]/18"
+                  title="Create a flow by picking songs and slides"
                 >
                   <Layers3 className="h-4 w-4" />
                   Create flow
                 </button>
-
-                {composeSelectionCount > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedComposeIds([])}
-                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-input bg-background px-3 text-xs font-medium text-muted-foreground shadow-sm transition hover:bg-secondary"
-                    title="Clear selected libraries"
-                  >
-                    <X className="h-4 w-4" />
-                    {composeSelectionCount} selected
-                  </button>
-                ) : null}
 
                 <button
                   type="button"
@@ -629,7 +677,7 @@ export const LibrariesPanel = memo(
                   {!hasActiveSearch ? (
                     <button
                       type="button"
-                      onClick={() => setShowNewLibraryItemDialog(true)}
+                      onClick={() => { void onNewLibraryItem(); }}
                       className="mt-4 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90"
                     >
                       New library item
@@ -639,15 +687,13 @@ export const LibrariesPanel = memo(
               </div>
             ) : layoutMode === "grid" ? (
               <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
-                <NewLibraryItemButton onClick={() => setShowNewLibraryItemDialog(true)} />
+                <NewLibraryItemButton onClick={() => { void onNewLibraryItem(); }} />
                 {filteredItems.map((item) => (
                   <LibraryItemCard
                     key={item._id}
                     item={item}
                     isSelected={selectedLibraryId === item._id}
                     showAddToService={isInsideService && !!selectedServiceId}
-                    isChecked={selectedComposeIds.includes(item._id)}
-                    onToggleSelected={() => toggleComposeSelection(item._id)}
                     onSelect={() => onSelectLibraryItem(item._id)}
                     onRename={() =>
                       setRenameTarget({ id: item._id, title: item.title })
@@ -661,15 +707,13 @@ export const LibrariesPanel = memo(
               </div>
             ) : (
               <div className="space-y-1.5">
-                <NewLibraryItemRowButton onClick={() => setShowNewLibraryItemDialog(true)} />
+                <NewLibraryItemRowButton onClick={() => { void onNewLibraryItem(); }} />
                 {filteredItems.map((item) => (
                   <LibraryItemRow
                     key={item._id}
                     item={item}
                     isSelected={selectedLibraryId === item._id}
                     showAddToService={isInsideService && !!selectedServiceId}
-                    isChecked={selectedComposeIds.includes(item._id)}
-                    onToggleSelected={() => toggleComposeSelection(item._id)}
                     onSelect={() => onSelectLibraryItem(item._id)}
                     onRename={() =>
                       setRenameTarget({ id: item._id, title: item.title })
@@ -687,16 +731,6 @@ export const LibrariesPanel = memo(
       </ResizablePanelGroup>
 
       {/* Dialogs */}
-        {showNewLibraryItemDialog && (
-          <NewLibraryItemDialog
-            onClose={() => setShowNewLibraryItemDialog(false)}
-            onCreate={onCreateLibraryItem}
-            onFixLyrics={onFixLyrics}
-            categoryId={selectedCategoryId}
-            categories={categories}
-          />
-        )}
-
         {showNewCategoryDialog && (
           <NewCategoryDialog
             onClose={() => setShowNewCategoryDialog(false)}
@@ -706,14 +740,17 @@ export const LibrariesPanel = memo(
 
         {showComposeDialog && (
           <ComposeLibrariesDialog
-            itemIds={selectedComposeIds}
             libraryItems={libraryItems}
             categories={categories}
             categoryId={selectedCategoryId}
             onClose={() => setShowComposeDialog(false)}
-            onCreate={async (title, itemIds, categoryId) => {
-              await onCreateComposedLibraryItem(title, itemIds, categoryId);
-              setSelectedComposeIds([]);
+            onCreate={async (title, itemIds, categoryId, slideSelections) => {
+              await onCreateComposedLibraryItem(
+                title,
+                itemIds,
+                categoryId,
+                slideSelections,
+              );
               setShowComposeDialog(false);
             }}
           />
@@ -746,12 +783,50 @@ export const LibrariesPanel = memo(
 );
 
 // Sub-components
+
+// Visual identity for a library item based on its type / composition.
+// Returns a leading icon and a colour tint so each row/card reads at a glance.
+function getItemVisual(item: LibraryItem): {
+  Icon: typeof Music2;
+  tint: string;
+  label: string;
+} {
+  const isFlow = Boolean(item.content?.composition);
+  if (isFlow) {
+    return {
+      Icon: Layers3,
+      tint: "bg-[#ff6f59]/15 text-[#ff6f59]",
+      label: "Flow",
+    };
+  }
+  switch (item.type) {
+    case "scripture":
+      return {
+        Icon: BookOpenText,
+        tint: "bg-amber-500/15 text-amber-400",
+        label: "Scripture",
+      };
+    case "slide":
+    case "note":
+      return {
+        Icon: FileText,
+        tint: "bg-violet-500/15 text-violet-400",
+        label: item.type === "note" ? "Note" : "Slides",
+      };
+    case "song":
+    default:
+      return {
+        Icon: Music2,
+        tint: "bg-sky-500/15 text-sky-400",
+        label: "Song",
+      };
+  }
+}
+
 interface LibraryItemCardProps {
   item: LibraryItem;
   isSelected: boolean;
   showAddToService: boolean;
-  isChecked: boolean;
-  onToggleSelected: () => void;
   onSelect: () => void;
   onRename: () => void;
   onDelete: () => void;
@@ -762,68 +837,73 @@ const LibraryItemCard = memo(function LibraryItemCard({
   item,
   isSelected,
   showAddToService,
-  isChecked,
-  onToggleSelected,
   onSelect,
   onRename,
   onDelete,
   onAddToService,
 }: LibraryItemCardProps) {
+  const { Icon, tint, label } = getItemVisual(item);
   return (
     <div
       className={cn(
-        "group rounded-lg border px-3 py-2 text-left text-xs transition",
+        "group relative flex flex-col gap-2.5 rounded-xl border p-3 text-left transition-all duration-150",
         isSelected
-          ? "border-primary bg-primary/10 text-primary"
-          : "border-border text-foreground hover:border-primary/50"
+          ? "border-primary/60 bg-primary/[0.07] ring-1 ring-primary/40"
+          : "border-border/60 bg-card/40 hover:border-primary/40 hover:bg-card hover:shadow-md hover:shadow-black/20",
       )}
     >
-      <div className="flex items-start justify-between">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex flex-col gap-2.5 text-left"
+      >
+        <span
+          className={cn(
+            "flex h-9 w-9 items-center justify-center rounded-lg",
+            tint,
+          )}
+        >
+          <Icon className="h-4.5 w-4.5" strokeWidth={1.8} />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[13px] font-semibold text-foreground">
+            {item.title || "Untitled"}
+          </p>
+          <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span>{label}</span>
+            <span className="text-muted-foreground/40">·</span>
+            <span>{item.slides.length} slides</span>
+          </p>
+        </div>
+      </button>
+
+      <div className="absolute right-2 top-2 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
         <button
           type="button"
-          onClick={onToggleSelected}
-          className={cn(
-            "mr-2 mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition",
-            isChecked
-              ? "border-primary bg-primary text-primary-foreground"
-              : "border-border bg-background text-transparent hover:border-primary/60",
-          )}
-          aria-label={isChecked ? "Deselect library item" : "Select library item"}
+          aria-label="Rename library item"
+          onClick={onRename}
+          className="rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
         >
-          <Check className="h-3 w-3" />
+          <Pencil className="h-3 w-3" />
         </button>
-        <button type="button" onClick={onSelect} className="flex-1 text-left">
-          <div className="font-medium">{item.title}</div>
-          <div className="mt-1 text-muted-foreground">
-            {item.slides.length} slides
-          </div>
+        <button
+          type="button"
+          aria-label="Delete library item"
+          onClick={onDelete}
+          className="rounded-md p-1.5 text-muted-foreground transition hover:bg-destructive/15 hover:text-destructive"
+        >
+          <Trash2 className="h-3 w-3" />
         </button>
-        <div className="flex gap-1 opacity-0 group-hover:opacity-100">
-          <button
-            type="button"
-            aria-label="Rename library item"
-            onClick={onRename}
-            className="text-muted-foreground hover:text-foreground p-1"
-          >
-            <EditIcon />
-          </button>
-          <button
-            type="button"
-            aria-label="Delete library item"
-            onClick={onDelete}
-            className="text-muted-foreground hover:text-destructive p-1"
-          >
-            <TrashIcon />
-          </button>
-        </div>
       </div>
+
       {showAddToService && (
         <button
           type="button"
           onClick={onAddToService}
-          className="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-border py-1 text-[10px] text-muted-foreground transition hover:border-primary hover:text-primary"
+          className="flex w-full items-center justify-center gap-1 rounded-lg border border-border/70 py-1.5 text-[10px] font-medium text-muted-foreground transition hover:border-primary/50 hover:text-primary"
         >
-          + Add to service
+          <Plus className="h-3 w-3" />
+          Add to service
         </button>
       )}
     </div>
@@ -835,19 +915,11 @@ function NewLibraryItemButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-4 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
+      className="flex min-h-[92px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/70 text-xs font-medium text-muted-foreground transition hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
     >
-      <svg
-        aria-hidden="true"
-        width="14"
-        height="14"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        viewBox="0 0 24 24"
-      >
-        <path d="M12 5v14M5 12h14" />
-      </svg>
+      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary/60 transition group-hover:bg-primary/10">
+        <Plus className="h-4 w-4" strokeWidth={2} />
+      </span>
       New library item
     </button>
   );
@@ -858,19 +930,11 @@ function NewLibraryItemRowButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-md border border-dashed border-border bg-card px-3 py-2 text-[11px] text-muted-foreground transition hover:border-primary hover:text-primary"
+      className="flex w-full items-center gap-3 rounded-xl border border-dashed border-border/70 px-2.5 py-2 text-[12px] font-medium text-muted-foreground transition hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
     >
-      <svg
-        aria-hidden="true"
-        width="14"
-        height="14"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        viewBox="0 0 24 24"
-      >
-        <path d="M12 5v14M5 12h14" />
-      </svg>
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary/60">
+        <Plus className="h-4 w-4" strokeWidth={2} />
+      </span>
       New library item
     </button>
   );
@@ -880,64 +944,68 @@ const LibraryItemRow = memo(function LibraryItemRow({
   item,
   isSelected,
   showAddToService,
-  isChecked,
-  onToggleSelected,
   onSelect,
   onRename,
   onDelete,
   onAddToService,
 }: LibraryItemCardProps) {
+  const { Icon, tint, label } = getItemVisual(item);
   return (
     <div
       className={cn(
-        "group flex items-center gap-3 rounded-md border bg-card px-3 py-2 text-left transition",
+        "group relative flex items-center gap-3 rounded-xl border px-2.5 py-2 text-left transition-all duration-150",
         isSelected
-          ? "border-primary bg-primary/8"
-          : "border-border hover:border-primary/35",
+          ? "border-primary/60 bg-primary/[0.07] ring-1 ring-primary/40"
+          : "border-border/60 bg-card/40 hover:border-primary/40 hover:bg-card",
       )}
     >
-      <button
-        type="button"
-        onClick={onToggleSelected}
+      {/* Selected accent bar */}
+      {isSelected && (
+        <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-primary" />
+      )}
+      <span
         className={cn(
-          "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition",
-          isChecked
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-border bg-background text-transparent hover:border-primary/60",
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+          tint,
         )}
-        aria-label={isChecked ? "Deselect library item" : "Select library item"}
       >
-        <Check className="h-3 w-3" />
-      </button>
+        <Icon className="h-4 w-4" strokeWidth={1.8} />
+      </span>
       <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left">
-        <p className="truncate text-sm font-medium text-foreground">{item.title}</p>
-        <p className="text-[11px] text-muted-foreground">{item.slides.length} slides</p>
+        <p className="truncate text-[13px] font-semibold text-foreground">
+          {item.title || "Untitled"}
+        </p>
+        <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span>{label}</span>
+          <span className="text-muted-foreground/40">·</span>
+          <span>{item.slides.length} slides</span>
+        </p>
       </button>
       {showAddToService ? (
         <button
           type="button"
           onClick={onAddToService}
-          className="rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground transition hover:border-primary hover:text-primary"
+          className="shrink-0 rounded-lg border border-border/70 px-2 py-1 text-[10px] font-medium text-muted-foreground transition hover:border-primary/50 hover:text-primary"
         >
           Add to service
         </button>
       ) : null}
-      <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
         <button
           type="button"
           aria-label="Rename library item"
           onClick={onRename}
-          className="p-1 text-muted-foreground hover:text-foreground"
+          className="rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
         >
-          <EditIcon />
+          <Pencil className="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
           aria-label="Delete library item"
           onClick={onDelete}
-          className="p-1 text-muted-foreground hover:text-destructive"
+          className="rounded-md p-1.5 text-muted-foreground transition hover:bg-destructive/15 hover:text-destructive"
         >
-          <TrashIcon />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
     </div>
@@ -945,166 +1013,24 @@ const LibraryItemRow = memo(function LibraryItemRow({
 });
 
 // Dialog components
-function NewLibraryItemDialog({
-  onClose,
-  onCreate,
-  onFixLyrics,
-  categoryId,
-  categories,
-}: {
-  onClose: () => void;
-  onCreate: (
-    title: string,
-    body: string,
-    categoryId?: string
-  ) => Promise<unknown>;
-  onFixLyrics: (lyrics: string) => Promise<string>;
-  categoryId: string | null;
-  categories: Category[];
-}) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [isFixing, setIsFixing] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Default to selected category, or first available category if "All" is selected
-  const [targetCategoryId, setTargetCategoryId] = useState<string>(
-    categoryId ?? categories[0]?._id ?? ""
-  );
-
-  const handleCreate = async () => {
-    if (!title.trim()) {
-      setError("Title is required");
-      return;
-    }
-
-    setIsCreating(true);
-
-    let shouldClose = false;
-    const nextCategoryId = targetCategoryId || undefined;
-    try {
-      await onCreate(
-        title.trim(),
-        body,
-        nextCategoryId,
-      );
-      shouldClose = true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create");
-    }
-
-    setIsCreating(false);
-    if (shouldClose) {
-      onClose();
-    }
-  };
-
-  const handleFix = async () => {
-    if (!body.trim()) {
-      return;
-    }
-
-    setIsFixing(true);
-
-    let fixedBody: string | null = null;
-    try {
-      fixedBody = await onFixLyrics(body);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fix");
-    }
-
-    setIsFixing(false);
-    if (fixedBody !== null) {
-      setBody(fixedBody);
-    }
-  };
-
-  return (
-    <Dialog title="New library item" onClose={onClose}>
-      <div className="space-y-3">
-        {/* Library Dropdown */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">
-            Library
-          </label>
-          <Select
-            value={targetCategoryId}
-            onValueChange={setTargetCategoryId}
-          >
-            <SelectTrigger className="w-full border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:border-primary focus-visible:ring-0">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {categories.map((cat) => (
-                <SelectItem key={cat._id} value={String(cat._id)}>
-                  {cat.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">
-            Title
-          </label>
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Library item title"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
-            autoFocus
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">
-            Lyrics
-          </label>
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder={"[Verse 1]\nLine 1\nLine 2\n\n[Chorus]\nLine 1"}
-            rows={10}
-            className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
-          />
-        </div>
-
-        {error && <p className="text-xs text-destructive">{error}</p>}
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={handleFix}
-            disabled={isFixing}
-            className="flex-1 rounded-md border border-input py-2 text-xs font-medium text-foreground hover:bg-secondary disabled:opacity-50"
-          >
-            {isFixing ? "Fixing..." : "Fix Lyrics"}
-          </button>
-          <button
-            type="button"
-            onClick={handleCreate}
-            disabled={isCreating}
-            className="flex-1 rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {isCreating && <Spinner className="size-3" />}
-            {isCreating ? "Creating..." : "Create"}
-          </button>
-        </div>
-      </div>
-    </Dialog>
-  );
-}
-
+/**
+ * Create-flow wizard.
+ *
+ * Step 1: search the org's library and add songs one by one with the + icon.
+ *         Songs appear in the order they were added (and that order is
+ *         honoured by the backend now — see createComposedItem).
+ *
+ * Step 2: drag-reorder the added songs, and pick which slides of each song
+ *         to include. Each card can expand to show its slides; an
+ *         "all slides" toggle covers the common case.
+ */
 function ComposeLibrariesDialog({
-  itemIds,
   libraryItems,
   categories,
   categoryId,
   onClose,
   onCreate,
 }: {
-  itemIds: string[];
   libraryItems: LibraryItem[];
   categories: Category[];
   categoryId: string | null;
@@ -1113,38 +1039,147 @@ function ComposeLibrariesDialog({
     title: string,
     itemIds: string[],
     categoryId?: string,
+    slideSelections?: Record<string, number[]>,
   ) => Promise<unknown>;
 }) {
-  const selectedItems = useMemo(
-    () => libraryItems.filter((item) => itemIds.includes(String(item._id))),
-    [itemIds, libraryItems],
+  type Step = "pick" | "arrange";
+
+  type SongSelection = {
+    libraryId: string;
+    slideIndexes: number[];
+  };
+
+  const itemsById = useMemo(
+    () => new Map(libraryItems.map((item) => [String(item._id), item])),
+    [libraryItems],
   );
-  const [title, setTitle] = useState(
-    selectedItems.map((item) => item.title).slice(0, 3).join(" / "),
-  );
+
+  const [step, setStep] = useState<Step>("pick");
+  const [search, setSearch] = useState("");
+  const [picked, setPicked] = useState<SongSelection[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [hasManualTitle, setHasManualTitle] = useState(false);
   const [targetCategoryId, setTargetCategoryId] = useState<string>(
     categoryId ?? categories[0]?._id ?? "",
   );
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const pickedIds = useMemo(
+    () => new Set(picked.map((p) => p.libraryId)),
+    [picked],
+  );
+
+  const searchResults = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const available = libraryItems.filter(
+      (item) => !pickedIds.has(String(item._id)),
+    );
+    if (!query) return available;
+    return available.filter((item) =>
+      item.title.toLowerCase().includes(query),
+    );
+  }, [libraryItems, pickedIds, search]);
+
+  // Keep the title in sync with the picked songs until the user types
+  // something themselves — then leave it alone.
+  const derivedTitle = useMemo(() => {
+    const names = picked
+      .map((p) => itemsById.get(p.libraryId)?.title)
+      .filter((name): name is string => Boolean(name));
+    return names.slice(0, 3).join(" / ");
+  }, [itemsById, picked]);
+  if (!hasManualTitle && title !== derivedTitle) {
+    setTimeout(() => setTitle(derivedTitle), 0);
+  }
+
+  const addSong = (libraryId: string) => {
+    const item = itemsById.get(libraryId);
+    if (!item) return;
+    setPicked((current) => [
+      ...current,
+      {
+        libraryId,
+        slideIndexes: item.slides.map((_, index) => index),
+      },
+    ]);
+  };
+
+  const removeSong = (libraryId: string) => {
+    setPicked((current) => current.filter((p) => p.libraryId !== libraryId));
+    if (expandedId === libraryId) setExpandedId(null);
+  };
+
+  const moveSong = (fromIndex: number, toIndex: number) => {
+    setPicked((current) => {
+      if (toIndex < 0 || toIndex >= current.length) return current;
+      const next = [...current];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const setSongSlides = (libraryId: string, slideIndexes: number[]) => {
+    setPicked((current) =>
+      current.map((p) =>
+        p.libraryId === libraryId ? { ...p, slideIndexes } : p,
+      ),
+    );
+  };
+
+  const toggleSongSlide = (libraryId: string, slideIndex: number) => {
+    setPicked((current) =>
+      current.map((p) => {
+        if (p.libraryId !== libraryId) return p;
+        const isSelected = p.slideIndexes.includes(slideIndex);
+        const next = isSelected
+          ? p.slideIndexes.filter((index) => index !== slideIndex)
+          : [...p.slideIndexes, slideIndex].sort((a, b) => a - b);
+        return { ...p, slideIndexes: next };
+      }),
+    );
+  };
+
+  const totalSlides = picked.reduce(
+    (sum, p) => sum + p.slideIndexes.length,
+    0,
+  );
+
   const handleCreate = async () => {
+    if (picked.length < 1) {
+      setError("Add at least one song");
+      return;
+    }
+    if (totalSlides < 1) {
+      setError("Select at least one slide");
+      return;
+    }
     if (!title.trim()) {
       setError("Flow title is required");
       return;
     }
 
-    if (selectedItems.length < 2) {
-      setError("Select at least two library items");
-      return;
-    }
-
     setIsCreating(true);
+    setError(null);
     try {
-      await onCreate(title.trim(), itemIds, targetCategoryId || undefined);
+      const slideSelections: Record<string, number[]> = {};
+      for (const p of picked) {
+        slideSelections[p.libraryId] = p.slideIndexes;
+      }
+      await onCreate(
+        title.trim(),
+        picked.map((p) => p.libraryId),
+        targetCategoryId || undefined,
+        slideSelections,
+      );
     } catch (createError) {
       setError(
-        createError instanceof Error ? createError.message : "Failed to create flow",
+        createError instanceof Error
+          ? createError.message
+          : "Failed to create flow",
       );
       setIsCreating(false);
       return;
@@ -1153,38 +1188,283 @@ function ComposeLibrariesDialog({
   };
 
   return (
-    <Dialog title="Create flow from library items" onClose={onClose}>
-      <div className="space-y-4">
-        <div className="rounded-2xl border border-border/70 bg-card/50 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Selected items
-          </p>
-          <div className="mt-3 space-y-2">
-            {selectedItems.map((item, index) => (
-              <div
-                key={item._id}
-                className="flex items-center justify-between rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs"
-              >
-                <span className="truncate text-foreground">
-                  {index + 1}. {item.title}
-                </span>
-                <span className="shrink-0 text-muted-foreground">
-                  {item.slides.length} slides
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+    <Dialog
+      title={
+        step === "pick"
+          ? "Create flow — pick songs"
+          : "Create flow — arrange slides"
+      }
+      onClose={onClose}
+    >
+      {step === "pick" ? (
+        <PickStep
+          search={search}
+          onSearchChange={setSearch}
+          results={searchResults}
+          picked={picked}
+          itemsById={itemsById}
+          totalCount={libraryItems.length}
+          onAdd={addSong}
+          onRemove={removeSong}
+          onMove={moveSong}
+          onNext={() => {
+            if (picked.length === 0) {
+              setError("Add at least one song first");
+              return;
+            }
+            setError(null);
+            setStep("arrange");
+          }}
+          onCancel={onClose}
+          error={error}
+        />
+      ) : (
+        <ArrangeStep
+          picked={picked}
+          itemsById={itemsById}
+          expandedId={expandedId}
+          setExpandedId={setExpandedId}
+          draggingId={draggingId}
+          setDraggingId={setDraggingId}
+          onMove={moveSong}
+          onSetSlides={setSongSlides}
+          onToggleSlide={toggleSongSlide}
+          onRemove={removeSong}
+          title={title}
+          onTitleChange={(value) => {
+            setHasManualTitle(true);
+            setTitle(value);
+          }}
+          targetCategoryId={targetCategoryId}
+          setTargetCategoryId={setTargetCategoryId}
+          categories={categories}
+          onBack={() => setStep("pick")}
+          onCreate={handleCreate}
+          isCreating={isCreating}
+          error={error}
+          totalSlides={totalSlides}
+        />
+      )}
+    </Dialog>
+  );
+}
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">
+/** Step 1: search + add songs, with a running list of picks below. */
+function PickStep({
+  search,
+  onSearchChange,
+  results,
+  picked,
+  itemsById,
+  totalCount,
+  onAdd,
+  onRemove,
+  onMove,
+  onNext,
+  onCancel,
+  error,
+}: {
+  search: string;
+  onSearchChange: (value: string) => void;
+  results: LibraryItem[];
+  picked: { libraryId: string; slideIndexes: number[] }[];
+  itemsById: Map<string, LibraryItem>;
+  totalCount: number;
+  onAdd: (libraryId: string) => void;
+  onRemove: (libraryId: string) => void;
+  onMove: (from: number, to: number) => void;
+  onNext: () => void;
+  onCancel: () => void;
+  error: string | null;
+}) {
+  return (
+    <div className="flex max-h-[70vh] flex-col gap-3">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          value={search}
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder="Search your library…"
+          className="h-10 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+          autoFocus
+        />
+      </div>
+
+      <div className="max-h-56 min-h-[80px] overflow-y-auto rounded-md border border-border/70 bg-card/40">
+        {results.length === 0 ? (
+          <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+            {search.trim()
+              ? "No matches."
+              : picked.length >= totalCount
+                ? "Every song is already in the flow."
+                : "Start typing to find songs."}
+          </p>
+        ) : (
+          results.slice(0, 50).map((item) => (
+            <button
+              key={item._id}
+              type="button"
+              onClick={() => onAdd(String(item._id))}
+              className="group flex w-full items-center gap-2 border-b border-border/40 px-3 py-2 text-left last:border-b-0 hover:bg-foreground/5"
+            >
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary transition group-hover:bg-primary group-hover:text-primary-foreground">
+                <Plus className="h-3.5 w-3.5" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                {item.title}
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                {item.slides.length} slides
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+
+      <div>
+        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          In this flow ({picked.length})
+        </p>
+        {picked.length === 0 ? (
+          <p className="rounded-md border border-dashed border-border/60 px-3 py-4 text-center text-xs text-muted-foreground">
+            No songs yet — search and tap + to add.
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {picked.map((entry, index) => {
+              const item = itemsById.get(entry.libraryId);
+              if (!item) return null;
+              return (
+                <li
+                  key={entry.libraryId}
+                  className="flex items-center gap-2 rounded-md border border-border/70 bg-background/70 px-2 py-1.5 text-xs"
+                >
+                  <span className="w-5 text-center text-muted-foreground">
+                    {index + 1}.
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-foreground">
+                    {item.title}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onMove(index, index - 1)}
+                    disabled={index === 0}
+                    className="rounded-sm p-1 text-muted-foreground transition hover:text-foreground disabled:opacity-30"
+                    aria-label="Move up"
+                  >
+                    <ChevronUp className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onMove(index, index + 1)}
+                    disabled={index === picked.length - 1}
+                    className="rounded-sm p-1 text-muted-foreground transition hover:text-foreground disabled:opacity-30"
+                    aria-label="Move down"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(entry.libraryId)}
+                    className="rounded-sm p-1 text-muted-foreground transition hover:text-destructive"
+                    aria-label="Remove from flow"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+
+      <div className="mt-1 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md border border-input px-4 py-2 text-xs font-medium text-foreground hover:bg-secondary"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={picked.length === 0}
+          className="rounded-md bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Step 2: drag-reorder + per-song slide selection + title/category. */
+function ArrangeStep({
+  picked,
+  itemsById,
+  expandedId,
+  setExpandedId,
+  draggingId,
+  setDraggingId,
+  onMove,
+  onSetSlides,
+  onToggleSlide,
+  onRemove,
+  title,
+  onTitleChange,
+  targetCategoryId,
+  setTargetCategoryId,
+  categories,
+  onBack,
+  onCreate,
+  isCreating,
+  error,
+  totalSlides,
+}: {
+  picked: { libraryId: string; slideIndexes: number[] }[];
+  itemsById: Map<string, LibraryItem>;
+  expandedId: string | null;
+  setExpandedId: (id: string | null) => void;
+  draggingId: string | null;
+  setDraggingId: (id: string | null) => void;
+  onMove: (from: number, to: number) => void;
+  onSetSlides: (libraryId: string, slideIndexes: number[]) => void;
+  onToggleSlide: (libraryId: string, slideIndex: number) => void;
+  onRemove: (libraryId: string) => void;
+  title: string;
+  onTitleChange: (value: string) => void;
+  targetCategoryId: string;
+  setTargetCategoryId: (id: string) => void;
+  categories: Category[];
+  onBack: () => void;
+  onCreate: () => void;
+  isCreating: boolean;
+  error: string | null;
+  totalSlides: number;
+}) {
+  return (
+    <div className="flex max-h-[78vh] flex-col gap-3">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-[1.4fr_1fr]">
+        <div className="space-y-1">
+          <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            Flow title
+          </label>
+          <input
+            value={title}
+            onChange={(event) => onTitleChange(event.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:border-primary focus:outline-none"
+            placeholder="Praise flow"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             Save to library
           </label>
-          <Select
-            value={targetCategoryId}
-            onValueChange={setTargetCategoryId}
-          >
-            <SelectTrigger className="w-full border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:border-primary focus-visible:ring-0">
+          <Select value={targetCategoryId} onValueChange={setTargetCategoryId}>
+            <SelectTrigger className="h-9 w-full border border-input bg-background px-3 text-sm text-foreground focus-visible:border-primary focus-visible:ring-0">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1196,46 +1476,216 @@ function ComposeLibrariesDialog({
             </SelectContent>
           </Select>
         </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">
-            Flow title
-          </label>
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
-            placeholder="Praise flow"
-            autoFocus
-          />
-        </div>
-
-        <p className="text-xs text-muted-foreground">
-          The new library item starts as one combined flow. You can then reorder
-          slides, remove verses, and relabel sections in edit mode.
-        </p>
-
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 rounded-md border border-input py-2 text-xs font-medium text-foreground hover:bg-secondary"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleCreate}
-            disabled={isCreating}
-            className="flex-1 rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {isCreating ? "Creating..." : "Create flow"}
-          </button>
-        </div>
       </div>
-    </Dialog>
+
+      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+        {picked.map((entry, index) => {
+          const item = itemsById.get(entry.libraryId);
+          if (!item) return null;
+          const isExpanded = expandedId === entry.libraryId;
+          const isDragging = draggingId === entry.libraryId;
+          return (
+            <div
+              key={entry.libraryId}
+              draggable
+              onDragStart={() => setDraggingId(entry.libraryId)}
+              onDragEnd={() => setDraggingId(null)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => {
+                if (!draggingId || draggingId === entry.libraryId) return;
+                const fromIndex = picked.findIndex(
+                  (p) => p.libraryId === draggingId,
+                );
+                if (fromIndex < 0) return;
+                onMove(fromIndex, index);
+                setDraggingId(null);
+              }}
+              className={cn(
+                "rounded-md border bg-background/70 transition",
+                isDragging
+                  ? "border-primary/60 opacity-60"
+                  : "border-border/70 hover:border-primary/30",
+              )}
+            >
+              <div className="flex items-center gap-2 px-2 py-2">
+                <span
+                  className="cursor-grab text-muted-foreground active:cursor-grabbing"
+                  title="Drag to reorder"
+                >
+                  <GripVertical className="h-4 w-4" />
+                </span>
+                <span className="w-5 text-center text-xs text-muted-foreground">
+                  {index + 1}.
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedId(isExpanded ? null : entry.libraryId)
+                  }
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {item.title}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {entry.slideIndexes.length} / {item.slides.length} slides
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedId(isExpanded ? null : entry.libraryId)
+                  }
+                  className="rounded-sm p-1 text-muted-foreground hover:text-foreground"
+                  aria-label={isExpanded ? "Collapse" : "Expand"}
+                >
+                  {isExpanded ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRemove(entry.libraryId)}
+                  className="rounded-sm p-1 text-muted-foreground hover:text-destructive"
+                  aria-label="Remove from flow"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {isExpanded && (
+                <SlidePicker
+                  item={item}
+                  selection={entry.slideIndexes}
+                  onSelectAll={() =>
+                    onSetSlides(
+                      entry.libraryId,
+                      item.slides.map((_, slideIndex) => slideIndex),
+                    )
+                  }
+                  onSelectNone={() => onSetSlides(entry.libraryId, [])}
+                  onToggle={(slideIndex) =>
+                    onToggleSlide(entry.libraryId, slideIndex)
+                  }
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        {totalSlides} slide{totalSlides === 1 ? "" : "s"} across {picked.length}{" "}
+        song{picked.length === 1 ? "" : "s"}.
+      </p>
+
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+
+      <div className="flex justify-between gap-2">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-md border border-input px-4 py-2 text-xs font-medium text-foreground hover:bg-secondary"
+        >
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={onCreate}
+          disabled={isCreating}
+          className="rounded-md bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {isCreating ? "Creating…" : "Create flow"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SlidePicker({
+  item,
+  selection,
+  onSelectAll,
+  onSelectNone,
+  onToggle,
+}: {
+  item: LibraryItem;
+  selection: number[];
+  onSelectAll: () => void;
+  onSelectNone: () => void;
+  onToggle: (slideIndex: number) => void;
+}) {
+  const allSelected = selection.length === item.slides.length;
+  const selectionSet = useMemo(() => new Set(selection), [selection]);
+
+  return (
+    <div className="space-y-2 border-t border-border/60 bg-card/40 px-3 py-2">
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={allSelected ? onSelectNone : onSelectAll}
+          className="inline-flex items-center gap-1.5 rounded-sm border border-border/70 bg-background px-2 py-1 text-[10px] font-medium text-foreground hover:bg-foreground/5"
+        >
+          <span
+            className={cn(
+              "flex h-3.5 w-3.5 items-center justify-center rounded border",
+              allSelected
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background",
+            )}
+          >
+            {allSelected ? <Check className="h-2.5 w-2.5" /> : null}
+          </span>
+          Select all slides
+        </button>
+        <span className="text-[10px] text-muted-foreground">
+          {selection.length} selected
+        </span>
+      </div>
+      <ul className="space-y-1">
+        {item.slides.map((slide, slideIndex) => {
+          const checked = selectionSet.has(slideIndex);
+          const previewText =
+            slide.text?.split("\n").slice(0, 2).join(" / ").slice(0, 100) ||
+            (slide.label ?? `Slide ${slideIndex + 1}`);
+          return (
+            <li key={slide.id ?? slideIndex}>
+              <button
+                type="button"
+                onClick={() => onToggle(slideIndex)}
+                className={cn(
+                  "flex w-full items-start gap-2 rounded-sm border px-2 py-1.5 text-left text-[11px] transition",
+                  checked
+                    ? "border-primary/60 bg-primary/10 text-foreground"
+                    : "border-border/60 bg-background/60 text-muted-foreground hover:border-foreground/40",
+                )}
+              >
+                <span
+                  className={cn(
+                    "mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border",
+                    checked
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-background",
+                  )}
+                >
+                  {checked ? <Check className="h-2.5 w-2.5" /> : null}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[10px] uppercase tracking-wider text-muted-foreground/80">
+                    {slide.label ?? `Slide ${slideIndex + 1}`}
+                  </span>
+                  <span className="block truncate text-foreground">
+                    {previewText}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -1383,38 +1833,6 @@ function DeleteLibraryItemDialog({
 
 
 // Icons
-function EditIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="10"
-      height="10"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      viewBox="0 0 24 24"
-    >
-      <path d="M12 20h9M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4L16.5 3.5z" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="10"
-      height="10"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      viewBox="0 0 24 24"
-    >
-      <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-    </svg>
-  );
-}
-
 // Skeleton loading component
 function ShowsGridSkeleton() {
   return (
@@ -1422,9 +1840,10 @@ function ShowsGridSkeleton() {
       {Array.from({ length: 12 }).map((_, i) => (
         <div
           key={i}
-          className="rounded-lg border border-border px-3 py-2"
+          className="flex flex-col gap-2.5 rounded-xl border border-border/60 bg-card/40 p-3"
         >
-          <Skeleton className="h-4 w-3/4 mb-2" />
+          <Skeleton className="h-9 w-9 rounded-lg" />
+          <Skeleton className="h-3.5 w-3/4" />
           <Skeleton className="h-3 w-1/2" />
         </div>
       ))}

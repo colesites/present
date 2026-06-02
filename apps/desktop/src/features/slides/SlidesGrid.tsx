@@ -302,13 +302,13 @@ const SlideCard = memo(function SlideCard({
           onClick={onClick}
           style={{ height: isGridView ? slideHeight : 64 }}
           className={cn(
-            "group relative flex w-full overflow-hidden rounded-lg border text-left transition",
+            "group relative flex w-full overflow-hidden rounded-xl border text-left transition-all duration-150",
             isGridView ? "flex-col" : "flex-row items-center",
             isActive
-              ? "border-primary ring-2 ring-primary"
+              ? "border-primary/70 ring-2 ring-primary/70 ring-offset-1 ring-offset-background"
               : isSelected
-                ? "border-primary/50"
-                : "border-border hover:border-primary/50",
+                ? "border-primary/50 shadow-sm"
+                : "border-border/60 hover:border-primary/40 hover:shadow-md hover:shadow-black/20",
             isDragging && "opacity-45",
             isDropTarget && "ring-2 ring-primary ring-offset-2 ring-offset-background",
             canReorder && "cursor-grab active:cursor-grabbing",

@@ -234,6 +234,10 @@ interface ElectronAPI {
 
   // Media & Filesystem
   selectMediaFile: () => Promise<{ name: string; path: string } | null>;
+  selectAudioFiles: () => Promise<Array<{ name: string; path: string }>>;
+  selectPropImage: () => Promise<
+    { name: string; path: string; dataUrl: string } | null
+  >;
   selectPresentationFiles: () => Promise<PresentationImportFile[] | null>;
   copyMediaFile: (source: string, target: string) => Promise<boolean>;
   createDirectory: (parent: string, name: string) => Promise<string>;

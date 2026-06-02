@@ -25,6 +25,12 @@ import {
   slidesToBody,
 } from "../lib/library-items";
 import type { LibraryTextStyleDefaults } from "../lib/library-items";
+import {
+  useLibrarySearchModeStore,
+  type LibrarySearchMode,
+} from "../../../renderer/shared/store/librarySearchMode";
+
+export type { LibrarySearchMode };
 
 const normalizeSearchText = (value: string): string =>
   value
@@ -97,6 +103,38 @@ const scoreLibrarySearchMatch = (
   return score + matchedTokens;
 };
 
+const scoreExactLibrarySearchMatch = (
+  item: Pick<LibraryItem, "title" | "body" | "_creationTime">,
+  rawQuery: string,
+): number => {
+  const query = normalizeSearchText(rawQuery);
+  if (!query) {
+    return 0;
+  }
+
+  const title = normalizeSearchText(item.title);
+  const body = normalizeSearchText(item.body);
+  const combined = `${title} ${body}`.trim();
+
+  if (title === query) {
+    return 1200;
+  }
+
+  if (title.includes(query)) {
+    return 900 + query.length;
+  }
+
+  if (body.includes(query)) {
+    return 700 + query.length;
+  }
+
+  if (combined.includes(query)) {
+    return 600 + query.length;
+  }
+
+  return 0;
+};
+
 export function useLibrary(
   input: { orgId: string | null; userId: string | null },
   contentSource: ContentSource,
@@ -118,6 +156,10 @@ export function useLibrary(
   const [selectedCategoryId, setSelectedCategoryId] =
     useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const searchMode = useLibrarySearchModeStore((state) => state.searchMode);
+  const setSearchMode = useLibrarySearchModeStore(
+    (state) => state.setSearchMode,
+  );
 
   useEffect(() => {
     const timerId = window.setTimeout(() => {
@@ -161,10 +203,14 @@ export function useLibrary(
 
     // Filter by search query
     if (searchQuery.trim()) {
+      const scoreMatch =
+        searchMode === "exact"
+          ? scoreExactLibrarySearchMatch
+          : scoreLibrarySearchMatch;
       result = result
         .map((item) => ({
           item,
-          score: scoreLibrarySearchMatch(item, searchQuery),
+          score: scoreMatch(item, searchQuery),
         }))
         .filter((entry) => entry.score > 0)
         .sort(
@@ -182,7 +228,7 @@ export function useLibrary(
     }
 
     return result;
-  }, [libraryItems, selectedCategoryId, searchQuery, contentSource]);
+  }, [libraryItems, selectedCategoryId, searchMode, searchQuery, contentSource]);
 
   const createNewItem = async (
     title: string,
@@ -307,10 +353,22 @@ export function useLibrary(
     title: string,
     itemIds: string[],
     categoryId?: string,
+    // Optional: per-source-item slide selections, keyed by libraryId. Each
+    // value is the list of slide indexes to include (in the order they
+    // appear in the source item). When a libraryId is omitted, ALL slides
+    // from that source are included (back-compat behaviour).
+    slideSelections?: Record<string, number[]>,
   ) => {
-    const selectedItems = libraryItems.filter((item) =>
-      itemIds.includes(String(item._id)),
-    );
+    // Look up items by id and rebuild the list in the order of `itemIds`.
+    // The old code used `libraryItems.filter(...)`, which silently dropped
+    // the selection order and produced the "song 3 above song 2" bug the
+    // operator reported.
+    const byId = new Map(libraryItems.map((item) => [String(item._id), item]));
+    const selectedItems = itemIds
+      .map((id) => byId.get(String(id)))
+      .filter((item): item is (typeof libraryItems)[number] =>
+        Boolean(item),
+      );
     if (selectedItems.length === 0 || !title.trim()) {
       return null;
     }
@@ -318,6 +376,7 @@ export function useLibrary(
       title.trim(),
       selectedItems,
       defaultTextStyle,
+      slideSelections,
     );
     return createNewItem(
       draft.title,
@@ -366,9 +425,11 @@ export function useLibrary(
     selectedItemId,
     selectedCategoryId,
     searchQuery,
+    searchMode,
     setSelectedItemId,
     setSelectedCategoryId,
     setSearchQuery,
+    setSearchMode,
     createNewItem,
     createItemFromDraft,
     createComposedItem,

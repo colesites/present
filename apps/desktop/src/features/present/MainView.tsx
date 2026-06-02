@@ -23,20 +23,25 @@ import type {
   ScriptureTextAlign,
   ScriptureVerticalAlign,
 } from "../../shared/types/output-window";
-import { MediaPanel } from "../media";
 import type {
   ViewMode,
   BottomTab,
   LibraryItem,
   LibraryItemDraft,
+  LibraryContent,
   CanvasSizePreset,
   Category,
   Service,
   PlaybackState,
   ServiceItem,
   ContentSource,
+  MessageOverlay,
   SlideElement,
 } from "../../shared/types/index";
+import { SidebarRail } from "../sidebar-rail";
+import type { LibrarySearchMode } from "../library/hooks";
+import { MediaPanel } from "../media";
+import type { UseTimersResult } from "../../renderer/shared/hooks";
 import { fixLyrics } from "../../renderer/shared/lib/lyrics";
 import { ScriptureSlide } from "../../features/scripture/lib/slides";
 import type { MediaPanelRef } from "../media/MediaPanel";
@@ -121,8 +126,9 @@ export interface MainViewLibraryState {
   createNewLibraryItem: (
     title: string,
     body: string,
-    categoryId?: string
-  ) => Promise<void>;
+    categoryId?: string,
+    content?: LibraryContent,
+  ) => Promise<string | null | undefined | void>;
   createLibraryItemFromDraft: (
     draft: LibraryItemDraft,
     categoryId?: string,
@@ -130,7 +136,8 @@ export interface MainViewLibraryState {
   createComposedLibraryItem: (
     title: string,
     itemIds: string[],
-    categoryId?: string
+    categoryId?: string,
+    slideSelections?: Record<string, number[]>,
   ) => Promise<void>;
   handleRenameLibraryItem: (
     libraryId: string,
@@ -141,6 +148,8 @@ export interface MainViewLibraryState {
   createNewCategory: (name: string) => Promise<void>;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+  searchMode: LibrarySearchMode;
+  setSearchMode: (mode: LibrarySearchMode) => void;
   contentSource: ContentSource;
   presentationImportState?: {
     isVisible: boolean;
@@ -204,6 +213,16 @@ export interface MainViewOutputState {
   setIsTimerLayerEnabled: (show: boolean) => void;
   isMessageLayerEnabled: boolean;
   setIsMessageLayerEnabled: (show: boolean) => void;
+  activeMessageOverlay: MessageOverlay | null;
+  onShowMessageOverlay: (overlay: MessageOverlay | null) => void;
+  activePropIds: string[];
+  onSetActivePropIds: (ids: string[]) => void;
+  onPushMasterSlide: (master: {
+    name: string;
+    color: string;
+    body: string;
+  }) => void;
+  timers: UseTimersResult;
 }
 
 interface MainViewProps {
@@ -280,6 +299,12 @@ export function MainView({
     setIsTimerLayerEnabled,
     isMessageLayerEnabled,
     setIsMessageLayerEnabled,
+    activeMessageOverlay,
+    onShowMessageOverlay,
+    activePropIds,
+    onSetActivePropIds,
+    onPushMasterSlide,
+    timers,
   } = outputState;
 
   const {
@@ -344,6 +369,8 @@ export function MainView({
     createNewCategory,
     searchQuery,
     setSearchQuery,
+    searchMode,
+    setSearchMode,
     presentationImportState,
   } = libraryState;
 
@@ -447,6 +474,20 @@ export function MainView({
       onSelectLibraryItem: setSelectedLibraryId,
       onSelectCategory: setSelectedCategoryId,
       onCreateLibraryItem: createNewLibraryItem,
+      onNewLibraryItem: async () => {
+        // Create an empty item that opens straight in the editor's Lyrics
+        // view (no modal). editorView:"source" makes LyricsEditor default to
+        // the lyrics tab so the operator starts typing immediately.
+        const newId = await createNewLibraryItem(
+          "Untitled",
+          "",
+          selectedCategoryId ?? undefined,
+          { editorView: "source" },
+        );
+        if (newId) {
+          handleEditSlide(String(newId), 0);
+        }
+      },
       onCreateLibraryItemFromDraft: createLibraryItemFromDraft,
       onCreateComposedLibraryItem: createComposedLibraryItem,
       onRenameLibraryItem: handleRenameLibraryItem,
@@ -456,6 +497,8 @@ export function MainView({
       onFixLyrics: fixLyrics,
       searchQuery,
       onSearchChange: setSearchQuery,
+      searchMode,
+      onSearchModeChange: setSearchMode,
       contentSource,
       speechLang: speechSettings.lang,
       speechInputDeviceId: speechSettings.inputDeviceId,
@@ -474,12 +517,14 @@ export function MainView({
       isInsideService,
       libraryLoading,
       searchQuery,
+      searchMode,
       selectedCategoryId,
       selectedLibraryId,
       selectedServiceId,
       speechSettings.inputDeviceId,
       speechSettings.lang,
       setSearchQuery,
+      setSearchMode,
       setSelectedCategoryId,
       setSelectedLibraryId,
     ],
@@ -510,8 +555,16 @@ export function MainView({
   }, [isTimerLayerEnabled, setIsTimerLayerEnabled]);
 
   const handleToggleMessageLayer = React.useCallback(() => {
-    setIsMessageLayerEnabled(!isMessageLayerEnabled);
-  }, [isMessageLayerEnabled, setIsMessageLayerEnabled]);
+    const nextEnabled = !isMessageLayerEnabled;
+    setIsMessageLayerEnabled(nextEnabled);
+    if (!nextEnabled) {
+      onShowMessageOverlay(null);
+    }
+  }, [
+    isMessageLayerEnabled,
+    onShowMessageOverlay,
+    setIsMessageLayerEnabled,
+  ]);
 
   const outputPreviewProps = React.useMemo(
     () => ({
@@ -558,6 +611,8 @@ export function MainView({
       onToggleTimerLayer: handleToggleTimerLayer,
       isMessageLayerEnabled,
       onToggleMessageLayer: handleToggleMessageLayer,
+      activeMessageOverlay,
+      timers,
       timerLayout,
     }),
     [
@@ -578,6 +633,7 @@ export function MainView({
       handleToggleMessageLayer,
       handleToggleTextInOutput,
       handleToggleTimerLayer,
+      activeMessageOverlay,
       hideBackgroundInOutput,
       isMessageLayerEnabled,
       isOutputFrozen,
@@ -599,6 +655,7 @@ export function MainView({
       showTextInOutput,
       outputTextPosition,
       slideGroups,
+      timers,
       timerLayout,
       onToggleVideoPlayback,
       updateMediaFilters,
@@ -718,7 +775,10 @@ export function MainView({
 
           <ResizableHandle withHandle />
 
-          {/* Bottom Row: Wide Media Panel (spanning left till right sidebar) */}
+          {/* Bottom Row: Wide Media Panel (spanning left till right sidebar).
+              This row is exclusively for photo/video MEDIA — the workspace
+              tabs (Audio / Text / Timer / Messages / Layers / Masters) live
+              inside the right column under the Output preview. */}
           <ResizablePanel defaultSize="30" minSize="15">
             <div className="flex h-full flex-col border-t border-border bg-card overflow-hidden">
               <div className="min-h-0 flex-1 relative">
@@ -739,11 +799,37 @@ export function MainView({
 
       <ResizableHandle withHandle />
 
-      {/* Right Column: Output Preview */}
-      <ResizablePanel defaultSize="20" minSize="18" maxSize="30" order={2}>
-        <PresentOutputSidebar
-          outputPreviewProps={outputPreviewProps}
-        />
+      {/* Right Column: Output Preview on top, workspace rail (Audio / Text /
+          Timer / Messages / Layers / Masters) underneath. The rail used to
+          live in the main-area bottom row by mistake — that footer is now
+          exclusively the photo/video media panel. */}
+      <ResizablePanel defaultSize="22" minSize="20" maxSize="35" order={2}>
+        <ResizablePanelGroup
+          direction="vertical"
+          autoSaveId="present-right-column-v1"
+        >
+          <ResizablePanel defaultSize="45" minSize="25">
+            <PresentOutputSidebar outputPreviewProps={outputPreviewProps} />
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize="55" minSize="30">
+            <SidebarRail
+              orgId={orgId ?? null}
+              isTimerLayerEnabled={isTimerLayerEnabled}
+              onToggleTimerLayer={handleToggleTimerLayer}
+              isTextLayerEnabled={showTextInOutput}
+              onToggleTextLayer={handleToggleTextInOutput}
+              isMessageLayerEnabled={isMessageLayerEnabled}
+              onSetMessageLayerEnabled={setIsMessageLayerEnabled}
+              activeMessageOverlay={activeMessageOverlay}
+              onShowMessageOverlay={onShowMessageOverlay}
+              onPushMasterSlide={onPushMasterSlide}
+              activePropIds={activePropIds}
+              onSetActivePropIds={onSetActivePropIds}
+              timers={timers}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </ResizablePanel>
     </ResizablePanelGroup>
   );

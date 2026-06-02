@@ -1,4 +1,8 @@
-import type { CanvasSizePreset, SlideElement } from "./index";
+import type {
+  CanvasSizePreset,
+  MessageOverlay,
+  SlideElement,
+} from "./index";
 import type { ScreenComposerLayout } from "./screen-composer";
 
 export type VideoSettings = {
@@ -80,4 +84,26 @@ export type OutputState = {
   };
   screenComposerEnabled?: boolean;
   screenComposerLayout?: ScreenComposerLayout | null;
+  messageOverlay?: MessageOverlay | null;
+  propsOverlay?: PropsOverlayItem[] | null;
+};
+
+// One visible prop currently overlaid on the audience output. Renderer
+// supports image and text kinds positioned via preset slots.
+export type PropsOverlayItem = {
+  id: string;
+  kind: "image" | "text";
+  imageUrl?: string;
+  text?: string;
+  position:
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right"
+    | "center"
+    | "full";
+  opacity: number;
+  sizePercent: number;
+  color?: string;
+  fontSize?: number;
 };

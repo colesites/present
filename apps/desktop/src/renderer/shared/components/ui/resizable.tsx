@@ -286,13 +286,25 @@ export function ResizablePanelGroup({
               <div
                 onPointerDown={(event) => startDrag(index, event)}
                 className={cn(
-                  "relative shrink-0 bg-transparent transition-colors",
+                  // The handle is a single 1px line the panels sit flush
+                  // against. An invisible wider grab zone (the child) keeps it
+                  // easy to drag without introducing a visible gap.
+                  "group relative z-10 shrink-0 bg-border transition-colors hover:bg-primary/60",
                   resolvedDirection === "horizontal"
-                    ? "h-full w-1.5 cursor-col-resize hover:bg-primary/25"
-                    : "h-1.5 w-full cursor-row-resize hover:bg-primary/25",
+                    ? "h-full w-px cursor-col-resize"
+                    : "h-px w-full cursor-row-resize",
                   handle?.props.className,
                 )}
-              />
+              >
+                <div
+                  className={cn(
+                    "absolute",
+                    resolvedDirection === "horizontal"
+                      ? "inset-y-0 -left-[3px] -right-[3px]"
+                      : "inset-x-0 -top-[3px] -bottom-[3px]",
+                  )}
+                />
+              </div>
             ) : null}
           </Fragment>
         );

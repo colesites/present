@@ -5,31 +5,16 @@ import { cn } from "../../renderer/shared/lib/utils";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../../renderer/shared/components/ScriptureTextLayer";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../renderer/shared/components/ui/select";
-import {
-  ChevronDown,
-  Clock3,
   Image,
   ImageOff,
-  Layers3,
   MessageSquare,
-  Monitor,
-  Music2,
   Pause,
   Play,
-  Plus,
   RotateCcw,
-  Send,
   SkipBack,
   SkipForward,
   SlidersHorizontal,
   Square,
-  Trash2,
   Type,
   Volume2,
   VolumeX,
@@ -42,7 +27,13 @@ import type {
   VideoSettings,
 } from "../../features/media/hooks";
 import { filtersToCSS } from "../../features/media/hooks";
-import type { CanvasSizePreset, SlideElement } from "../../shared/types";
+import type {
+  CanvasSizePreset,
+  MessageOverlay,
+  SlideElement,
+} from "../../shared/types";
+import type { UseTimersResult } from "../../renderer/shared/hooks";
+import { getTimerDisplay } from "../../renderer/shared/hooks";
 import type {
   OutputTextPosition,
   ScriptureFooterPosition,
@@ -102,6 +93,12 @@ interface OutputPreviewProps {
   onToggleTimerLayer: () => void;
   isMessageLayerEnabled: boolean;
   onToggleMessageLayer: () => void;
+  activeMessageOverlay: MessageOverlay | null;
+  // Timer state from the shared `useTimers` hook upstream (PresentContainer).
+  // OutputPreview reads `activeTimer` for its small preview overlay and
+  // forwards the header-bar controls (reset/play/stop) to the hook's
+  // mutators.
+  timers: UseTimersResult;
   timerLayout: {
     xPercent: number;
     yPercent: number;
@@ -113,125 +110,6 @@ interface OutputPreviewProps {
     nameBannerColor: string;
     titlePosition: "top" | "bottom";
   };
-}
-
-type TimerType = "countdown" | "countdownToTime" | "elapsed";
-
-type TimerConfig = {
-  id: string;
-  name: string;
-  type: TimerType;
-  duration: string;
-  hour: number;
-  minute: number;
-  meridiem: "AM" | "PM";
-  elapsedStart: string;
-  elapsedEnd: string;
-};
-
-type TimerItem = TimerConfig & {
-  isRunning: boolean;
-  secondsValue: number;
-};
-
-function parseDurationToSeconds(value: string) {
-  const parts = value.split(":").map((part) => Number.parseInt(part, 10));
-  if (parts.some((part) => Number.isNaN(part))) {
-    return 300;
-  }
-
-  if (parts.length === 3) {
-    const [hours, minutes, seconds] = parts;
-    return hours * 3600 + minutes * 60 + seconds;
-  }
-
-  if (parts.length === 2) {
-    const [minutes, seconds] = parts;
-    return minutes * 60 + seconds;
-  }
-
-  return 300;
-}
-
-function parseTimeToMinutes(value: string) {
-  const [hours, minutes] = value
-    .split(":")
-    .map((part) => Number.parseInt(part, 10));
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
-    return null;
-  }
-
-  return hours * 60 + minutes;
-}
-
-function formatSecondsToClock(totalSeconds: number) {
-  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-  const seconds = safeSeconds % 60;
-
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function getCountdownToTimeSeconds(
-  hour: number,
-  minute: number,
-  meridiem: "AM" | "PM"
-) {
-  const now = new Date();
-  const target = new Date(now);
-  const normalizedHour = hour % 12;
-  const hour24 = meridiem === "PM" ? normalizedHour + 12 : normalizedHour;
-  target.setHours(hour24, minute, 0, 0);
-  if (target.getTime() <= now.getTime()) {
-    target.setDate(target.getDate() + 1);
-  }
-
-  return Math.floor((target.getTime() - now.getTime()) / 1000);
-}
-
-function getElapsedTargetSeconds(timer: TimerConfig) {
-  const start = parseTimeToMinutes(timer.elapsedStart);
-  const end = parseTimeToMinutes(timer.elapsedEnd);
-  if (start === null || end === null) {
-    return 0;
-  }
-
-  return Math.max((end - start) * 60, 0);
-}
-
-function getInitialTimerValue(timer: TimerConfig) {
-  if (timer.type === "countdown") {
-    return parseDurationToSeconds(timer.duration);
-  }
-
-  if (timer.type === "countdownToTime") {
-    return getCountdownToTimeSeconds(timer.hour, timer.minute, timer.meridiem);
-  }
-
-  return 0;
-}
-
-function getTimerDisplay(timer: TimerItem) {
-  if (timer.type === "countdownToTime" && !timer.isRunning) {
-    return `Countdown to ${timer.hour}:${String(timer.minute).padStart(2, "0")} ${timer.meridiem}`;
-  }
-
-  if (timer.type === "elapsed" && !timer.isRunning) {
-    return formatSecondsToClock(getElapsedTargetSeconds(timer));
-  }
-
-  return formatSecondsToClock(timer.secondsValue);
-}
-
-function getTimerTypeLabel(timerType: TimerType) {
-  if (timerType === "countdown") {
-    return "Countdown";
-  }
-  if (timerType === "countdownToTime") {
-    return "Countdown to Time";
-  }
-  return "Elapsed";
 }
 
 const FilterSlider = memo(function FilterSlider({
@@ -250,7 +128,6 @@ const FilterSlider = memo(function FilterSlider({
   onChange: (value: number) => void;
 }) {
   const isDefault = value === defaultValue;
-
   return (
     <div className="flex items-center gap-1">
       <span className="w-12 shrink-0 truncate text-[9px] text-muted-foreground">
@@ -267,7 +144,7 @@ const FilterSlider = memo(function FilterSlider({
       <span
         className={cn(
           "w-6 shrink-0 text-right text-[9px]",
-          isDefault ? "text-muted-foreground" : "text-primary"
+          isDefault ? "text-muted-foreground" : "text-primary",
         )}
       >
         {value}
@@ -276,15 +153,81 @@ const FilterSlider = memo(function FilterSlider({
   );
 });
 
-const timerAffectsClockFields: (keyof TimerConfig)[] = [
-  "type",
-  "duration",
-  "hour",
-  "minute",
-  "meridiem",
-  "elapsedStart",
-  "elapsedEnd",
-];
+function getPreviewMessageThemeStyle(themeKey: string): React.CSSProperties {
+  switch (themeKey) {
+    case "info":
+      return { backgroundColor: "rgba(37, 99, 235, 0.94)", color: "#ffffff" };
+    case "warning":
+      return { backgroundColor: "rgba(245, 158, 11, 0.96)", color: "#111827" };
+    case "danger":
+      return { backgroundColor: "rgba(220, 38, 38, 0.96)", color: "#ffffff" };
+    case "transparent":
+      return {
+        backgroundColor: "rgba(0, 0, 0, 0.34)",
+        color: "#ffffff",
+        backdropFilter: "blur(2px)",
+      };
+    default:
+      return { backgroundColor: "rgba(31, 32, 48, 0.94)", color: "#ffffff" };
+  }
+}
+
+function PreviewMessageOverlay({ overlay }: { overlay: MessageOverlay }) {
+  if (!overlay.text.trim()) return null;
+
+  const isMarquee =
+    overlay.animation === "marquee-left" ||
+    overlay.animation === "marquee-right";
+  const positionClass = overlay.position === "top" ? "top-0" : "bottom-0";
+  const direction =
+    overlay.animation === "marquee-right"
+      ? "previewMarqueeRight"
+      : "previewMarqueeLeft";
+
+  return (
+    <div
+      className={cn(
+        "pointer-events-none absolute inset-x-0 z-30 overflow-hidden px-3 py-1.5",
+        positionClass,
+      )}
+      style={getPreviewMessageThemeStyle(overlay.themeKey)}
+    >
+      {isMarquee ? (
+        <>
+          <style>
+            {`
+              @keyframes previewMarqueeLeft {
+                0% { transform: translateX(100%); }
+                100% { transform: translateX(-100%); }
+              }
+              @keyframes previewMarqueeRight {
+                0% { transform: translateX(-100%); }
+                100% { transform: translateX(100%); }
+              }
+            `}
+          </style>
+          <span
+            className="block whitespace-nowrap text-[11px] font-semibold leading-tight"
+            style={{
+              animation: `${direction} ${Math.max(
+                2,
+                overlay.speedSeconds,
+              )}s linear infinite`,
+              willChange: "transform",
+            }}
+          >
+            {overlay.text}
+          </span>
+        </>
+      ) : (
+        <span className="block text-center text-[11px] font-semibold leading-tight">
+          {overlay.text}
+        </span>
+      )}
+    </div>
+  );
+}
+
 
 export const OutputPreview = memo(function OutputPreview({
   text,
@@ -330,59 +273,24 @@ export const OutputPreview = memo(function OutputPreview({
   onToggleTimerLayer,
   isMessageLayerEnabled,
   onToggleMessageLayer,
+  activeMessageOverlay,
+  timers,
   timerLayout,
 }: OutputPreviewProps) {
+  // Pull the bits of the timers hook the preview's header controls need.
+  const {
+    timers: timerItems,
+    activeTimer,
+    resetTimer,
+    toggleTimerPlayback,
+    stopAllTimers,
+    adjustTimerSeconds,
+  } = timers;
+  const activeTimerId = activeTimer?.id ?? null;
   const videoRef = useRef<HTMLVideoElement>(null);
   const outputFrameRef = useRef<HTMLDivElement>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [previewScale, setPreviewScale] = useState(0.35);
-  const [timerSyncTrigger, setTimerSyncTrigger] = useState(0);
-  const [timers, setTimers] = useState<TimerItem[]>(() => {
-    const defaults: TimerConfig[] = [
-      {
-        id: "pre-service",
-        name: "Pre-Service",
-        type: "countdown",
-        duration: "00:15:00",
-        hour: 9,
-        minute: 0,
-        meridiem: "AM",
-        elapsedStart: "00:00",
-        elapsedEnd: "00:15",
-      },
-      {
-        id: "opening-prayer",
-        name: "Opening Prayer",
-        type: "countdown",
-        duration: "00:05:00",
-        hour: 9,
-        minute: 0,
-        meridiem: "AM",
-        elapsedStart: "00:00",
-        elapsedEnd: "00:05",
-      },
-      {
-        id: "praise-worship",
-        name: "Praise & Worship",
-        type: "elapsed",
-        duration: "00:20:00",
-        hour: 9,
-        minute: 0,
-        meridiem: "AM",
-        elapsedStart: "00:00",
-        elapsedEnd: "00:20",
-      },
-    ];
-
-    return defaults.map((timer) => ({
-      ...timer,
-      isRunning: false,
-      secondsValue: getInitialTimerValue(timer),
-    }));
-  });
-  const [expandedTimerId, setExpandedTimerId] = useState<string | null>(
-    "pre-service"
-  );
 
   const isScriptureSlide = activeSlideId?.startsWith("scripture:") ?? false;
   const shouldUseScriptureTextLayer =
@@ -400,24 +308,12 @@ export const OutputPreview = memo(function OutputPreview({
     [fontBold, fontFamily, fontItalic, fontSize, fontUnderline],
   );
 
-  const activeTimerId = useMemo(
-    () =>
-      expandedTimerId && timers.some((timer) => timer.id === expandedTimerId)
-        ? expandedTimerId
-        : (timers[0]?.id ?? null),
-    [expandedTimerId, timers]
-  );
-
-  const activeTimer = useMemo(
-    () => timers.find((timer) => timer.id === activeTimerId) ?? null,
-    [timers, activeTimerId]
-  );
-  const activeTimerDisplay = useMemo(
-    () => (activeTimer ? getTimerDisplay(activeTimer) : null),
-    [activeTimer]
-  );
+  // Timer label/text are derived from the shared `useTimers` hook. Local
+  // aliases preserve the existing JSX read sites in the preview thumbnail.
   const timerLabelForOutput = activeTimer?.name ?? "Timer Name";
-  const timerTextForOutput = activeTimerDisplay ?? "00:00:00";
+  const timerTextForOutput = activeTimer
+    ? getTimerDisplay(activeTimer)
+    : "00:00:00";
   const timerClockFontPx = useMemo(
     () =>
       Math.max(
@@ -476,38 +372,9 @@ export const OutputPreview = memo(function OutputPreview({
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (!window.electronAPI) {
-      return;
-    }
-    window.electronAPI.onOutputReady(() => {
-      setTimerSyncTrigger((current) => current + 1);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!window.electronAPI) {
-      return;
-    }
-    const timerPayload = {
-      type: "timer-update",
-      timerLabel: timerLabelForOutput,
-      timerText: timerTextForOutput,
-      timerRunning: activeTimer?.isRunning ?? false,
-      timerVisible: isTimerLayerEnabled,
-    };
-
-    window.electronAPI.sendToOutput(timerPayload);
-    if (window.electronAPI.sendToStage) {
-      window.electronAPI.sendToStage(timerPayload);
-    }
-  }, [
-    activeTimer?.isRunning,
-    isTimerLayerEnabled,
-    timerLabelForOutput,
-    timerTextForOutput,
-    timerSyncTrigger,
-  ]);
+  // The previous `onOutputReady` + `timer-update` broadcast effects lived
+  // here. Both moved to PresentContainer alongside the `useTimers` hook so
+  // the audience output and the new sidebar-rail Timer panel share state.
 
   useEffect(() => {
     if (videoRef.current) {
@@ -535,52 +402,6 @@ export const OutputPreview = memo(function OutputPreview({
     }
   }, [videoCurrentTime, activeMediaItem, showMedia]);
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setTimers((previous) =>
-        previous.map((timer) => {
-          if (!timer.isRunning) {
-            return timer;
-          }
-
-          if (timer.type === "countdownToTime") {
-            const remaining = getCountdownToTimeSeconds(
-              timer.hour,
-              timer.minute,
-              timer.meridiem
-            );
-            if (remaining <= 0) {
-              return { ...timer, isRunning: false, secondsValue: 0 };
-            }
-            return { ...timer, secondsValue: remaining };
-          }
-
-          if (timer.type === "elapsed") {
-            const targetSeconds = getElapsedTargetSeconds(timer);
-            const nextElapsed = timer.secondsValue + 1;
-            if (targetSeconds > 0 && nextElapsed >= targetSeconds) {
-              return {
-                ...timer,
-                isRunning: false,
-                secondsValue: targetSeconds,
-              };
-            }
-
-            return { ...timer, secondsValue: nextElapsed };
-          }
-
-          const nextRemaining = Math.max(timer.secondsValue - 1, 0);
-          return {
-            ...timer,
-            isRunning: nextRemaining > 0,
-            secondsValue: nextRemaining,
-          };
-        })
-      );
-    }, 1000);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
 
   const filterStyle = filtersToCSS(mediaFilters);
   const previewTextScale = useMemo(
@@ -610,170 +431,27 @@ export const OutputPreview = memo(function OutputPreview({
     ? videoSettings.volume
     : 1;
 
-  const createTimer = () => {
-    const timerConfig: TimerConfig = {
-      id: crypto.randomUUID(),
-      name: `Timer ${timers.length + 1}`,
-      type: "countdown",
-      duration: "00:05:00",
-      hour: 5,
-      minute: 0,
-      meridiem: "PM",
-      elapsedStart: "00:00",
-      elapsedEnd: "00:15",
-    };
-
-    const timer: TimerItem = {
-      ...timerConfig,
-      isRunning: false,
-      secondsValue: getInitialTimerValue(timerConfig),
-    };
-
-    setTimers((previous) => [...previous, timer]);
-    setExpandedTimerId(timer.id);
-  };
-
-  const updateTimer = (id: string, patch: Partial<TimerConfig>) => {
-    setTimers((previous) =>
-      previous.map((timer) => {
-        if (timer.id !== id) {
-          return timer;
-        }
-
-        const nextTimer = { ...timer, ...patch };
-        const shouldResetRuntime = timerAffectsClockFields.some(
-          (field) => field in patch
-        );
-
-        if (!shouldResetRuntime) {
-          return nextTimer;
-        }
-
-        return {
-          ...nextTimer,
-          isRunning: false,
-          secondsValue: getInitialTimerValue(nextTimer),
-        };
-      })
-    );
-  };
-
-  const toggleTimerPlayback = (id: string) => {
-    setTimers((previous) =>
-      previous.map((timer) => {
-        if (timer.id !== id) {
-          return timer;
-        }
-
-        if (timer.isRunning) {
-          return { ...timer, isRunning: false };
-        }
-
-        if (timer.type === "countdownToTime") {
-          return {
-            ...timer,
-            isRunning: true,
-            secondsValue: getCountdownToTimeSeconds(
-              timer.hour,
-              timer.minute,
-              timer.meridiem
-            ),
-          };
-        }
-
-        if (timer.type === "elapsed") {
-          const targetSeconds = getElapsedTargetSeconds(timer);
-          const startAt =
-            targetSeconds > 0 && timer.secondsValue >= targetSeconds
-              ? 0
-              : timer.secondsValue;
-          return { ...timer, isRunning: true, secondsValue: startAt };
-        }
-
-        return {
-          ...timer,
-          isRunning: true,
-          secondsValue:
-            timer.secondsValue > 0
-              ? timer.secondsValue
-              : getInitialTimerValue(timer),
-        };
-      })
-    );
-  };
-
-  const resetTimer = (id: string) => {
-    setTimers((previous) =>
-      previous.map((timer) =>
-        timer.id === id
-          ? {
-              ...timer,
-              isRunning: false,
-              secondsValue: getInitialTimerValue(timer),
-            }
-          : timer
-      )
-    );
-  };
-
-  const stopAllTimers = () => {
-    setTimers((previous) =>
-      previous.map((timer) => ({ ...timer, isRunning: false }))
-    );
-  };
-
-  const adjustTimerSeconds = (id: string, delta: number) => {
-    setTimers((previous) =>
-      previous.map((timer) => {
-        if (timer.id !== id) {
-          return timer;
-        }
-
-        if (timer.type === "elapsed") {
-          const targetSeconds = getElapsedTargetSeconds(timer);
-          const nextValue = Math.max(timer.secondsValue + delta, 0);
-          return {
-            ...timer,
-            secondsValue:
-              targetSeconds > 0
-                ? Math.min(nextValue, targetSeconds)
-                : nextValue,
-            isRunning: false,
-          };
-        }
-
-        const nextValue = Math.max(timer.secondsValue + delta, 0);
-        return { ...timer, secondsValue: nextValue, isRunning: false };
-      })
-    );
-  };
-
-  const removeTimer = (id: string) => {
-    setTimers((previous) => previous.filter((timer) => timer.id !== id));
-    setExpandedTimerId((current) => (current === id ? null : current));
-  };
-
   return (
     <div className="flex h-full flex-col overflow-auto">
-      <div className="flex shrink-0 items-center gap-2 px-3 py-2">
+      <div className="flex shrink-0 items-center gap-2 px-3 py-2.5">
         <span
           className={cn(
             "h-2 w-2 rounded-full",
             activeMediaItem || text
               ? isFrozen
-                ? "bg-sky-400"
-                : "bg-green-500"
-              : "bg-primary"
+                ? "bg-sky-400 shadow-[0_0_6px] shadow-sky-400/60"
+                : "bg-green-500 shadow-[0_0_6px] shadow-green-500/60"
+              : "bg-muted-foreground/40"
           )}
         />
-        <p className="text-xs font-medium text-muted-foreground">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           Main Output
-          {isFrozen && (
-            <span className="ml-2 text-[10px] uppercase tracking-wide text-sky-400">
-              Frozen
-            </span>
-          )}
         </p>
+        {isFrozen && (
+          <span className="rounded-full bg-sky-400/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-400">
+            Frozen
+          </span>
+        )}
       </div>
 
       <div className="shrink-0">
@@ -935,6 +613,10 @@ export const OutputPreview = memo(function OutputPreview({
               </div>
             )}
 
+            {isMessageLayerEnabled && activeMessageOverlay ? (
+              <PreviewMessageOverlay overlay={activeMessageOverlay} />
+            ) : null}
+
             {hasHiddenTextLayerContent && !activeMediaItem && !isTimerLayerEnabled && (
               <div className="absolute inset-0 z-0 flex h-full items-center justify-center">
                 <p className="text-xs text-zinc-500">Text layer is hidden</p>
@@ -952,106 +634,116 @@ export const OutputPreview = memo(function OutputPreview({
             </div>
           </div>
 
-          <div className="grid w-24 shrink-0 grid-cols-[2.8rem_1fr] text-muted-foreground pr-2">
-            <div className="flex items-center justify-center border-r border-border/70">
+          {/* Slim layer toolbar: clear action up top, layer toggles below.
+              Compact, consistent icon buttons with a subtle active chip. */}
+          <div className="flex w-10 shrink-0 flex-col items-center gap-0.5 py-0.5 pr-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (showText) {
+                  onToggleText();
+                }
+                onClearMedia();
+              }}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-secondary hover:text-foreground focus:outline-none focus-visible:outline-none"
+              title="Clear text and media"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="my-0.5 h-px w-5 bg-border/60" />
+
+            <button
+              type="button"
+              onClick={onToggleText}
+              aria-pressed={showText}
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md transition focus:outline-none focus-visible:outline-none",
+                showText
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+              title={showText ? "Hide text layer" : "Show text layer"}
+            >
+              <Type className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onToggleMessageLayer}
+              aria-pressed={isMessageLayerEnabled}
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md transition focus:outline-none focus-visible:outline-none",
+                isMessageLayerEnabled
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+              title={
+                isMessageLayerEnabled
+                  ? "Hide message layer"
+                  : "Show message layer"
+              }
+            >
+              <MessageSquare className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onToggleMedia}
+              aria-pressed={showMedia && Boolean(activeMediaItem)}
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md transition focus:outline-none focus-visible:outline-none",
+                showMedia && activeMediaItem
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+              title={showMedia ? "Hide media layer" : "Show media layer"}
+            >
+              <Image className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onToggleHideBackground}
+              aria-pressed={hideBackground}
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md transition focus:outline-none focus-visible:outline-none",
+                hideBackground
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+              title={hideBackground ? "Show background layer" : "Hide background layer"}
+            >
+              <ImageOff className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowFilters((previous) => !previous)}
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md transition focus:outline-none focus-visible:outline-none",
+                showFilters
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+              title="Media filters"
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </button>
+            {onToggleFreeze && (
               <button
                 type="button"
-                onClick={() => {
-                  if (showText) {
-                    onToggleText();
-                  }
-                  onClearMedia();
-                }}
-                className="inline-flex h-10 w-10 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none"
-                title="Clear text and media"
-              >
-                <X className="h-7 w-7" />
-              </button>
-            </div>
-            <div className="flex flex-col items-center justify-between py-1">
-              <button
-                type="button"
-                onClick={onToggleText}
-                aria-pressed={showText}
+                onClick={onToggleFreeze}
+                aria-pressed={isFrozen}
                 className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
-                  showText ? "text-primary" : "text-muted-foreground"
-                )}
-                title={showText ? "Hide text layer" : "Show text layer"}
-              >
-                <Type className="h-6 w-6" />
-              </button>
-              <button
-                type="button"
-                onClick={onToggleMessageLayer}
-                aria-pressed={isMessageLayerEnabled}
-                className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
-                  isMessageLayerEnabled ? "text-primary" : "text-muted-foreground"
+                  "inline-flex h-8 w-8 items-center justify-center rounded-md transition focus:outline-none focus-visible:outline-none",
+                  isFrozen
+                    ? "bg-sky-400/15 text-sky-400"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                 )}
                 title={
-                  isMessageLayerEnabled
-                    ? "Hide message layer"
-                    : "Show message layer"
+                  isFrozen ? "Unfreeze main output" : "Freeze main output"
                 }
               >
-                <MessageSquare className="h-6 w-6" />
+                <IoSnow className="h-4 w-4" />
               </button>
-              <button
-                type="button"
-                onClick={onToggleMedia}
-                aria-pressed={showMedia && Boolean(activeMediaItem)}
-                className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
-                  showMedia && activeMediaItem
-                    ? "text-primary"
-                    : "text-muted-foreground"
-                )}
-                title={showMedia ? "Hide media layer" : "Show media layer"}
-              >
-                <Image className="h-6 w-6" />
-              </button>
-              <button
-                type="button"
-                onClick={onToggleHideBackground}
-                aria-pressed={hideBackground}
-                className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
-                  hideBackground ? "text-primary" : "text-muted-foreground"
-                )}
-                title={hideBackground ? "Show background layer" : "Hide background layer"}
-              >
-                <ImageOff className="h-6 w-6" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowFilters((previous) => !previous)}
-                className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center bg-transparent transition hover:text-foreground active:bg-transparent focus:outline-none focus-visible:outline-none",
-                  showFilters
-                    ? "text-primary"
-                    : "text-muted-foreground"
-                )}
-                title="Media filters"
-              >
-                <SlidersHorizontal className="h-6 w-6" />
-              </button>
-              {onToggleFreeze && (
-                <button
-                  type="button"
-                  onClick={onToggleFreeze}
-                  className={cn(
-                    "inline-flex h-9 w-9 items-center justify-center transition hover:text-foreground",
-                    isFrozen ? "text-sky-400" : "text-muted-foreground"
-                  )}
-                  title={
-                    isFrozen ? "Unfreeze main output" : "Freeze main output"
-                  }
-                >
-                  <IoSnow className="h-6 w-6" />
-                </button>
-              )}
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -1174,10 +866,13 @@ export const OutputPreview = memo(function OutputPreview({
         </div>
       )}
 
-      <div className="mt-4 flex-1 border-t border-border px-3 py-2">
-        <div className="mb-2 rounded-md border border-border/70 bg-secondary/25">
-          <div className="px-2 pt-2">
-            {activeMediaItem?.type === "video" ? (
+      <div className="mt-4 flex-1 border-t border-border px-3 py-3">
+        {/* Transport bar — a clean control surface for the active video or
+            timer. Borderless ghost buttons around a single filled play. */}
+        <div className="rounded-xl border border-border/60 bg-secondary/20 p-3">
+          {activeMediaItem?.type === "video" ? (
+            <div className="mb-3 flex items-center gap-2">
+              <Volume2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <input
                 key="video-volume"
                 type="range"
@@ -1190,39 +885,85 @@ export const OutputPreview = memo(function OutputPreview({
                     volume: Number.parseFloat(event.target.value),
                   })
                 }
-                className="h-1.5 w-full accent-muted-foreground"
+                className="h-1 w-full cursor-pointer accent-primary"
                 aria-label="Video volume"
                 title={`Volume: ${Math.round(safeVideoVolume * 100)}%`}
               />
-            ) : (
-              <input
-                key="timer-intensity"
-                type="range"
-                min={0}
-                max={100}
-                value={100}
-                onChange={() => {
-                  return;
+              <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
+                {Math.round(safeVideoVolume * 100)}%
+              </span>
+            </div>
+          ) : (
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                {activeTimer?.name ?? "Timer"}
+              </span>
+              <span className="ml-auto text-xs font-semibold tabular-nums text-foreground">
+                {timerTextForOutput}
+              </span>
+            </div>
+          )}
+
+          {/* 3-column grid keeps the play/pause button dead-center while
+              auxiliary controls balance on each side. */}
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1">
+            {/* Left cluster (right-aligned toward the play button) */}
+            <div className="flex items-center justify-end gap-1">
+              <button
+                type="button"
+                onClick={stopAllTimers}
+                disabled={timerItems.every((timer) => !timer.isRunning)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-background hover:text-foreground disabled:opacity-30"
+                title="Stop all timers"
+              >
+                <Square className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeMediaItem?.type === "video") {
+                    onVideoSettingsChange({ loop: !videoSettings.loop });
+                    return;
+                  }
+                  if (activeTimerId) {
+                    resetTimer(activeTimerId);
+                  }
                 }}
-                className="h-1.5 w-full accent-muted-foreground"
-                aria-label="Timer intensity"
-              />
-            )}
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-1.5 px-2 py-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (activeTimerId) {
-                  adjustTimerSeconds(activeTimerId, -15);
+                disabled={
+                  activeMediaItem?.type === "video" ? false : !activeTimerId
                 }
-              }}
-              disabled={!activeTimerId}
-              className="inline-flex h-7 w-7 items-center justify-center rounded border border-border bg-background/60 text-muted-foreground transition hover:text-foreground disabled:opacity-40"
-              title="Rewind 15s"
-            >
-              <SkipBack className="h-3.5 w-3.5" />
-            </button>
+                className={cn(
+                  "inline-flex h-8 w-8 items-center justify-center rounded-lg transition disabled:opacity-30",
+                  activeMediaItem?.type === "video" && videoSettings.loop
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:bg-background hover:text-foreground"
+                )}
+                title={
+                  activeMediaItem?.type === "video"
+                    ? videoSettings.loop
+                      ? "Disable video loop"
+                      : "Enable video loop"
+                    : "Reset timer"
+                }
+              >
+                <RotateCcw className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeTimerId) {
+                    adjustTimerSeconds(activeTimerId, -15);
+                  }
+                }}
+                disabled={!activeTimerId}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-background hover:text-foreground disabled:opacity-30"
+                title="Rewind 15s"
+              >
+                <SkipBack className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Center: primary play / pause */}
             <button
               type="button"
               onClick={() => {
@@ -1235,7 +976,7 @@ export const OutputPreview = memo(function OutputPreview({
                 }
               }}
               disabled={activeMediaItem?.type === "video" ? false : !activeTimer}
-              className="inline-flex h-8 w-8 items-center justify-center rounded border border-border bg-background text-foreground transition hover:bg-accent/35 disabled:opacity-40"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-30"
               title={
                 activeMediaItem?.type === "video"
                   ? isVideoPlaying
@@ -1248,419 +989,55 @@ export const OutputPreview = memo(function OutputPreview({
             >
               {activeMediaItem?.type === "video" ? (
                 isVideoPlaying ? (
-                  <Pause className="h-4 w-4" />
+                  <Pause className="h-5 w-5" />
                 ) : (
-                  <Play className="h-4 w-4" />
+                  <Play className="h-5 w-5 translate-x-px" />
                 )
               ) : activeTimer?.isRunning ? (
-                <Pause className="h-4 w-4" />
+                <Pause className="h-5 w-5" />
               ) : (
-                <Play className="h-4 w-4" />
+                <Play className="h-5 w-5 translate-x-px" />
               )}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (activeTimerId) {
-                  adjustTimerSeconds(activeTimerId, 15);
-                }
-              }}
-              disabled={!activeTimerId}
-              className="inline-flex h-7 w-7 items-center justify-center rounded border border-border bg-background/60 text-muted-foreground transition hover:text-foreground disabled:opacity-40"
-              title="Forward 15s"
-            >
-              <SkipForward className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (activeMediaItem?.type === "video") {
-                  onVideoSettingsChange({ loop: !videoSettings.loop });
-                  return;
-                }
-                if (activeTimerId) {
-                  resetTimer(activeTimerId);
-                }
-              }}
-              disabled={
-                activeMediaItem?.type === "video" ? false : !activeTimerId
-              }
-              className={cn(
-                "inline-flex h-7 w-7 items-center justify-center rounded border transition disabled:opacity-40",
-                activeMediaItem?.type === "video"
-                  ? videoSettings.loop
-                    ? "border-primary/60 bg-primary/20 text-primary"
-                    : "border-border bg-background/60 text-muted-foreground hover:text-foreground"
-                  : "border-border bg-background/60 text-muted-foreground hover:text-foreground"
-              )}
-              title={
-                activeMediaItem?.type === "video"
-                  ? videoSettings.loop
-                    ? "Disable video loop"
-                    : "Enable video loop"
-                  : "Reset timer"
-              }
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={stopAllTimers}
-              disabled={timers.every((timer) => !timer.isRunning)}
-              className="inline-flex h-7 w-7 items-center justify-center rounded border border-border bg-background/60 text-muted-foreground transition hover:text-foreground disabled:opacity-40"
-              title="Stop all timers"
-            >
-              <Square className="h-3.5 w-3.5" />
-            </button>
-            {activeMediaItem?.type === "video" ? (
-              <>
+
+            {/* Right cluster (left-aligned away from the play button) */}
+            <div className="flex items-center justify-start gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeTimerId) {
+                    adjustTimerSeconds(activeTimerId, 15);
+                  }
+                }}
+                disabled={!activeTimerId}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-background hover:text-foreground disabled:opacity-30"
+                title="Forward 15s"
+              >
+                <SkipForward className="h-4 w-4" />
+              </button>
+              {activeMediaItem?.type === "video" ? (
                 <button
                   type="button"
                   onClick={() =>
                     onVideoSettingsChange({ muted: !videoSettings.muted })
                   }
                   className={cn(
-                    "inline-flex h-7 w-7 items-center justify-center rounded border transition",
+                    "inline-flex h-8 w-8 items-center justify-center rounded-lg transition",
                     videoSettings.muted
-                      ? "border-destructive/50 bg-destructive/15 text-destructive"
-                      : "border-border bg-background/60 text-muted-foreground hover:text-foreground"
+                      ? "bg-destructive/15 text-destructive"
+                      : "text-muted-foreground hover:bg-background hover:text-foreground"
                   )}
                   title={videoSettings.muted ? "Unmute video" : "Mute video"}
                 >
                   {videoSettings.muted ? (
-                    <VolumeX className="h-3.5 w-3.5" />
+                    <VolumeX className="h-4 w-4" />
                   ) : (
-                    <Volume2 className="h-3.5 w-3.5" />
+                    <Volume2 className="h-4 w-4" />
                   )}
                 </button>
-              </>
-            ) : null}
+              ) : null}
+            </div>
           </div>
-        </div>
-
-        <div className="mb-2 grid grid-cols-6 overflow-hidden rounded-md border border-border/70 bg-secondary/20 mr-1.5 font-bold uppercase tracking-widest text-muted-foreground">
-          <button
-            type="button"
-            className="inline-flex h-7 items-center justify-center border-r border-border/70 text-muted-foreground"
-            title="Audio"
-          >
-            <Music2 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-7 items-center justify-center border-r border-border/70 text-muted-foreground"
-            title="Text"
-          >
-            <Type className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={onToggleTimerLayer}
-            aria-pressed={isTimerLayerEnabled}
-            className={cn(
-              "inline-flex h-7 items-center justify-center border-r border-border/70 transition",
-              isTimerLayerEnabled
-                ? "bg-destructive/70 text-white"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-            title="Timers"
-          >
-            <Clock3 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-7 items-center justify-center border-r border-border/70 text-muted-foreground"
-            title="Messages"
-          >
-            <Send className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-7 items-center justify-center border-r border-border/70 text-muted-foreground"
-            title="Layers"
-          >
-            <Layers3 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-7 items-center justify-center text-muted-foreground"
-            title="Media"
-          >
-            <Monitor className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        <div className="mb-2 flex items-center justify-between">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-            Timers
-          </p>
-          <button
-            type="button"
-            onClick={createTimer}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-border bg-secondary/30 text-muted-foreground transition hover:text-foreground"
-            title="Add timer"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        <div className="space-y-1.5 overflow-y-auto pr-1">
-          {timers.map((timer) => {
-            const isExpanded = expandedTimerId === timer.id;
-
-            return (
-              <div
-                key={timer.id}
-                className="overflow-hidden rounded-md border border-border/80 bg-secondary/15"
-              >
-                <div className="flex items-center gap-2 px-2 py-1.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedTimerId((current) =>
-                        current === timer.id ? null : timer.id
-                      )
-                    }
-                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border/70 bg-background/40 text-muted-foreground"
-                    title={isExpanded ? "Collapse" : "Expand"}
-                  >
-                    <ChevronDown
-                      className={cn(
-                        "h-3.5 w-3.5 transition-transform",
-                        isExpanded ? "rotate-180" : "-rotate-90"
-                      )}
-                    />
-                  </button>
-
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium text-foreground">
-                      {timer.name}
-                    </p>
-                    <p className="truncate text-[11px] text-muted-foreground">
-                      {getTimerDisplay(timer)}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => resetTimer(timer.id)}
-                      className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-background/50 text-muted-foreground transition hover:text-foreground"
-                      title="Reset timer"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleTimerPlayback(timer.id)}
-                      className={cn(
-                        "inline-flex h-6 w-6 items-center justify-center rounded border transition",
-                        timer.isRunning
-                          ? "border-primary/60 bg-primary/20 text-primary"
-                          : "border-border bg-background/50 text-muted-foreground hover:text-foreground"
-                      )}
-                      title={timer.isRunning ? "Pause timer" : "Play timer"}
-                    >
-                      {timer.isRunning ? (
-                        <Pause className="h-3 w-3" />
-                      ) : (
-                        <Play className="h-3 w-3" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {isExpanded ? (
-                  <div className="space-y-2 border-t border-border/70 px-2 py-2">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-medium text-muted-foreground">
-                        Name
-                      </label>
-                      <input
-                        value={timer.name}
-                        onChange={(event) =>
-                          updateTimer(timer.id, { name: event.target.value })
-                        }
-                        className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-medium text-muted-foreground">
-                        Type
-                      </label>
-                      <Select
-                        value={timer.type}
-                        onValueChange={(value) =>
-                          updateTimer(timer.id, { type: value as TimerType })
-                        }
-                      >
-                        <SelectTrigger className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:border-primary/60 focus-visible:ring-0">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="countdown">Countdown Timer</SelectItem>
-                          <SelectItem value="countdownToTime">
-                            Countdown to Time
-                          </SelectItem>
-                          <SelectItem value="elapsed">Elapsed Time</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-[10px] text-muted-foreground">
-                        {getTimerTypeLabel(timer.type)}
-                      </p>
-                    </div>
-
-                    {timer.type === "countdown" ? (
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-medium text-muted-foreground">
-                          Duration (HH:MM:SS)
-                        </label>
-                        <input
-                          value={timer.duration}
-                          onChange={(event) =>
-                            updateTimer(timer.id, {
-                              duration: event.target.value,
-                            })
-                          }
-                          className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
-                        />
-                      </div>
-                    ) : null}
-
-                    {timer.type === "countdownToTime" ? (
-                      <div className="grid grid-cols-3 gap-1.5">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-medium text-muted-foreground">
-                            Hour
-                          </label>
-                          <Select
-                            value={String(timer.hour)}
-                            onValueChange={(value) =>
-                              updateTimer(timer.id, {
-                                hour: Number.parseInt(value, 10),
-                              })
-                            }
-                          >
-                            <SelectTrigger className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:border-primary/60 focus-visible:ring-0">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {Array.from(
-                                { length: 12 },
-                                (_, index) => index + 1,
-                              ).map((hourValue) => (
-                                <SelectItem key={hourValue} value={String(hourValue)}>
-                                  {hourValue}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-medium text-muted-foreground">
-                            Minute
-                          </label>
-                          <Select
-                            value={String(timer.minute)}
-                            onValueChange={(value) =>
-                              updateTimer(timer.id, {
-                                minute: Number.parseInt(value, 10),
-                              })
-                            }
-                          >
-                            <SelectTrigger className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:border-primary/60 focus-visible:ring-0">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {Array.from(
-                                { length: 60 },
-                                (_, index) => index,
-                              ).map((minuteValue) => (
-                                <SelectItem
-                                  key={minuteValue}
-                                  value={String(minuteValue)}
-                                >
-                                  {String(minuteValue).padStart(2, "0")}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-medium text-muted-foreground">
-                            Period
-                          </label>
-                          <Select
-                            value={timer.meridiem}
-                            onValueChange={(value) =>
-                              updateTimer(timer.id, {
-                                meridiem: value as "AM" | "PM",
-                              })
-                            }
-                          >
-                            <SelectTrigger className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:border-primary/60 focus-visible:ring-0">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="AM">AM</SelectItem>
-                              <SelectItem value="PM">PM</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {timer.type === "elapsed" ? (
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-medium text-muted-foreground">
-                            Start
-                          </label>
-                          <input
-                            type="time"
-                            value={timer.elapsedStart}
-                            onChange={(event) =>
-                              updateTimer(timer.id, {
-                                elapsedStart: event.target.value,
-                              })
-                            }
-                            className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-medium text-muted-foreground">
-                            End
-                          </label>
-                          <input
-                            type="time"
-                            value={timer.elapsedEnd}
-                            onChange={(event) =>
-                              updateTimer(timer.id, {
-                                elapsedEnd: event.target.value,
-                              })
-                            }
-                            className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-primary/60"
-                          />
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => removeTimer(timer.id)}
-                        className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/15 px-2 py-1 text-[10px] font-medium text-destructive transition hover:bg-destructive/25"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
         </div>
       </div>
     </div>

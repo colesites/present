@@ -110,16 +110,124 @@ export function parseLyricsToSlides(
 }
 
 /**
- * Fixes lyrics using the Convex lyrics action.
- * @param lyrics The raw lyrics string to clean up.
- * @returns The cleaned lyrics or original if failed.
+ * Local-only lyric cleaner. Runs deterministically and offline so the
+ * "Fix Lyrics" button always improves output even when the AI Gateway key
+ * isn't configured. Handles the small cleanups operators actually care
+ * about: decorative junk, repeated whitespace, deity casing, and
+ * pad-around-punctuation artefacts pasted from PDFs / web lyric sites.
+ */
+export function cleanLyricsLocally(lyrics: string): string {
+  if (!lyrics) return "";
+
+  let text = lyrics
+    // Normalise newlines (CRLF, CR) → LF
+    .replace(/\r\n?/g, "\n")
+    // Strip BOM / zero-widths that sneak in from copy-paste
+    .replace(/[​-‍﻿]/g, "")
+    // Curly quotes → straight, em/en-dashes → hyphen
+    .replace(/[‘’‚‛]/g, "'")
+    .replace(/[“”„‟]/g, '"')
+    .replace(/[–—]/g, "-")
+    // Ellipsis char → three dots, then collapse runs of decorative dots
+    .replace(/…/g, "...")
+    .replace(/\.{3,}/g, "")
+    // Decorative separator lines (---- ____ ====)
+    .replace(/^[\s_\-=]{3,}$/gm, "")
+    // "(2x)" / "(x3)" repeat markers — strip from body
+    .replace(/\s*\(\s*x?\s*\d+\s*x?\s*\)\s*$/gim, "")
+    // Trailing whitespace before line break
+    .replace(/[ \t]+$/gm, "")
+    // Leading whitespace at line start
+    .replace(/^[ \t]+/gm, "")
+    // Collapse multiple spaces inside a line
+    .replace(/[ \t]{2,}/g, " ");
+
+  // Casing fix for the deity references operators consistently want.
+  // Only fix when it's a word on its own (so we don't mangle "good" → "God").
+  text = text.replace(/\bgod\b/g, "God").replace(/\blord\b/g, "Lord");
+
+  // Collapse 3+ blank lines down to a single blank line (slide separator)
+  text = text.replace(/\n{3,}/g, "\n\n");
+
+  return text.trim();
+}
+
+/**
+ * Re-split a lyric body into slides of N lines each, preserving section
+ * labels like `[Verse 1]` / `[Chorus]`.
+ *
+ * IMPORTANT: blank lines are NOT treated as hard breaks. Earlier slide
+ * separators (the blank lines a previous break inserted) are ignored so
+ * the body can be freely re-flowed to any N — breaking to 4 and then to 6
+ * works correctly. Only a section label or reaching `size` lyric lines
+ * starts a new slide.
+ */
+export function breakLyricsIntoChunks(
+  lyrics: string,
+  linesPerSlide: number,
+): string {
+  const size = Math.max(1, Math.min(linesPerSlide | 0, 12));
+  const cleaned = cleanLyricsLocally(lyrics);
+  if (!cleaned) return "";
+
+  const rawLines = cleaned.split("\n");
+  const out: string[] = [];
+  let bufferLabel: string | null = null;
+  let buffer: string[] = [];
+
+  const flush = () => {
+    if (buffer.length === 0 && !bufferLabel) return;
+    if (bufferLabel) out.push(bufferLabel);
+    if (buffer.length > 0) out.push(...buffer);
+    out.push("");
+    buffer = [];
+    bufferLabel = null;
+  };
+
+  for (const rawLine of rawLines) {
+    const line = rawLine.trim();
+    // Skip blank lines entirely — they were previous slide separators and
+    // must not constrain the new chunk size.
+    if (!line) {
+      continue;
+    }
+    // A section label closes the current slide and labels the next one.
+    if (/^\[[^\]]+\]$/.test(line)) {
+      flush();
+      bufferLabel = line;
+      continue;
+    }
+    buffer.push(line);
+    if (buffer.length >= size) {
+      flush();
+    }
+  }
+  flush();
+
+  while (out.length > 0 && out[out.length - 1] === "") out.pop();
+  return out.join("\n");
+}
+
+/**
+ * Fixes lyrics. Always applies the deterministic local cleaner first,
+ * then asks the Convex AI action for further improvements (rewording,
+ * casing edge cases, structural breaks). If the AI is unavailable, the
+ * locally-cleaned text is returned — never the raw input.
  */
 export async function fixLyrics(lyrics: string): Promise<string> {
-  const data = await convex.action(api.lyrics.fixLyrics, { lyrics });
+  const locallyCleaned = cleanLyricsLocally(lyrics);
 
-  if (data.notes?.includes("failed")) {
-    throw new Error(data.notes);
+  try {
+    const data = await convex.action(api.lyrics.fixLyrics, {
+      lyrics: locallyCleaned,
+    });
+    if (data.notes?.includes("failed")) {
+      // Don't throw — the local clean is still valuable, surface it.
+      return locallyCleaned;
+    }
+    return data.cleanedLyrics?.trim() || locallyCleaned;
+  } catch {
+    // Offline / Convex down / quota: still return the cleaned text.
+    return locallyCleaned;
   }
-
-  return data.cleanedLyrics ?? lyrics;
 }

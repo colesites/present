@@ -36,10 +36,13 @@ import {
 } from "../library/lib/library-items";
 import type { LibraryTextStyleDefaults } from "../library/lib/library-items";
 import { normalizeEditableRichTextHtml } from "../../renderer/shared/lib/rich-text";
+import { breakLyricsIntoChunks } from "../../renderer/shared/lib/lyrics";
+import { Dialog } from "../../renderer/shared/components/Dialog";
 import { EditorHeader } from "./components/EditorHeader";
 import { SlideList } from "./components/SlideList";
 import { EditorCanvas } from "./components/EditorCanvas";
 import { EditorInspector } from "./components/EditorInspector";
+import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
 
 interface LyricsEditorProps {
   libraryItem: LibraryItem | null;
@@ -205,6 +208,8 @@ export const LyricsEditor = memo(function LyricsEditor({
   const [dropSlideIndex, setDropSlideIndex] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
+  const [breakDialogOpen, setBreakDialogOpen] = useState(false);
+  const [breakLines, setBreakLines] = useState(2);
 
   const latestSavedRef = useRef<string | null>(null);
   const lastItemKeyRef = useRef<string | null>(null);
@@ -592,6 +597,50 @@ export const LyricsEditor = memo(function LyricsEditor({
     [applyDraft],
   );
 
+  // Listen for Theme-modal apply requests. When the Themes modal dispatches
+  // a payload, the editor patches the currently-selected slide's text
+  // elements with the theme's style and applies the background color. We
+  // consume the pending payload after applying so it only fires once.
+  const pendingTheme = useThemesModalStore((state) => state.pending);
+  const consumePendingTheme = useThemesModalStore(
+    (state) => state.consumePending,
+  );
+  const lastAppliedNonceRef = useRef<number>(0);
+  useEffect(() => {
+    if (!pendingTheme) return;
+    if (pendingTheme.nonce === lastAppliedNonceRef.current) return;
+    lastAppliedNonceRef.current = pendingTheme.nonce;
+
+    if (Object.keys(pendingTheme.style).length > 0) {
+      setAllTextElementsStyle(pendingTheme.style);
+    }
+
+    if (pendingTheme.backgroundColor !== null && selectedSlideId) {
+      const bg = pendingTheme.backgroundColor;
+      applyDraft((previous) => ({
+        ...previous,
+        slides: previous.slides.map((slide) =>
+          slide.id === selectedSlideId
+            ? {
+                ...slide,
+                backgroundColor: bg,
+                useBackgroundColor: true,
+              }
+            : slide,
+        ),
+      }));
+    }
+
+    toast.success("Theme applied");
+    consumePendingTheme();
+  }, [
+    applyDraft,
+    consumePendingTheme,
+    pendingTheme,
+    selectedSlideId,
+    setAllTextElementsStyle,
+  ]);
+
   const handleSelectSlide = useCallback(
     (slideId: string | null) => {
       setSelectedSlideId(slideId);
@@ -810,47 +859,64 @@ export const LyricsEditor = memo(function LyricsEditor({
     }
   }, [draft, persistDraft]);
 
-  const handleFix = useCallback(async () => {
+  // The "Fix / Break Lyrics" button opens a modal asking how many lines per
+  // slide. Confirming runs the clean/AI fix AND the slide break in one pass,
+  // so the operator gets cleaned, properly-split slides from a single action.
+  const handleFix = useCallback(() => {
     if (!draft.body.trim()) {
+      toast.error("Add some lyrics first");
       return;
     }
+    setBreakDialogOpen(true);
+  }, [draft.body]);
 
-    setIsFixing(true);
-    try {
-      const fixedBody = await onFixLyrics(draft.body);
-      const nextSlides = buildSlidesFromBody(
-        fixedBody,
-        currentCanvasSize,
-        activeDefaultTextStyle,
-      );
-      applyDraft(
-        (previous) => ({
-          ...previous,
-          slides: nextSlides,
-          body: fixedBody,
-        }),
-        {
-          preserveBody: editorView === "source",
-        },
-      );
-      setSelectedSlideId(nextSlides[0]?.id ?? null);
-      setSelectedElementId(null);
-      setInspectorTab("slide");
-      toast.success("Lyrics cleaned up");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to clean up");
-    } finally {
-      setIsFixing(false);
-    }
-  }, [
-    applyDraft,
-    activeDefaultTextStyle,
-    currentCanvasSize,
-    draft.body,
-    editorView,
-    onFixLyrics,
-    setInspectorTab,
-  ]);
+  const applyFixAndBreak = useCallback(
+    async (linesPerSlide: number) => {
+      if (!draft.body.trim()) return;
+      setIsFixing(true);
+      try {
+        // 1. Clean + AI-fix the raw body.
+        const fixedBody = await onFixLyrics(draft.body);
+        // 2. Re-flow the cleaned body into N-line slides (ignores any
+        //    existing slide separators, so re-breaking to a new N works).
+        const nextBody = breakLyricsIntoChunks(fixedBody, linesPerSlide);
+        const nextSlides = buildSlidesFromBody(
+          nextBody,
+          currentCanvasSize,
+          activeDefaultTextStyle,
+        );
+        applyDraft(
+          (previous) => ({
+            ...previous,
+            slides: nextSlides,
+            body: nextBody,
+          }),
+          { preserveBody: editorView === "source" },
+        );
+        setSelectedSlideId(nextSlides[0]?.id ?? null);
+        setSelectedElementId(null);
+        setInspectorTab("slide");
+        toast.success(
+          `Cleaned & split into ${nextSlides.length} slide${nextSlides.length === 1 ? "" : "s"} (${linesPerSlide} line${linesPerSlide === 1 ? "" : "s"} each)`,
+        );
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to fix lyrics",
+        );
+      } finally {
+        setIsFixing(false);
+      }
+    },
+    [
+      activeDefaultTextStyle,
+      applyDraft,
+      currentCanvasSize,
+      draft.body,
+      editorView,
+      onFixLyrics,
+      setInspectorTab,
+    ],
+  );
 
   const handleSourceBodyChange = useCallback(
     (nextBody: string) => {
@@ -994,6 +1060,61 @@ export const LyricsEditor = memo(function LyricsEditor({
         handleManualSave={handleManualSave}
         isSaving={isSaving}
       />
+      {breakDialogOpen && (
+        <Dialog
+          title="Fix & split lyrics"
+          onClose={() => setBreakDialogOpen(false)}
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              We&apos;ll clean up the lyrics, then split them into slides.
+              How many lyric lines should each slide hold? Section labels like{" "}
+              <span className="font-mono">[Verse 1]</span> are preserved and
+              don&apos;t count toward the line total.
+            </p>
+            <div className="space-y-2">
+              <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                Lines per slide:{" "}
+                <span className="text-foreground">{breakLines}</span>
+              </label>
+              <input
+                type="range"
+                min={1}
+                max={8}
+                step={1}
+                value={breakLines}
+                onChange={(event) => setBreakLines(Number(event.target.value))}
+                className="w-full accent-primary"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                  <span key={n}>{n}</span>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setBreakDialogOpen(false)}
+                className="flex-1 rounded-md border border-input py-2 text-xs font-medium text-foreground hover:bg-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isFixing}
+                onClick={() => {
+                  setBreakDialogOpen(false);
+                  void applyFixAndBreak(breakLines);
+                }}
+                className="flex-1 rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                {isFixing ? "Working…" : "Fix & split"}
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
       <div className="flex-1 min-h-0">
         <ResizablePanelGroup
           direction="horizontal"

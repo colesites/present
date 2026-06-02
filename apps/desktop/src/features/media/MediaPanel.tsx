@@ -114,16 +114,16 @@ const MediaItemCard = memo(function MediaItemCard({
       onClick={() => onSelect(item)}
       ref={cardRef}
       className={cn(
-        "group relative overflow-hidden rounded-lg border bg-black transition",
+        "group relative overflow-hidden rounded-xl border bg-black transition-all duration-150",
         isGridView ? "aspect-video w-full" : "flex h-16 w-full flex-row items-center",
         isActive
-          ? "border-primary ring-2 ring-primary"
-          : "border-border hover:border-primary"
+          ? "border-primary/70 ring-2 ring-primary/70 ring-offset-1 ring-offset-background"
+          : "border-border/60 hover:border-primary/40 hover:shadow-md hover:shadow-black/30"
       )}
     >
           <div className={cn(
             "overflow-hidden shrink-0",
-            isGridView ? "h-full w-full" : "h-full w-28 border-r border-border"
+            isGridView ? "h-full w-full" : "h-full w-28 border-r border-border/60"
           )}>
             {item.type === "image" ? (
               <img
@@ -394,8 +394,8 @@ export const MediaPanel = memo(
           {/* Folders sidebar - resizable */}
           <ResizablePanel defaultSize="33" minSize="20" maxSize="40">
             <div className="flex h-full flex-col border-r border-border">
-              <div className="flex items-center justify-between border-b border-border px-3 py-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">
+              <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                   Media
                 </span>
                 <div className="flex gap-1">
@@ -463,7 +463,7 @@ export const MediaPanel = memo(
                       className={cn(
                         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition",
                         selectedFolderId === null
-                          ? "bg-primary text-primary-foreground"
+                          ? "bg-primary/15 text-primary ring-1 ring-primary/30"
                           : "text-foreground hover:bg-secondary"
                       )}
                     >
@@ -483,7 +483,7 @@ export const MediaPanel = memo(
                         className={cn(
                           "group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition",
                           selectedFolderId === folder.id
-                            ? "bg-primary text-primary-foreground"
+                            ? "bg-primary/15 text-primary ring-1 ring-primary/30"
                             : "text-foreground hover:bg-secondary"
                         )}
                       >
@@ -549,54 +549,50 @@ export const MediaPanel = memo(
           <ResizablePanel defaultSize={67}>
             <div className="flex h-full flex-col">
               {/* Filter tabs and Search */}
-              <div className="flex items-center justify-between border-b border-border px-3 py-1.5 gap-2">
-                <div className="flex items-center gap-1">
+              <div className="flex items-center justify-between border-b border-border px-3 py-2 gap-2">
+                <div className="flex items-center gap-0.5 rounded-lg bg-secondary/40 p-0.5">
                   <button
                     type="button"
                     onClick={() => setFilter("all")}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
+                      "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition",
                       filter === "all"
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
+                        : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     All
-                    <span className="text-[10px] opacity-70">
-                      ({filteredItems.length})
+                    <span className="text-[10px] opacity-60">
+                      {filteredItems.length}
                     </span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setFilter("images")}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
+                      "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition",
                       filter === "images"
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
+                        : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     <Image className="h-3 w-3" />
                     Images
-                    <span className="text-[10px] opacity-70">
-                      ({imageCount})
-                    </span>
+                    <span className="text-[10px] opacity-60">{imageCount}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setFilter("videos")}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition",
+                      "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition",
                       filter === "videos"
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
+                        : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     <Video className="h-3 w-3" />
                     Videos
-                    <span className="text-[10px] opacity-70">
-                      ({videoCount})
-                    </span>
+                    <span className="text-[10px] opacity-60">{videoCount}</span>
                   </button>
                 </div>
 
@@ -606,7 +602,7 @@ export const MediaPanel = memo(
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button className="h-7 w-7 flex items-center justify-center rounded-md border border-input hover:bg-secondary text-muted-foreground">
+                      <button className="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition hover:bg-secondary hover:text-foreground">
                         <ArrowUpDown className="h-3 w-3" />
                       </button>
                     </DropdownMenuTrigger>

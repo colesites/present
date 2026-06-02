@@ -177,9 +177,20 @@ const normalizeStoredSession = (
     return null;
   }
 
+  const organizations = Array.isArray(payload.organizations)
+    ? payload.organizations
+    : [];
+  const normalizedOrganizations =
+    payload.user && !organizations.some((organization) => organization.id === "personal")
+      ? [
+          { id: "personal", name: "Personal", type: "personal" as const },
+          ...organizations,
+        ]
+      : organizations;
+
   return {
     orgId: typeof payload.orgId === "string" ? payload.orgId : null,
-    organizations: Array.isArray(payload.organizations) ? payload.organizations : [],
+    organizations: normalizedOrganizations,
     savedAtMs:
       typeof payload.savedAtMs === "number" && Number.isFinite(payload.savedAtMs)
         ? payload.savedAtMs
@@ -393,6 +404,33 @@ const persistTokenFailure = (message: string, clearSession: boolean): null => {
   return null;
 };
 
+const areOrganizationsEqual = (
+  left: DesktopOrganization[],
+  right: DesktopOrganization[],
+): boolean => {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((organization, index) => {
+    const candidate = right[index];
+    return (
+      candidate &&
+      organization.id === candidate.id &&
+      organization.name === candidate.name &&
+      organization.type === candidate.type &&
+      organization.logo === candidate.logo
+    );
+  });
+};
+
+const areUsersEqual = (
+  left: DesktopUser | null,
+  right: DesktopUser | null,
+): boolean => {
+  return JSON.stringify(left) === JSON.stringify(right);
+};
+
 export const ensureFreshDesktopAccessToken = async (): Promise<string | null> => {
   const currentState = useDesktopSessionStore.getState();
   const stateToken = currentState.token;
@@ -484,6 +522,9 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
           if (fallbackToken && !isTimestampExpired(fallbackTokenExpiryMs)) {
             return fallbackToken;
           }
+          if (!currentState.user) {
+            currentState.setAuthStatus("unauthenticated");
+          }
           return null;
         }
 
@@ -498,6 +539,9 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
         );
         if (fallbackToken && !isTimestampExpired(fallbackTokenExpiryMs)) {
           return fallbackToken;
+        }
+        if (!currentState.user) {
+          currentState.setAuthStatus("unauthenticated");
         }
         return null;
       })
@@ -581,8 +625,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
       stored.tokenExpiresAtMs ??
       (stored.token ? getTokenExpiryTimestampMs(stored.token) : null);
 
-    const hasCachedIdentity =
-      Boolean(stored.user) && Array.isArray(stored.organizations) && stored.organizations.length > 0;
+    const hasCachedIdentity = Boolean(stored.user);
 
     set({
       authStatus: hasCachedIdentity ? "authenticated" : "loading",
@@ -678,6 +721,11 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
       orgId: string | null;
     } | null;
   }) => {
+    const normalizedOrganizations: DesktopOrganization[] = [
+      { id: "personal", name: "Personal", type: "personal" },
+      ...organizations.filter((organization) => organization.id !== "personal"),
+    ];
+
     // Prefer the server-persisted workspace selection (which follows the user
     // across devices). If absent, fall back to currentOrgId, then the first
     // organization, then personal.
@@ -689,7 +737,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
       if (
         currentWorkspace.type === "organization" &&
         currentWorkspace.orgId &&
-        organizations.some((org) => org.id === currentWorkspace.orgId)
+        normalizedOrganizations.some((org) => org.id === currentWorkspace.orgId)
       ) {
         workspaceType = "organization";
         workspaceOrgId = currentWorkspace.orgId;
@@ -704,32 +752,54 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
     if (workspaceType === "personal" && !currentWorkspace) {
       const fallbackOrg =
         (currentOrgId
-          ? organizations.find((org) => org.id === currentOrgId)
+          ? normalizedOrganizations.find((org) => org.id === currentOrgId)
           : null) ??
-        organizations.find((org) => org.type === "organization") ??
+        normalizedOrganizations.find((org) => org.type === "organization") ??
         null;
       if (fallbackOrg) {
-        workspaceType = "organization";
-        workspaceOrgId = fallbackOrg.id;
-        resolvedOrgId = fallbackOrg.id;
+        workspaceType = fallbackOrg.type;
+        workspaceOrgId =
+          fallbackOrg.type === "organization" ? fallbackOrg.id : null;
+        resolvedOrgId =
+          fallbackOrg.type === "organization" ? fallbackOrg.id : null;
       }
     }
 
-    useWorkspaceStore.getState().setWorkspace(workspaceType, workspaceOrgId);
+    const workspaceState = useWorkspaceStore.getState();
+    if (
+      workspaceState.type !== workspaceType ||
+      workspaceState.id !== workspaceOrgId
+    ) {
+      workspaceState.setWorkspace(workspaceType, workspaceOrgId);
+    }
 
-    set({
-      authStatus: "authenticated",
-      error: null,
-      orgId: resolvedOrgId,
-      organizations,
-      user,
+    set((previous) => {
+      if (
+        previous.authStatus === "authenticated" &&
+        previous.error === null &&
+        previous.orgId === resolvedOrgId &&
+        areOrganizationsEqual(previous.organizations, normalizedOrganizations) &&
+        areUsersEqual(previous.user, user)
+      ) {
+        return previous;
+      }
+
+      return {
+        authStatus: "authenticated",
+        error: null,
+        orgId: resolvedOrgId,
+        organizations: normalizedOrganizations,
+        user,
+      };
     });
 
     void persistSessionSnapshot(get());
   },
 
-  setAuthStatus: (status: DesktopAuthStatus) => set({ authStatus: status }),
-  setError: (error: string | null) => set({ error }),
+  setAuthStatus: (status: DesktopAuthStatus) =>
+    set((state) => (state.authStatus === status ? state : { authStatus: status })),
+  setError: (error: string | null) =>
+    set((state) => (state.error === error ? state : { error })),
   setOrgId: (orgId: string) => {
     const target = get().organizations.find((org) => org.id === orgId);
     if (!target) {

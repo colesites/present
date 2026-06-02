@@ -140,6 +140,56 @@ export const registerFileIPC = (): void => {
     };
   });
 
+  // Pick one or more audio files from disk for the Audio tab. Returns the
+  // absolute local paths; binaries stay on the machine (we don't upload).
+  ipcMain.handle('select-audio-files', async (event) => {
+    const parentWindow = BrowserWindow.fromWebContents(event.sender) ?? getMainWindow() ?? undefined;
+    const result = await dialog.showOpenDialog(parentWindow, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Audio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'] },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return [];
+    }
+    return result.filePaths.map((filePath) => ({
+      name: path.basename(filePath),
+      path: filePath,
+    }));
+  });
+
+  // Pick an image to use as a prop overlay. Returns a data: URL so we can
+  // store it in Convex (small) and render in the renderer without exposing
+  // local file paths.
+  ipcMain.handle('select-prop-image', async (event) => {
+    const parentWindow = BrowserWindow.fromWebContents(event.sender) ?? getMainWindow() ?? undefined;
+    const result = await dialog.showOpenDialog(parentWindow, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    const filePath = result.filePaths[0];
+    try {
+      const data = await fs.promises.readFile(filePath);
+      const ext = path.extname(filePath).slice(1).toLowerCase() || 'png';
+      const mime =
+        ext === 'svg' ? 'image/svg+xml' : ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+      return {
+        name: path.basename(filePath),
+        path: filePath,
+        dataUrl: `data:${mime};base64,${data.toString('base64')}`,
+      };
+    } catch (error) {
+      console.error('[select-prop-image] failed to read file', error);
+      return null;
+    }
+  });
+
   ipcMain.handle('select-presentation-files', async (event) => {
     const parentWindow = BrowserWindow.fromWebContents(event.sender) ?? getMainWindow() ?? undefined;
     const result = await dialog.showOpenDialog(parentWindow, {

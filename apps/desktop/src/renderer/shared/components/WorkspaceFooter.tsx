@@ -44,17 +44,17 @@ export function WorkspaceFooter({
 
       {/* Right side: View Toggles + Scale Control */}
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-1.5 border-r border-border pr-4 mr-1">
+        <div className="mr-1 flex items-center gap-0.5 rounded-lg bg-secondary/40 p-0.5">
           <button
             type="button"
             disabled={disableViewModeToggle}
             onClick={() => onViewModeChange(true)}
             className={cn(
-              "p-1.5 transition rounded-md",
+              "rounded-md p-1.5 transition",
               disableViewModeToggle && "cursor-not-allowed opacity-45",
               isGridView
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
+                : "text-muted-foreground hover:text-foreground"
             )}
             title="Grid View"
           >
@@ -65,11 +65,11 @@ export function WorkspaceFooter({
             disabled={disableViewModeToggle}
             onClick={() => onViewModeChange(false)}
             className={cn(
-              "p-1.5 transition rounded-md",
+              "rounded-md p-1.5 transition",
               disableViewModeToggle && "cursor-not-allowed opacity-45",
               !isGridView
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
+                : "text-muted-foreground hover:text-foreground"
             )}
             title="List View"
           >
@@ -77,8 +77,8 @@ export function WorkspaceFooter({
           </button>
         </div>
 
-        <div className="flex items-center gap-4">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 select-none">Scale</span>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/60 select-none">Scale</span>
           <div className="flex items-center group">
             <input
               type="range"

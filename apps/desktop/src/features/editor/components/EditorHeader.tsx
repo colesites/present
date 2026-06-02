@@ -61,8 +61,9 @@ export const EditorHeader = memo(function EditorHeader({
             onClick={handleFix}
             disabled={isFixing}
             className="rounded-full border border-border bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
+            title="Clean the lyrics and split them into slides"
           >
-            {isFixing ? "Fixing..." : "Fix Lyrics"}
+            {isFixing ? "Fixing..." : "Fix / Break Lyrics"}
           </button>
           <button
             type="button"

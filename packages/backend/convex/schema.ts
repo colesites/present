@@ -121,6 +121,109 @@ export default defineSchema({
     .index("by_org", ["orgId"])
     .index("by_org_order", ["orgId", "order"]),
 
+  // Operator-authored banner messages that can be sent to the audience output
+  // as a top/bottom overlay. Stored per-org so the operator's draft messages
+  // follow them across devices.
+  messages: defineTable({
+    orgId: v.id("organizations"),
+    title: v.string(),
+    body: v.string(), // raw template with {token} placeholders
+    themeKey: v.string(), // e.g. "default", "checkered", "warning", "info"
+    position: v.union(v.literal("top"), v.literal("bottom")),
+    dismissMode: v.union(
+      v.literal("manual"),
+      v.literal("after-10s"),
+      v.literal("after-30s"),
+    ),
+    allowWebNotifications: v.boolean(),
+    // Animation mode for the banner. "static" = stationary; "marquee-left" /
+    // "marquee-right" scroll the text across the screen at `speedSeconds`
+    // per full pass. Optional for back-compat with v1 documents.
+    animation: v.optional(
+      v.union(
+        v.literal("static"),
+        v.literal("marquee-left"),
+        v.literal("marquee-right"),
+      ),
+    ),
+    speedSeconds: v.optional(v.number()),
+    order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_org", ["orgId"])
+    .index("by_org_order", ["orgId", "order"]),
+
+  // Master slides ("Macros" in some apps): one-click slide templates the
+  // operator can drop on the live output. Each is essentially a saved slide
+  // (color + optional body text + optional background) named for fast recall
+  // during a service ("Blank Stream", "Pre-Service", "Sermon Point", etc.).
+  slideMasters: defineTable({
+    orgId: v.id("organizations"),
+    name: v.string(),
+    color: v.string(), // hex like "#dc2626"
+    body: v.optional(v.string()),
+    // The underlying slide payload (matches LibrarySlide shape from the
+    // shared types). Stored opaquely so we don't need to migrate the schema
+    // every time the slide format gains a field.
+    slide: v.optional(v.any()),
+    order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_org", ["orgId"])
+    .index("by_org_order", ["orgId", "order"]),
+
+  // Props / layer overlays — image or text overlays composited above the
+  // active slide on the output window. Stored per-org so the same logo /
+  // ticker is available across the operator's devices.
+  props: defineTable({
+    orgId: v.id("organizations"),
+    name: v.string(),
+    kind: v.union(v.literal("image"), v.literal("text")),
+    // For image props: a data URL (small) or an external URL. We don't
+    // store binaries in Convex storage at this scope.
+    imageUrl: v.optional(v.string()),
+    // For text props: the literal text rendered on screen.
+    text: v.optional(v.string()),
+    // Position preset on the slide canvas.
+    position: v.union(
+      v.literal("top-left"),
+      v.literal("top-right"),
+      v.literal("bottom-left"),
+      v.literal("bottom-right"),
+      v.literal("center"),
+      v.literal("full"),
+    ),
+    opacity: v.number(), // 0..1
+    sizePercent: v.number(), // 0..100 of slide width
+    color: v.optional(v.string()), // text color for text props
+    fontSize: v.optional(v.number()), // px for text props
+    order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_org", ["orgId"])
+    .index("by_org_order", ["orgId", "order"]),
+
+  // Lyric / slide theme presets — fonts, colors, alignment that can be
+  // applied to a slide via the Themes modal in the editor.
+  themes: defineTable({
+    orgId: v.id("organizations"),
+    name: v.string(),
+    // Opaque style payload; matches the SlideElementStyle shape so the
+    // editor can apply it directly to text elements without translation.
+    style: v.any(),
+    backgroundColor: v.optional(v.string()),
+    // Preview swatch for the Themes modal grid.
+    previewColor: v.string(),
+    order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_org", ["orgId"])
+    .index("by_org_order", ["orgId", "order"]),
+
   // Keep playlists for backward compat
   playlists: defineTable({
     orgId: v.id("organizations"),

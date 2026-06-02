@@ -1,5 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "convex/react";
+import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { toast } from "sonner";
 import type { MediaPanelRef } from "../media";
@@ -17,6 +19,7 @@ import type {
   BottomTab,
   ContentSource,
   CanvasSizePreset,
+  MessageOverlay,
   SlideElement,
   ServicePresentation,
 } from "../../shared/types";
@@ -27,7 +30,10 @@ import {
   usePresentMediaFlow,
   useStageBroadcast,
   useShowVideoSync,
+  useTimers,
+  getTimerDisplay,
 } from "../../renderer/shared/hooks";
+import type { UseTimersResult } from "../../renderer/shared/hooks";
 import type { useAppSettings } from "../../renderer/shared/hooks/useAppSettings";
 import { MediaState, MediaItem } from "../media/hooks/useMediaFolders";
 import type { OutputTextPosition } from "../../shared/types/output-window";
@@ -42,6 +48,7 @@ import { useAppNavigation } from "../../renderer/shared/hooks/useAppNavigation";
 import { useAppHandlers } from "../../renderer/shared/hooks/useAppHandlers";
 import { MainView } from "./MainView";
 import {
+  DEFAULT_CANVAS_SIZE,
   getSlideBackgroundColor,
   reorderLibrarySlides,
 } from "../library/lib/library-items";
@@ -237,9 +244,11 @@ export function PresentContainer({
     selectedItemId: selectedLibraryId,
     selectedCategoryId,
     searchQuery,
+    searchMode: librarySearchMode,
     setSelectedItemId: setSelectedLibraryId,
     setSelectedCategoryId,
     setSearchQuery,
+    setSearchMode: setLibrarySearchMode,
     createNewItem: createNewLibraryItem,
     createComposedItem: createComposedLibraryItem,
     createItemFromDraft: createLibraryItemFromDraft,
@@ -316,6 +325,19 @@ export function PresentContainer({
   const [isOutputFrozen, setIsOutputFrozen] = useState(false);
   const [editedOutputSnapshot, setEditedOutputSnapshot] =
     useState<EditedOutputSnapshot | null>(null);
+  // Banner overlay currently being broadcast to the audience output, or null
+  // when nothing is shown. Lifted here so the Messages tab can publish it and
+  // useOutputBroadcast can forward it to the output window.
+  const [activeMessageOverlay, setActiveMessageOverlay] =
+    useState<MessageOverlay | null>(null);
+  // IDs of props that are currently visible on the output (subset of the
+  // org's saved props). Stored as strings to stay independent of the Convex
+  // generated Id type.
+  const [activePropIds, setActivePropIds] = useState<string[]>([]);
+  // Timer state lives here so both the rail Timer tab and the output
+  // broadcast effect read from the same source. (Used to be inside
+  // OutputPreview, which forced the embedded duplicate UI.)
+  const timers = useTimers();
   const [presentationImportState, setPresentationImportState] =
     useState<PresentationImportUiState>({
       isVisible: false,
@@ -514,22 +536,55 @@ export function PresentContainer({
     scriptureSlides,
   ]);
 
+  // Freeze the broadcast as soon as the user enters Edit mode on a slide
+  // that's currently live. Without this, every keystroke triggers the
+  // debounced auto-save which mutates the library item the live output is
+  // reading from — and during those round-trips the audience sees flicker,
+  // partial text, or the layer collapsing entirely. The freeze is released
+  // when the user leaves Edit, selects a different slide, or explicitly
+  // clicks "Update Output" (which sets its own snapshot).
+  const editLockSnapshotRef = useRef<EditedOutputSnapshot | null>(null);
+  useEffect(() => {
+    if (viewMode !== "edit") {
+      editLockSnapshotRef.current = null;
+      return;
+    }
+    if (editedOutputSnapshot || !activeSlideId || !activeSlideContent) {
+      return;
+    }
+    // Capture once per (edit-session, live slide) pair.
+    if (editLockSnapshotRef.current?.slideId === activeSlideId) {
+      return;
+    }
+    editLockSnapshotRef.current = {
+      slideId: activeSlideId,
+      text: activeSlideContent.text ?? "",
+      elements: normalizeSlideElements(activeSlideContent.elements),
+      canvasSize: activeSlideContent.canvasSize ?? DEFAULT_CANVAS_SIZE,
+      backgroundColor: activeSlideContent.backgroundColor ?? null,
+    };
+  }, [viewMode, activeSlideId, activeSlideContent, editedOutputSnapshot]);
+
+  const broadcastSnapshot =
+    editedOutputSnapshot ??
+    (viewMode === "edit" ? editLockSnapshotRef.current : null);
+
   const outputSlideContent = useMemo<OutputSlideContent | null>(
     () =>
-      editedOutputSnapshot
+      broadcastSnapshot
         ? {
-            text: editedOutputSnapshot.text,
+            text: broadcastSnapshot.text,
             footer: undefined,
-            elements: normalizeSlideElements(editedOutputSnapshot.elements),
-            canvasSize: editedOutputSnapshot.canvasSize,
-            backgroundColor: editedOutputSnapshot.backgroundColor,
+            elements: normalizeSlideElements(broadcastSnapshot.elements),
+            canvasSize: broadcastSnapshot.canvasSize,
+            backgroundColor: broadcastSnapshot.backgroundColor,
           }
         : activeSlideContent,
-    [activeSlideContent, editedOutputSnapshot],
+    [activeSlideContent, broadcastSnapshot],
   );
 
   const outputActiveSlideId =
-    editedOutputSnapshot?.slideId ?? activeSlideId ?? null;
+    broadcastSnapshot?.slideId ?? activeSlideId ?? null;
   const lastAutoEnabledSlideRef = useRef<string | null>(null);
   const previousOutputActiveSlideRef = useRef<string | null>(null);
 
@@ -1000,6 +1055,76 @@ export function PresentContainer({
     showTextInOutput,
   ]);
 
+  // Broadcast the active timer to the audience output + stage. (Was inline
+  // inside OutputPreview before the timer UI moved to the sidebar rail.)
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    const activeTimer = timers.activeTimer;
+    const payload = {
+      type: "timer-update",
+      timerLabel: activeTimer?.name ?? "Timer Name",
+      timerText: activeTimer ? getTimerDisplay(activeTimer) : "00:00:00",
+      timerRunning: activeTimer?.isRunning ?? false,
+      timerVisible: isTimerLayerEnabled,
+    };
+    window.electronAPI.sendToOutput(payload);
+    if (window.electronAPI.sendToStage) {
+      window.electronAPI.sendToStage(payload);
+    }
+  }, [
+    isTimerLayerEnabled,
+    timers.activeTimer,
+    timers.activeTimer?.isRunning,
+    timers.activeTimer?.secondsValue,
+    timers.activeTimer?.name,
+  ]);
+
+  // Resolve the active prop IDs into the full overlay payload that
+  // useOutputBroadcast forwards to the audience window.
+  const orgPropsList = useQuery(
+    api.props.listByOrg,
+    orgId ? { orgId } : "skip",
+  );
+  const resolvedPropsOverlay = useMemo(() => {
+    if (!orgPropsList || activePropIds.length === 0) return [];
+    const byId = new Map(
+      orgPropsList.map((prop) => [prop._id as unknown as string, prop]),
+    );
+    return activePropIds
+      .map((id) => byId.get(id))
+      .filter((prop): prop is NonNullable<typeof prop> => Boolean(prop))
+      .map((prop) => ({
+        id: prop._id as unknown as string,
+        kind: prop.kind,
+        imageUrl: prop.imageUrl,
+        text: prop.text,
+        position: prop.position,
+        opacity: prop.opacity,
+        sizePercent: prop.sizePercent,
+        color: prop.color,
+        fontSize: prop.fontSize,
+      }));
+  }, [orgPropsList, activePropIds]);
+
+  // Pushing a master slide to the live output uses the existing
+  // edited-snapshot channel: synthesize an EditedOutputSnapshot with the
+  // master's color as the background and its body as the text. The audience
+  // output already knows how to render that shape, so we don't need a new
+  // broadcast type.
+  const handlePushMasterSlide = useCallback(
+    (master: { name: string; color: string; body: string }) => {
+      setEditedOutputSnapshot({
+        slideId: `master:${master.name}:${Date.now()}`,
+        text: master.body || "",
+        elements: [],
+        canvasSize: DEFAULT_CANVAS_SIZE,
+        backgroundColor: master.color,
+      });
+      setShowTextInOutput(Boolean(master.body));
+    },
+    [setShowTextInOutput],
+  );
+
   useOutputBroadcast({
     activeMediaItem: effectiveActiveMediaItem,
     showText: showTextInOutput,
@@ -1044,6 +1169,8 @@ export function PresentContainer({
     },
     screenComposerEnabled: screenComposer.enabled,
     screenComposerLayout: screenComposer.liveLayout,
+    messageOverlay: isMessageLayerEnabled ? activeMessageOverlay : null,
+    propsOverlay: resolvedPropsOverlay,
     activeSlideId: outputActiveSlideId,
     slideText: outputSlideContent?.text ?? null,
     slideFooter: outputSlideContent?.footer ?? null,
@@ -1310,14 +1437,24 @@ export function PresentContainer({
         categories,
         selectedCategoryId,
         setSelectedCategoryId,
-        createNewLibraryItem: async (title, body, categoryId) => {
-          await createNewLibraryItem(title, body, categoryId);
+        createNewLibraryItem: async (title, body, categoryId, content) => {
+          return createNewLibraryItem(title, body, categoryId, content);
         },
         createLibraryItemFromDraft: async (draft, categoryId) => {
           await createLibraryItemFromDraft(draft, categoryId);
         },
-        createComposedLibraryItem: async (title, itemIds, categoryId) => {
-          await createComposedLibraryItem(title, itemIds, categoryId);
+        createComposedLibraryItem: async (
+          title,
+          itemIds,
+          categoryId,
+          slideSelections,
+        ) => {
+          await createComposedLibraryItem(
+            title,
+            itemIds,
+            categoryId,
+            slideSelections,
+          );
         },
         handleRenameLibraryItem,
         deleteLibraryItem,
@@ -1327,6 +1464,8 @@ export function PresentContainer({
         },
         searchQuery,
         setSearchQuery,
+        searchMode: librarySearchMode,
+        setSearchMode: setLibrarySearchMode,
         contentSource,
         presentationImportState,
       }}
@@ -1387,6 +1526,12 @@ export function PresentContainer({
         setIsTimerLayerEnabled,
         isMessageLayerEnabled,
         setIsMessageLayerEnabled,
+        activeMessageOverlay,
+        onShowMessageOverlay: setActiveMessageOverlay,
+        activePropIds,
+        onSetActivePropIds: setActivePropIds,
+        onPushMasterSlide: handlePushMasterSlide,
+        timers,
       }}
       />
     </>

@@ -14,7 +14,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     (set) => ({
       type: "personal",
       id: null as string | null,
-      setWorkspace: (type, id) => set({ type, id }),
+      setWorkspace: (type, id) =>
+        set((state) =>
+          state.type === type && state.id === id ? state : { type, id },
+        ),
     }),
     {
       name: "present-workspace-storage",

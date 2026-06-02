@@ -9,8 +9,14 @@ export function useOrganization() {
   const { isAuthenticated } = useConvexAuth();
   
   const ensureCurrent = useMutation(api.users.ensureCurrent);
-  const current = useQuery(api.users.getCurrentWithOrg);
-  const currentUser = useQuery(api.users.getCurrent);
+  const current = useQuery(
+    api.users.getCurrentWithOrg,
+    isAuthenticated ? {} : "skip",
+  );
+  const currentUser = useQuery(
+    api.users.getCurrent,
+    isAuthenticated ? {} : "skip",
+  );
   const [ensuredOrgId, setEnsuredOrgId] = useState<Id<"organizations"> | null>(null);
   const [ensuredUserId, setEnsuredUserId] = useState<string | null>(null);
   const lastEnsuredRef = useRef<boolean>(false);

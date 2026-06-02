@@ -5,9 +5,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
 } from "react";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import {
@@ -27,26 +25,50 @@ if (!process.env.CONVEX_URL) {
 const convex = new ConvexReactClient(convexUrl);
 const DesktopConvexAuthReadyContext = createContext(false);
 
+/**
+ * The auth hook handed to ConvexProviderWithAuth. Convex owns the entire auth
+ * lifecycle once this is wired up — DO NOT also call `convex.setAuth()`
+ * manually anywhere else. Doing both races the WebSocket and produces the
+ * "[CONVEX FATAL ERROR] Base version N passed up doesn't match the current
+ * version 0" crash, because the manual setAuth resets the server-side state
+ * version while the in-flight subscription still references the old one.
+ *
+ * Convex calls `fetchAccessToken` on its own schedule (initial connect, after
+ * token expiry, after reconnect). We must:
+ *   - report `isLoading: true` until the session store has hydrated from
+ *     persistent storage, otherwise Convex commits to "unauthenticated" with a
+ *     stale snapshot and the app gets stuck on the loading screen on first
+ *     launch even though the user is signed in;
+ *   - report `isAuthenticated` based on whether we have a session token (not
+ *     the short-lived access token), because the access token will be
+ *     refreshed transparently via `fetchAccessToken` and shouldn't toggle the
+ *     auth state.
+ */
 function useDesktopConvexAuth() {
   const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
+  const hasHydratedSession = useDesktopSessionStore(
+    (state) => state.hasHydratedSession,
+  );
 
-  const fetchAccessToken = useCallback(async () => {
-    const nextToken = await ensureFreshDesktopAccessToken();
-    console.info("[Desktop Auth] token attached to Convex", {
-      hasSessionToken: Boolean(sessionToken),
-      hasToken: Boolean(nextToken),
-      tokenLength: nextToken?.length ?? 0,
-    });
-    return nextToken;
-  }, [sessionToken]);
+  const fetchAccessToken = useCallback(
+    async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
+      // `forceRefreshToken` is true when Convex's server rejected the previous
+      // token. `ensureFreshDesktopAccessToken` already covers expiry-based
+      // refresh; we just call it and Convex will retry on its own if needed.
+      void forceRefreshToken;
+      const nextToken = await ensureFreshDesktopAccessToken();
+      return nextToken;
+    },
+    [],
+  );
 
   return useMemo(
     () => ({
-      isLoading: false,
-      isAuthenticated: Boolean(sessionToken),
+      isLoading: !hasHydratedSession,
+      isAuthenticated: hasHydratedSession && Boolean(sessionToken),
       fetchAccessToken,
     }),
-    [fetchAccessToken, sessionToken]
+    [fetchAccessToken, hasHydratedSession, sessionToken],
   );
 }
 
@@ -55,31 +77,12 @@ export default function ConvexClientProvider({
 }: {
   children: ReactNode;
 }) {
-  const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
-  const token = useDesktopSessionStore((state) => state.token);
-  const [isAuthReady, setIsAuthReady] = useState(false);
-
-  useEffect(() => {
-    setIsAuthReady(false);
-    convex.setAuth(async () => {
-      const resolvedToken =
-        (await ensureFreshDesktopAccessToken()) ?? token ?? null;
-      console.info("[Convex Auth Debug] token being sent:", {
-        exists: Boolean(resolvedToken),
-        length: resolvedToken?.length ?? 0,
-      });
-      return resolvedToken;
-    });
-    setIsAuthReady(true);
-    console.info("[Desktop Auth] setAuth applied", {
-      hasToken: Boolean(token),
-      tokenLength: token?.length ?? 0,
-      convexUrl,
-    });
-  }, [sessionToken, token]);
+  const hasHydratedSession = useDesktopSessionStore(
+    (state) => state.hasHydratedSession,
+  );
 
   return (
-    <DesktopConvexAuthReadyContext.Provider value={isAuthReady}>
+    <DesktopConvexAuthReadyContext.Provider value={hasHydratedSession}>
       <ConvexProviderWithAuth client={convex} useAuth={useDesktopConvexAuth}>
         {children}
       </ConvexProviderWithAuth>

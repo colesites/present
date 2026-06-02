@@ -21,7 +21,9 @@ import {
   FileText,
   Music,
   LayoutList,
+  Palette,
 } from "lucide-react";
+import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
 import { AuthControls } from "../../renderer/shared/components/AuthControls";
 import { ProjectButton } from "../../renderer/shared/components/ProjectButton";
 import { cn } from "../../renderer/shared/lib/utils";
@@ -265,128 +267,160 @@ export const AppHeader = memo(function AppHeader({
     typeof navigator !== "undefined" &&
     navigator.platform.toLowerCase().includes("mac");
 
+  // Primary navigation — data-driven so the markup stays short and the active
+  // rules live in one place.
+  const navItems: {
+    key: string;
+    label: string;
+    Icon: typeof Presentation;
+    isActive: boolean;
+    onClick: () => void;
+  }[] = [
+    {
+      key: "show",
+      label: "Show",
+      Icon: Presentation,
+      isActive: viewMode === "show" && !isBibleActive && !isLibrariesActive,
+      onClick: onOpenShow,
+    },
+    {
+      key: "libraries",
+      label: "Libraries",
+      Icon: LibraryBig,
+      isActive: isLibrariesActive,
+      onClick: onOpenLibraries,
+    },
+    {
+      key: "edit",
+      label: "Edit",
+      Icon: PencilLine,
+      isActive: viewMode === "edit",
+      onClick: () => onViewModeChange("edit"),
+    },
+    {
+      key: "bible",
+      label: "Bible",
+      Icon: BookOpenText,
+      isActive: isBibleActive,
+      onClick: onOpenBible,
+    },
+    {
+      key: "browser",
+      label: "Browser",
+      Icon: Globe,
+      isActive: viewMode === "browser",
+      onClick: onOpenBrowser,
+    },
+  ];
+
+  // Secondary tools (right cluster) — icon-only with tooltips to keep the
+  // header light. Stage reflects its active view state.
+  const toolItems: {
+    key: string;
+    label: string;
+    Icon: typeof Monitor;
+    isActive?: boolean;
+    onClick: () => void;
+  }[] = [
+    {
+      key: "stage",
+      label: "Media Stage",
+      Icon: Layers3,
+      isActive: viewMode === "stage",
+      onClick: onOpenStage,
+    },
+    { key: "looks", label: "Looks", Icon: Check, onClick: onOpenLooks },
+    {
+      key: "composer",
+      label: "Screen Composer",
+      Icon: Monitor,
+      onClick: onOpenComposer,
+    },
+  ];
+
   return (
     <>
-      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-3">
-        <div className="flex min-w-0 items-center gap-2">
+      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card/80 px-3 backdrop-blur-sm">
+        <div className="flex min-w-0 items-center gap-2.5">
           <button
             type="button"
             onClick={openSearchModal}
             className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-secondary/30 px-2 transition",
+              "group inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 text-[11px] transition",
               isSearchOpen
-                ? "border-primary/60 bg-primary/15 text-primary"
-                : "text-muted-foreground hover:text-foreground",
+                ? "border-primary/60 bg-primary/10 text-primary"
+                : "border-border/70 bg-secondary/30 text-muted-foreground hover:border-border hover:text-foreground",
             )}
             title={`Search (${isMac ? "⌘" : "Ctrl+"}K)`}
           >
             <Search className="h-3.5 w-3.5" />
-            <span className="text-[10px] font-medium opacity-60">
-              {isMac ? "⌘K" : "Ctrl+K"}
-            </span>
+            <span className="hidden sm:inline">Search</span>
+            <kbd className="ml-1 hidden rounded border border-border/70 bg-background/60 px-1 py-px font-sans text-[9px] font-medium text-muted-foreground sm:inline-block">
+              {isMac ? "⌘K" : "Ctrl K"}
+            </kbd>
           </button>
-          <div className="flex items-center rounded-md border border-border bg-secondary/40 p-1">
-            <button
-              type="button"
-              onClick={onOpenShow}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] font-medium transition",
-                viewMode === "show" &&
-                  !isBibleActive &&
-                  !isLibrariesActive
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Presentation className="h-3.5 w-3.5" />
-              Show
-            </button>
-            <button
-              type="button"
-              onClick={onOpenLibraries}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] font-medium transition",
-                isLibrariesActive
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <LibraryBig className="h-3.5 w-3.5" />
-              Libraries
-            </button>
-            <button
-              type="button"
-              onClick={() => onViewModeChange("edit")}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] font-medium transition",
-                viewMode === "edit"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <PencilLine className="h-3.5 w-3.5" />
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={onOpenBible}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] font-medium transition",
-                isBibleActive
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <BookOpenText className="h-3.5 w-3.5" />
-              Bible
-            </button>
-            <button
-              type="button"
-              onClick={onOpenBrowser}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] font-medium transition",
-                viewMode === "browser"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Globe className="h-3.5 w-3.5" />
-              Browser
-            </button>
-          </div>
+
+          <span className="h-5 w-px bg-border/70" aria-hidden />
+
+          <button
+            type="button"
+            onClick={() => useThemesModalStore.getState().toggle()}
+            title="Themes"
+            aria-label="Themes"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/70 bg-secondary/30 px-2.5 text-[11px] font-medium text-muted-foreground transition hover:border-border hover:text-foreground"
+          >
+            <Palette className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Themes</span>
+          </button>
+
+          <span className="h-5 w-px bg-border/70" aria-hidden />
+
+          <nav className="flex items-center gap-0.5 rounded-lg bg-secondary/40 p-0.5">
+            {navItems.map(({ key, label, Icon, isActive, onClick }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={onClick}
+                aria-pressed={isActive}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-medium transition",
+                  isActive
+                    ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
+                    : "text-muted-foreground hover:bg-background/40 hover:text-foreground",
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </nav>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-0.5">
+            {toolItems.map(({ key, label, Icon, isActive, onClick }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={onClick}
+                aria-pressed={isActive ?? undefined}
+                title={label}
+                aria-label={label}
+                className={cn(
+                  "inline-flex h-8 w-8 items-center justify-center rounded-lg transition",
+                  isActive
+                    ? "bg-primary/15 text-primary ring-1 ring-primary/40"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            ))}
+          </div>
+
+          <span className="h-5 w-px bg-border/70" aria-hidden />
+
           <ProjectButton className="h-8 px-2.5 py-0 text-[11px] font-medium" />
-          <button
-            type="button"
-            onClick={onOpenStage}
-            className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium transition",
-              viewMode === "stage"
-                ? "border-primary/60 bg-primary/15 text-primary"
-                : "border-border bg-secondary/30 text-foreground hover:bg-secondary"
-            )}
-          >
-            <Layers3 className="h-3.5 w-3.5" />
-            Media Stage
-          </button>
-          <button
-            type="button"
-            onClick={onOpenLooks}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-secondary/30 px-2.5 text-[11px] font-medium text-foreground transition hover:bg-secondary"
-          >
-            <Check className="h-3.5 w-3.5" />
-            Looks
-          </button>
-          <button
-            type="button"
-            onClick={onOpenComposer}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-secondary/30 px-2.5 text-[11px] font-medium text-foreground transition hover:bg-secondary"
-          >
-            <Monitor className="h-3.5 w-3.5" />
-            Screen Composer
-          </button>
           <AuthControls />
         </div>
       </header>

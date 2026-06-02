@@ -3,9 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import type {
   OutputTextPosition,
+  PropsOverlayItem,
   ScriptureStyle,
 } from "../../../shared/types/output-window";
-import type { CanvasSizePreset, SlideElement } from "../../../shared/types";
+import type {
+  CanvasSizePreset,
+  MessageOverlay,
+  SlideElement,
+} from "../../../shared/types";
 import type { ScreenComposerLayout } from "../../../shared/types/screen-composer";
 
 type MediaItem =
@@ -57,6 +62,12 @@ type Params = {
   };
   screenComposerEnabled: boolean;
   screenComposerLayout: ScreenComposerLayout;
+  // Active banner overlay being broadcast to the audience output, or null
+  // when nothing is currently shown. Drives the Messages tab's "Show" button.
+  messageOverlay: MessageOverlay | null;
+  // Visible props (image / text overlays) above the slide. Empty array =
+  // nothing showing.
+  propsOverlay: PropsOverlayItem[];
 };
 
 export function useOutputBroadcast({
@@ -75,6 +86,8 @@ export function useOutputBroadcast({
   timerLayout,
   screenComposerEnabled,
   screenComposerLayout,
+  messageOverlay,
+  propsOverlay,
   activeSlideId,
   slideText,
   slideFooter,
@@ -159,6 +172,18 @@ export function useOutputBroadcast({
       slideCanvasSize,
       slideBackgroundColor,
     });
+
+    // Broadcast the current banner-message overlay (or null to clear it).
+    window.electronAPI.sendToOutput({
+      type: "message-overlay",
+      overlay: messageOverlay,
+    });
+
+    // Broadcast the current props (image / text overlays).
+    window.electronAPI.sendToOutput({
+      type: "props-overlay",
+      props: propsOverlay,
+    });
   }, [
     activeMediaItem,
     activeMediaItem?.id,
@@ -196,6 +221,8 @@ export function useOutputBroadcast({
     timerLayout.titlePosition,
     screenComposerEnabled,
     screenComposerLayout,
+    messageOverlay,
+    propsOverlay,
     activeSlideId,
     slideText,
     slideFooter,

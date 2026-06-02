@@ -435,18 +435,38 @@ export function createComposedLibraryDraft(
   title: string,
   sourceItems: LibraryItem[],
   textDefaults?: LibraryTextStyleDefaults,
+  // Optional per-source-item slide selection. Keyed by `String(item._id)`.
+  // Each value is the list of slide indexes (0-based) from that source item
+  // to include, in the order they should appear in the resulting flow.
+  // When a source's libraryId is missing from the map, ALL of its slides
+  // are included (back-compat with the original "merge entire songs"
+  // behaviour).
+  slideSelections?: Record<string, number[]>,
 ): LibraryItemDraft {
   const normalizedItems = sourceItems.map((item) =>
     normalizeLibraryItem(item, textDefaults),
   );
-  const slides = normalizedItems.flatMap((item) =>
-    item.slides.map((slide) =>
-      normalizeLibrarySlide({
-        ...slide,
-        id: undefined,
-      }, DEFAULT_CANVAS_SIZE, textDefaults),
-    ),
-  );
+
+  // Slides are emitted in source-item order, then in selected-slide order
+  // within each source. This preserves the order the operator chose in the
+  // Create Flow wizard (drag-to-reorder cards + per-card slide order).
+  const slides = normalizedItems.flatMap((item) => {
+    const selection = slideSelections?.[String(item._id)];
+    const chosenIndexes =
+      selection && selection.length > 0
+        ? selection.filter(
+            (index) => index >= 0 && index < item.slides.length,
+          )
+        : item.slides.map((_, index) => index);
+
+    return chosenIndexes.map((index) =>
+      normalizeLibrarySlide(
+        { ...item.slides[index], id: undefined },
+        DEFAULT_CANVAS_SIZE,
+        textDefaults,
+      ),
+    );
+  });
 
   return {
     title,
@@ -455,11 +475,17 @@ export function createComposedLibraryDraft(
     content: normalizeLibraryContent(
       {
         composition: {
-          sourceItems: normalizedItems.map((item) => ({
-            libraryId: String(item._id),
-            title: item.title,
-            slideCount: item.slides.length,
-          })),
+          sourceItems: normalizedItems.map((item) => {
+            const selection = slideSelections?.[String(item._id)];
+            return {
+              libraryId: String(item._id),
+              title: item.title,
+              slideCount:
+                selection && selection.length > 0
+                  ? selection.length
+                  : item.slides.length,
+            };
+          }),
           createdAt: Date.now(),
         },
       },

@@ -12,6 +12,20 @@ type Params = {
   showsPanelRef: RefObject<LibrariesPanelRef | null>;
   mediaPanelRef: RefObject<MediaPanelRef | null>;
   scripturePanelRef: RefObject<ScripturePanelRef | null>;
+  showTextInOutput: boolean;
+  setShowTextInOutput: (show: boolean) => void;
+};
+
+// Don't fire global shortcuts while the user is typing — otherwise Cmd+T
+// would also fire from inside the lyrics editor / inputs and look like a bug.
+const isTypingInEditableField = (target: EventTarget | null): boolean => {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return true;
+  return (
+    target.isContentEditable ||
+    Boolean(target.closest("[contenteditable='true']"))
+  );
 };
 
 export function useGlobalShortcuts({
@@ -20,6 +34,8 @@ export function useGlobalShortcuts({
   showsPanelRef,
   mediaPanelRef,
   scripturePanelRef,
+  showTextInOutput,
+  setShowTextInOutput,
 }: Params) {
   useEffect(() => {
     if (!enabled) {
@@ -29,6 +45,16 @@ export function useGlobalShortcuts({
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
       if (!isCmdOrCtrl) return;
+
+      // Cmd/Ctrl + T: toggle the live text layer on the audience output.
+      // Works from anywhere except editable fields (so typing "t" inside the
+      // editor doesn't fight the operator).
+      if (e.key.toLowerCase() === "t" && !e.shiftKey && !e.altKey) {
+        if (isTypingInEditableField(e.target)) return;
+        e.preventDefault();
+        setShowTextInOutput(!showTextInOutput);
+        return;
+      }
 
       // Cmd/Ctrl + L: Libraries
       if (e.key.toLowerCase() === "l") {
@@ -62,5 +88,13 @@ export function useGlobalShortcuts({
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [enabled, setBottomTab, showsPanelRef, mediaPanelRef, scripturePanelRef]);
+  }, [
+    enabled,
+    setBottomTab,
+    showsPanelRef,
+    mediaPanelRef,
+    scripturePanelRef,
+    showTextInOutput,
+    setShowTextInOutput,
+  ]);
 }

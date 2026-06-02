@@ -126,7 +126,7 @@ export function AuthControls() {
 
   const isSignedIn =
     authStatus === "authenticated" &&
-    Boolean(user && orgId && organizations.length > 0);
+    Boolean(user && organizations.length > 0);
 
   if (authStatus === "unauthenticated") {
     return (
@@ -166,6 +166,7 @@ export function AuthControls() {
 
   const activeOrganization =
     organizations.find((organization) => organization.id === orgId) ??
+    organizations.find((organization) => organization.type === "personal") ??
     organizations[0];
   const webBaseUrl = resolveWebBaseUrl();
 
