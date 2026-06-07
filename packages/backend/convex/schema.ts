@@ -147,6 +147,9 @@ export default defineSchema({
       ),
     ),
     speedSeconds: v.optional(v.number()),
+    // Font-size multiplier for the banner text (1 = default). Optional for
+    // back-compat with documents created before this field existed.
+    fontScale: v.optional(v.number()),
     order: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),

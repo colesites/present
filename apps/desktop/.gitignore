@@ -1,3 +1,9 @@
 
 # Staged native NDI modules (generated at package time)
 .ndi/
+
+# Local whisper.cpp binary + model (dev; provisioned per machine)
+.whisper/
+
+# Staged self-contained whisper bundle (generated at package time)
+.whisper-stage/

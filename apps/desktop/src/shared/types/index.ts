@@ -52,6 +52,9 @@ export type MessageOverlay = {
   animation: MessageOverlayAnimation;
   // Seconds for one full marquee pass. Ignored when animation === "static".
   speedSeconds: number;
+  // Font-size multiplier applied to the overlay text on both the preview and
+  // the main output (1 = default). Lets operators make messages bigger.
+  fontScale: number;
 };
 
 export type RenameTarget = {

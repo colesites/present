@@ -173,6 +173,15 @@ function getPreviewMessageThemeStyle(themeKey: string): React.CSSProperties {
 }
 
 function PreviewMessageOverlay({ overlay }: { overlay: MessageOverlay }) {
+  // Phase-lock the marquee to the shared `shownAtMs` so the preview and the
+  // main output animate in sync regardless of when each mounts. Computed once
+  // per overlay (keyed on id+shownAtMs) so re-renders don't jump it.
+  const animationDelay = useMemo(
+    () => `${-((Date.now() - overlay.shownAtMs) / 1000)}s`,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [overlay.id, overlay.shownAtMs],
+  );
+
   if (!overlay.text.trim()) return null;
 
   const isMarquee =
@@ -207,12 +216,14 @@ function PreviewMessageOverlay({ overlay }: { overlay: MessageOverlay }) {
             `}
           </style>
           <span
-            className="block whitespace-nowrap text-[11px] font-semibold leading-tight"
+            className="block whitespace-nowrap font-semibold leading-tight"
             style={{
+              fontSize: `${11 * (overlay.fontScale ?? 1)}px`,
               animation: `${direction} ${Math.max(
                 2,
                 overlay.speedSeconds,
               )}s linear infinite`,
+              animationDelay,
               willChange: "transform",
             }}
           >
@@ -220,7 +231,10 @@ function PreviewMessageOverlay({ overlay }: { overlay: MessageOverlay }) {
           </span>
         </>
       ) : (
-        <span className="block text-center text-[11px] font-semibold leading-tight">
+        <span
+          className="block text-center font-semibold leading-tight"
+          style={{ fontSize: `${11 * (overlay.fontScale ?? 1)}px` }}
+        >
           {overlay.text}
         </span>
       )}
@@ -613,7 +627,7 @@ export const OutputPreview = memo(function OutputPreview({
               </div>
             )}
 
-            {isMessageLayerEnabled && activeMessageOverlay ? (
+            {activeMessageOverlay ? (
               <PreviewMessageOverlay overlay={activeMessageOverlay} />
             ) : null}
 

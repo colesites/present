@@ -34,6 +34,7 @@ export const create = mutation({
     allowWebNotifications: v.optional(v.boolean()),
     animation: v.optional(animationValidator),
     speedSeconds: v.optional(v.number()),
+    fontScale: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -58,6 +59,7 @@ export const create = mutation({
       allowWebNotifications: args.allowWebNotifications ?? false,
       animation: args.animation ?? "static",
       speedSeconds: args.speedSeconds ?? 12,
+      fontScale: args.fontScale ?? 1,
       order: nextOrder,
       createdAt: now,
       updatedAt: now,
@@ -76,6 +78,7 @@ export const update = mutation({
     allowWebNotifications: v.optional(v.boolean()),
     animation: v.optional(animationValidator),
     speedSeconds: v.optional(v.number()),
+    fontScale: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -95,6 +98,7 @@ export const update = mutation({
     }
     if (args.animation !== undefined) patch.animation = args.animation;
     if (args.speedSeconds !== undefined) patch.speedSeconds = args.speedSeconds;
+    if (args.fontScale !== undefined) patch.fontScale = args.fontScale;
 
     await ctx.db.patch(args.messageId, patch);
     return args.messageId;

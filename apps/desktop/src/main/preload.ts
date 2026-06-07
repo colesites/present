@@ -45,6 +45,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
     source: "bible" | "library",
   ) => ipcRenderer.invoke('request-assemblyai-token', sessionToken, source),
   requestMicrophoneAccess: () => ipcRenderer.invoke('request-microphone-access'),
+  listAiOperatorTools: () => ipcRenderer.invoke('ai-operator:list-tools'),
+
+  // ── Whisper local STT ──
+  getWhisperStatus: () => ipcRenderer.invoke('whisper:status'),
+  startWhisper: (sessionId: string, sampleRate?: number) =>
+    ipcRenderer.invoke('whisper:start', { sessionId, sampleRate }),
+  pushWhisperAudio: (sessionId: string, pcm: ArrayBuffer) =>
+    ipcRenderer.send('whisper:audio', { sessionId, pcm }),
+  stopWhisper: (sessionId: string) =>
+    ipcRenderer.send('whisper:stop', { sessionId }),
+  transcribeWhisperFile: (wavPath: string) =>
+    ipcRenderer.invoke('whisper:transcribe-file', wavPath),
+  onWhisperTranscript: (
+    callback: (event: {
+      sessionId: string;
+      transcript: string;
+      isFinal: boolean;
+    }) => void,
+  ) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown) =>
+      callback(
+        payload as { sessionId: string; transcript: string; isFinal: boolean },
+      );
+    ipcRenderer.on('whisper:transcript', listener);
+    return () => {
+      ipcRenderer.removeListener('whisper:transcript', listener);
+    };
+  },
 
   // Output window IPC - send state from main window to output window
   sendToOutput: (data: unknown) => ipcRenderer.send('send-to-output', data),

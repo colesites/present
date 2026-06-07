@@ -12,6 +12,7 @@ import { registerBrowserIPC } from './browser.ipc';
 import { registerFontIPC } from './font.ipc';
 import { registerPptxIPC } from './pptx.ipc';
 import { registerNdiIPC } from './ndi.ipc';
+import { registerAiOperatorIPC } from './ai-operator.ipc';
 
 /**
  * Register all IPC handlers
@@ -27,4 +28,5 @@ export const registerAllIPC = (): void => {
   registerFontIPC();
   registerPptxIPC();
   registerNdiIPC();
+  registerAiOperatorIPC();
 };

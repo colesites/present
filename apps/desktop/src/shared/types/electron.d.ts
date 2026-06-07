@@ -1,6 +1,11 @@
 
 import type { CustomFontFace, SystemFontFace } from "./font";
 import type { ParsedPptxPresentation } from "./pptx";
+import type {
+  AiModelToolDefinition,
+  WhisperStatus,
+  WhisperTranscriptEvent,
+} from "../ai-operator/types";
 
 declare global {
 interface Display {
@@ -159,6 +164,17 @@ interface ElectronAPI {
     source: "bible" | "library",
   ) => Promise<unknown | null>;
   requestMicrophoneAccess: () => Promise<MediaAccessResult>;
+  listAiOperatorTools: () => Promise<AiModelToolDefinition[]>;
+
+  // Whisper local STT
+  getWhisperStatus: () => Promise<WhisperStatus>;
+  startWhisper: (sessionId: string, sampleRate?: number) => Promise<WhisperStatus>;
+  pushWhisperAudio: (sessionId: string, pcm: ArrayBuffer) => void;
+  stopWhisper: (sessionId: string) => void;
+  transcribeWhisperFile: (wavPath: string) => Promise<string>;
+  onWhisperTranscript: (
+    callback: (event: WhisperTranscriptEvent) => void,
+  ) => () => void;
 
   // Output window IPC
   sendToOutput: (data: unknown) => void;

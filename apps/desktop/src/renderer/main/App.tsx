@@ -35,6 +35,7 @@ import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
 import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
 import { LooksWindow } from "../../features/looks/LooksWindow";
 import { ScreenComposerWindow } from "../../features/screen-composer";
+import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
 
 export default function Home() {
   const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
@@ -598,7 +599,9 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       orgId={effectiveOrgId}
       userId={userId as any}
       viewMode={mode}
+      setViewMode={setViewMode}
       bottomTab={bottomTab}
+      setBottomTab={setBottomTab}
       contentSource={contentSource}
       mediaState={mediaState}
       settings={settings}
@@ -699,6 +702,7 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
           useThemesModalStore.getState().dispatchApply(payload)
         }
       />
+      <AiOperatorRoot />
     </div>
   );
 }

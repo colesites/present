@@ -652,6 +652,11 @@ export function OutputWindow() {
             />
           )
         ) : null}
+
+        {/* Overlays must render in the default (non-composer) path too —
+            this is the common output mode. */}
+        <PropsOverlayLayer items={state.propsOverlay ?? null} />
+        <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
       </div>
     );
   }
@@ -696,6 +701,16 @@ function MessageOverlayLayer({
 }: {
   overlay: OutputState["messageOverlay"];
 }) {
+  // Phase-lock the marquee to the shared `shownAtMs` so the audience output
+  // matches the operator preview, even though this window mounts the overlay
+  // a moment later (after the IPC hop). Negative delay jumps the animation to
+  // the correct point on mount; memoized so re-renders don't restart it.
+  const animationDelay = useMemo(
+    () => `${-((Date.now() - (overlay?.shownAtMs ?? 0)) / 1000)}s`,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [overlay?.id, overlay?.shownAtMs],
+  );
+
   if (!overlay || !overlay.text.trim()) {
     return null;
   }
@@ -735,12 +750,12 @@ function MessageOverlayLayer({
           `}
         </style>
         <span
-          className="inline-block font-semibold leading-tight"
+          className="block whitespace-nowrap font-semibold leading-tight"
           style={{
-            fontSize: "min(5vw, 56px)",
+            fontSize: `calc(min(5vw, 56px) * ${overlay.fontScale ?? 1})`,
             animation: `${direction} ${duration}s linear infinite`,
+            animationDelay,
             willChange: "transform",
-            paddingLeft: "100%",
           }}
         >
           {overlay.text}
@@ -756,7 +771,7 @@ function MessageOverlayLayer({
     >
       <span
         className="text-center font-semibold leading-tight"
-        style={{ fontSize: "min(6vw, 64px)" }}
+        style={{ fontSize: `calc(min(6vw, 64px) * ${overlay.fontScale ?? 1})` }}
       >
         {overlay.text}
       </span>

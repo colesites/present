@@ -33,7 +33,6 @@ import {
   useTimers,
   getTimerDisplay,
 } from "../../renderer/shared/hooks";
-import type { UseTimersResult } from "../../renderer/shared/hooks";
 import type { useAppSettings } from "../../renderer/shared/hooks/useAppSettings";
 import { MediaState, MediaItem } from "../media/hooks/useMediaFolders";
 import type { OutputTextPosition } from "../../shared/types/output-window";
@@ -68,6 +67,7 @@ import {
 import { useScriptureLayoutTemplateStore } from "../scripture/lib/layout-template-state";
 import { useScreenComposerState } from "../screen-composer";
 import { useGlobalSearchStore } from "../../renderer/shared/store/globalSearchStore";
+import { usePresentAiToolProvider } from "../../renderer/ai-operator/usePresentAiToolProvider";
 
 type EditedOutputSnapshot = {
   slideId: string;
@@ -124,7 +124,9 @@ interface PresentContainerProps {
   orgId: Id<"organizations"> | undefined;
   userId: string | null;
   viewMode: ViewMode;
+  setViewMode: (mode: ViewMode) => void;
   bottomTab: BottomTab;
+  setBottomTab: (tab: BottomTab) => void;
   contentSource: ContentSource;
   mediaState: MediaState;
   settings: ReturnType<typeof useAppSettings>;
@@ -149,7 +151,9 @@ export function PresentContainer({
   orgId,
   userId,
   viewMode,
+  setViewMode,
   bottomTab,
+  setBottomTab,
   mediaState,
   settings,
   showsPanelRef,
@@ -654,7 +658,7 @@ export function PresentContainer({
     setSelected,
     setViewMode: () => {
       /* No-op in PresentContainer */
-    }, // Not used in PresentContainer for now, but signature requires it
+    },
     setSelectedLibraryId: handleSetSelectedDeckLibraryId,
     setScriptureSlides,
     setShowTextInOutput,
@@ -1022,6 +1026,24 @@ export function PresentContainer({
     forcePlay: isScriptureActive && effectiveActiveMediaItem?.type === "video",
   });
 
+  usePresentAiToolProvider({
+    libraryItems,
+    slidesForGrid,
+    selected,
+    allMediaItems,
+    selectedServiceId,
+    setSelectedLibraryId: handleSetSelectedDeckLibraryId,
+    setViewMode,
+    setBottomTab,
+    setShowTextInOutput,
+    selectMediaForOutput: selectMediaForOutputWithComposer,
+    handleSelectSlide: handleLiveSlideSelect,
+    handleSelectScripture,
+    addLibraryItemToService: addLibraryToService,
+    timers,
+    toggleVideoPlayback,
+  });
+
   useStageBroadcast({
     currentText: outputSlideContent?.text ?? null,
     currentFooter: outputSlideContent?.footer ?? null,
@@ -1169,7 +1191,13 @@ export function PresentContainer({
     },
     screenComposerEnabled: screenComposer.enabled,
     screenComposerLayout: screenComposer.liveLayout,
-    messageOverlay: isMessageLayerEnabled ? activeMessageOverlay : null,
+    // The banner shows whenever an overlay is active — `activeMessageOverlay`
+    // is the single source of truth (set on "Show", cleared on "Hide" /
+    // auto-dismiss). It must NOT be gated on the looks-layer flag, which lives
+    // in a different component and updates on a separate render pass — that
+    // race made the banner appear in the operator preview but never reach the
+    // main output.
+    messageOverlay: activeMessageOverlay,
     propsOverlay: resolvedPropsOverlay,
     activeSlideId: outputActiveSlideId,
     slideText: outputSlideContent?.text ?? null,

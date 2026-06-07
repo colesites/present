@@ -65,12 +65,12 @@ type ConvexMessage = {
   allowWebNotifications: boolean;
   animation?: MessageOverlayAnimation;
   speedSeconds?: number;
+  fontScale?: number;
   order: number;
 };
 
 export function MessagesTabPanel({
   orgId,
-  isMessageLayerEnabled,
   activeOverlay,
   onShowOverlay,
   onSetMessageLayerEnabled,
@@ -120,8 +120,10 @@ export function MessagesTabPanel({
     }
   }, [selected]);
 
+  // Whether the currently-selected message is the one live on the output.
+  // Driven solely by the active overlay (the single source of truth), not the
+  // looks-layer flag, so the Show/Hide button reflects reality.
   const isActiveBeingShown =
-    isMessageLayerEnabled &&
     activeOverlay !== null &&
     selected !== null &&
     activeOverlay.id === selected._id;
@@ -158,6 +160,7 @@ export function MessagesTabPanel({
       dismissMode: selected.dismissMode,
       animation: selected.animation ?? "static",
       speedSeconds: selected.speedSeconds ?? 12,
+      fontScale: selected.fontScale ?? 1,
       shownAtMs: activeOverlay.shownAtMs,
     };
 
@@ -167,7 +170,8 @@ export function MessagesTabPanel({
       next.themeKey === activeOverlay.themeKey &&
       next.dismissMode === activeOverlay.dismissMode &&
       next.animation === activeOverlay.animation &&
-      next.speedSeconds === activeOverlay.speedSeconds;
+      next.speedSeconds === activeOverlay.speedSeconds &&
+      next.fontScale === activeOverlay.fontScale;
     if (unchanged) return;
 
     onShowOverlay(next);
@@ -227,6 +231,7 @@ export function MessagesTabPanel({
       shownAtMs: Date.now(),
       animation: selected.animation ?? "static",
       speedSeconds: selected.speedSeconds ?? 12,
+      fontScale: selected.fontScale ?? 1,
     };
     if (!overlay.text) return;
     onSetMessageLayerEnabled(true);
@@ -446,6 +451,24 @@ export function MessagesTabPanel({
                 />
               </Field>
             )}
+
+            <Field
+              label={`Font size (${Math.round((selected.fontScale ?? 1) * 100)}%)`}
+            >
+              <input
+                type="range"
+                min={0.5}
+                max={3}
+                step={0.1}
+                value={selected.fontScale ?? 1}
+                onChange={(event) =>
+                  void patchMessage(selected._id, {
+                    fontScale: Number(event.target.value),
+                  })
+                }
+                className="w-32 accent-primary"
+              />
+            </Field>
 
             <div className="mt-auto flex items-center gap-2 border-t border-border/60 pt-3">
               <button
