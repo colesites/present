@@ -1,8 +1,10 @@
 "use client";
 
 import { memo, useMemo, useState } from "react";
+import type { DragEvent } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import {
+  ArrowLeft,
   ChevronDown,
   ChevronRight,
   Folder,
@@ -66,7 +68,11 @@ interface ServicesSidebarProps {
   onAddGroupToService: (label: string) => Promise<void>;
   onRenameServiceGroup: (groupId: string, label: string) => Promise<void>;
   onDeleteServiceGroup: (groupId: string) => Promise<void>;
-  onMoveServiceItemToGroup: (index: number, groupId: string | null) => Promise<void>;
+  onMoveServiceItemToGroup: (
+    index: number,
+    groupId: string | null,
+    toIndex?: number,
+  ) => Promise<void>;
   onRenameServiceItem: (index: number, label: string) => Promise<void>;
   onSelectServiceTemplate: (templateId: string | null) => void;
   onCreateServiceTemplate: (name: string) => string | null;
@@ -140,9 +146,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
 }: ServicesSidebarProps) {
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newServiceTemplateId, setNewServiceTemplateId] = useState<string | null>(
-    selectedServiceTemplateId,
-  );
+  const [newServiceTemplateId, setNewServiceTemplateId] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<{
     id: Id<"services">;
     name: string;
@@ -209,9 +213,11 @@ export const ServicesSidebar = memo(function ServicesSidebar({
               <button
                 type="button"
                 onClick={onExitService}
-                className="inline-flex h-6 items-center rounded border border-border px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                className="inline-flex h-6 w-6 items-center justify-center text-muted-foreground transition hover:text-foreground"
+                aria-label="Back"
+                title="Back"
               >
-                Back
+                <ArrowLeft className="h-4 w-4" />
               </button>
             ) : null}
             <p className="truncate text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
@@ -224,7 +230,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
               <button
                 type="button"
                 onClick={openTemplateDialog}
-                className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-secondary/30 text-muted-foreground transition hover:border-primary hover:text-primary"
+                className="inline-flex h-6 w-6 items-center justify-center text-muted-foreground transition hover:text-primary"
                 aria-label="Service template"
                 title="Service template"
               >
@@ -233,11 +239,11 @@ export const ServicesSidebar = memo(function ServicesSidebar({
               <button
                 type="button"
                 onClick={openNewServiceDialog}
-                className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-secondary/30 text-xs font-semibold text-muted-foreground transition hover:border-primary hover:text-primary"
+                className="inline-flex h-6 w-6 items-center justify-center text-muted-foreground transition hover:text-primary"
                 aria-label="Add service"
                 title="Add service"
               >
-                +
+                <Plus className="h-4 w-4" />
               </button>
             </div>
           ) : (
@@ -245,7 +251,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
               <button
                 type="button"
                 onClick={openTemplateDialog}
-                className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-secondary/30 text-muted-foreground transition hover:border-primary hover:text-primary"
+                className="inline-flex h-6 w-6 items-center justify-center text-muted-foreground transition hover:text-primary"
                 aria-label="Service templates"
                 title="Service templates"
               >
@@ -254,7 +260,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
               <button
                 type="button"
                 onClick={() => setShowGroupDialog(true)}
-                className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-secondary/30 text-muted-foreground transition hover:border-primary hover:text-primary"
+                className="inline-flex h-6 w-6 items-center justify-center text-muted-foreground transition hover:text-primary"
                 aria-label="Add group"
                 title="Add group"
               >
@@ -308,8 +314,8 @@ export const ServicesSidebar = memo(function ServicesSidebar({
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="Service name"
+              aria-label="Service name"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
-              autoFocus
               onKeyDown={(e) => e.key === "Enter" && handleCreate()}
             />
             <label className="block space-y-1">
@@ -324,6 +330,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
                 }}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
               >
+                <option value="">None</option>
                 {serviceTemplates.map((template) => (
                   <option key={template.id} value={template.id}>
                     {template.name}
@@ -358,8 +365,8 @@ export const ServicesSidebar = memo(function ServicesSidebar({
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
               placeholder="Group name"
+              aria-label="Group name"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
-              autoFocus
               onKeyDown={(e) => e.key === "Enter" && handleCreateGroup()}
             />
             <div className="flex gap-2">
@@ -383,7 +390,11 @@ export const ServicesSidebar = memo(function ServicesSidebar({
       )}
 
       {showTemplateDialog && (
-        <Dialog title="Service templates" onClose={() => setShowTemplateDialog(false)}>
+        <Dialog
+          title="Service templates"
+          onClose={() => setShowTemplateDialog(false)}
+          contentClassName="max-w-none"
+        >
           <ServiceTemplateEditor
             templates={serviceTemplates}
             selectedTemplateId={selectedServiceTemplateId}
@@ -414,8 +425,8 @@ export const ServicesSidebar = memo(function ServicesSidebar({
               onChange={(e) =>
                 setRenameTarget({ ...renameTarget, name: e.target.value })
               }
+              aria-label="Service name"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
-              autoFocus
               onKeyDown={(e) => e.key === "Enter" && handleRename()}
             />
             <div className="flex gap-2">
@@ -516,13 +527,6 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
     templates[0] ??
     null;
   const [groupName, setGroupName] = useState("");
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [itemType, setItemType] = useState<"library" | "media" | "scripture">(
-    "library",
-  );
-  const [selectedLibraryId, setSelectedLibraryId] = useState("");
-  const [selectedMediaId, setSelectedMediaId] = useState("");
-  const [scriptureLabel, setScriptureLabel] = useState("");
   const orderedGroups = useMemo(
     () =>
       selectedTemplate
@@ -567,76 +571,39 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
 
   const handleAddGroup = () => {
     if (!selectedTemplate || !groupName.trim()) return;
-    const groupId = onAddGroup(selectedTemplate.id, groupName.trim());
+    onAddGroup(selectedTemplate.id, groupName.trim());
     setGroupName("");
-    if (groupId) {
-      setSelectedGroupId(groupId);
-    }
-  };
-
-  const handleAddItem = () => {
-    if (!selectedTemplate) return;
-
-    if (itemType === "library") {
-      const libraryId = selectedLibraryId || String(libraryItems[0]?._id ?? "");
-      const libraryItem = libraryItems.find(
-        (item) => String(item._id) === libraryId,
-      );
-      if (!libraryItem) return;
-      onAddItem(selectedTemplate.id, {
-        type: "library",
-        refId: String(libraryItem._id),
-        label: libraryItem.title,
-        groupId: selectedGroupId,
-      });
-      setSelectedLibraryId("");
-      return;
-    }
-
-    if (itemType === "media") {
-      const mediaId = selectedMediaId || mediaItems[0]?.id || "";
-      const mediaItem = mediaItems.find((item) => item.id === mediaId);
-      if (!mediaItem) return;
-      onAddItem(selectedTemplate.id, {
-        type: "media",
-        refId: mediaItem.id,
-        label: mediaItem.name,
-        groupId: selectedGroupId,
-      });
-      setSelectedMediaId("");
-      return;
-    }
-
-    if (!scriptureLabel.trim()) return;
-    onAddItem(selectedTemplate.id, {
-      type: "scripture",
-      refId: scriptureLabel.trim(),
-      label: scriptureLabel.trim(),
-      groupId: selectedGroupId,
-    });
-    setScriptureLabel("");
   };
 
   return (
-    <div className="grid max-h-[72vh] min-h-[460px] grid-cols-[180px_minmax(0,1fr)] gap-3 overflow-hidden">
-      <div className="flex min-h-0 flex-col gap-3 border-r border-border pr-3">
-        <div className="space-y-1 overflow-auto pr-1">
+    <div className="grid h-[min(78vh,720px)] min-h-[560px] w-[min(960px,calc(100vw-48px))] grid-cols-[260px_minmax(0,1fr)] overflow-hidden">
+      <div className="flex min-h-0 flex-col border-r border-border bg-background/60 p-4">
+        <div className="mb-3">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Templates
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Choose the default structure for new services.
+          </p>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-1 overflow-auto pr-1">
           {templates.map((template) => (
             <button
               key={template.id}
               type="button"
               onClick={() => onSelectTemplate(template.id)}
               className={cn(
-                "w-full rounded-md border px-2 py-2 text-left transition",
+                "w-full rounded-md border px-3 py-2.5 text-left transition",
                 selectedTemplate?.id === template.id
-                  ? "border-primary/70 bg-primary/10 text-primary"
-                  : "border-border bg-background text-foreground hover:bg-secondary",
+                  ? "border-primary/70 bg-primary/10 text-primary shadow-[inset_3px_0_0_hsl(var(--primary))]"
+                  : "border-transparent bg-transparent text-foreground hover:border-border hover:bg-secondary/60",
               )}
             >
-              <span className="block truncate text-xs font-medium">
+              <span className="block truncate text-sm font-semibold">
                 {template.name}
               </span>
-              <span className="block text-[10px] text-muted-foreground">
+              <span className="mt-1 block text-[11px] text-muted-foreground">
                 {template.groups.length} folder
                 {template.groups.length === 1 ? "" : "s"} · {template.items.length} item
                 {template.items.length === 1 ? "" : "s"}
@@ -645,162 +612,89 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
           ))}
         </div>
 
-        <div className="mt-auto space-y-2 rounded-md border border-border bg-muted/20 p-2">
+        <div className="mt-4 space-y-2 rounded-md border border-border bg-card/70 p-3">
           <input
+            aria-label="New service template name"
             value={newTemplateName}
             onChange={(event) => onNewTemplateNameChange(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") onCreateTemplate();
             }}
             placeholder="Template name"
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
           />
           <button
             type="button"
             onClick={onCreateTemplate}
             disabled={!newTemplateName.trim()}
-            className="inline-flex w-full items-center justify-center gap-1 rounded-md bg-primary px-2 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="h-4 w-4" />
             New template
           </button>
         </div>
       </div>
 
-      <div className="min-h-0 overflow-auto pr-1">
+      <div className="flex min-h-0 flex-col bg-card">
         {!selectedTemplate ? (
           <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
             Create a template to begin.
           </div>
         ) : (
-          <div className="space-y-3">
-            <div className="flex items-start gap-2">
-              <div className="min-w-0 flex-1 space-y-1">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                  Template
-                </span>
-                <input
-                  key={selectedTemplate.id}
-                  defaultValue={selectedTemplate.name}
-                  onBlur={(event) =>
-                    onRenameTemplate(selectedTemplate.id, event.currentTarget.value)
-                  }
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.currentTarget.blur();
+          <>
+            <div className="border-b border-border px-5 py-4">
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    Template
+                  </span>
+                  <input
+                    aria-label="Service template name"
+                    key={selectedTemplate.id}
+                    defaultValue={selectedTemplate.name}
+                    onBlur={(event) =>
+                      onRenameTemplate(
+                        selectedTemplate.id,
+                        event.currentTarget.value,
+                      )
                     }
-                  }}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-medium text-foreground focus:border-primary focus:outline-none"
-                />
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.currentTarget.blur();
+                      }
+                    }}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-base font-semibold text-foreground focus:border-primary focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onDeleteTemplate(selectedTemplate.id)}
+                  className="mt-5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:border-destructive/50 hover:text-destructive"
+                >
+                  Delete
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => onDeleteTemplate(selectedTemplate.id)}
-                className="mt-5 rounded-md border border-border px-2 py-2 text-xs font-medium text-muted-foreground hover:text-destructive"
-              >
-                Delete
-              </button>
-            </div>
 
-            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2 rounded-md border border-border bg-muted/20 p-2">
-              <div className="space-y-1">
+              <div className="mt-4 rounded-md border border-border bg-background/50 p-3">
                 <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                   Add folder
                 </span>
-                <div className="flex gap-2">
+                <div className="mt-2 flex gap-2">
                   <input
+                    aria-label="New service template folder name"
                     value={groupName}
                     onChange={(event) => setGroupName(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") handleAddGroup();
                     }}
                     placeholder="Announcements"
-                    className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+                    className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={handleAddGroup}
                     disabled={!groupName.trim()}
-                    className="rounded-md border border-border px-2 text-xs font-medium text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Add
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                  Add item
-                </span>
-                <div className="grid grid-cols-[86px_minmax(0,1fr)] gap-2">
-                  <select
-                    value={itemType}
-                    onChange={(event) =>
-                      setItemType(event.target.value as "library" | "media" | "scripture")
-                    }
-                    className="rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
-                  >
-                    <option value="library">Library</option>
-                    <option value="media">Media</option>
-                    <option value="scripture">Scripture</option>
-                  </select>
-                  <select
-                    value={selectedGroupId ?? ""}
-                    onChange={(event) => setSelectedGroupId(event.target.value || null)}
-                    className="rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
-                  >
-                    <option value="">No folder</option>
-                    {orderedGroups.map((group) => (
-                      <option key={group.id} value={group.id}>
-                        {group.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex gap-2">
-                  {itemType === "library" ? (
-                    <select
-                      value={selectedLibraryId}
-                      onChange={(event) => setSelectedLibraryId(event.target.value)}
-                      className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
-                    >
-                      <option value="">Select library item</option>
-                      {libraryItems.map((item) => (
-                        <option key={String(item._id)} value={String(item._id)}>
-                          {item.title}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
-                  {itemType === "media" ? (
-                    <select
-                      value={selectedMediaId}
-                      onChange={(event) => setSelectedMediaId(event.target.value)}
-                      className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
-                    >
-                      <option value="">Select media</option>
-                      {mediaItems.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
-                  {itemType === "scripture" ? (
-                    <input
-                      value={scriptureLabel}
-                      onChange={(event) => setScriptureLabel(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") handleAddItem();
-                      }}
-                      placeholder="John 3:16"
-                      className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
-                    />
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={handleAddItem}
-                    className="rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                    className="rounded-md border border-border px-4 text-sm font-semibold text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Add
                   </button>
@@ -808,23 +702,21 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+              <div className="space-y-3">
               {groupedItems.map(({ group, items }) => (
                 <section
                   key={group.id}
                   className={cn(
-                    "overflow-hidden rounded-md border bg-background/40",
-                    selectedGroupId === group.id
-                      ? "border-primary/60"
-                      : "border-border/70",
+                    "overflow-hidden rounded-md border border-border/70 bg-background/40",
                   )}
                 >
-                  <div className="flex items-center gap-2 border-b border-border/60 bg-muted/30 px-2 py-1.5">
-                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <div className="flex items-center gap-2 border-b border-border/60 bg-muted/25 px-3 py-2">
+                    <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <input
+                      aria-label="Service template folder name"
                       key={group.id}
                       defaultValue={group.name}
-                      onFocus={() => setSelectedGroupId(group.id)}
                       onBlur={(event) =>
                         onRenameGroup(
                           selectedTemplate.id,
@@ -835,10 +727,10 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                       onKeyDown={(event) => {
                         if (event.key === "Enter") event.currentTarget.blur();
                       }}
-                      className="min-w-0 flex-1 bg-transparent text-[10px] font-semibold uppercase tracking-widest text-muted-foreground outline-none focus:text-foreground"
+                      className="min-w-0 flex-1 bg-transparent text-xs font-semibold uppercase tracking-widest text-muted-foreground outline-none focus:text-foreground"
                     />
-                    <span className="text-[10px] text-muted-foreground">
-                      {items.length}
+                    <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {items.length} item{items.length === 1 ? "" : "s"}
                     </span>
                     <button
                       type="button"
@@ -849,7 +741,7 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                       <TrashIcon />
                     </button>
                   </div>
-                  <div className="space-y-1 p-1 pl-4">
+                  <div className="space-y-1 p-2">
                     {items.length ? (
                       items.map(({ item, index }) => (
                         <TemplateItemRow
@@ -866,26 +758,26 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                         />
                       ))
                     ) : (
-                      <p className="px-2 py-2 text-[10px] text-muted-foreground">
-                        Add items to this folder from the controls above.
+                      <p className="rounded-md border border-dashed border-border/80 px-3 py-3 text-xs text-muted-foreground">
+                        No items in this folder yet.
                       </p>
                     )}
+                    <AddTemplateItemControl
+                      groupId={group.id}
+                      templateId={selectedTemplate.id}
+                      libraryItems={libraryItems}
+                      mediaItems={mediaItems}
+                      onAddItem={onAddItem}
+                    />
                   </div>
                 </section>
               ))}
 
-              {ungroupedItems.length ? (
+              {ungroupedItems.length || orderedGroups.length === 0 ? (
                 <section className="space-y-1 rounded-md border border-border/50 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedGroupId(null)}
-                    className={cn(
-                      "w-full rounded-sm px-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground",
-                      selectedGroupId === null && "bg-primary/10 text-primary",
-                    )}
-                  >
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                     No folder
-                  </button>
+                  </div>
                   {ungroupedItems.map(({ item, index }) => (
                     <TemplateItemRow
                       key={getTemplateItemKey(item)}
@@ -900,15 +792,194 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                       onRemove={() => onRemoveItem(selectedTemplate.id, index)}
                     />
                   ))}
+                  <AddTemplateItemControl
+                    groupId={null}
+                    templateId={selectedTemplate.id}
+                    libraryItems={libraryItems}
+                    mediaItems={mediaItems}
+                    onAddItem={onAddItem}
+                  />
                 </section>
               ) : null}
+              </div>
             </div>
-          </div>
+          </>
         )}
       </div>
     </div>
   );
 });
+
+function AddTemplateItemControl({
+  groupId,
+  templateId,
+  libraryItems,
+  mediaItems,
+  onAddItem,
+}: {
+  groupId: string | null;
+  templateId: string;
+  libraryItems: LibraryItem[];
+  mediaItems: MediaItem[];
+  onAddItem: (
+    templateId: string,
+    item: Omit<Service["items"][number], "addedAt">,
+  ) => void;
+}) {
+  const [itemType, setItemType] = useState<"library" | "media" | "scripture">(
+    "library",
+  );
+  const [selectedLibraryId, setSelectedLibraryId] = useState("");
+  const [selectedMediaId, setSelectedMediaId] = useState("");
+  const [scriptureLabel, setScriptureLabel] = useState("");
+
+  const handleAddItem = () => {
+    if (itemType === "library") {
+      const libraryId = selectedLibraryId || String(libraryItems[0]?._id ?? "");
+      const libraryItem = libraryItems.find(
+        (item) => String(item._id) === libraryId,
+      );
+      if (!libraryItem) return;
+      onAddItem(templateId, {
+        type: "library",
+        refId: String(libraryItem._id),
+        label: libraryItem.title,
+        groupId,
+      });
+      setSelectedLibraryId("");
+      return;
+    }
+
+    if (itemType === "media") {
+      const mediaId = selectedMediaId || mediaItems[0]?.id || "";
+      const mediaItem = mediaItems.find((item) => item.id === mediaId);
+      if (!mediaItem) return;
+      onAddItem(templateId, {
+        type: "media",
+        refId: mediaItem.id,
+        label: mediaItem.name,
+        groupId,
+      });
+      setSelectedMediaId("");
+      return;
+    }
+
+    if (!scriptureLabel.trim()) return;
+    onAddItem(templateId, {
+      type: "scripture",
+      refId: scriptureLabel.trim(),
+      label: scriptureLabel.trim(),
+      groupId,
+    });
+    setScriptureLabel("");
+  };
+
+  return (
+    <div
+      className={cn(
+        "mt-2 grid gap-2 rounded-md border border-border/70 bg-muted/20 p-2",
+        itemType === "media"
+          ? "grid-cols-[116px_minmax(0,1fr)_auto] items-start"
+          : "grid-cols-[116px_minmax(0,1fr)_auto]",
+      )}
+    >
+      <select
+        aria-label="Template item type"
+        value={itemType}
+        onChange={(event) =>
+          setItemType(event.target.value as "library" | "media" | "scripture")
+        }
+        className="h-9 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:border-primary focus:outline-none"
+      >
+        <option value="library">Library</option>
+        <option value="media">Media</option>
+        <option value="scripture">Scripture</option>
+      </select>
+
+      {itemType === "library" ? (
+        <select
+          aria-label="Library item to add"
+          value={selectedLibraryId}
+          onChange={(event) => setSelectedLibraryId(event.target.value)}
+          className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:border-primary focus:outline-none"
+        >
+          <option value="">Select library item</option>
+          {libraryItems.map((item) => (
+            <option key={String(item._id)} value={String(item._id)}>
+              {item.title}
+            </option>
+          ))}
+        </select>
+      ) : null}
+
+      {itemType === "media" ? (
+        <div
+          className="grid max-h-32 min-h-20 min-w-0 grid-cols-[repeat(auto-fill,minmax(88px,1fr))] gap-1 overflow-auto rounded-md border border-input bg-background p-1"
+          aria-label="Media item to add"
+        >
+          {mediaItems.length ? (
+            mediaItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setSelectedMediaId(item.id)}
+                className={cn(
+                  "group overflow-hidden rounded border text-left transition",
+                  selectedMediaId === item.id
+                    ? "border-primary bg-primary/10"
+                    : "border-border/70 bg-card hover:border-primary/50",
+                )}
+              >
+                <span className="relative block aspect-video bg-black">
+                  {item.type === "image" ? (
+                    <span
+                      className="block h-full w-full bg-cover bg-center"
+                      style={{ backgroundImage: `url("${item.url}")` }}
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+                      <VideoIcon />
+                    </span>
+                  )}
+                </span>
+                <span className="block truncate px-1.5 py-1 text-[10px] text-foreground">
+                  {item.name}
+                </span>
+              </button>
+            ))
+          ) : (
+            <span className="col-span-full px-2 py-3 text-xs text-muted-foreground">
+              No media available.
+            </span>
+          )}
+        </div>
+      ) : null}
+
+      {itemType === "scripture" ? (
+        <input
+          aria-label="Scripture reference to add"
+          value={scriptureLabel}
+          onChange={(event) => setScriptureLabel(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") handleAddItem();
+          }}
+          placeholder="John 3:16"
+          className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+        />
+      ) : null}
+
+      <button
+        type="button"
+        onClick={handleAddItem}
+        className="inline-flex h-9 items-center gap-1 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Add
+      </button>
+    </div>
+  );
+}
 
 function TemplateItemRow({
   item,
@@ -1170,7 +1241,11 @@ const ServiceItemsList = memo(function ServiceItemsList({
   onRemove: (index: number) => void;
   onRenameGroup: (groupId: string, label: string) => Promise<void>;
   onDeleteGroup: (groupId: string) => Promise<void>;
-  onMoveToGroup: (index: number, groupId: string | null) => Promise<void>;
+  onMoveToGroup: (
+    index: number,
+    groupId: string | null,
+    toIndex?: number,
+  ) => Promise<void>;
   onRenameItem: (index: number, label: string) => Promise<void>;
   onReorder?: (fromIndex: number, toIndex: number) => Promise<void>;
 }) {
@@ -1197,6 +1272,35 @@ const ServiceItemsList = memo(function ServiceItemsList({
   const ungroupedItems = items.filter(
     (item) => !item.groupId || !groups.some((group) => group.id === item.groupId),
   );
+  const orderedServiceRows = (() => {
+    const looseItems = [...ungroupedItems].sort((left, right) => left.index - right.index);
+    let looseIndex = 0;
+    const rows: Array<
+      | { type: "item"; item: ServiceItem }
+      | { type: "group"; group: ServiceGroup; items: ServiceItem[] }
+    > = [];
+
+    for (const entry of groupedItems) {
+      const firstGroupItemIndex = entry.items.length
+        ? Math.min(...entry.items.map((item) => item.index))
+        : Number.POSITIVE_INFINITY;
+      while (
+        looseIndex < looseItems.length &&
+        looseItems[looseIndex].index < firstGroupItemIndex
+      ) {
+        rows.push({ type: "item", item: looseItems[looseIndex] });
+        looseIndex += 1;
+      }
+      rows.push({ type: "group", group: entry.group, items: entry.items });
+    }
+
+    while (looseIndex < looseItems.length) {
+      rows.push({ type: "item", item: looseItems[looseIndex] });
+      looseIndex += 1;
+    }
+
+    return rows;
+  })();
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
@@ -1271,6 +1375,65 @@ const ServiceItemsList = memo(function ServiceItemsList({
     }
   };
 
+  const getGroupBoundaryIndex = (
+    groupId: string,
+    position: "before" | "after",
+  ) => {
+    const groupItems = items
+      .filter((item) => item.groupId === groupId)
+      .sort((left, right) => left.index - right.index);
+
+    if (groupItems.length > 0) {
+      return position === "before"
+        ? groupItems[0].index
+        : groupItems[groupItems.length - 1].index + 1;
+    }
+
+    const groupOrder =
+      orderedGroups.find((group) => group.id === groupId)?.order ?? 0;
+    const neighborIndexes: number[] = [];
+    for (const group of orderedGroups) {
+      const isNeighbor =
+        position === "before" ? group.order < groupOrder : group.order > groupOrder;
+      if (!isNeighbor) continue;
+      for (const item of items) {
+        if (item.groupId === group.id) {
+          neighborIndexes.push(item.index);
+        }
+      }
+    }
+
+    if (neighborIndexes.length === 0) {
+      return position === "before" ? 0 : items.length;
+    }
+
+    return position === "before"
+      ? Math.max(...neighborIndexes) + 1
+      : Math.min(...neighborIndexes);
+  };
+
+  const handleGroupBoundaryDrop = async (
+    event: React.DragEvent,
+    groupId: string,
+    position: "before" | "after",
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const droppedIndex = Number.parseInt(
+      event.dataTransfer.getData(dragDataKey) || event.dataTransfer.getData("text/plain"),
+      10,
+    );
+    const fromIndex =
+      draggedIndex ?? (Number.isFinite(droppedIndex) ? droppedIndex : null);
+    setDraggedIndex(null);
+    setDropTargetIndex(null);
+    setDropTargetGroupId(null);
+    if (fromIndex !== null) {
+      await onMoveToGroup(fromIndex, null, getGroupBoundaryIndex(groupId, position));
+      onSelectGroup(null);
+    }
+  };
+
   const renderItem = (item: ServiceItem) => {
     const { displayName, icon } = getServiceItemDisplay(item);
     return (
@@ -1313,7 +1476,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
             <button
               type="button"
               onClick={() => {
-                onSelectGroup(null);
+                onSelectGroup(item.groupId ?? null);
                 onSelect(item.index);
               }}
               onDoubleClick={() => onDoubleClick?.(item.index)}
@@ -1351,7 +1514,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
             <ContextMenuSubTrigger>Move to group</ContextMenuSubTrigger>
             <ContextMenuSubContent className="w-44">
               <ContextMenuItem onClick={() => onMoveToGroup(item.index, null)}>
-                Ungrouped
+                No folder
               </ContextMenuItem>
               {orderedGroups.map((group) => (
                 <ContextMenuItem
@@ -1386,7 +1549,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-1">
       {renameGroupTarget ? (
         <Dialog title="Rename group" onClose={() => setRenameGroupTarget(null)}>
           <div className="space-y-3">
@@ -1398,8 +1561,8 @@ const ServiceItemsList = memo(function ServiceItemsList({
                   label: event.target.value,
                 })
               }
+              aria-label="Group name"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
-              autoFocus
               onKeyDown={(event) => {
                 if (event.key === "Enter" && renameGroupTarget.label.trim()) {
                   void onRenameGroup(
@@ -1446,8 +1609,8 @@ const ServiceItemsList = memo(function ServiceItemsList({
                   label: event.target.value,
                 })
               }
+              aria-label="Service item name"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
-              autoFocus
               onKeyDown={(event) => {
                 if (event.key === "Enter" && renameItemTarget.label.trim()) {
                   void onRenameItem(
@@ -1489,106 +1652,108 @@ const ServiceItemsList = memo(function ServiceItemsList({
         </p>
       ) : null}
 
-      {groupedItems.map(({ group, items: groupItems }) => (
-        <section
-          key={group.id}
-          onDragOver={(event) => handleGroupDragOver(event, group.id)}
-          onDragLeave={() => setDropTargetGroupId(null)}
-          onDrop={(event) => handleGroupDrop(event, group.id)}
-          className={cn(
-            "overflow-hidden rounded-md border bg-background/40 transition",
-            selectedGroupId === group.id
-              ? "border-primary/60 bg-primary/10"
-              : "border-border/70",
-            dropTargetGroupId === group.id && "ring-2 ring-primary/70",
-          )}
-        >
-          <div className="group flex items-center gap-1 border-b border-border/60 bg-muted/30 px-1.5 py-1">
-            <button
-              type="button"
-              aria-label={
-                collapsedGroupIds.has(group.id) ? "Expand group" : "Collapse group"
-              }
-              onClick={() => toggleGroupCollapsed(group.id)}
-              className="rounded-sm p-0.5 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
-            >
-              {collapsedGroupIds.has(group.id) ? (
-                <ChevronRight className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => onSelectGroup(group.id)}
-              className="flex min-w-0 flex-1 items-center gap-2 rounded-sm px-1 py-0.5 text-left"
-            >
-              {collapsedGroupIds.has(group.id) ? (
-                <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              )}
-              <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                {group.name}
-              </span>
-              <span className="text-[10px] text-muted-foreground">
-                {groupItems.length}
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label="Rename group"
-              onClick={() => setRenameGroupTarget({ id: group.id, label: group.name })}
-              className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
-            >
-              <EditIcon />
-            </button>
-            <button
-              type="button"
-              aria-label="Delete group"
-              onClick={() => onDeleteGroup(group.id)}
-              className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
-            >
-              <TrashIcon />
-            </button>
-          </div>
-          {!collapsedGroupIds.has(group.id) ? (
-            <div className="space-y-1 p-1 pl-4">
-              {groupItems.length ? (
-                groupItems.map(renderItem)
-              ) : (
-                <p className="px-2 py-2 text-[10px] text-muted-foreground">
-                  Drop items here, or select this folder before adding.
-                </p>
-              )}
-            </div>
-          ) : null}
-        </section>
-      ))}
+      {orderedServiceRows.map((row) => {
+        if (row.type === "item") {
+          return renderItem(row.item);
+        }
 
-      {ungroupedItems.length ? (
-        <section
-          className={cn(
-            "space-y-1 rounded-md border border-transparent p-1 transition",
-            dropTargetGroupId === "__ungrouped__" && "border-primary/60 ring-2 ring-primary/70",
-          )}
-          onDragOver={(event) => handleGroupDragOver(event, null)}
-          onDragLeave={() => setDropTargetGroupId(null)}
-          onDrop={(event) => handleGroupDrop(event, null)}
-        >
-          <button
-            type="button"
-            onClick={() => onSelectGroup(null)}
-            className={cn(
-              "w-full rounded-sm px-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground",
-              selectedGroupId === null && selectedIndex === null && "bg-primary/10 text-primary",
-            )}
-          >
-            Ungrouped
-          </button>
-          {ungroupedItems.map(renderItem)}
-        </section>
-      ) : null}
+        const { group, items: groupItems } = row;
+        return (
+          <div key={group.id}>
+            <GroupBoundaryDropZone
+              groupId={group.id}
+              position="before"
+              canDrop={draggedIndex !== null}
+              isActive={dropTargetGroupId === `${group.id}:before`}
+              onActivate={setDropTargetGroupId}
+              onClear={() => setDropTargetGroupId(null)}
+              onDrop={handleGroupBoundaryDrop}
+            />
+            <section
+              onDragOver={(event) => handleGroupDragOver(event, group.id)}
+              onDragLeave={() => setDropTargetGroupId(null)}
+              onDrop={(event) => handleGroupDrop(event, group.id)}
+              className={cn(
+                "transition",
+                selectedGroupId === group.id
+                  ? "bg-primary/10"
+                  : "hover:bg-secondary/40",
+                dropTargetGroupId === group.id && "ring-2 ring-primary/70 ring-inset",
+              )}
+            >
+              <div className="group flex items-center gap-1 px-1.5 py-1">
+                <button
+                  type="button"
+                  aria-label={
+                    collapsedGroupIds.has(group.id) ? "Expand group" : "Collapse group"
+                  }
+                  onClick={() => toggleGroupCollapsed(group.id)}
+                  className="rounded-sm p-0.5 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+                >
+                  {collapsedGroupIds.has(group.id) ? (
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSelectGroup(group.id)}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-sm px-1 py-0.5 text-left"
+                >
+                  {collapsedGroupIds.has(group.id) ? (
+                    <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    {group.name}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {groupItems.length}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Rename group"
+                  onClick={() => setRenameGroupTarget({ id: group.id, label: group.name })}
+                  className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                >
+                  <EditIcon />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Delete group"
+                  onClick={() => onDeleteGroup(group.id)}
+                  className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+                >
+                  <TrashIcon />
+                </button>
+              </div>
+              {!collapsedGroupIds.has(group.id) ? (
+                <div className="space-y-1 py-0.5 pl-5 pr-1">
+                  {groupItems.length ? (
+                    groupItems.map(renderItem)
+                  ) : (
+                    <p className="px-2 py-1.5 text-[10px] text-muted-foreground">
+                      Drop items here, or select this folder before adding.
+                    </p>
+                  )}
+                </div>
+              ) : null}
+            </section>
+            <GroupBoundaryDropZone
+              groupId={group.id}
+              position="after"
+              canDrop={draggedIndex !== null}
+              isActive={dropTargetGroupId === `${group.id}:after`}
+              onActivate={setDropTargetGroupId}
+              onClear={() => setDropTargetGroupId(null)}
+              onDrop={handleGroupBoundaryDrop}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 });
@@ -1618,6 +1783,45 @@ function getServiceItemDisplay(item: ServiceItem) {
     };
   }
   return { displayName: item.label ?? "Group", icon: <Folder className="h-3.5 w-3.5" /> };
+}
+
+function GroupBoundaryDropZone({
+  groupId,
+  position,
+  canDrop,
+  isActive,
+  onActivate,
+  onClear,
+  onDrop,
+}: {
+  groupId: string;
+  position: "before" | "after";
+  canDrop: boolean;
+  isActive: boolean;
+  onActivate: (targetId: string) => void;
+  onClear: () => void;
+  onDrop: (
+    event: DragEvent<HTMLDivElement>,
+    groupId: string,
+    position: "before" | "after",
+  ) => void | Promise<void>;
+}) {
+  return (
+    <div
+      onDragOver={(event) => {
+        if (!canDrop) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onActivate(`${groupId}:${position}`);
+      }}
+      onDragLeave={onClear}
+      onDrop={(event) => {
+        void onDrop(event, groupId, position);
+      }}
+      className={cn("h-1 rounded-full transition", isActive && "bg-primary")}
+      aria-hidden="true"
+    />
+  );
 }
 
 // Icons

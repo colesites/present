@@ -5,7 +5,7 @@ import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
-} from "../../renderer/shared/components";
+} from "../../renderer/shared/components/ui/resizable";
 import { PresentServicesSidebar } from "./PresentServicesSidebar";
 import { PresentCenterArea } from "./PresentCenterArea";
 import { PresentOutputSidebar } from "./PresentOutputSidebar";
@@ -275,7 +275,11 @@ interface MainViewProps {
     onAddGroupToService: (label: string) => Promise<void>;
     onRenameServiceGroup: (groupId: string, label: string) => Promise<void>;
     onDeleteServiceGroup: (groupId: string) => Promise<void>;
-    onMoveServiceItemToGroup: (index: number, groupId: string | null) => Promise<void>;
+    onMoveServiceItemToGroup: (
+      index: number,
+      groupId: string | null,
+      toIndex?: number,
+    ) => Promise<void>;
     onRenameServiceItem: (index: number, label: string) => Promise<void>;
     onSelectServiceTemplate: (templateId: string | null) => void;
     onCreateServiceTemplate: (name: string) => string | null;

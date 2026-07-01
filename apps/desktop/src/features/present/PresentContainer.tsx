@@ -356,6 +356,8 @@ export function PresentContainer({
   const [isOutputFrozen, setIsOutputFrozen] = useState(false);
   const [editedOutputSnapshot, setEditedOutputSnapshot] =
     useState<EditedOutputSnapshot | null>(null);
+  const [editLockSnapshot, setEditLockSnapshot] =
+    useState<EditedOutputSnapshot | null>(null);
   // Banner overlay currently being broadcast to the audience output, or null
   // when nothing is shown. Lifted here so the Messages tab can publish it and
   // useOutputBroadcast can forward it to the output window.
@@ -431,18 +433,13 @@ export function PresentContainer({
     () => [...libraryItems, ...servicePresentationLibraryItems],
     [libraryItems, servicePresentationLibraryItems],
   );
-  useEffect(() => {
-    if (!selectedPresentationLibraryId) {
-      return;
-    }
-
-    const stillExists = servicePresentationLibraryItems.some(
+  const effectiveSelectedPresentationLibraryId =
+    selectedPresentationLibraryId &&
+    servicePresentationLibraryItems.some(
       (item) => String(item._id) === selectedPresentationLibraryId,
-    );
-    if (!stillExists) {
-      setSelectedPresentationLibraryId(null);
-    }
-  }, [selectedPresentationLibraryId, servicePresentationLibraryItems]);
+    )
+      ? selectedPresentationLibraryId
+      : null;
 
   // Memos
   const slidesForGrid = useMemo(() => {
@@ -511,7 +508,7 @@ export function PresentContainer({
       bottomTab === "scripture" &&
       scriptureSlides.length > 0 &&
       !selectedLibraryId &&
-      !selectedPresentationLibraryId
+      !effectiveSelectedPresentationLibraryId
     ) {
       return true;
     }
@@ -520,7 +517,7 @@ export function PresentContainer({
     activeSlideId,
     bottomTab,
     selectedLibraryId,
-    selectedPresentationLibraryId,
+    effectiveSelectedPresentationLibraryId,
     scriptureSlides.length,
   ]);
 
@@ -575,31 +572,27 @@ export function PresentContainer({
   // partial text, or the layer collapsing entirely. The freeze is released
   // when the user leaves Edit, selects a different slide, or explicitly
   // clicks "Update Output" (which sets its own snapshot).
-  const editLockSnapshotRef = useRef<EditedOutputSnapshot | null>(null);
-  useEffect(() => {
-    if (viewMode !== "edit") {
-      editLockSnapshotRef.current = null;
-      return;
-    }
-    if (editedOutputSnapshot || !activeSlideId || !activeSlideContent) {
-      return;
-    }
-    // Capture once per (edit-session, live slide) pair.
-    if (editLockSnapshotRef.current?.slideId === activeSlideId) {
-      return;
-    }
-    editLockSnapshotRef.current = {
+  if (viewMode !== "edit" && editLockSnapshot !== null) {
+    setEditLockSnapshot(null);
+  } else if (
+    viewMode === "edit" &&
+    !editedOutputSnapshot &&
+    activeSlideId &&
+    activeSlideContent &&
+    editLockSnapshot?.slideId !== activeSlideId
+  ) {
+    setEditLockSnapshot({
       slideId: activeSlideId,
       text: activeSlideContent.text ?? "",
       elements: normalizeSlideElements(activeSlideContent.elements),
       canvasSize: activeSlideContent.canvasSize ?? DEFAULT_CANVAS_SIZE,
       backgroundColor: activeSlideContent.backgroundColor ?? null,
-    };
-  }, [viewMode, activeSlideId, activeSlideContent, editedOutputSnapshot]);
+    });
+  }
 
   const broadcastSnapshot =
     editedOutputSnapshot ??
-    (viewMode === "edit" ? editLockSnapshotRef.current : null);
+    (viewMode === "edit" ? editLockSnapshot : null);
 
   const outputSlideContent = useMemo<OutputSlideContent | null>(
     () =>
@@ -1357,79 +1350,80 @@ export function PresentContainer({
 
       let importedCount = 0;
 
-      try {
-        for (const file of files) {
-          try {
-            const fileLabel = `${file.name} (${importedCount + 1} of ${files.length})`;
-            setPresentationImportState({
-              isVisible: true,
-              title: mode === "images" ? "Importing presentation images" : "Importing presentation",
-              detail: `Preparing ${fileLabel}`,
-              progress:
-                files.length > 0
-                  ? (importedCount / files.length) * 100
-                  : null,
+      for (const file of files) {
+        try {
+          const fileLabel = `${file.name} (${importedCount + 1} of ${files.length})`;
+          setPresentationImportState({
+            isVisible: true,
+            title: mode === "images" ? "Importing presentation images" : "Importing presentation",
+            detail: `Preparing ${fileLabel}`,
+            progress:
+              files.length > 0
+                ? (importedCount / files.length) * 100
+                : null,
+          });
+
+          const presentation = await importServicePresentationFile(
+            file,
+            mode,
+            (progress: PresentationImportProgress) => {
+              const fileBaseProgress = files.length > 0 ? (importedCount / files.length) * 100 : 0;
+              const fileWeight = files.length > 0 ? 100 / files.length : 100;
+              const nextProgress =
+                progress.percent == null
+                  ? null
+                  : Math.min(
+                      99,
+                      fileBaseProgress + (progress.percent / 100) * fileWeight,
+                    );
+
+              setPresentationImportState({
+                isVisible: true,
+                title:
+                  mode === "images"
+                    ? "Importing presentation images"
+                    : "Importing presentation",
+                detail: `${progress.detail ?? "Processing file"} • ${fileLabel}`,
+                progress: nextProgress,
+              });
+            },
+          );
+          const refId = await addPresentationToService(
+            selectedServiceId,
+            presentation,
+          );
+          if (!refId) {
+            toast.error(`Failed to import ${file.name}.`, {
+              duration: IMPORT_ERROR_DURATION_MS,
             });
-
-            const presentation = await importServicePresentationFile(
-              file,
-              mode,
-              (progress: PresentationImportProgress) => {
-                const fileBaseProgress = files.length > 0 ? (importedCount / files.length) * 100 : 0;
-                const fileWeight = files.length > 0 ? 100 / files.length : 100;
-                const nextProgress =
-                  progress.percent == null
-                    ? null
-                    : Math.min(
-                        99,
-                        fileBaseProgress + (progress.percent / 100) * fileWeight,
-                      );
-
-                setPresentationImportState({
-                  isVisible: true,
-                  title:
-                    mode === "images"
-                      ? "Importing presentation images"
-                      : "Importing presentation",
-                  detail: `${progress.detail ?? "Processing file"} • ${fileLabel}`,
-                  progress: nextProgress,
-                });
-              },
-            );
-            const refId = await addPresentationToService(
-              selectedServiceId,
-              presentation,
-            );
-            if (!refId) {
-              throw new Error(`Failed to import ${file.name}.`);
-            }
-
-            importedCount += 1;
-            const presentationLibraryId = `presentation_${refId}`;
-            setServiceItemIndex(serviceItems.length + importedCount - 1);
-            setSelectedServiceGroupId(null);
-            setSelectedLibraryId(null);
-            setSelectedPresentationLibraryId(presentationLibraryId);
-            setSelected({ libraryId: presentationLibraryId, index: 0 });
-          } catch (error) {
-            toast.error(
-              error instanceof Error
-                ? error.message
-                : `Failed to import ${file.name}.`,
-              {
-                duration: IMPORT_ERROR_DURATION_MS,
-              },
-            );
+            continue;
           }
+
+          importedCount += 1;
+          const presentationLibraryId = `presentation_${refId}`;
+          setServiceItemIndex(serviceItems.length + importedCount - 1);
+          setSelectedServiceGroupId(null);
+          setSelectedLibraryId(null);
+          setSelectedPresentationLibraryId(presentationLibraryId);
+          setSelected({ libraryId: presentationLibraryId, index: 0 });
+        } catch (error) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : `Failed to import ${file.name}.`,
+            {
+              duration: IMPORT_ERROR_DURATION_MS,
+            },
+          );
         }
-      } finally {
-        setPresentationImportState({
-          isVisible: false,
-          title: "Importing presentation",
-          detail: "",
-          progress: null,
-        });
       }
+
+      setPresentationImportState({
+        isVisible: false,
+        title: "Importing presentation",
+        detail: "",
+        progress: null,
+      });
 
       if (importedCount > 0) {
         toast.success(
@@ -1550,8 +1544,8 @@ export function PresentContainer({
             ? (groupId: string) => deleteServiceGroup(selectedServiceId, groupId)
             : () => Promise.resolve(),
           onMoveServiceItemToGroup: selectedServiceId
-            ? (index: number, groupId: string | null) =>
-                moveServiceItemToGroup(selectedServiceId, index, groupId)
+            ? (index: number, groupId: string | null, toIndex?: number) =>
+                moveServiceItemToGroup(selectedServiceId, index, groupId, toIndex)
             : () => Promise.resolve(),
           onRenameServiceItem: selectedServiceId
             ? (index: number, label: string) =>

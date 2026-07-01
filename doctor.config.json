@@ -1,0 +1,11 @@
+{
+  "$schema": "https://react.doctor/schema/config.json",
+  "ignore": {
+    "tags": [
+      "test-noise"
+    ]
+  },
+  "rules": {
+    "react-doctor/react-compiler-no-manual-memoization": "off"
+  }
+}

@@ -98,6 +98,9 @@ const cloneTemplateForService = (template: ServiceTemplate) => {
   return { groups, items };
 };
 
+const findBibleGroupId = (groups: ServiceGroup[] | undefined): string | null =>
+  groups?.find((group) => group.name.trim().toLowerCase() === "bible")?.id ?? null;
+
 function loadServiceTemplates(): ServiceTemplate[] {
   const fallback = [createDefaultServiceTemplate()];
   if (typeof window === "undefined") return fallback;
@@ -339,10 +342,16 @@ export function useServices(
   const createNewService = async (name: string, templateId?: string | null) => {
     if (!name.trim()) return null;
     const template =
-      serviceTemplates.find((item) => item.id === (templateId ?? selectedServiceTemplateId)) ??
-      serviceTemplates[0] ??
-      createDefaultServiceTemplate();
-    const templatePayload = cloneTemplateForService(template);
+      templateId === null
+        ? null
+        : (serviceTemplates.find(
+            (item) => item.id === (templateId ?? selectedServiceTemplateId),
+          ) ??
+          serviceTemplates[0] ??
+          createDefaultServiceTemplate());
+    const templatePayload = template
+      ? cloneTemplateForService(template)
+      : { groups: [], items: [] };
     const nextService = createLocalService(workspaceId, {
       name: name.trim(),
       date: undefined,
@@ -367,9 +376,12 @@ export function useServices(
   };
 
   const selectDefaultServiceTemplate = (templateId: string | null) => {
-    const nextId = serviceTemplates.some((template) => template.id === templateId)
-      ? templateId
-      : serviceTemplates[0]?.id ?? null;
+    const nextId =
+      templateId === null
+        ? null
+        : serviceTemplates.some((template) => template.id === templateId)
+          ? templateId
+          : serviceTemplates[0]?.id ?? null;
     setSelectedServiceTemplateIdState(nextId);
     saveDefaultTemplateId(nextId);
   };
@@ -471,7 +483,9 @@ export function useServices(
       const groupId =
         item.groupId && template.groups.some((group) => group.id === item.groupId)
           ? item.groupId
-          : null;
+          : item.type === "scripture"
+            ? findBibleGroupId(template.groups)
+            : null;
       return {
         ...template,
         items: [
@@ -575,7 +589,8 @@ export function useServices(
       return;
     }
     const service = normalizeServiceGroups(existingService);
-    const groupId = getSelectedGroupIdForService(service, serviceId);
+    const groupId =
+      findBibleGroupId(service.groups) ?? getSelectedGroupIdForService(service, serviceId);
     const nextService = upsertService(workspaceId, {
       ...service,
       items: [
@@ -748,6 +763,7 @@ export function useServices(
     serviceId: Id<"services">,
     index: number,
     groupId: string | null,
+    toIndex?: number,
   ) => {
     const service = services.find((item) => item._id === serviceId);
     if (!service) {
@@ -765,6 +781,15 @@ export function useServices(
     const nextItems = normalizedService.items.map((item, itemIndex) =>
       itemIndex === index ? { ...item, groupId } : item,
     );
+    if (typeof toIndex === "number" && Number.isFinite(toIndex)) {
+      const [moved] = nextItems.splice(index, 1);
+      if (!moved) {
+        return;
+      }
+      const adjustedIndex = index < toIndex ? toIndex - 1 : toIndex;
+      const clampedIndex = Math.max(0, Math.min(adjustedIndex, nextItems.length));
+      nextItems.splice(clampedIndex, 0, moved);
+    }
     const nextService = upsertService(workspaceId, {
       ...normalizedService,
       items: nextItems,

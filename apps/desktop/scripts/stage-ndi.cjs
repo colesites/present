@@ -35,14 +35,16 @@ function resolvePackageDir(pkgName, fromDir) {
   let dir = fromDir;
   for (let i = 0; i < 12; i += 1) {
     const candidate = path.join(dir, "node_modules", pkgName);
-    if (fs.existsSync(path.join(candidate, "package.json"))) return candidate;
+    if (fs.existsSync(path.join(candidate, "package.json"))) {
+      return fs.realpathSync(candidate);
+    }
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
   const rootCandidate = path.join(ROOT_NODE_MODULES, pkgName);
   return fs.existsSync(path.join(rootCandidate, "package.json"))
-    ? rootCandidate
+    ? fs.realpathSync(rootCandidate)
     : null;
 }
 
@@ -56,27 +58,34 @@ function copyPackage(sourceDir, pkgName) {
 }
 
 // Stage a package AND its transitive runtime dependencies.
-function stagePackageWithDeps(pkgName, fromDir, seen) {
+function stagePackageWithDeps(pkgName, fromDir, seen, options = {}) {
   if (seen.has(pkgName)) return;
   const sourceDir = resolvePackageDir(pkgName, fromDir);
   if (!sourceDir) {
-    console.warn(`[stage-ndi] dependency not found: ${pkgName}`);
+    if (!options.optional) {
+      console.warn(`[stage-ndi] dependency not found: ${pkgName}`);
+    }
     return;
   }
   seen.add(pkgName);
   copyPackage(sourceDir, pkgName);
 
   let deps = {};
+  let optionalDeps = {};
   try {
     const manifest = JSON.parse(
       fs.readFileSync(path.join(sourceDir, "package.json"), "utf8"),
     );
     deps = { ...(manifest.dependencies ?? {}) };
+    optionalDeps = { ...(manifest.optionalDependencies ?? {}) };
   } catch {
     // ignore unparsable manifest
   }
   for (const depName of Object.keys(deps)) {
     stagePackageWithDeps(depName, sourceDir, seen);
+  }
+  for (const depName of Object.keys(optionalDeps)) {
+    stagePackageWithDeps(depName, sourceDir, seen, { optional: true });
   }
 }
 

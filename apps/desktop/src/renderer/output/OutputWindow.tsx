@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { Camera } from "lucide-react";
 import type {
   VideoSettings,
@@ -390,6 +391,7 @@ export function OutputWindow() {
       ? state.screenComposerLayout.regions
       : DEFAULT_SCREEN_LAYOUT.regions;
   }, [state.screenComposerLayout]);
+  const hasCountdownRegion = regions.some((region) => region.source === "countdown");
 
   const renderRegionContent = (region: ScreenComposerRegion) => {
     if (region.source === "camera-feed") {
@@ -444,6 +446,7 @@ export function OutputWindow() {
           {region.backgroundMediaUrl ? (
             region.backgroundMediaType === "video" ? (
               <video
+                aria-label="Region background video"
                 src={region.backgroundMediaUrl}
                 className={cn(
                   "absolute inset-0 h-full w-full",
@@ -460,22 +463,15 @@ export function OutputWindow() {
                 autoPlay
                 playsInline
                 style={{ filter: state.mediaFilterCSS }}
-              />
+              >
+                <track kind="captions" />
+              </video>
             ) : (
-              <img
-                src={region.backgroundMediaUrl}
-                alt=""
-                className={cn(
-                  "absolute inset-0 h-full w-full",
-                  region.fitMode === "contain"
-                    ? "object-contain"
-                    : region.fitMode === "fill"
-                      ? "object-fill"
-                      : region.fitMode === "scale-down"
-                        ? "object-scale-down"
-                        : "object-cover"
-                )}
-                style={{ filter: state.mediaFilterCSS }}
+              <OutputImageLayer
+                url={region.backgroundMediaUrl}
+                fitMode={region.fitMode}
+                className="absolute inset-0"
+                filter={state.mediaFilterCSS}
               />
             )
           ) : null}
@@ -533,6 +529,7 @@ export function OutputWindow() {
         {region.mediaUrl ? (
           region.mediaType === "video" ? (
             <video
+              aria-label="Region media video"
               src={region.mediaUrl}
               className={cn(
                 "h-full w-full",
@@ -549,22 +546,15 @@ export function OutputWindow() {
               autoPlay
               playsInline
               style={{ filter: state.mediaFilterCSS }}
-            />
+            >
+              <track kind="captions" />
+            </video>
           ) : (
-            <img
-              src={region.mediaUrl}
-              alt=""
-              className={cn(
-                "h-full w-full",
-                region.fitMode === "contain"
-                  ? "object-contain"
-                  : region.fitMode === "fill"
-                    ? "object-fill"
-                    : region.fitMode === "scale-down"
-                      ? "object-scale-down"
-                      : "object-cover"
-              )}
-              style={{ filter: state.mediaFilterCSS }}
+            <OutputImageLayer
+              url={region.mediaUrl}
+              fitMode={region.fitMode}
+              className="h-full w-full"
+              filter={state.mediaFilterCSS}
             />
           )
         ) : null}
@@ -595,19 +585,22 @@ export function OutputWindow() {
           state.mediaType === "video" ? (
             <video
               ref={legacyVideoRef}
+              aria-label="Output media video"
               src={state.mediaUrl}
               className="absolute inset-0 h-full w-full object-cover"
               loop={state.videoSettings.loop}
               muted={state.videoSettings.muted}
               playsInline
               style={{ filter: state.mediaFilterCSS }}
-            />
+            >
+              <track kind="captions" />
+            </video>
           ) : (
-            <img
-              src={state.mediaUrl}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover"
-              style={{ filter: state.mediaFilterCSS }}
+            <OutputImageLayer
+              url={state.mediaUrl}
+              fitMode="cover"
+              className="absolute inset-0"
+              filter={state.mediaFilterCSS}
             />
           )
         ) : null}
@@ -655,6 +648,7 @@ export function OutputWindow() {
 
         {/* Overlays must render in the default (non-composer) path too —
             this is the common output mode. */}
+        <TimerOverlayLayer state={state} />
         <PropsOverlayLayer items={state.propsOverlay ?? null} />
         <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
       </div>
@@ -686,9 +680,116 @@ export function OutputWindow() {
           </div>
         </div>
       ))}
+      {!hasCountdownRegion ? <TimerOverlayLayer state={state} /> : null}
       <PropsOverlayLayer items={state.propsOverlay ?? null} />
       <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
     </div>
+  );
+}
+
+function clampNumber(value: number | undefined, min: number, max: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return min;
+  }
+  return Math.min(Math.max(value, min), max);
+}
+
+function getBackgroundSize(fitMode: ScreenComposerRegion["fitMode"] | "cover") {
+  if (fitMode === "fill") return "100% 100%";
+  if (fitMode === "contain" || fitMode === "scale-down") return "contain";
+  return "cover";
+}
+
+function OutputImageLayer({
+  url,
+  fitMode,
+  className,
+  filter,
+  style,
+}: {
+  url: string;
+  fitMode: ScreenComposerRegion["fitMode"] | "cover";
+  className?: string;
+  filter?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <span
+      className={cn("block bg-center bg-no-repeat", className)}
+      style={{
+        ...style,
+        backgroundImage: `url("${url}")`,
+        backgroundSize: getBackgroundSize(fitMode),
+        filter,
+      }}
+      aria-hidden="true"
+    />
+  );
+}
+
+function TimerOverlayLayer({ state }: { state: OutputState }) {
+  if (!state.timerVisible || !state.timerText) {
+    return null;
+  }
+
+  const layout = state.timerLayout;
+  const xPercent = clampNumber(layout?.xPercent, 0, 100);
+  const yPercent = clampNumber(layout?.yPercent, 0, 100);
+  const clockFontPx = clampNumber(layout?.clockFontPx, 12, 400);
+  const nameFontPx = clampNumber(layout?.nameFontPx, 10, 180);
+  const clockColor = layout?.clockColor || "#ffffff";
+  const nameColor = layout?.nameColor || "#ffffff";
+  const nameBannerEnabled = Boolean(layout?.nameBannerEnabled);
+  const titlePosition = layout?.titlePosition === "top" ? "top" : "bottom";
+  const label = state.timerLabel?.trim() || null;
+
+  return (
+    <>
+      {label && nameBannerEnabled ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 z-50 px-6 py-3 text-center font-medium uppercase tracking-wider"
+          style={{
+            backgroundColor: layout?.nameBannerColor || "rgba(0,0,0,0.65)",
+            color: nameColor,
+            fontSize: `${nameFontPx}px`,
+          }}
+        >
+          {label}
+        </div>
+      ) : null}
+
+      <div
+        className="pointer-events-none absolute z-50 box-border rounded-md bg-black/65 px-4 py-2 text-center font-semibold tracking-wide text-white"
+        style={{
+          left: `${xPercent}%`,
+          top: `${yPercent}%`,
+          transform: "translate(-50%, -50%)",
+        }}
+      >
+        {label && !nameBannerEnabled && titlePosition === "top" ? (
+          <div
+            className="max-w-[40vw] overflow-hidden text-ellipsis whitespace-nowrap font-medium uppercase tracking-wider"
+            style={{ color: nameColor, fontSize: `${nameFontPx}px` }}
+          >
+            {label}
+          </div>
+        ) : null}
+        <div
+          className="whitespace-nowrap leading-none"
+          style={{ color: clockColor, fontSize: `${clockFontPx}px` }}
+        >
+          {state.timerText}
+        </div>
+        {label && !nameBannerEnabled && titlePosition !== "top" ? (
+          <div
+            className="max-w-[40vw] overflow-hidden text-ellipsis whitespace-nowrap font-medium uppercase tracking-wider"
+            style={{ color: nameColor, fontSize: `${nameFontPx}px` }}
+          >
+            {label}
+          </div>
+        ) : null}
+      </div>
+    </>
   );
 }
 
@@ -701,16 +802,6 @@ function MessageOverlayLayer({
 }: {
   overlay: OutputState["messageOverlay"];
 }) {
-  // Phase-lock the marquee to the shared `shownAtMs` so the audience output
-  // matches the operator preview, even though this window mounts the overlay
-  // a moment later (after the IPC hop). Negative delay jumps the animation to
-  // the correct point on mount; memoized so re-renders don't restart it.
-  const animationDelay = useMemo(
-    () => `${-((Date.now() - (overlay?.shownAtMs ?? 0)) / 1000)}s`,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [overlay?.id, overlay?.shownAtMs],
-  );
-
   if (!overlay || !overlay.text.trim()) {
     return null;
   }
@@ -754,8 +845,7 @@ function MessageOverlayLayer({
           style={{
             fontSize: `calc(min(5vw, 56px) * ${overlay.fontScale ?? 1})`,
             animation: `${direction} ${duration}s linear infinite`,
-            animationDelay,
-            willChange: "transform",
+            animationDelay: "0s",
           }}
         >
           {overlay.text}
@@ -797,11 +887,11 @@ function PropsOverlayLayer({
         };
         if (item.kind === "image" && item.imageUrl) {
           return (
-            <img
+            <OutputImageLayer
               key={item.id}
-              src={item.imageUrl}
-              alt=""
-              className="pointer-events-none absolute z-40 object-contain"
+              url={item.imageUrl}
+              fitMode="contain"
+              className="pointer-events-none absolute z-40"
               style={baseStyle}
             />
           );
