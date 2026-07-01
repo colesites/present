@@ -84,7 +84,7 @@ const getMainRendererUrl = (windowType?: 'settings'): string => {
     console.log('[Main Window] Dev mode - webpack entry:', baseUrl);
   } else {
     // In production, use the app:// protocol
-    baseUrl = 'app://app/main_window';
+    baseUrl = 'app://app/main_window/';
     console.log('[Main Window] Production mode - using app:// protocol');
   }
 

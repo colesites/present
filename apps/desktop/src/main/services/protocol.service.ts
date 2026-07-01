@@ -21,6 +21,18 @@ const resolveWebpackEntryPath = (entry: string): string => {
   }
 };
 
+const resolveInside = (baseDir: string, relativePath: string): string | null => {
+  const resolvedBaseDir = path.resolve(baseDir);
+  const resolvedPath = path.resolve(resolvedBaseDir, relativePath);
+  if (resolvedPath !== resolvedBaseDir && !resolvedPath.startsWith(`${resolvedBaseDir}${path.sep}`)) {
+    return null;
+  }
+  return resolvedPath;
+};
+
+const firstExistingPath = (paths: Array<string | null>): string | null =>
+  paths.find((candidate): candidate is string => Boolean(candidate && fs.existsSync(candidate))) ?? null;
+
 /**
  * Register custom protocol schemes as privileged BEFORE app is ready
  * Must be called before app.on('ready')
@@ -62,13 +74,14 @@ export const registerProtocolHandlers = (): void => {
     const outputEntryPath = resolveWebpackEntryPath(OUTPUT_WINDOW_WEBPACK_ENTRY);
     const mainDir = path.dirname(mainEntryPath);
     const outputDir = path.dirname(outputEntryPath);
+    const rendererRootDir = path.dirname(mainDir);
 
     protocol.handle('app', (request) => {
       const url = new URL(request.url);
       // url.pathname is e.g. '/main_window' or '/main_window/some-asset.js'
       const pathname = decodeURIComponent(url.pathname);
 
-      let filePath: string;
+      let filePath: string | null;
       if (pathname === '/main_window' || pathname === '/main_window/') {
         // Serve the main window index.html
         filePath = mainEntryPath;
@@ -76,22 +89,30 @@ export const registerProtocolHandlers = (): void => {
         // Serve the output window index.html
         filePath = outputEntryPath;
       } else if (pathname.startsWith('/main_window/')) {
-        // Asset relative to main window dir
+        // Assets may be inside the entry folder or emitted from the shared renderer root.
         const relativePath = pathname.slice('/main_window/'.length);
-        filePath = path.join(mainDir, relativePath);
+        filePath = firstExistingPath([
+          resolveInside(mainDir, relativePath),
+          resolveInside(rendererRootDir, pathname.slice(1)),
+        ]);
       } else if (pathname.startsWith('/output_window/')) {
-        // Asset relative to output window dir
+        // Assets may be inside the entry folder or emitted from the shared renderer root.
         const relativePath = pathname.slice('/output_window/'.length);
-        filePath = path.join(outputDir, relativePath);
+        filePath = firstExistingPath([
+          resolveInside(outputDir, relativePath),
+          resolveInside(rendererRootDir, pathname.slice(1)),
+        ]);
       } else {
-        // Fallback: try relative to main dir
+        // Forge emits split chunks as renderer-root siblings, e.g. renderer/821/index.js.
         const relativePath = pathname.startsWith('/') ? pathname.slice(1) : pathname;
-        filePath = path.join(mainDir, relativePath);
+        filePath = firstExistingPath([
+          resolveInside(rendererRootDir, relativePath),
+          resolveInside(mainDir, relativePath),
+        ]);
       }
 
-      if (!fs.existsSync(filePath)) {
+      if (!filePath) {
         console.error('[Protocol] app:// asset not found', {
-          filePath,
           requestUrl: request.url,
         });
         return new Response('Not Found', { status: 404 });

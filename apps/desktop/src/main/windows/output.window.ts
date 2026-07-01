@@ -81,7 +81,7 @@ export const createOutputWindow = (
   if (isDev()) {
     outputWindow.loadURL(OUTPUT_WINDOW_WEBPACK_ENTRY);
   } else {
-    outputWindow.loadURL('app://app/output_window');
+    outputWindow.loadURL('app://app/output_window/');
   }
 
   outputWindow.on('closed', () => {

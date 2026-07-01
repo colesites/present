@@ -77,7 +77,7 @@ export const createMiniLyricsWindow = (
   const state: MiniLyricsWindowState = { window: miniLyricsWindow, payload };
   miniLyricsWindows.set(payload.libraryId, state);
 
-  const baseUrl = isDev() ? MAIN_WINDOW_WEBPACK_ENTRY : "app://app/main_window";
+  const baseUrl = isDev() ? MAIN_WINDOW_WEBPACK_ENTRY : "app://app/main_window/";
   const url = new URL(baseUrl);
   url.searchParams.set("window", "mini-lyrics");
   url.searchParams.set("libraryId", payload.libraryId);

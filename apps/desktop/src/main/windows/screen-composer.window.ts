@@ -34,7 +34,7 @@ export const createScreenComposerWindow = (): boolean => {
     },
   });
 
-  const baseUrl = isDev() ? MAIN_WINDOW_WEBPACK_ENTRY : "app://app/main_window";
+  const baseUrl = isDev() ? MAIN_WINDOW_WEBPACK_ENTRY : "app://app/main_window/";
   const url = new URL(baseUrl);
   url.searchParams.set("window", "screen-composer");
   screenComposerWindow.loadURL(url.toString());

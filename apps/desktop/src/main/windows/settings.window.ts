@@ -40,7 +40,7 @@ export const createSettingsWindow = (): void => {
     },
   });
 
-  const baseUrl = isDev() ? MAIN_WINDOW_WEBPACK_ENTRY : 'app://app/main_window';
+  const baseUrl = isDev() ? MAIN_WINDOW_WEBPACK_ENTRY : 'app://app/main_window/';
   const url = new URL(baseUrl);
   url.searchParams.set('window', 'settings');
   settingsWindow.loadURL(url.toString());
