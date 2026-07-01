@@ -6,16 +6,38 @@ const convexUrl = process.env.CONVEX_URL ?? DEFAULT_DESKTOP_CONVEX_URL;
 const convex = new ConvexHttpClient(convexUrl);
 
 /**
- * Strip bracket annotations like [Verse 1], [Chorus], etc. from text
- * so it can be displayed cleanly on slides / output preview.
+ * Strip square-bracket annotations like [Verse 1], [Chorus], [x2], etc.
+ * from text so it can be displayed cleanly on slides / output preview.
+ * Parentheses are normal lyric text and must remain visible.
  */
 export function stripBracketsForDisplay(text: string): string {
   return text
     .replace(/^\s*\[[^\]]+\]\s*$/gm, "")
-    .replace(/^\s*\([^)]+\)\s*$/gm, "")
     .replace(/^\[[^\]]+\]\s*/gm, "")
     .replace(/\[.*?\]/g, "")
     .trim();
+}
+
+const REPEAT_TOKEN_PATTERN = /^(?:x\s*\d+|\d+\s*x)$/i;
+
+function normalizeRepeatToken(value: string): string | null {
+  const compact = value.replace(/\s+/g, "").toLowerCase();
+  if (!/^(?:x\d+|\d+x)$/.test(compact)) return null;
+  return compact.startsWith("x")
+    ? compact
+    : `x${compact.slice(0, -1)}`;
+}
+
+function splitTrailingSectionRepeat(value: string) {
+  const match = value.trim().match(/^(.*?)(?:\s+)(x\s*\d+|\d+\s*x)$/i);
+  const label = match?.[1]?.trim() ?? "";
+  const repeat = match?.[2] ? normalizeRepeatToken(match[2]) : null;
+  if (!label || !repeat) return null;
+  return { label, repeat };
+}
+
+function isRepeatToken(value: string) {
+  return REPEAT_TOKEN_PATTERN.test(value.trim());
 }
 
 /**
@@ -23,20 +45,33 @@ export function stripBracketsForDisplay(text: string): string {
  *
  * Rules:
  * - Slides are separated by blank lines (double newlines).
- * - A line matching `[Label]` (optionally with a modifier after a colon,
- *   e.g. `[Verse 1: Repeat]`) sets the label/modifier for the *next* slide.
+ * - A line matching `[Label]` sets the label for the next slide.
+ * - A label with a trailing repeat (`[Verse 1 x2]` or `[Verse 1 2x]`)
+ *   stores a section repeat that follows every slide in that section.
+ * - Inline square brackets (`this line [x3]`) become the slide modifier.
  * - Everything else becomes the slide text.
  */
 export function parseLyricsToSlides(
   lyrics: string,
-): Array<{ text: string; label?: string; modifier?: string }> {
+): Array<{
+  text: string;
+  label?: string;
+  modifier?: string;
+  sectionRepeat?: string;
+}> {
   if (!lyrics || !lyrics.trim()) return [];
 
   const blocks = lyrics.split(/\n\s*\n/); // split on blank lines
-  const slides: Array<{ text: string; label?: string; modifier?: string }> = [];
+  const slides: Array<{
+    text: string;
+    label?: string;
+    modifier?: string;
+    sectionRepeat?: string;
+  }> = [];
 
   let pendingLabel: string | undefined;
   let pendingModifier: string | undefined;
+  let pendingSectionRepeat: string | undefined;
 
   for (const raw of blocks) {
     const block = raw.trim();
@@ -45,6 +80,7 @@ export function parseLyricsToSlides(
     const lines = block.split("\n");
     let label = pendingLabel;
     let modifier = pendingModifier;
+    let sectionRepeat = pendingSectionRepeat;
     let textStartIndex = 0;
     let foundLabel = false;
 
@@ -58,22 +94,46 @@ export function parseLyricsToSlides(
       const labelMatch = trimmedLine.match(/^\[([^\]]+)\]\s*$/);
       if (labelMatch) {
         const parts = labelMatch[1].split(":");
-        const bracketLabel = parts[0]?.trim();
+        let bracketLabel = parts[0]?.trim();
         const bracketModifier = parts[1]?.trim();
         if (!foundLabel) {
+          const repeatOnly = bracketLabel
+            ? normalizeRepeatToken(bracketLabel)
+            : null;
+          if (repeatOnly) {
+            modifier = repeatOnly;
+            foundLabel = true;
+            textStartIndex = index + 1;
+            continue;
+          }
+
+          const repeatInfo = bracketLabel
+            ? splitTrailingSectionRepeat(bracketLabel)
+            : null;
+          if (repeatInfo) {
+            bracketLabel = repeatInfo.label;
+            sectionRepeat = repeatInfo.repeat;
+          } else {
+            sectionRepeat = undefined;
+          }
           label = bracketLabel || label;
           foundLabel = true;
-          if (bracketModifier) modifier = bracketModifier;
+          if (bracketModifier) {
+            const repeatToken = normalizeRepeatToken(bracketModifier);
+            if (repeatToken) {
+              sectionRepeat = repeatToken;
+            } else {
+              modifier = bracketModifier;
+            }
+          }
         } else {
-          modifier = bracketLabel || modifier;
+          const nextValue = bracketLabel || "";
+          if (nextValue && isRepeatToken(nextValue) && label) {
+            sectionRepeat = normalizeRepeatToken(nextValue) ?? sectionRepeat;
+          } else {
+            modifier = nextValue || modifier;
+          }
         }
-        textStartIndex = index + 1;
-        continue;
-      }
-
-      const instructionMatch = trimmedLine.match(/^\(([^)]+)\)\s*$/);
-      if (instructionMatch) {
-        modifier = instructionMatch[1]?.trim() || modifier;
         textStartIndex = index + 1;
         continue;
       }
@@ -86,23 +146,31 @@ export function parseLyricsToSlides(
     if (!text && textStartIndex >= lines.length) {
       pendingLabel = label;
       pendingModifier = modifier;
+      pendingSectionRepeat = sectionRepeat;
       continue;
     }
 
     const inlineBrackets = text.match(/\[([^\]]+)\]/g);
     if (inlineBrackets) {
-      const modValues = inlineBrackets.map((m) => m.slice(1, -1));
+      const bracketValues = inlineBrackets?.map((m) => m.slice(1, -1)) ?? [];
+      const modValues = bracketValues;
       const uniqueMods = [...new Set(modValues)];
       const combinedMod = uniqueMods.join(" ");
       modifier = combinedMod;
-      text = text.replace(/\[[^\]]*\]/g, "").split("\n").map((l) => l.trim()).join("\n").trim();
+      text = text
+        .replace(/\[[^\]]*\]/g, "")
+        .split("\n")
+        .map((l) => l.trim())
+        .join("\n")
+        .trim();
     }
 
     pendingLabel = label;
     pendingModifier = undefined;
+    pendingSectionRepeat = sectionRepeat;
 
     if (text) {
-      slides.push({ text, label, modifier });
+      slides.push({ text, label, modifier, sectionRepeat });
     }
   }
 
@@ -123,7 +191,7 @@ export function cleanLyricsLocally(lyrics: string): string {
     // Normalise newlines (CRLF, CR) → LF
     .replace(/\r\n?/g, "\n")
     // Strip BOM / zero-widths that sneak in from copy-paste
-    .replace(/[​-‍﻿]/g, "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     // Curly quotes → straight, em/en-dashes → hyphen
     .replace(/[‘’‚‛]/g, "'")
     .replace(/[“”„‟]/g, '"')
@@ -133,8 +201,6 @@ export function cleanLyricsLocally(lyrics: string): string {
     .replace(/\.{3,}/g, "")
     // Decorative separator lines (---- ____ ====)
     .replace(/^[\s_\-=]{3,}$/gm, "")
-    // "(2x)" / "(x3)" repeat markers — strip from body
-    .replace(/\s*\(\s*x?\s*\d+\s*x?\s*\)\s*$/gim, "")
     // Trailing whitespace before line break
     .replace(/[ \t]+$/gm, "")
     // Leading whitespace at line start

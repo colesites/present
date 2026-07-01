@@ -1,8 +1,8 @@
 "use client";
 
-import type { LibraryItem, Service } from "../../../shared/types";
+import type { Category, LibraryItem, SavedMessage, Service } from "../../../shared/types";
 
-export type OfflineEntityType = "library" | "service";
+export type OfflineEntityType = "library" | "service" | "message";
 export type OfflineOperation = "create" | "update" | "delete" | "reorder";
 
 export interface SyncQueueItem {
@@ -17,7 +17,9 @@ export interface SyncQueueItem {
 }
 
 interface PersistedLocalState {
+  categories: Category[];
   libraryItems: LibraryItem[];
+  messages: SavedMessage[];
   services: Service[];
 }
 
@@ -80,6 +82,7 @@ const compactSyncPayload = (
     return {
       _id: service._id,
       name: service.name,
+      groups: service.groups,
       updatedAt: service.updatedAt,
       version: service.version,
       operation,
@@ -92,6 +95,7 @@ const compactSyncPayload = (
           type: entry.type,
           refId: entry.refId,
           label: entry.label,
+          groupId: entry.groupId ?? null,
           addedAt: entry.addedAt,
           presentation:
             presentation == null
@@ -105,6 +109,24 @@ const compactSyncPayload = (
                 },
         };
       }),
+    };
+  }
+
+  if (entityType === "message") {
+    return {
+      _id: data._id,
+      title: data.title,
+      body: data.body,
+      themeKey: data.themeKey,
+      position: data.position,
+      dismissMode: data.dismissMode,
+      animation: data.animation,
+      speedSeconds: data.speedSeconds,
+      fontScale: data.fontScale,
+      order: data.order,
+      updatedAt: data.updatedAt,
+      version: data.version,
+      operation,
     };
   }
 
@@ -169,10 +191,18 @@ const readLocalState = (): PersistedLocalState => {
     return inMemoryLocalState;
   }
 
-  inMemoryLocalState = readJson<PersistedLocalState>(LOCAL_DATA_KEY, {
+  const stored = readJson<Partial<PersistedLocalState>>(LOCAL_DATA_KEY, {
+    categories: [],
     libraryItems: [],
+    messages: [],
     services: [],
   });
+  inMemoryLocalState = {
+    categories: Array.isArray(stored.categories) ? stored.categories : [],
+    libraryItems: Array.isArray(stored.libraryItems) ? stored.libraryItems : [],
+    messages: Array.isArray(stored.messages) ? stored.messages : [],
+    services: Array.isArray(stored.services) ? stored.services : [],
+  };
   return inMemoryLocalState;
 };
 
@@ -197,6 +227,21 @@ export const readOrgLibraryItems = (orgId: string): LibraryItem[] => {
   );
 };
 
+export const readOrgCategories = (orgId: string): Category[] => {
+  const state = readLocalState();
+  return state.categories
+    .filter(
+      (category) =>
+        (category.orgId as string | undefined) === orgId &&
+        !(category as Category & { deleted?: boolean }).deleted,
+    )
+    .sort(
+      (left, right) =>
+        (left.order ?? 0) - (right.order ?? 0) ||
+        left.name.localeCompare(right.name),
+    );
+};
+
 export const readOrgServices = (orgId: string): Service[] => {
   const state = readLocalState();
   return state.services.filter(
@@ -204,6 +249,41 @@ export const readOrgServices = (orgId: string): Service[] => {
       (service.orgId as string | undefined) === orgId &&
       !(service.deleted ?? false),
   );
+};
+
+export const readOrgMessages = (orgId: string): SavedMessage[] => {
+  const state = readLocalState();
+  return state.messages.filter(
+    (message) =>
+      (message.orgId as string | undefined) === orgId &&
+      !(message.deleted ?? false),
+  );
+};
+
+export const upsertCategory = (orgId: string, input: Category): Category => {
+  const state = readLocalState();
+  const existingIndex = state.categories.findIndex(
+    (category) => String(category._id) === String(input._id),
+  );
+  const stamp = now();
+  const existing = existingIndex >= 0 ? state.categories[existingIndex] : null;
+  const nextCategory: Category = {
+    ...input,
+    orgId: orgId as Category["orgId"],
+    _creationTime: input._creationTime ?? existing?._creationTime ?? stamp,
+    createdAt: input.createdAt ?? existing?.createdAt ?? stamp,
+    isDefault: input.isDefault ?? false,
+    order: input.order ?? existing?.order ?? state.categories.length,
+  };
+
+  if (existingIndex >= 0) {
+    state.categories[existingIndex] = nextCategory;
+  } else {
+    state.categories.push(nextCategory);
+  }
+
+  writeLocalState(state);
+  return nextCategory;
 };
 
 export const upsertLibraryItem = (orgId: string, input: LibraryItem): LibraryItem => {
@@ -228,6 +308,24 @@ export const upsertLibraryItem = (orgId: string, input: LibraryItem): LibraryIte
   }
   writeLocalState(state);
   return nextItem;
+};
+
+export const removeCategoryLocal = (orgId: string, categoryId: string) => {
+  const state = readLocalState();
+  state.categories = state.categories.filter(
+    (category) =>
+      !(
+        (category.orgId as string | undefined) === orgId &&
+        String(category._id) === categoryId
+      ),
+  );
+  state.libraryItems = state.libraryItems.map((item) =>
+    (item.orgId as string | undefined) === orgId &&
+    String(item.categoryId) === categoryId
+      ? { ...item, categoryId: undefined }
+      : item,
+  );
+  writeLocalState(state);
 };
 
 export const removeLibraryItemLocal = (orgId: string, itemId: string) => {
@@ -288,6 +386,55 @@ export const removeServiceLocal = (orgId: string, serviceId: string) => {
   writeLocalState(state);
 };
 
+export const upsertMessage = (
+  orgId: string,
+  input: SavedMessage,
+): SavedMessage => {
+  const state = readLocalState();
+  const existingIndex = state.messages.findIndex((message) => message._id === input._id);
+  const existing = existingIndex >= 0 ? state.messages[existingIndex] : null;
+  const stamp = now();
+  const nextMessage: SavedMessage = {
+    ...input,
+    orgId,
+    updatedAt: input.updatedAt ?? stamp,
+    version: input.version ?? nextVersion(existing?.version),
+    deleted: input.deleted ?? false,
+    _creationTime: input._creationTime ?? stamp,
+    allowWebNotifications: input.allowWebNotifications ?? false,
+    animation: input.animation ?? "static",
+    speedSeconds: input.speedSeconds ?? 12,
+    fontScale: input.fontScale ?? 1,
+  };
+
+  if (existingIndex >= 0) {
+    state.messages[existingIndex] = nextMessage;
+  } else {
+    state.messages.push(nextMessage);
+  }
+  writeLocalState(state);
+  return nextMessage;
+};
+
+export const removeMessageLocal = (orgId: string, messageId: string) => {
+  const state = readLocalState();
+  const index = state.messages.findIndex(
+    (message) =>
+      (message.orgId as string | undefined) === orgId &&
+      message._id === messageId,
+  );
+  if (index >= 0) {
+    const existing = state.messages[index];
+    state.messages[index] = {
+      ...existing,
+      deleted: true,
+      updatedAt: now(),
+      version: nextVersion(existing.version),
+    };
+  }
+  writeLocalState(state);
+};
+
 export const replaceOrgServices = (orgId: string, services: Service[]) => {
   const state = readLocalState();
   const withoutOrg = state.services.filter((service) => (service.orgId as string | undefined) !== orgId);
@@ -302,6 +449,80 @@ export const replaceOrgServices = (orgId: string, services: Service[]) => {
     })),
   ];
   writeLocalState(state);
+};
+
+export const replaceOrgCategories = (orgId: string, categories: Category[]) => {
+  const state = readLocalState();
+  const remoteIds = new Set(categories.map((category) => String(category._id)));
+  const withoutOrg = state.categories.filter(
+    (category) => (category.orgId as string | undefined) !== orgId,
+  );
+  const localOnlyCategories = state.categories.filter(
+    (category) =>
+      (category.orgId as string | undefined) === orgId &&
+      String(category._id).startsWith("category_") &&
+      !remoteIds.has(String(category._id)),
+  );
+  state.categories = [
+    ...withoutOrg,
+    ...categories.map((category, index) => ({
+      ...category,
+      orgId: orgId as Category["orgId"],
+      isDefault: category.isDefault ?? false,
+      order: Number.isFinite(category.order) ? category.order : index,
+      createdAt: category.createdAt ?? category._creationTime ?? now(),
+      _creationTime: category._creationTime ?? category.createdAt ?? now(),
+    })),
+    ...localOnlyCategories,
+  ];
+  writeLocalState(state);
+};
+
+export const replaceOrgMessages = (orgId: string, messages: SavedMessage[]) => {
+  const state = readLocalState();
+  const withoutOrg = state.messages.filter(
+    (message) => (message.orgId as string | undefined) !== orgId,
+  );
+  state.messages = [
+    ...withoutOrg,
+    ...messages.map((message, index) => ({
+      ...message,
+      orgId,
+      deleted: message.deleted ?? false,
+      version: message.version ?? 1,
+      order: Number.isFinite(message.order) ? message.order : index,
+      updatedAt: message.updatedAt ?? now(),
+      _creationTime: message._creationTime ?? message.createdAt ?? now(),
+      allowWebNotifications: message.allowWebNotifications ?? false,
+      animation: message.animation ?? "static",
+      speedSeconds: message.speedSeconds ?? 12,
+      fontScale: message.fontScale ?? 1,
+    })),
+  ];
+  writeLocalState(state);
+};
+
+export const createLocalCategory = (
+  orgId: string,
+  input: Pick<Category, "name"> & Partial<Omit<Category, "_id" | "orgId" | "name">>,
+) => {
+  const stamp = now();
+  const existing = readOrgCategories(orgId);
+  const nextOrder =
+    existing.length > 0
+      ? Math.max(...existing.map((category) => category.order ?? 0)) + 1
+      : 0;
+
+  return upsertCategory(orgId, {
+    ...input,
+    _id: `category_${uid()}` as Category["_id"],
+    _creationTime: stamp,
+    orgId: orgId as Category["orgId"],
+    name: input.name,
+    isDefault: input.isDefault ?? false,
+    order: input.order ?? nextOrder,
+    createdAt: input.createdAt ?? stamp,
+  });
 };
 
 export const createLocalLibraryItem = (
@@ -341,6 +562,26 @@ export const createLocalService = (
     updatedAt: stamp,
     version: 1,
     deleted: false,
+  });
+};
+
+export const createLocalMessage = (
+  orgId: string,
+  input: Omit<
+    SavedMessage,
+    "_id" | "_creationTime" | "orgId" | "updatedAt" | "version" | "deleted"
+  >,
+) => {
+  const stamp = now();
+  return upsertMessage(orgId, {
+    ...input,
+    _id: `message_${uid()}`,
+    _creationTime: stamp,
+    orgId,
+    updatedAt: stamp,
+    version: 1,
+    deleted: false,
+    createdAt: input.createdAt ?? stamp,
   });
 };
 

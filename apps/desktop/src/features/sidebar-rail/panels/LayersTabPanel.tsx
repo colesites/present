@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
   Eye,
   EyeOff,
   ImagePlus,
   Layers,
-  Plus,
   Trash2,
   Type as TypeIcon,
 } from "lucide-react";
@@ -70,21 +69,19 @@ export function LayersTabPanel({
     [props],
   );
 
-  useEffect(() => {
-    if (!selectedId && sorted.length > 0) {
-      setSelectedId(sorted[0]._id);
-    }
-  }, [selectedId, sorted]);
-
+  const effectiveSelectedId =
+    selectedId && sorted.some((item) => item._id === selectedId)
+      ? selectedId
+      : sorted[0]?._id ?? null;
   const selected = useMemo(
-    () => sorted.find((p) => p._id === selectedId) ?? null,
-    [selectedId, sorted],
+    () => sorted.find((p) => p._id === effectiveSelectedId) ?? null,
+    [effectiveSelectedId, sorted],
   );
 
   if (!orgId) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-[11px] text-muted-foreground">
-        Sign in to manage props.
+        Join or select an organization to manage props.
       </div>
     );
   }

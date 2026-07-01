@@ -25,6 +25,8 @@ import { getCanvasSizeDimensions } from "../../library/lib/library-items";
 interface EditorCanvasProps {
   editorView: "slides" | "source";
   draftBody: string;
+  sourceFocusSlideIndex?: number | null;
+  onSourceFocusComplete?: () => void;
   onSourceBodyChange: (body: string) => void;
   canvasSize: CanvasSizePreset;
   selectedSlide: LibrarySlide | null;
@@ -53,9 +55,33 @@ interface EditorCanvasProps {
 type InteractionMode = "none" | "dragging" | "resizing";
 const EDITOR_PREVIEW_TEXT_SIZE_MULTIPLIER = 0.25;
 
+function getLyricBlockRange(body: string, slideIndex: number) {
+  if (slideIndex < 0) {
+    return null;
+  }
+
+  const blockPattern = /\S[\s\S]*?(?=\n\s*\n|$)/g;
+  let match: RegExpExecArray | null;
+  let currentIndex = 0;
+
+  while ((match = blockPattern.exec(body)) != null) {
+    if (currentIndex === slideIndex) {
+      return {
+        start: match.index,
+        end: match.index + match[0].length,
+      };
+    }
+    currentIndex += 1;
+  }
+
+  return null;
+}
+
 export const EditorCanvas = memo(function EditorCanvas({
   editorView,
   draftBody,
+  sourceFocusSlideIndex,
+  onSourceFocusComplete,
   onSourceBodyChange,
   canvasSize,
   selectedSlide,
@@ -72,6 +98,7 @@ export const EditorCanvas = memo(function EditorCanvas({
   fontUnderline,
 }: EditorCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
+  const sourceTextareaRef = useRef<HTMLTextAreaElement>(null);
   const canvasDimensions = getCanvasSizeDimensions(canvasSize);
   const [editingElementId, setEditingElementId] = useState<string | null>(null);
   const editingContentRef = useRef<string>("");
@@ -99,18 +126,36 @@ export const EditorCanvas = memo(function EditorCanvas({
         el.focus({ preventScroll: true });
         el.scrollTop = 0;
 
-        // For empty placeholders, ensure caret is inside the editor.
-        if (!(el.textContent ?? "").trim()) {
-          const range = document.createRange();
-          const selection = window.getSelection();
-          range.selectNodeContents(el);
-          range.collapse(true);
-          selection?.removeAllRanges();
-          selection?.addRange(range);
-        }
+        const range = document.createRange();
+        const selection = window.getSelection();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
       }
     }
   }, [editingElementId]);
+
+  useEffect(() => {
+    if (editorView !== "source" || sourceFocusSlideIndex == null) {
+      return;
+    }
+
+    const textarea = sourceTextareaRef.current;
+    const range = getLyricBlockRange(draftBody, sourceFocusSlideIndex);
+    if (!textarea || !range) {
+      onSourceFocusComplete?.();
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(range.end, range.end);
+      const lineCount = draftBody.slice(0, range.start).split("\n").length;
+      textarea.scrollTop = Math.max(0, (lineCount - 3) * 26);
+      onSourceFocusComplete?.();
+    });
+  }, [draftBody, editorView, onSourceFocusComplete, sourceFocusSlideIndex]);
 
   // Keyboard deletion support
   useEffect(() => {
@@ -241,6 +286,7 @@ export const EditorCanvas = memo(function EditorCanvas({
           </p>
         </div>
         <textarea
+          ref={sourceTextareaRef}
           value={draftBody}
           onChange={(event) => onSourceBodyChange(event.target.value)}
           className="min-h-0 flex-1 resize-none border-0 bg-transparent px-6 py-6 font-mono text-sm leading-[1.8] text-foreground/90 outline-none placeholder:text-muted-foreground/30 selection:bg-primary/20"

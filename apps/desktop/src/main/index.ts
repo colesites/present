@@ -24,6 +24,11 @@ import { openSettingsFromMenu } from './windows/settings.window';
 import { setupMenu } from './menu/app.menu';
 import { registerAllIPC } from './ipc';
 import { applyDesktopDockIcon } from './services/icon.service';
+import {
+  registerAiOperatorShortcuts,
+  unregisterAiOperatorShortcuts,
+} from './services/ai-operator-shortcuts.service';
+import { initializeErrorReporting } from './services/error-reporting.service';
 
 // Handle Squirrel startup events on Windows
 if (require('electron-squirrel-startup')) {
@@ -45,6 +50,7 @@ app.on('open-url', (event, url) => {
 
 // App ready - initialize everything
 app.on('ready', () => {
+  initializeErrorReporting();
   applyDesktopDockIcon();
 
   // Register protocol handlers
@@ -55,6 +61,9 @@ app.on('ready', () => {
 
   // Create main window
   createMainWindow();
+
+  // Register app-wide AI Operator activation shortcut.
+  registerAiOperatorShortcuts();
 
   // Setup application menu
   setupMenu(openSettingsFromMenu);
@@ -81,6 +90,7 @@ app.on('ready', () => {
 
 // Cleanup before quit
 app.on('before-quit', () => {
+  unregisterAiOperatorShortcuts();
   clearLoopbackAuthFlow();
 });
 

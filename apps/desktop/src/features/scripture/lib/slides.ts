@@ -19,6 +19,17 @@ export interface ScriptureSlide {
   useBackgroundColor?: boolean;
 }
 
+export const getScriptureSlideId = (verse: BibleVerse): string =>
+  `scripture:${verse.pk}`;
+
+export const getActiveScriptureVersePk = (
+  activeSlideId: string | null | undefined,
+): string | null => {
+  if (!activeSlideId?.startsWith("scripture:")) return null;
+  const value = activeSlideId.slice("scripture:".length);
+  return value.includes("|") ? value : null;
+};
+
 export function generateBibleSlides(
   verses: BibleVerse[],
   config: SlideConfig,
@@ -34,6 +45,7 @@ export function generateBibleSlides(
         : "";
 
     return {
+      id: getScriptureSlideId(verse),
       content: `${versePrefix}${verse.text}`,
       label:
         `${verse.bookName} ${verse.chapter}:${verse.verse} ${versionStr ? `(${versionStr})` : ""}`

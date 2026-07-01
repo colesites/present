@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeLooksWindow: () => ipcRenderer.invoke('close-looks-window'),
   openScreenComposerWindow: () => ipcRenderer.invoke("open-screen-composer-window"),
   closeScreenComposerWindow: () => ipcRenderer.invoke("close-screen-composer-window"),
+  openMiniLyricsWindow: (payload: MiniLyricsPayload) =>
+    ipcRenderer.invoke("open-mini-lyrics-window", payload),
+  closeMiniLyricsWindow: (libraryId: string) =>
+    ipcRenderer.invoke("close-mini-lyrics-window", libraryId),
   getDisplays: () => ipcRenderer.invoke('get-displays'),
   setPreferredOutputDisplay: (displayId: number | null) =>
     ipcRenderer.invoke('set-preferred-output-display', displayId),
@@ -32,6 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectPropImage: () => ipcRenderer.invoke('select-prop-image'),
   selectPresentationFiles: () => ipcRenderer.invoke('select-presentation-files'),
   copyMediaFile: (source: string, target: string) => ipcRenderer.invoke('copy-media-file', source, target),
+  renameMediaFile: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-media-file', oldPath, newName),
+  deleteMediaFile: (filePath: string) => ipcRenderer.invoke('delete-media-file', filePath),
   createDirectory: (parent: string, name: string) => ipcRenderer.invoke('create-directory', parent, name),
   renameDirectory: (oldPath: string, newPath: string) => ipcRenderer.invoke('rename-directory', oldPath, newPath),
   listBundledBibles: () => ipcRenderer.invoke('list-bundled-bibles'),
@@ -46,33 +52,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ) => ipcRenderer.invoke('request-assemblyai-token', sessionToken, source),
   requestMicrophoneAccess: () => ipcRenderer.invoke('request-microphone-access'),
   listAiOperatorTools: () => ipcRenderer.invoke('ai-operator:list-tools'),
-
-  // ── Whisper local STT ──
-  getWhisperStatus: () => ipcRenderer.invoke('whisper:status'),
-  startWhisper: (sessionId: string, sampleRate?: number) =>
-    ipcRenderer.invoke('whisper:start', { sessionId, sampleRate }),
-  pushWhisperAudio: (sessionId: string, pcm: ArrayBuffer) =>
-    ipcRenderer.send('whisper:audio', { sessionId, pcm }),
-  stopWhisper: (sessionId: string) =>
-    ipcRenderer.send('whisper:stop', { sessionId }),
-  transcribeWhisperFile: (wavPath: string) =>
-    ipcRenderer.invoke('whisper:transcribe-file', wavPath),
-  onWhisperTranscript: (
-    callback: (event: {
-      sessionId: string;
-      transcript: string;
-      isFinal: boolean;
-    }) => void,
-  ) => {
-    const listener = (_event: IpcRendererEvent, payload: unknown) =>
-      callback(
-        payload as { sessionId: string; transcript: string; isFinal: boolean },
-      );
-    ipcRenderer.on('whisper:transcript', listener);
+  onAiOperatorToggleShortcut: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('ai-operator:toggle-shortcut', listener);
     return () => {
-      ipcRenderer.removeListener('whisper:transcript', listener);
+      ipcRenderer.removeListener('ai-operator:toggle-shortcut', listener);
     };
   },
+  reportRendererError: (payload: {
+    message: string;
+    name?: string;
+    source?: string;
+    stack?: string;
+  }) => ipcRenderer.send('report-renderer-error', payload),
 
   // Output window IPC - send state from main window to output window
   sendToOutput: (data: unknown) => ipcRenderer.send('send-to-output', data),
@@ -169,6 +161,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('browser-focus-address', listener);
     };
   },
+  onMiniLyricsData: (callback: (payload: MiniLyricsPayload) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: MiniLyricsPayload) =>
+      callback(payload);
+    ipcRenderer.on("mini-lyrics:data", listener);
+    return () => {
+      ipcRenderer.removeListener("mini-lyrics:data", listener);
+    };
+  },
+  notifyMiniLyricsReady: () => ipcRenderer.send("mini-lyrics:ready"),
+  saveMiniLyrics: (payload: MiniLyricsSavePayload) =>
+    ipcRenderer.invoke("mini-lyrics:save", payload),
+  onMiniLyricsSaveRequest: (
+    callback: (request: MiniLyricsSaveRequest) => void,
+  ) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      request: MiniLyricsSaveRequest,
+    ) => callback(request);
+    ipcRenderer.on("mini-lyrics:save-request", listener);
+    return () => {
+      ipcRenderer.removeListener("mini-lyrics:save-request", listener);
+    };
+  },
+  respondMiniLyricsSave: (response: MiniLyricsSaveResponse) =>
+    ipcRenderer.send("mini-lyrics:save-response", response),
 });
 
 contextBridge.exposeInMainWorld('fontAPI', {

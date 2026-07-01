@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { 
   GripVertical, 
   Image as ImageIcon,
@@ -16,14 +16,17 @@ import { cn } from "../../../renderer/shared/lib/utils";
 import { AutoFitText } from "../../../renderer/shared/components";
 import type { LibrarySlide, LibraryContent, SlideElement } from "../../../shared/types";
 import { getSlideBackgroundColor } from "../../library/lib/library-items";
+import { resolveSlideListScrollTop } from "../lib/slide-list-scroll.mjs";
 
 const SLIDE_DRAG_DATA_KEY = "application/x-present-slide-index";
 const LAYER_DRAG_DATA_KEY = "application/x-present-layer-index";
+const slideListScrollPositions = new Map<string, number>();
 
 interface SlideListProps {
   sidebarTab: "slides" | "layers";
   setSidebarTab: (tab: "slides" | "layers") => void;
   slides: LibrarySlide[];
+  scrollKey: string;
   selectedSlideId: string | null;
   selectedSlide: LibrarySlide | null;
   draggedSlideIndex: number | null;
@@ -47,6 +50,7 @@ export const SlideList = memo(function SlideList({
   sidebarTab,
   setSidebarTab,
   slides,
+  scrollKey,
   selectedSlideId,
   selectedSlide,
   draggedSlideIndex,
@@ -67,6 +71,11 @@ export const SlideList = memo(function SlideList({
 }: SlideListProps) {
   const [draggedLayerIndex, setDraggedLayerIndex] = useState<number | null>(null);
   const [dropLayerIndex, setDropLayerIndex] = useState<number | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const slideRefs = useRef<Map<string, HTMLDivElement> | null>(null);
+  if (slideRefs.current == null) {
+    slideRefs.current = new Map<string, HTMLDivElement>();
+  }
   const layerItems = useMemo(
     () =>
       (selectedSlide?.elements ?? [])
@@ -76,12 +85,45 @@ export const SlideList = memo(function SlideList({
   );
   const layerCount = layerItems.length;
 
+  useLayoutEffect(() => {
+    if (sidebarTab !== "slides") {
+      return;
+    }
+    const container = scrollContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const saved = slideListScrollPositions.get(scrollKey) ?? 0;
+    const nextScrollTop = resolveSlideListScrollTop({
+      current: container.scrollTop,
+      saved,
+      maxScrollTop: container.scrollHeight - container.clientHeight,
+    });
+    if (Math.abs(container.scrollTop - nextScrollTop) > 1) {
+      container.scrollTop = nextScrollTop;
+    }
+  }, [scrollKey, sidebarTab, slides.length]);
+
+  useLayoutEffect(() => {
+    if (sidebarTab !== "slides" || !selectedSlideId) {
+      return;
+    }
+
+    const selectedSlideElement = slideRefs.current?.get(selectedSlideId);
+    selectedSlideElement?.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+  }, [selectedSlideId, sidebarTab]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Sidebar Tabs */}
       <div className="flex items-center justify-between border-b border-border bg-card/40 p-1.5">
         <div className="flex w-full overflow-hidden rounded-lg bg-muted/30 p-1">
           <button
+            type="button"
             onClick={() => setSidebarTab("slides")}
             className={cn(
               "flex flex-1 items-center justify-center gap-2 rounded-md py-1.5 text-[10px] font-bold uppercase transition",
@@ -94,6 +136,7 @@ export const SlideList = memo(function SlideList({
             Slides
           </button>
           <button
+            type="button"
             onClick={() => setSidebarTab("layers")}
             className={cn(
               "flex flex-1 items-center justify-center gap-2 rounded-md py-1.5 text-[10px] font-bold uppercase transition",
@@ -108,7 +151,15 @@ export const SlideList = memo(function SlideList({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto scrollbar-hide">
+      <div
+        ref={scrollContainerRef}
+        className="min-h-0 flex-1 overflow-auto scrollbar-hide"
+        onScroll={(event) => {
+          if (sidebarTab === "slides") {
+            slideListScrollPositions.set(scrollKey, event.currentTarget.scrollTop);
+          }
+        }}
+      >
         {sidebarTab === "slides" ? (
           <div className="space-y-2 p-3">
             <div className="flex items-center justify-between mb-4">
@@ -128,6 +179,16 @@ export const SlideList = memo(function SlideList({
               return (
                 <div
                   key={slide.id ?? index}
+                  ref={(node) => {
+                    if (!slide.id) {
+                      return;
+                    }
+                    if (node) {
+                      slideRefs.current?.set(slide.id, node);
+                    } else {
+                      slideRefs.current?.delete(slide.id);
+                    }
+                  }}
                   role="button"
                   tabIndex={0}
                   draggable
@@ -318,7 +379,8 @@ export const SlideList = memo(function SlideList({
                       <span className="text-[9px] uppercase tracking-widest text-muted-foreground/40">{el.type}</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <button 
+                      <button
+                        type="button"
                         onClick={(e) => { 
                           e.stopPropagation(); 
                           onUpdateElement(selectedSlideId, el.id, p => ({ ...p, isVisible: !p.isVisible })); 
@@ -327,7 +389,8 @@ export const SlideList = memo(function SlideList({
                       >
                         {el.isVisible !== false ? <Eye className="h-3.5 w-3.5 opacity-40 hover:opacity-100" /> : <EyeOff className="h-3.5 w-3.5 text-red-500" />}
                       </button>
-                      <button 
+                      <button
+                        type="button"
                         onClick={(e) => { 
                           e.stopPropagation(); 
                           onUpdateElement(selectedSlideId, el.id, p => ({ ...p, isLocked: !p.isLocked })); 

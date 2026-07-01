@@ -55,6 +55,15 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
 
+  speechQuotaAllowlist: defineTable({
+    email: v.string(),
+    normalizedEmail: v.string(),
+    quotaSeconds: v.number(),
+    reason: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_normalized_email", ["normalizedEmail"]),
+
   speechUsageSessions: defineTable({
     userId: v.string(),
     source: v.string(),
@@ -87,6 +96,7 @@ export default defineSchema({
         text: v.string(),
         label: v.optional(v.string()),
         modifier: v.optional(v.string()), // e.g. "x3", "2x"
+        sectionRepeat: v.optional(v.string()), // e.g. "x2" for the full section
         backgroundId: v.optional(v.string()),
       })
     ),
@@ -102,6 +112,15 @@ export default defineSchema({
     name: v.string(),
     date: v.optional(v.string()),
     order: v.optional(v.number()),
+    groups: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          name: v.string(),
+          order: v.number(),
+        }),
+      ),
+    ),
     items: v.array(
       v.object({
         type: v.union(
@@ -109,9 +128,11 @@ export default defineSchema({
           v.literal("media"),
           v.literal("scripture"),
           v.literal("presentation"),
+          v.literal("group"),
         ),
         refId: v.string(),
         label: v.optional(v.string()),
+        groupId: v.optional(v.union(v.string(), v.null())),
         presentation: v.optional(v.any()),
         addedAt: v.number(),
       })
@@ -270,6 +291,7 @@ export default defineSchema({
         text: v.string(),
         label: v.optional(v.string()),
         modifier: v.optional(v.string()),
+        sectionRepeat: v.optional(v.string()),
         backgroundId: v.optional(v.string()),
       }),
     ),
@@ -284,6 +306,15 @@ export default defineSchema({
     name: v.string(),
     date: v.optional(v.string()),
     order: v.optional(v.number()),
+    groups: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          name: v.string(),
+          order: v.number(),
+        }),
+      ),
+    ),
     items: v.array(
       v.object({
         type: v.union(
@@ -291,14 +322,44 @@ export default defineSchema({
           v.literal("media"),
           v.literal("scripture"),
           v.literal("presentation"),
+          v.literal("group"),
         ),
         refId: v.string(),
         label: v.optional(v.string()),
+        groupId: v.optional(v.union(v.string(), v.null())),
         presentation: v.optional(v.any()),
         addedAt: v.number(),
       }),
     ),
     createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_order", ["userId", "order"]),
+
+  personalMessages: defineTable({
+    userId: v.string(),
+    title: v.string(),
+    body: v.string(),
+    themeKey: v.string(),
+    position: v.union(v.literal("top"), v.literal("bottom")),
+    dismissMode: v.union(
+      v.literal("manual"),
+      v.literal("after-10s"),
+      v.literal("after-30s"),
+    ),
+    allowWebNotifications: v.boolean(),
+    animation: v.optional(
+      v.union(
+        v.literal("static"),
+        v.literal("marquee-left"),
+        v.literal("marquee-right"),
+      ),
+    ),
+    speedSeconds: v.optional(v.number()),
+    fontScale: v.optional(v.number()),
+    order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_user", ["userId"])
     .index("by_user_order", ["userId", "order"]),

@@ -204,6 +204,7 @@ export const LyricsEditor = memo(function LyricsEditor({
     draft.slides[0]?.id ?? null,
   );
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [sourceFocusSlideIndex, setSourceFocusSlideIndex] = useState<number | null>(null);
   const [draggedSlideIndex, setDraggedSlideIndex] = useState<number | null>(null);
   const [dropSlideIndex, setDropSlideIndex] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -407,6 +408,8 @@ export const LyricsEditor = memo(function LyricsEditor({
       setSelectedSlideId(slide.id);
       setSelectedElementId(null);
       setInspectorTab("slide");
+      setEditorView("source");
+      setSourceFocusSlideIndex(scrollToSlideIndex);
     }
     onScrollComplete?.();
   }, [draft.slides, onScrollComplete, scrollToSlideIndex, setInspectorTab]);
@@ -1131,6 +1134,7 @@ export const LyricsEditor = memo(function LyricsEditor({
               sidebarTab={sidebarTab}
               setSidebarTab={setSidebarTab}
               slides={draft.slides}
+              scrollKey={String(libraryItem?._id ?? "preview")}
               selectedSlideId={selectedSlideId}
               selectedSlide={selectedSlide}
               draggedSlideIndex={draggedSlideIndex}
@@ -1157,6 +1161,8 @@ export const LyricsEditor = memo(function LyricsEditor({
             <EditorCanvas
               editorView={editorView}
               draftBody={draft.body}
+              sourceFocusSlideIndex={sourceFocusSlideIndex}
+              onSourceFocusComplete={() => setSourceFocusSlideIndex(null)}
               onSourceBodyChange={handleSourceBodyChange}
               canvasSize={currentCanvasSize}
               selectedSlide={selectedSlide}

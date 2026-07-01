@@ -1,4 +1,4 @@
-import { ipcMain, screen } from 'electron';
+import { BrowserWindow, ipcMain, screen } from 'electron';
 import { createOutputWindow, closeOutputWindow, getOutputWindow } from '../windows/output.window';
 import { getMainWindow } from '../windows/main.window';
 import {
@@ -7,6 +7,11 @@ import {
   getMediaStageWindow,
 } from '../windows/media-stage.window';
 import { closeLooksWindow, createLooksWindow } from '../windows/looks.window';
+import {
+  closeMiniLyricsWindow,
+  createMiniLyricsWindow,
+  sendMiniLyricsPayloadForWindow,
+} from '../windows/mini-lyrics.window';
 import {
   closeScreenComposerWindow,
   createScreenComposerWindow,
@@ -20,6 +25,11 @@ import {
  * Register window-related IPC handlers
  */
 export const registerWindowIPC = (): void => {
+  const pendingMiniLyricsSaves = new Map<
+    string,
+    (value: { ok: boolean; error?: string }) => void
+  >();
+
   // Get all displays
   ipcMain.handle('get-displays', () => {
     return screen.getAllDisplays().map(d => ({
@@ -74,6 +84,67 @@ export const registerWindowIPC = (): void => {
 
   ipcMain.handle("close-screen-composer-window", () => {
     return closeScreenComposerWindow();
+  });
+
+  ipcMain.handle("open-mini-lyrics-window", (_event, payload) => {
+    return createMiniLyricsWindow(payload);
+  });
+
+  ipcMain.handle("close-mini-lyrics-window", (_event, libraryId?: string) => {
+    if (typeof libraryId !== "string" || !libraryId) {
+      return false;
+    }
+    return closeMiniLyricsWindow(libraryId);
+  });
+
+  ipcMain.on("mini-lyrics:ready", (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (senderWindow && !senderWindow.isDestroyed()) {
+      sendMiniLyricsPayloadForWindow(senderWindow);
+    }
+  });
+
+  ipcMain.handle("mini-lyrics:save", async (_event, payload) => {
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { ok: false, error: "Main window is unavailable." };
+    }
+
+    const requestId = `mini_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const timeoutId = setTimeout(() => {
+        pendingMiniLyricsSaves.delete(requestId);
+        resolve({ ok: false, error: "Save timed out." });
+      }, 10_000);
+
+      pendingMiniLyricsSaves.set(requestId, (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      });
+
+      mainWindow.webContents.send("mini-lyrics:save-request", {
+        requestId,
+        payload,
+      });
+    });
+
+    return result;
+  });
+
+  ipcMain.on("mini-lyrics:save-response", (_event, response) => {
+    const requestId = response?.requestId;
+    if (typeof requestId !== "string") {
+      return;
+    }
+    const resolve = pendingMiniLyricsSaves.get(requestId);
+    if (!resolve) {
+      return;
+    }
+    pendingMiniLyricsSaves.delete(requestId);
+    resolve({
+      ok: Boolean(response.ok),
+      error: typeof response.error === "string" ? response.error : undefined,
+    });
   });
 
   // Relay: main window sends data to output window

@@ -3,7 +3,11 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --filter \"*\" run dev",
-    "convex": "pnpm --filter @present/backend run convex"
+    "convex": "pnpm --filter @present/backend run convex",
+    "test": "pnpm --filter @present/desktop run test",
+    "typecheck": "pnpm --filter @present/desktop run typecheck && pnpm --filter @present/web run typecheck",
+    "quality": "pnpm run test && pnpm run typecheck && pnpm --filter @present/desktop run lint",
+    "release:check": "node .github/scripts/verify-desktop-release.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

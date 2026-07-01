@@ -18,6 +18,12 @@ type AssemblyAiTokenRequestBody = {
   source?: "bible" | "library";
 };
 
+const SPEECH_QUOTA_EXHAUSTED_MESSAGE =
+  "You've used all of your speech-to-search time for this billing period. Upgrade your plan or wait for the next billing period to continue using voice search.";
+
+const isSpeechQuotaExhaustedError = (message: string): boolean =>
+  /speech-to-search quota exhausted|quota exhausted/i.test(message);
+
 const isAllowedOrigin = (origin: string): boolean => {
   if (DEFAULT_ALLOWED_ORIGINS.has(origin)) {
     return true;
@@ -160,11 +166,19 @@ export async function POST(request: Request) {
     console.error("[AssemblyAI Token Route] Error:", error);
     const message =
       error instanceof Error ? error.message : "Live transcription could not start.";
-    const status = /quota exhausted/i.test(message) ? 402 : 401;
+    const isQuotaError = isSpeechQuotaExhaustedError(message);
+    const status = isQuotaError ? 402 : 401;
 
-    return new Response(message, {
-      status,
-      headers,
-    });
+    if (isQuotaError) {
+      return Response.json(
+        {
+          error: "speech_quota_exhausted",
+          message: SPEECH_QUOTA_EXHAUSTED_MESSAGE,
+        },
+        { status, headers },
+      );
+    }
+
+    return new Response(message, { status, headers });
   }
 }

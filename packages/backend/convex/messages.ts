@@ -23,6 +23,21 @@ export const listByOrg = query({
   },
 });
 
+export const listByUser = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity || identity.subject !== args.userId) {
+      return [];
+    }
+
+    return await ctx.db
+      .query("personalMessages")
+      .withIndex("by_user_order", (q) => q.eq("userId", args.userId))
+      .collect();
+  },
+});
+
 export const create = mutation({
   args: {
     orgId: v.id("organizations"),
@@ -51,6 +66,51 @@ export const create = mutation({
 
     return await ctx.db.insert("messages", {
       orgId: args.orgId,
+      title: args.title.trim() || "New Message",
+      body: args.body ?? "",
+      themeKey: args.themeKey ?? "default",
+      position: args.position ?? "bottom",
+      dismissMode: args.dismissMode ?? "manual",
+      allowWebNotifications: args.allowWebNotifications ?? false,
+      animation: args.animation ?? "static",
+      speedSeconds: args.speedSeconds ?? 12,
+      fontScale: args.fontScale ?? 1,
+      order: nextOrder,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
+export const createPersonal = mutation({
+  args: {
+    userId: v.string(),
+    title: v.string(),
+    body: v.optional(v.string()),
+    themeKey: v.optional(v.string()),
+    position: v.optional(positionValidator),
+    dismissMode: v.optional(dismissValidator),
+    allowWebNotifications: v.optional(v.boolean()),
+    animation: v.optional(animationValidator),
+    speedSeconds: v.optional(v.number()),
+    fontScale: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity || identity.subject !== args.userId) {
+      throw new ConvexError("Not authenticated");
+    }
+
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("personalMessages")
+      .withIndex("by_user_order", (q) => q.eq("userId", args.userId))
+      .collect();
+    const nextOrder =
+      existing.reduce((max, m) => (m.order > max ? m.order : max), -1) + 1;
+
+    return await ctx.db.insert("personalMessages", {
+      userId: args.userId,
       title: args.title.trim() || "New Message",
       body: args.body ?? "",
       themeKey: args.themeKey ?? "default",
@@ -105,11 +165,69 @@ export const update = mutation({
   },
 });
 
+export const updatePersonal = mutation({
+  args: {
+    messageId: v.id("personalMessages"),
+    title: v.optional(v.string()),
+    body: v.optional(v.string()),
+    themeKey: v.optional(v.string()),
+    position: v.optional(positionValidator),
+    dismissMode: v.optional(dismissValidator),
+    allowWebNotifications: v.optional(v.boolean()),
+    animation: v.optional(animationValidator),
+    speedSeconds: v.optional(v.number()),
+    fontScale: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Not authenticated");
+
+    const existing = await ctx.db.get(args.messageId);
+    if (!existing) throw new ConvexError("Message not found");
+    if (existing.userId !== identity.subject) {
+      throw new ConvexError("Unauthorized");
+    }
+
+    const patch: Partial<typeof existing> = { updatedAt: Date.now() };
+    if (args.title !== undefined) patch.title = args.title;
+    if (args.body !== undefined) patch.body = args.body;
+    if (args.themeKey !== undefined) patch.themeKey = args.themeKey;
+    if (args.position !== undefined) patch.position = args.position;
+    if (args.dismissMode !== undefined) patch.dismissMode = args.dismissMode;
+    if (args.allowWebNotifications !== undefined) {
+      patch.allowWebNotifications = args.allowWebNotifications;
+    }
+    if (args.animation !== undefined) patch.animation = args.animation;
+    if (args.speedSeconds !== undefined) patch.speedSeconds = args.speedSeconds;
+    if (args.fontScale !== undefined) patch.fontScale = args.fontScale;
+
+    await ctx.db.patch(args.messageId, patch);
+    return args.messageId;
+  },
+});
+
 export const remove = mutation({
   args: { messageId: v.id("messages") },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Not authenticated");
+    await ctx.db.delete(args.messageId);
+    return args.messageId;
+  },
+});
+
+export const removePersonal = mutation({
+  args: { messageId: v.id("personalMessages") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Not authenticated");
+
+    const existing = await ctx.db.get(args.messageId);
+    if (!existing) throw new ConvexError("Message not found");
+    if (existing.userId !== identity.subject) {
+      throw new ConvexError("Unauthorized");
+    }
+
     await ctx.db.delete(args.messageId);
     return args.messageId;
   },

@@ -27,6 +27,8 @@ import {
   useDesktopSessionStore,
 } from "../shared/store/desktopSession";
 import { api } from "@present/backend/convex/_generated/api";
+import type { Id } from "@present/backend/convex/_generated/dataModel";
+import { resolveVerifiedOrganizationId } from "../shared/lib/organization-scope-policy.mjs";
 import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvider";
 import { ThemesModal } from "../../features/themes";
 import { useThemesModalStore } from "../shared/store/themesModal";
@@ -36,11 +38,31 @@ import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
 import { LooksWindow } from "../../features/looks/LooksWindow";
 import { ScreenComposerWindow } from "../../features/screen-composer";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
+import { SpeechScriptureOverlayHost } from "../../features/scripture/components/SpeechScriptureOverlayHost";
+import { MiniLyricsWindow } from "../../features/editor";
+
+const getWindowType = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return new URLSearchParams(window.location.search).get("window");
+};
 
 export default function Home() {
+  const windowType = getWindowType();
+  if (windowType === "mini-lyrics") {
+    return <MiniLyricsWindow />;
+  }
+  return <AuthenticatedHome windowType={windowType} />;
+}
+
+function AuthenticatedHome({ windowType }: { windowType: string | null }) {
   const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
   const sessionExpiresAtMs = useDesktopSessionStore(
     (state) => state.sessionExpiresAtMs
+  );
+  const tokenExpiresAtMs = useDesktopSessionStore(
+    (state) => state.tokenExpiresAtMs
   );
   const hasHydratedSession = useDesktopSessionStore(
     (state) => state.hasHydratedSession
@@ -129,13 +151,6 @@ export default function Home() {
       }>
     | undefined;
 
-  const windowType = useMemo(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    return new URLSearchParams(window.location.search).get("window");
-  }, []);
-
   useEffect(() => {
     void ensureFontCatalogLoaded(document);
   }, []);
@@ -145,6 +160,7 @@ export default function Home() {
     const titleMap: Record<string, string> = {
       looks: "Looks",
       "media-stage": "Media Stage",
+      "mini-lyrics": "Mini Lyrics Editor",
       "screen-composer": "Screen Composer",
       settings: "Settings",
     };
@@ -194,6 +210,25 @@ export default function Home() {
   }, [hasHydratedSession, isOnline, sessionToken]);
 
   useEffect(() => {
+    if (
+      !hasHydratedSession ||
+      !sessionToken ||
+      !isOnline ||
+      !tokenExpiresAtMs
+    ) {
+      return;
+    }
+
+    const refreshAtMs = tokenExpiresAtMs - 5 * 60 * 1000;
+    const delayMs = Math.max(0, Math.min(refreshAtMs - Date.now(), 2_147_483_647));
+    const timeoutId = window.setTimeout(() => {
+      void ensureFreshDesktopAccessToken();
+    }, delayMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [hasHydratedSession, isOnline, sessionToken, tokenExpiresAtMs]);
+
+  useEffect(() => {
     if (!hasHydratedSession || !sessionToken || user) {
       return;
     }
@@ -205,8 +240,8 @@ export default function Home() {
         !state.user &&
         state.authStatus === "loading"
       ) {
-        state.setAuthStatus("unauthenticated");
-        state.setError("Unable to restore your desktop session. Please sign in again.");
+        state.setError("Still reconnecting to Present services…");
+        void ensureFreshDesktopAccessToken({ forceRefresh: true });
       }
     }, 15_000);
 
@@ -231,12 +266,15 @@ export default function Home() {
     }
 
     if (sessionExpiresAtMs && sessionExpiresAtMs <= Date.now()) {
-      setAuthStatus("unauthenticated");
-      setError(
-        isOnline
-          ? "Session expired. Please sign in again."
-          : "Session expired. Reconnect to continue."
-      );
+      if (isOnline) {
+        clearSession();
+        setError("Session expired. Please sign in again.");
+      } else if (user) {
+        setAuthStatus("authenticated");
+        setError("Session expired. Reconnect to verify your account.");
+      } else {
+        setAuthStatus("loading");
+      }
       return;
     }
 
@@ -324,8 +362,9 @@ export default function Home() {
         return;
       }
       console.error("[Desktop Auth] Convex rejected token");
-      clearSession();
-      setError("Session expired. Please sign in again.");
+      setAuthStatus("loading");
+      setError("Reconnecting to Present services…");
+      void ensureFreshDesktopAccessToken({ forceRefresh: true });
       return;
     }
 
@@ -364,18 +403,61 @@ export default function Home() {
 function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // Organization & auth
   const { userId } = useOrganization();
+  const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
+  const desktopUser = useDesktopSessionStore((state) => state.user);
+  const desktopOrgId = useDesktopSessionStore((state) => state.orgId);
+  const desktopOrganizations = useDesktopSessionStore(
+    (state) => state.organizations,
+  );
+  const hasVerifiedOrganizationScope = useDesktopSessionStore(
+    (state) => state.hasVerifiedOrganizationScope,
+  );
   const { type: activeWorkspaceType, id: activeWorkspaceId } =
     useWorkspaceStore();
   const isSettingsWindow = windowType === "settings";
   const isMediaStageWindow = windowType === "media-stage";
   const isLooksWindow = windowType === "looks";
   const isScreenComposerWindow = windowType === "screen-composer";
+  const isMiniLyricsWindow = windowType === "mini-lyrics";
 
-  // Enforce explicit workspace data isolation
-  const effectiveOrgId =
-    activeWorkspaceType === "organization" && activeWorkspaceId
-      ? (activeWorkspaceId as any)
-      : undefined;
+  // Cached session data is useful offline, but it is not authoritative enough
+  // to cross a Convex v.id("organizations") boundary. Wait for the signed-in
+  // organization query to verify it before enabling organization-scoped data.
+  const effectiveOrgId = (resolveVerifiedOrganizationId({
+    desktopOrganizationId: desktopOrgId,
+    hasVerifiedOrganizationScope,
+    organizations: desktopOrganizations,
+    workspaceOrganizationId: activeWorkspaceId,
+    workspaceType: activeWorkspaceType,
+  }) ?? undefined) as Id<"organizations"> | undefined;
+  const cachedLocalOrgId = useMemo(() => {
+    const validOrgIds = new Set(
+      desktopOrganizations
+        .filter((organization) => organization.type === "organization")
+        .map((organization) => organization.id),
+    );
+    const workspaceOrgId =
+      activeWorkspaceType === "organization" ? activeWorkspaceId : null;
+
+    if (workspaceOrgId && validOrgIds.has(workspaceOrgId)) {
+      return workspaceOrgId;
+    }
+
+    if (desktopOrgId && desktopOrgId !== "personal" && validOrgIds.has(desktopOrgId)) {
+      return desktopOrgId;
+    }
+
+    return null;
+  }, [
+    activeWorkspaceId,
+    activeWorkspaceType,
+    desktopOrgId,
+    desktopOrganizations,
+  ]);
+  const localOrgId = (effectiveOrgId ?? cachedLocalOrgId ?? null) as
+    | Id<"organizations">
+    | null;
+  const localUserId = userId ?? desktopUser?.id ?? null;
 
   // Root UI state
   const { viewMode, setViewMode, bottomTab, setBottomTab } =
@@ -597,7 +679,8 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   const renderPresentContainer = (mode: ViewMode) => (
     <PresentContainer
       orgId={effectiveOrgId}
-      userId={userId as any}
+      localOrgId={localOrgId}
+      userId={localUserId}
       viewMode={mode}
       setViewMode={setViewMode}
       bottomTab={bottomTab}
@@ -648,6 +731,10 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     return <ScreenComposerWindow />;
   }
 
+  if (isMiniLyricsWindow) {
+    return <MiniLyricsWindow />;
+  }
+
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <AppHeader
@@ -682,6 +769,18 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
         }}
       />
 
+      <div
+        className={
+          effectiveViewMode === "browser"
+            ? "hidden"
+            : "contents"
+        }
+      >
+        {renderPresentContainer(
+          effectiveViewMode === "browser" ? "show" : effectiveViewMode,
+        )}
+      </div>
+
       {effectiveViewMode === "browser" ? (
         <div className="flex min-h-0 flex-1">
           <div className="min-w-0 flex-1">
@@ -689,20 +788,23 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
           </div>
           <BrowserPreviewSidebar />
         </div>
-      ) : (
-        renderPresentContainer(effectiveViewMode)
-      )}
+      ) : null}
 
       {/* Themes modal lives at the top of the tree so any view (editor or
           show mode) can open it. The editor watches the modal's "pending"
           payload and applies it to the selected slide. */}
       <ThemesModal
-        orgId={effectiveOrgId ?? null}
+        orgId={localOrgId}
         onApplyTheme={(payload) =>
           useThemesModalStore.getState().dispatchApply(payload)
         }
       />
-      <AiOperatorRoot />
+      <AiOperatorRoot
+        sessionToken={sessionToken}
+        speechInputDeviceId={settings.settingsSpeechInputDeviceId}
+        speechLang={settings.settingsLang}
+      />
+      <SpeechScriptureOverlayHost />
     </div>
   );
 }

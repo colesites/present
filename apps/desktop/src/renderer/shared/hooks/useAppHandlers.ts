@@ -37,7 +37,11 @@ interface UseAppHandlersProps {
   removeFromService: (serviceId: Id<"services">, index: number) => Promise<void>;
   addLibraryItemToService: (serviceId: Id<"services">, libraryId: string) => Promise<void>;
   addMediaToService: (serviceId: Id<"services">, mediaId: string, mediaName: string) => Promise<void>;
-  updateExistingLibraryItem: (id: string, draft: LibraryItemDraft) => Promise<void>;
+  updateExistingLibraryItem: (
+    id: string,
+    draft: LibraryItemDraft,
+    categoryId?: string,
+  ) => Promise<void>;
   
   // Context/Data
   libraryItems: LibraryItem[];
@@ -163,7 +167,7 @@ export function useAppHandlers({
   );
 
   const handleRenameLibraryItem = useCallback(
-    async (libraryId: string, newTitle: string) => {
+    async (libraryId: string, newTitle: string, categoryId?: string) => {
       const item = libraryItems.find((s) => s._id === libraryId);
       if (!item) return;
       await updateExistingLibraryItem(libraryId, {
@@ -171,7 +175,7 @@ export function useAppHandlers({
         body: item.body,
         slides: item.slides,
         content: item.content,
-      });
+      }, categoryId);
     },
     [libraryItems, updateExistingLibraryItem]
   );
@@ -216,7 +220,7 @@ export function useAppHandlers({
 
       if (nextSlides.length > 0) {
         await handleSelectSlide(
-          `scripture:0`,
+          nextSlides[0].id ?? `scripture:0`,
           nextSlides[0].content,
           nextSlides[0].footer,
         );

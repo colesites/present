@@ -37,6 +37,7 @@ export const create = mutation({
         text: v.string(),
         label: v.optional(v.string()),
         modifier: v.optional(v.string()),
+        sectionRepeat: v.optional(v.string()),
         backgroundId: v.optional(v.string()),
       })
     ),
@@ -80,6 +81,7 @@ export const update = mutation({
           text: v.string(),
           label: v.optional(v.string()),
           modifier: v.optional(v.string()),
+          sectionRepeat: v.optional(v.string()),
           backgroundId: v.optional(v.string()),
         })
       )

@@ -87,7 +87,6 @@ export const AppHeader = memo(function AppHeader({
   viewMode,
   isBibleActive,
   isLibrariesActive,
-  searchScope,
   onViewModeChange,
   onOpenShow,
   onOpenComposer,
@@ -100,6 +99,10 @@ export const AppHeader = memo(function AppHeader({
   // Read search data from the global store (populated by PresentContainer)
   const services = useGlobalSearchStore((s) => s.services);
   const libraryItems = useGlobalSearchStore((s) => s.libraryItems);
+  const searchRequestId = useGlobalSearchStore((s) => s.searchRequestId);
+  const closeSearchRequestId = useGlobalSearchStore(
+    (s) => s.closeSearchRequestId,
+  );
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -130,6 +133,28 @@ export const AppHeader = memo(function AppHeader({
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [isSearchOpen]);
+
+  useEffect(() => {
+    if (searchRequestId <= 0) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      setIsSearchOpen(true);
+      setQuery("");
+      setActiveIndex(0);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [searchRequestId]);
+
+  useEffect(() => {
+    if (closeSearchRequestId <= 0) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      setIsSearchOpen(false);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [closeSearchRequestId]);
 
   // ── Build search results ──
   const results = useMemo<SearchResult[]>(() => {

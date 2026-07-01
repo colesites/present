@@ -4,9 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
+import { useDesktopSessionStore } from "../store/desktopSession";
 
 export function useOrganization() {
   const { isAuthenticated } = useConvexAuth();
+  const cachedUser = useDesktopSessionStore((state) => state.user);
+  const cachedOrgId = useDesktopSessionStore((state) => state.orgId);
+  const cachedOrganizations = useDesktopSessionStore(
+    (state) => state.organizations,
+  );
   
   const ensureCurrent = useMutation(api.users.ensureCurrent);
   const current = useQuery(
@@ -50,21 +56,45 @@ export function useOrganization() {
     })();
   }, [isAuthenticated, ensureCurrent]);
 
-  // Derive orgId directly from query result
+  const cachedValidOrgId = useMemo(() => {
+    if (!cachedOrgId || cachedOrgId === "personal") {
+      return null;
+    }
+
+    return cachedOrganizations.some(
+      (organization) =>
+        organization.type === "organization" &&
+        organization.id === cachedOrgId,
+    )
+      ? (cachedOrgId as Id<"organizations">)
+      : null;
+  }, [cachedOrgId, cachedOrganizations]);
+
+  const canUseCachedIdentity = isAuthenticated || Boolean(cachedUser);
+
+  // Prefer live Convex identity, but keep cached desktop identity usable while
+  // the app is offline or reconnecting.
   const orgId = useMemo(
-    () => (isAuthenticated ? current?.org?._id ?? ensuredOrgId ?? null : null),
-    [current, ensuredOrgId, isAuthenticated],
+    () =>
+      canUseCachedIdentity
+        ? current?.org?._id ?? ensuredOrgId ?? cachedValidOrgId
+        : null,
+    [cachedValidOrgId, canUseCachedIdentity, current, ensuredOrgId],
   );
   const userId = useMemo(
     () =>
-      isAuthenticated
-        ? current?.user?._id ?? currentUser?._id ?? ensuredUserId ?? null
+      canUseCachedIdentity
+        ? current?.user?._id ??
+          currentUser?._id ??
+          ensuredUserId ??
+          cachedUser?.id ??
+          null
         : null,
-    [current, currentUser, ensuredUserId, isAuthenticated],
+    [cachedUser?.id, canUseCachedIdentity, current, currentUser, ensuredUserId],
   );
 
   return {
-    isSignedIn: isAuthenticated,
+    isSignedIn: canUseCachedIdentity,
     current,
     orgId,
     organization: current?.org ?? null,

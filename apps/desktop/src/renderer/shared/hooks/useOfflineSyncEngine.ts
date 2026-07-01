@@ -3,15 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useConvex } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
-import type { LibrarySlide, Service } from "../../../shared/types";
+import type { LibrarySlide, SavedMessage, Service } from "../../../shared/types";
 import type { SyncQueueItem } from "../offline/localData";
 import {
+  readOrgMessages,
   readOrgLibraryItems,
   readOrgServices,
   readSyncQueue,
   removeSyncQueueItems,
 } from "../offline/localData";
-import { ensureFreshDesktopAccessToken } from "../store/desktopSession";
+import {
+  ensureFreshDesktopAccessToken,
+  useDesktopSessionStore,
+} from "../store/desktopSession";
 
 const ID_MAP_STORAGE_KEY = "present-sync-id-map-v1";
 const MAX_BATCH_SIZE = 20;
@@ -21,13 +25,15 @@ const RETRY_MAX_DELAY_MS = 30_000;
 type IdMapByOrg = Record<string, Record<string, string>>;
 type SyncIdMap = {
   library: IdMapByOrg;
+  message: IdMapByOrg;
   service: IdMapByOrg;
 };
 
-type SyncEntityType = "library" | "service";
+type SyncEntityType = "library" | "message" | "service";
 
 const EMPTY_ID_MAP: SyncIdMap = {
   library: {},
+  message: {},
   service: {},
 };
 
@@ -43,15 +49,16 @@ const readIdMap = (): SyncIdMap => {
   try {
     const raw = window.localStorage.getItem(ID_MAP_STORAGE_KEY);
     if (!raw) {
-      return { ...EMPTY_ID_MAP, library: {}, service: {} };
+      return { ...EMPTY_ID_MAP, library: {}, message: {}, service: {} };
     }
     const parsed = JSON.parse(raw) as Partial<SyncIdMap>;
     return {
       library: parsed.library ?? {},
+      message: parsed.message ?? {},
       service: parsed.service ?? {},
     };
   } catch {
-    return { ...EMPTY_ID_MAP, library: {}, service: {} };
+    return { ...EMPTY_ID_MAP, library: {}, message: {}, service: {} };
   }
 };
 
@@ -119,6 +126,7 @@ const toBackendSlides = (slides: LibrarySlide[]) =>
     text: slide.text ?? "",
     label: slide.label || undefined,
     modifier: slide.modifier || undefined,
+    sectionRepeat: slide.sectionRepeat || undefined,
     backgroundId: slide.backgroundId || undefined,
   }));
 
@@ -139,6 +147,7 @@ const toSyncableServiceItems = (
     )
     .map((item) => ({
       ...item,
+      groupId: item.groupId ?? null,
       refId:
         item.type === "library"
           ? resolveMappedId(idMap, "library", orgId, item.refId)
@@ -158,6 +167,21 @@ const getLocalLibrary = (orgId: string, entityId: string) =>
 
 const getLocalService = (orgId: string, entityId: string) =>
   readOrgServices(orgId).find((item) => String(item._id) === entityId) ?? null;
+
+const getLocalMessage = (orgId: string, entityId: string) =>
+  readOrgMessages(orgId).find((message) => String(message._id) === entityId) ?? null;
+
+const toMessagePayload = (message: SavedMessage) => ({
+  title: message.title.trim() || "New Message",
+  body: message.body,
+  themeKey: message.themeKey,
+  position: message.position,
+  dismissMode: message.dismissMode,
+  allowWebNotifications: message.allowWebNotifications,
+  animation: message.animation ?? "static",
+  speedSeconds: message.speedSeconds ?? 12,
+  fontScale: message.fontScale ?? 1,
+});
 
 type SyncEngineParams = {
   enabled: boolean;
@@ -230,9 +254,10 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
         await convex.mutation(api.services.addItem, {
           workspaceId,
           serviceId: remoteServiceId,
-          type: item.type as "library" | "media" | "scripture",
+          type: item.type,
           refId: item.refId,
           label: item.label,
+          groupId: item.groupId ?? null,
           presentation:
             item.type === "presentation" ? item.presentation ?? null : undefined,
         } as never);
@@ -393,6 +418,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
               workspaceId,
               name: localService.name,
               date: localService.date,
+              groups: localService.groups ?? [],
             });
             remoteServiceId = String(createdId);
             setMappedId(
@@ -409,10 +435,109 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
               serviceId: remoteServiceId,
               name: localService.name,
               date: localService.date,
+              groups: localService.groups ?? [],
             });
           }
 
           await syncServiceItems(item.orgId, remoteServiceId, localService);
+          return "ok";
+        }
+
+        if (item.entityType === "message") {
+          const isPersonalWorkspace = item.orgId === "personal";
+
+          if (item.operation === "delete") {
+            const mappedRemoteId = getMappedId(
+              idMapRef.current,
+              "message",
+              item.orgId,
+              entityId,
+            );
+            if (!mappedRemoteId && entityId.startsWith("message_")) {
+              return "ok";
+            }
+            const remoteMessageId = mappedRemoteId ?? entityId;
+            if (isPersonalWorkspace) {
+              await convex.mutation(api.messages.removePersonal, {
+                messageId: remoteMessageId as never,
+              });
+            } else {
+              await convex.mutation(api.messages.remove, {
+                messageId: remoteMessageId as never,
+              });
+            }
+            removeMappedId(idMapRef.current, "message", item.orgId, entityId);
+            persistIdMap();
+            return "ok";
+          }
+
+          const localMessage = getLocalMessage(item.orgId, entityId);
+          if (!localMessage) {
+            return "ok";
+          }
+
+          const mappedRemoteId =
+            idMapRef.current.message?.[item.orgId]?.[entityId] ?? null;
+          const payload = toMessagePayload(localMessage);
+
+          if (mappedRemoteId) {
+            if (isPersonalWorkspace) {
+              await convex.mutation(api.messages.updatePersonal, {
+                messageId: mappedRemoteId as never,
+                ...payload,
+              });
+            } else {
+              await convex.mutation(api.messages.update, {
+                messageId: mappedRemoteId as never,
+                ...payload,
+              });
+            }
+            return "ok";
+          }
+
+          if (item.operation === "create" || entityId.startsWith("message_")) {
+            const userId =
+              localMessage.userId ?? useDesktopSessionStore.getState().user?.id;
+            const createdId = isPersonalWorkspace
+              ? userId
+                ? await convex.mutation(api.messages.createPersonal, {
+                    userId,
+                    ...payload,
+                  })
+                : null
+              : await convex.mutation(api.messages.create, {
+                  orgId: item.orgId as never,
+                  ...payload,
+                });
+
+            if (!createdId) {
+              return "retry";
+            }
+
+            if (typeof createdId === "string") {
+              setMappedId(
+                idMapRef.current,
+                "message",
+                item.orgId,
+                entityId,
+                createdId,
+              );
+              persistIdMap();
+            }
+            return "ok";
+          }
+
+          if (isPersonalWorkspace) {
+            await convex.mutation(api.messages.updatePersonal, {
+              messageId: entityId as never,
+              ...payload,
+            });
+          } else {
+            await convex.mutation(api.messages.update, {
+              messageId: entityId as never,
+              ...payload,
+            });
+          }
           return "ok";
         }
 

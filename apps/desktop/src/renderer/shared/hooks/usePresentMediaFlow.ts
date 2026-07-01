@@ -67,11 +67,6 @@ export function usePresentMediaFlow<
         setSelectedLibraryId(null);
         onClearScripture?.();
         onClearPresentation?.();
-
-        // Go live immediately for media items
-        if (mediaItem?.type === "video") setShouldAutoPlay(true);
-        selectMediaForOutput(mediaItem);
-        // Keep current text/slide active when changing backgrounds.
       }
 
       if (item.type === "scripture") {

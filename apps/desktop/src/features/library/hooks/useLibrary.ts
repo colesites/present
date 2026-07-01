@@ -293,6 +293,7 @@ export function useLibrary(
   const saveExistingItem = async (
     itemId: string,
     input: LibraryItemDraft,
+    categoryId?: string,
   ) => {
     const existing = libraryItems.find((item) => item._id === itemId);
     if (!existing) {
@@ -321,6 +322,10 @@ export function useLibrary(
       body,
       slides,
       content,
+      categoryId:
+        categoryId !== undefined
+          ? (categoryId as LibraryItem["categoryId"])
+          : existing.categoryId,
       updatedAt: Date.now(),
     });
     setLibraryItems(

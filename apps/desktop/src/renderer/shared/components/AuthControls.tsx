@@ -67,6 +67,7 @@ export function AuthControls() {
   const [isOpening, setIsOpening] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const authStatus = useDesktopSessionStore((state) => state.authStatus);
+  const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
   const user = useDesktopSessionStore((state) => state.user);
   const orgId = useDesktopSessionStore((state) => state.orgId);
   const organizations = useDesktopSessionStore((state) => state.organizations);
@@ -124,11 +125,11 @@ export function AuthControls() {
     };
   }, [activeSpeechSessionStartedAtMs]);
 
-  const isSignedIn =
-    authStatus === "authenticated" &&
-    Boolean(user && organizations.length > 0);
+  const isSignedIn = Boolean(
+    sessionToken && user && organizations.length > 0
+  );
 
-  if (authStatus === "unauthenticated") {
+  if (authStatus === "unauthenticated" && !sessionToken) {
     return (
       <Button
         type="button"

@@ -57,6 +57,27 @@ export type MessageOverlay = {
   fontScale: number;
 };
 
+export type SavedMessage = {
+  _id: Id<"messages"> | Id<"personalMessages"> | string;
+  _creationTime: number;
+  orgId?: Id<"organizations"> | string;
+  userId?: string;
+  title: string;
+  body: string;
+  themeKey: string;
+  position: MessageOverlayPosition;
+  dismissMode: MessageOverlayDismiss;
+  allowWebNotifications: boolean;
+  animation?: MessageOverlayAnimation;
+  speedSeconds?: number;
+  fontScale?: number;
+  order: number;
+  createdAt: number;
+  updatedAt: number;
+  version: number;
+  deleted: boolean;
+};
+
 export type RenameTarget = {
   type: "service" | "category" | "library";
   id: string;
@@ -172,6 +193,7 @@ export type LibrarySlide = {
   label?: string;
   labelColor?: string;
   modifier?: string;
+  sectionRepeat?: string;
   backgroundId?: string;
   backgroundColor?: string;
   useBackgroundColor?: boolean;
@@ -189,6 +211,7 @@ export type LibraryCompositionSource = {
   libraryId: string;
   title: string;
   slideCount: number;
+  slideIndexes?: number[];
 };
 
 export type LibraryContent = {
@@ -232,16 +255,25 @@ export type ServicePresentation = {
   content?: LibraryContent;
 };
 
+export type ServiceGroup = {
+  id: string;
+  name: string;
+  order: number;
+};
+
 export type ServiceItemType =
   | "library"
   | "media"
   | "scripture"
-  | "presentation";
+  | "presentation"
+  // Legacy: older local data used service items as divider rows.
+  | "group";
 
 export interface ServiceItem {
   type: ServiceItemType;
   refId: string;
   label?: string;
+  groupId?: string | null;
   addedAt: number;
   presentation?: ServicePresentation | null;
   libraryItem: LibraryItem | null;
@@ -254,10 +286,12 @@ export type Service = {
   orgId: Id<"organizations"> | string;
   name: string;
   date?: string;
+  groups?: ServiceGroup[];
   items: Array<{
     type: ServiceItemType;
     refId: string;
     label?: string;
+    groupId?: string | null;
     addedAt: number;
     presentation?: ServicePresentation;
   }>;

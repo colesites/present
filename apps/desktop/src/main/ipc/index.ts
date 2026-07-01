@@ -13,6 +13,7 @@ import { registerFontIPC } from './font.ipc';
 import { registerPptxIPC } from './pptx.ipc';
 import { registerNdiIPC } from './ndi.ipc';
 import { registerAiOperatorIPC } from './ai-operator.ipc';
+import { registerErrorReportingIPC } from './error-reporting.ipc';
 
 /**
  * Register all IPC handlers
@@ -29,4 +30,5 @@ export const registerAllIPC = (): void => {
   registerPptxIPC();
   registerNdiIPC();
   registerAiOperatorIPC();
+  registerErrorReportingIPC();
 };

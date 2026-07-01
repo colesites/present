@@ -3,6 +3,14 @@
 import { create } from "zustand";
 import { useWorkspaceStore } from "../../../../../../packages/shared/src/store/workspace";
 import { decodeJwtPayload } from "../lib/utils";
+import {
+  getRefreshRetryDelayMs,
+  isAuthFailureStatus,
+  isTransientRefreshStatus,
+  shouldKeepCachedIdentity,
+  shouldRetryRefresh,
+  TOKEN_REFRESH_RETRY_DELAYS_MS,
+} from "../lib/auth-refresh-policy.mjs";
 
 export interface DesktopUser {
   id: string;
@@ -47,6 +55,7 @@ interface DesktopSessionState {
   authStatus: DesktopAuthStatus;
   error: string | null;
   hasHydratedSession: boolean;
+  hasVerifiedOrganizationScope: boolean;
   hydrateAuthSession: () => Promise<void>;
   setAuthTokens: (payload: DesktopAuthPayload | null) => void;
   clearSession: () => void;
@@ -83,7 +92,6 @@ class DesktopRefreshError extends Error {
 }
 
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
-
 let desktopAccessTokenRefreshPromise: Promise<string | null> | null = null;
 
 const resolveDesktopWebBaseUrl = (): string => {
@@ -187,9 +195,17 @@ const normalizeStoredSession = (
           ...organizations,
         ]
       : organizations;
+  const normalizedOrgId =
+    typeof payload.orgId === "string" &&
+    normalizedOrganizations.some(
+      (organization) =>
+        organization.type === "organization" && organization.id === payload.orgId,
+    )
+      ? payload.orgId
+      : null;
 
   return {
-    orgId: typeof payload.orgId === "string" ? payload.orgId : null,
+    orgId: normalizedOrgId,
     organizations: normalizedOrganizations,
     savedAtMs:
       typeof payload.savedAtMs === "number" && Number.isFinite(payload.savedAtMs)
@@ -339,14 +355,22 @@ const fetchDesktopRefreshPayload = async (
   return (await response.json()) as DesktopRefreshResponse | null;
 };
 
-const isAuthFailureStatus = (status: number): boolean => {
-  return status === 401 || status === 403;
+const waitForRefreshRetry = async (delayMs: number): Promise<void> => {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
 };
 
-const isTransientNetworkStatus = (status: number): boolean => {
-  // 0 = network/fetch failure surfaced by IPC; 5xx = upstream blip; 408/429 = retryable.
-  if (status === 0 || status === 408 || status === 429) return true;
-  return status >= 500 && status < 600;
+const logDesktopAuthEvent = (
+  event: string,
+  details: Record<string, unknown> = {},
+): void => {
+  console.info("[Desktop Auth]", {
+    event,
+    occurredAt: new Date().toISOString(),
+    online: isOnline(),
+    ...details,
+  });
 };
 
 const refreshDesktopAccessToken = async (
@@ -394,6 +418,44 @@ const refreshDesktopAccessToken = async (
   };
 };
 
+const refreshDesktopAccessTokenWithRetry = async (
+  sessionToken: string,
+): Promise<Awaited<ReturnType<typeof refreshDesktopAccessToken>>> => {
+  for (
+    let attempt = 0;
+    attempt <= TOKEN_REFRESH_RETRY_DELAYS_MS.length;
+    attempt += 1
+  ) {
+    try {
+      return await refreshDesktopAccessToken(sessionToken);
+    } catch (error) {
+      const status = error instanceof DesktopRefreshError ? error.status : 0;
+      const canRetry = shouldRetryRefresh({
+        attempt,
+        online: isOnline(),
+        status,
+      });
+
+      if (!canRetry) {
+        throw error;
+      }
+
+      const delayMs = getRefreshRetryDelayMs(attempt);
+      if (delayMs === null) {
+        throw error;
+      }
+      logDesktopAuthEvent("refresh-retry-scheduled", {
+        attempt: attempt + 1,
+        delayMs,
+        status,
+      });
+      await waitForRefreshRetry(delayMs);
+    }
+  }
+
+  throw new DesktopRefreshError("Desktop refresh retry limit reached", 0);
+};
+
 const persistTokenFailure = (message: string, clearSession: boolean): null => {
   const state = useDesktopSessionStore.getState();
   if (clearSession) {
@@ -431,7 +493,10 @@ const areUsersEqual = (
   return JSON.stringify(left) === JSON.stringify(right);
 };
 
-export const ensureFreshDesktopAccessToken = async (): Promise<string | null> => {
+export const ensureFreshDesktopAccessToken = async (options?: {
+  forceRefresh?: boolean;
+}): Promise<string | null> => {
+  const forceRefresh = options?.forceRefresh === true;
   const currentState = useDesktopSessionStore.getState();
   const stateToken = currentState.token;
   const stateTokenExpiresAtMs =
@@ -447,12 +512,22 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
   }
 
   if (isTimestampExpired(stateSessionExpiresAtMs)) {
-    return isOnline()
-      ? persistTokenFailure("Session expired. Please sign in again.", true)
-      : persistTokenFailure("Session expired. Reconnect to continue.", false);
+    if (isOnline()) {
+      return persistTokenFailure("Session expired. Please sign in again.", true);
+    }
+
+    currentState.setError("Session expired. Reconnect to verify your account.");
+    if (currentState.user) {
+      currentState.setAuthStatus("authenticated");
+    }
+    return null;
   }
 
-  if (stateToken && !shouldRefreshAccessToken(stateTokenExpiresAtMs)) {
+  if (
+    !forceRefresh &&
+    stateToken &&
+    !shouldRefreshAccessToken(stateTokenExpiresAtMs)
+  ) {
     return stateToken;
   }
 
@@ -467,7 +542,16 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
     const fallbackToken = stateToken;
     const fallbackTokenExpiryMs = stateTokenExpiresAtMs;
 
-    desktopAccessTokenRefreshPromise = refreshDesktopAccessToken(stateSessionToken)
+    logDesktopAuthEvent("refresh-started", {
+      forceRefresh,
+      hasFallbackToken: Boolean(fallbackToken),
+      sessionExpiresAtMs: stateSessionExpiresAtMs,
+      tokenExpiresAtMs: stateTokenExpiresAtMs,
+    });
+
+    desktopAccessTokenRefreshPromise = refreshDesktopAccessTokenWithRetry(
+      stateSessionToken,
+    )
       .then((payload) => {
         useDesktopSessionStore.setState((previous) => {
           const nextState: Partial<DesktopSessionState> = {
@@ -488,6 +572,11 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
         const snapshot = useDesktopSessionStore.getState();
         void persistSessionSnapshot(snapshot);
 
+        logDesktopAuthEvent("refresh-succeeded", {
+          sessionExpiresAtMs: payload.sessionExpiresAtMs,
+          tokenExpiresAtMs: payload.accessTokenExpiresAtMs,
+        });
+
         return payload.accessToken;
       })
       .catch((error) => {
@@ -499,6 +588,9 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
           error instanceof DesktopRefreshError &&
           isAuthFailureStatus(error.status)
         ) {
+          logDesktopAuthEvent("session-invalidated", {
+            status: error.status,
+          });
           return persistTokenFailure("Session expired. Please sign in again.", true);
         }
 
@@ -509,7 +601,7 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
           error instanceof DesktopRefreshError ? error.status : 0;
         const transient =
           !isOnline() ||
-          isTransientNetworkStatus(status) ||
+          isTransientRefreshStatus(status) ||
           !(error instanceof DesktopRefreshError);
 
         if (transient) {
@@ -522,8 +614,13 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
           if (fallbackToken && !isTimestampExpired(fallbackTokenExpiryMs)) {
             return fallbackToken;
           }
-          if (!currentState.user) {
-            currentState.setAuthStatus("unauthenticated");
+          if (
+            shouldKeepCachedIdentity({
+              hasUser: Boolean(currentState.user),
+              status,
+            })
+          ) {
+            currentState.setAuthStatus("authenticated");
           }
           return null;
         }
@@ -540,8 +637,13 @@ export const ensureFreshDesktopAccessToken = async (): Promise<string | null> =>
         if (fallbackToken && !isTimestampExpired(fallbackTokenExpiryMs)) {
           return fallbackToken;
         }
-        if (!currentState.user) {
-          currentState.setAuthStatus("unauthenticated");
+        if (
+          shouldKeepCachedIdentity({
+            hasUser: Boolean(currentState.user),
+            status,
+          })
+        ) {
+          currentState.setAuthStatus("authenticated");
         }
         return null;
       })
@@ -584,6 +686,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
   authStatus: "loading",
   error: null,
   hasHydratedSession: false,
+  hasVerifiedOrganizationScope: false,
 
   hydrateAuthSession: async () => {
     if (get().hasHydratedSession) {
@@ -630,6 +733,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
     set({
       authStatus: hasCachedIdentity ? "authenticated" : "loading",
       hasHydratedSession: true,
+      hasVerifiedOrganizationScope: false,
       orgId: stored.orgId,
       organizations: stored.organizations,
       sessionExpiresAtMs,
@@ -638,6 +742,21 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
       tokenExpiresAtMs,
       user: stored.user,
     });
+
+    const workspaceState = useWorkspaceStore.getState();
+    if (
+      workspaceState.type === "organization" &&
+      (!workspaceState.id ||
+        !stored.organizations.some(
+          (organization) =>
+            organization.type === "organization" &&
+            organization.id === workspaceState.id,
+        ))
+    ) {
+      workspaceState.setWorkspace("personal", null);
+    }
+
+    void persistSessionSnapshot(get());
   },
 
   setAuthTokens: (payload: DesktopAuthPayload | null) => {
@@ -648,6 +767,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
       set({
         authStatus: "unauthenticated",
         error: null,
+        hasVerifiedOrganizationScope: false,
         orgId: null,
         organizations: [],
         sessionExpiresAtMs: null,
@@ -672,6 +792,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
     set(() => ({
       authStatus: "loading",
       error: null,
+      hasVerifiedOrganizationScope: false,
       orgId: null,
       organizations: [],
       sessionExpiresAtMs: nextSessionExpiresAtMs,
@@ -696,6 +817,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
     set({
       authStatus: "unauthenticated",
       error: null,
+      hasVerifiedOrganizationScope: false,
       orgId: null,
       organizations: [],
       sessionExpiresAtMs: null,
@@ -777,6 +899,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
       if (
         previous.authStatus === "authenticated" &&
         previous.error === null &&
+        previous.hasVerifiedOrganizationScope &&
         previous.orgId === resolvedOrgId &&
         areOrganizationsEqual(previous.organizations, normalizedOrganizations) &&
         areUsersEqual(previous.user, user)
@@ -787,6 +910,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
       return {
         authStatus: "authenticated",
         error: null,
+        hasVerifiedOrganizationScope: true,
         orgId: resolvedOrgId,
         organizations: normalizedOrganizations,
         user,

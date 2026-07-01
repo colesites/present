@@ -123,7 +123,14 @@ const normalizeStoredSession = (value: unknown): DesktopStoredSession | null => 
     ? candidate.organizations.filter(isDesktopStoredOrganization)
     : [];
   const user = isDesktopStoredUser(candidate.user) ? candidate.user : null;
-  const orgId = typeof candidate.orgId === "string" ? candidate.orgId : null;
+  const orgId =
+    typeof candidate.orgId === "string" &&
+    organizations.some(
+      (organization) =>
+        organization.type === "organization" && organization.id === candidate.orgId,
+    )
+      ? candidate.orgId
+      : null;
   const token = typeof candidate.token === "string" ? candidate.token : null;
   const sessionExpiresAtMs =
     typeof candidate.sessionExpiresAtMs === "number" &&

@@ -11,15 +11,18 @@ import { type ParsedReference } from "../lib/parser";
 import { Button } from "../../../renderer/shared/components/ui/button";
 import { Monitor, Plus } from "lucide-react";
 import { type BibleVerse } from "../lib/db";
+import { cn } from "../../../renderer/shared/lib/utils";
 
 interface ScriptureResultsProps {
   parsedRef: ParsedReference;
+  activeVersePk?: string | null;
   onSendToOutput: (slides: ScriptureSlide[]) => void;
   onAddToService?: (ref: string, text: string) => void;
 }
 
 export function ScriptureResults({
   parsedRef,
+  activeVersePk = null,
   onSendToOutput,
   onAddToService,
 }: ScriptureResultsProps) {
@@ -148,33 +151,57 @@ export function ScriptureResults({
             No verses found.
           </p>
         ) : (
-          verses.map((v) => (
-            <div
-              key={v.pk}
-              onClick={() => handleSendVerse(v)}
-              className="group relative w-full cursor-pointer rounded p-2 text-left transition-colors hover:bg-accent [content-visibility:auto] [contain-intrinsic-size:72px]"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <span className="font-bold text-[10px] mr-2 text-primary/60">
-                    {v.verse}
-                  </span>
-                  <span className="text-sm">{v.text}</span>
-                </div>
-
-                {onAddToService && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => handleAddVerseToService(e, v)}
-                  >
-                    <Plus className="h-3 w-3" />
-                  </Button>
+          verses.map((v) => {
+            const isLive = v.pk === activeVersePk;
+            return (
+              <div
+                key={v.pk}
+                role="button"
+                tabIndex={0}
+                aria-current={isLive ? "true" : undefined}
+                onClick={() => handleSendVerse(v)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    handleSendVerse(v);
+                  }
+                }}
+                className={cn(
+                  "group relative w-full cursor-pointer rounded border p-2 text-left transition-colors [content-visibility:auto] [contain-intrinsic-size:72px]",
+                  isLive
+                    ? "border-emerald-400/50 bg-emerald-400/8"
+                    : "border-transparent hover:bg-accent",
                 )}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <span
+                      className={cn(
+                        "mr-2 text-[10px] font-bold",
+                        isLive ? "text-emerald-400" : "text-primary/60",
+                      )}
+                    >
+                      {v.verse}
+                      {isLive ? " · LIVE" : ""}
+                    </span>
+                    <span className="text-sm">{v.text}</span>
+                  </div>
+
+                  {onAddToService && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Add ${v.bookName} ${v.chapter}:${v.verse} to service`}
+                      className="h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                      onClick={(e) => handleAddVerseToService(e, v)}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 

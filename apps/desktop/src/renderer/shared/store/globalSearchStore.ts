@@ -8,8 +8,12 @@ import type { LibraryItem, Service } from "../../../shared/types";
 interface GlobalSearchStore {
   services: Service[];
   libraryItems: LibraryItem[];
+  searchRequestId: number;
+  closeSearchRequestId: number;
   setServices: (services: Service[]) => void;
   setLibraryItems: (items: LibraryItem[]) => void;
+  openSearch: () => void;
+  closeSearch: () => void;
 
   onSelectService?: (serviceId: string) => void;
   onSelectLibraryItem?: (libraryId: string) => void;
@@ -24,7 +28,13 @@ interface GlobalSearchStore {
 export const useGlobalSearchStore = create<GlobalSearchStore>((set) => ({
   services: [],
   libraryItems: [],
+  searchRequestId: 0,
+  closeSearchRequestId: 0,
   setServices: (services) => set({ services }),
   setLibraryItems: (items) => set({ libraryItems: items }),
+  openSearch: () =>
+    set((state) => ({ searchRequestId: state.searchRequestId + 1 })),
+  closeSearch: () =>
+    set((state) => ({ closeSearchRequestId: state.closeSearchRequestId + 1 })),
   setActions: (actions) => set(actions),
 }));

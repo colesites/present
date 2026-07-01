@@ -249,7 +249,7 @@ export function ThemesModal({ orgId, onApplyTheme }: ThemesModalProps) {
 
         {!orgId ? (
           <div className="p-6 text-center text-[11px] text-muted-foreground">
-            Sign in to use themes.
+            Join or select an organization to use themes.
           </div>
         ) : (
           <>

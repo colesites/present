@@ -3,8 +3,6 @@ import type { CustomFontFace, SystemFontFace } from "./font";
 import type { ParsedPptxPresentation } from "./pptx";
 import type {
   AiModelToolDefinition,
-  WhisperStatus,
-  WhisperTranscriptEvent,
 } from "../ai-operator/types";
 
 declare global {
@@ -95,6 +93,29 @@ interface PresentationImportFile {
   lastModified: number;
 }
 
+interface MiniLyricsPayload {
+  libraryId: string;
+  title: string;
+  body: string;
+  initialSlideIndex?: number | null;
+}
+
+interface MiniLyricsSavePayload {
+  libraryId: string;
+  body: string;
+}
+
+interface MiniLyricsSaveRequest {
+  requestId: string;
+  payload: MiniLyricsSavePayload;
+}
+
+interface MiniLyricsSaveResponse {
+  requestId: string;
+  ok: boolean;
+  error?: string;
+}
+
 interface FontAPI {
   getSystemFonts: () => Promise<string[]>;
   getSystemFontFaces?: () => Promise<SystemFontFace[]>;
@@ -117,6 +138,8 @@ interface ElectronAPI {
   closeLooksWindow: () => Promise<boolean>;
   openScreenComposerWindow: () => Promise<boolean>;
   closeScreenComposerWindow: () => Promise<boolean>;
+  openMiniLyricsWindow: (payload: MiniLyricsPayload) => Promise<boolean>;
+  closeMiniLyricsWindow: (libraryId: string) => Promise<boolean>;
   getDisplays: () => Promise<Display[]>;
   setPreferredOutputDisplay: (displayId: number | null) => Promise<boolean>;
   getPreferredOutputDisplay: () => Promise<number | null>;
@@ -165,16 +188,13 @@ interface ElectronAPI {
   ) => Promise<unknown | null>;
   requestMicrophoneAccess: () => Promise<MediaAccessResult>;
   listAiOperatorTools: () => Promise<AiModelToolDefinition[]>;
-
-  // Whisper local STT
-  getWhisperStatus: () => Promise<WhisperStatus>;
-  startWhisper: (sessionId: string, sampleRate?: number) => Promise<WhisperStatus>;
-  pushWhisperAudio: (sessionId: string, pcm: ArrayBuffer) => void;
-  stopWhisper: (sessionId: string) => void;
-  transcribeWhisperFile: (wavPath: string) => Promise<string>;
-  onWhisperTranscript: (
-    callback: (event: WhisperTranscriptEvent) => void,
-  ) => () => void;
+  onAiOperatorToggleShortcut: (callback: () => void) => () => void;
+  reportRendererError: (payload: {
+    message: string;
+    name?: string;
+    source?: string;
+    stack?: string;
+  }) => void;
 
   // Output window IPC
   sendToOutput: (data: unknown) => void;
@@ -247,6 +267,15 @@ interface ElectronAPI {
   getBrowserModeState: () => Promise<BrowserModeState>;
   onBrowserModeStateChanged: (callback: (state: BrowserModeState) => void) => () => void;
   onBrowserFocusAddress: (callback: () => void) => () => void;
+  onMiniLyricsData: (callback: (payload: MiniLyricsPayload) => void) => () => void;
+  notifyMiniLyricsReady: () => void;
+  saveMiniLyrics: (
+    payload: MiniLyricsSavePayload,
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onMiniLyricsSaveRequest: (
+    callback: (request: MiniLyricsSaveRequest) => void,
+  ) => () => void;
+  respondMiniLyricsSave: (response: MiniLyricsSaveResponse) => void;
 
   // Media & Filesystem
   selectMediaFile: () => Promise<{ name: string; path: string } | null>;
@@ -256,6 +285,11 @@ interface ElectronAPI {
   >;
   selectPresentationFiles: () => Promise<PresentationImportFile[] | null>;
   copyMediaFile: (source: string, target: string) => Promise<boolean>;
+  renameMediaFile: (
+    oldPath: string,
+    newName: string,
+  ) => Promise<{ path: string; name: string }>;
+  deleteMediaFile: (filePath: string) => Promise<boolean>;
   createDirectory: (parent: string, name: string) => Promise<string>;
   renameDirectory: (oldPath: string, newPath: string) => Promise<boolean>;
 }

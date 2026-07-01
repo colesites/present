@@ -17,7 +17,7 @@ const stateLabels: Record<AiOperatorVisualState, string> = {
 };
 
 // Peak glow alpha + breathe speed per state. idle = 0 (the glow is OFF until
-// the operator is toggled on with the spacebar).
+// the operator is toggled on with the activation key).
 const stateTuning: Record<
   AiOperatorVisualState,
   { intensity: number; breathe: string }
@@ -56,8 +56,7 @@ export function AiGlow({ state, error }: AiGlowProps) {
   };
 
   // A single continuous halo that bleeds inward from the left, bottom, and
-  // right edges (no top) using layered inset box-shadows — soft, organic, and
-  // connected like the Gemini Live glow, rather than hard rectangular bars.
+  // right edges only. It stays pointer-transparent and never blocks the app.
   const halo: CSSProperties = {
     position: "absolute",
     inset: 0,
@@ -72,6 +71,28 @@ export function AiGlow({ state, error }: AiGlowProps) {
       ? `ai-glow-breathe ${breathe} ease-in-out infinite`
       : "none",
     willChange: "opacity",
+  };
+
+  const errorPill: CSSProperties = {
+    position: "absolute",
+    left: "50%",
+    bottom: 22,
+    maxWidth: "min(720px, calc(100vw - 48px))",
+    transform: "translateX(-50%)",
+    borderRadius: 999,
+    border: "1px solid color-mix(in srgb, var(--destructive) 35%, transparent)",
+    background:
+      "color-mix(in srgb, var(--background) 86%, var(--destructive) 14%)",
+    color: "var(--foreground)",
+    boxShadow: `0 16px 48px -28px ${accent}`,
+    fontSize: 12,
+    lineHeight: 1.35,
+    padding: "8px 12px",
+    opacity: state === "error" && error ? 1 : 0,
+    transition: "opacity 180ms ease",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   };
 
   return (
@@ -89,6 +110,7 @@ export function AiGlow({ state, error }: AiGlowProps) {
           }`}
       </style>
       <div style={halo} />
+      <div style={errorPill}>{error}</div>
     </div>
   );
 }

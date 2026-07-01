@@ -99,27 +99,3 @@ export type AiOperatorTranscriptEvent = {
   transcript: string;
   isFinal: boolean;
 };
-
-// ── Whisper (local, offline STT via spawned whisper-cli) ──
-
-export interface WhisperStatus {
-  /** True only when both the binary and the model are present and runnable. */
-  available: boolean;
-  binaryPresent: boolean;
-  modelPresent: boolean;
-  binaryPath: string | null;
-  modelPath: string | null;
-  error: string | null;
-}
-
-export interface WhisperTranscriptEvent {
-  sessionId: string;
-  /** Best transcript for the current rolling window. */
-  transcript: string;
-  /** True when an utterance boundary (pause) committed the text. */
-  isFinal: boolean;
-}
-
-/** Audio contract the renderer must satisfy when streaming to whisper. */
-export const WHISPER_SAMPLE_RATE = 16000;
-export const WHISPER_CHANNELS = 1;

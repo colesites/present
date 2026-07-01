@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { ArrowDownToLine } from "lucide-react";
-import { FaApple, FaLinux } from "react-icons/fa6";
+import { Apple, ArrowDownToLine, Terminal } from "lucide-react";
 import { Footer, Navbar } from "@/components/home/Layout";
 import {
   getDesktopDownloadTargets,
@@ -26,9 +25,9 @@ function WindowsMark() {
 }
 
 const platformIcons = {
-  mac: FaApple,
+  mac: Apple,
   windows: WindowsMark,
-  linux: FaLinux,
+  linux: Terminal,
 } as const;
 
 function DownloadRow({ variant }: { variant: DesktopDownloadVariant }) {

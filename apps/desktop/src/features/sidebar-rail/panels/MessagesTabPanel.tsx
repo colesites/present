@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "convex/react";
 import {
   ChevronDown,
   ChevronUp,
@@ -13,16 +13,26 @@ import {
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { cn } from "../../../renderer/shared/lib/utils";
-import { ensureFreshDesktopAccessToken } from "../../../renderer/shared/store/desktopSession";
+import {
+  createLocalMessage,
+  enqueueSyncOperation,
+  listSyncQueueByOrg,
+  readOrgMessages,
+  removeMessageLocal,
+  replaceOrgMessages,
+  upsertMessage,
+} from "../../../renderer/shared/offline/localData";
 import type {
   MessageOverlay,
   MessageOverlayAnimation,
   MessageOverlayDismiss,
   MessageOverlayPosition,
+  SavedMessage,
 } from "../../../shared/types";
 
 interface MessagesTabPanelProps {
   orgId: Id<"organizations"> | null;
+  userId: string | null;
   isMessageLayerEnabled: boolean;
   activeOverlay: MessageOverlay | null;
   onShowOverlay: (overlay: MessageOverlay | null) => void;
@@ -55,8 +65,9 @@ function applyTokens(body: string): string {
     .replace(/\{day\}/gi, now.toLocaleDateString(undefined, { weekday: "long" }));
 }
 
-type ConvexMessage = {
-  _id: Id<"messages">;
+type RemoteMessage = {
+  _id: Id<"messages"> | Id<"personalMessages"> | string;
+  _creationTime?: number;
   title: string;
   body: string;
   themeKey: string;
@@ -67,40 +78,103 @@ type ConvexMessage = {
   speedSeconds?: number;
   fontScale?: number;
   order: number;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
+const normalizeRemoteMessage = (
+  workspaceId: string,
+  message: RemoteMessage,
+  index: number,
+): SavedMessage => {
+  const createdAt = message.createdAt ?? message._creationTime ?? Date.now();
+  return {
+    _id: message._id,
+    _creationTime: message._creationTime ?? createdAt,
+    orgId: workspaceId,
+    title: message.title,
+    body: message.body,
+    themeKey: message.themeKey,
+    position: message.position,
+    dismissMode: message.dismissMode,
+    allowWebNotifications: message.allowWebNotifications,
+    animation: message.animation ?? "static",
+    speedSeconds: message.speedSeconds ?? 12,
+    fontScale: message.fontScale ?? 1,
+    order: Number.isFinite(message.order) ? message.order : index,
+    createdAt,
+    updatedAt: message.updatedAt ?? createdAt,
+    version: 1,
+    deleted: false,
+  };
 };
 
 export function MessagesTabPanel({
   orgId,
+  userId,
   activeOverlay,
   onShowOverlay,
   onSetMessageLayerEnabled,
 }: MessagesTabPanelProps) {
-  const { isAuthenticated } = useConvexAuth();
-  const messages = useQuery(
-    api.messages.listByOrg,
-    orgId && isAuthenticated ? { orgId } : "skip",
-  ) as ConvexMessage[] | undefined;
-  const createMessage = useMutation(api.messages.create);
-  const updateMessage = useMutation(api.messages.update);
-  const removeMessage = useMutation(api.messages.remove);
+  const isOrgWorkspace = Boolean(orgId);
+  const workspaceId = orgId ? String(orgId) : "personal";
+  const remoteMessages = useQuery(
+    isOrgWorkspace ? api.messages.listByOrg : api.messages.listByUser,
+    orgId ? { orgId } : userId ? { userId } : "skip",
+  ) as RemoteMessage[] | undefined;
 
-  const [selectedId, setSelectedId] = useState<Id<"messages"> | null>(null);
+  const [messages, setMessages] = useState<SavedMessage[]>(() =>
+    readOrgMessages(workspaceId),
+  );
+  const [selectedId, setSelectedId] = useState<SavedMessage["_id"] | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(true);
 
+  const refreshLocalMessages = useCallback(() => {
+    setMessages(readOrgMessages(workspaceId));
+  }, [workspaceId]);
+
+  useEffect(() => {
+    refreshLocalMessages();
+  }, [refreshLocalMessages]);
+
+  useEffect(() => {
+    if (!remoteMessages) {
+      return;
+    }
+
+    const hasPendingMessageSync = listSyncQueueByOrg(workspaceId).some(
+      (item) => item.entityType === "message",
+    );
+    if (hasPendingMessageSync) {
+      return;
+    }
+
+    replaceOrgMessages(
+      workspaceId,
+      remoteMessages.map((message, index) =>
+        normalizeRemoteMessage(workspaceId, message, index),
+      ),
+    );
+    refreshLocalMessages();
+  }, [refreshLocalMessages, remoteMessages, workspaceId]);
+
   const sorted = useMemo(() => {
-    if (!messages) return [];
     return [...messages].sort((a, b) => a.order - b.order);
   }, [messages]);
 
   // Auto-select first message once the list loads or after a delete.
   useEffect(() => {
+    let frame: number | null = null;
     if (!sorted.length) {
-      setSelectedId(null);
-      return;
+      frame = window.requestAnimationFrame(() => setSelectedId(null));
+    } else if (!selectedId || !sorted.some((m) => m._id === selectedId)) {
+      frame = window.requestAnimationFrame(() => setSelectedId(sorted[0]._id));
     }
-    if (!selectedId || !sorted.some((m) => m._id === selectedId)) {
-      setSelectedId(sorted[0]._id);
-    }
+    return () => {
+      if (frame != null) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
   }, [selectedId, sorted]);
 
   const selected = useMemo(
@@ -111,13 +185,17 @@ export function MessagesTabPanel({
   // Local editing buffer — debounced into Convex on blur / dropdown change.
   const [draftBody, setDraftBody] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
-  const lastSavedSelectedIdRef = useRef<Id<"messages"> | null>(null);
+  const lastSavedSelectedIdRef = useRef<SavedMessage["_id"] | null>(null);
   useEffect(() => {
-    if (selected && selected._id !== lastSavedSelectedIdRef.current) {
+    if (!selected || selected._id === lastSavedSelectedIdRef.current) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
       setDraftBody(selected.body);
       setDraftTitle(selected.title);
       lastSavedSelectedIdRef.current = selected._id;
-    }
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [selected]);
 
   // Whether the currently-selected message is the one live on the output.
@@ -177,28 +255,35 @@ export function MessagesTabPanel({
     onShowOverlay(next);
   }, [isActiveBeingShown, selected, draftBody, activeOverlay, onShowOverlay]);
 
-  if (!orgId || !isAuthenticated) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-center text-[11px] text-muted-foreground">
-        Sign in and select an organization to use synced messages.
-      </div>
-    );
-  }
-
   const patchMessage = async (
-    messageId: Id<"messages">,
-    patch: Partial<Omit<ConvexMessage, "_id" | "order" | "allowWebNotifications">>,
+    messageId: SavedMessage["_id"],
+    patch: Partial<Omit<SavedMessage, "_id" | "order" | "allowWebNotifications">>,
   ) => {
-    const token = await ensureFreshDesktopAccessToken();
-    if (!token) return;
-    await updateMessage({ messageId, ...patch });
+    const existing = messages.find((message) => message._id === messageId);
+    if (!existing) {
+      return;
+    }
+
+    const nextMessage = upsertMessage(workspaceId, {
+      ...existing,
+      ...patch,
+      title: patch.title?.trim() || existing.title || "New Message",
+      updatedAt: Date.now(),
+    });
+    refreshLocalMessages();
+    enqueueSyncOperation(
+      workspaceId,
+      "message",
+      String(messageId),
+      "update",
+      nextMessage,
+    );
   };
 
   const handleCreate = async () => {
-    const token = await ensureFreshDesktopAccessToken();
-    if (!token) return;
-    const id = await createMessage({
-      orgId,
+    const nextOrder =
+      sorted.reduce((max, message) => Math.max(max, message.order), -1) + 1;
+    const commonPayload = {
       title: "New Message",
       body: "",
       themeKey: "default",
@@ -206,8 +291,25 @@ export function MessagesTabPanel({
       dismissMode: "manual",
       animation: "static",
       speedSeconds: 12,
-    });
-    setSelectedId(id);
+      fontScale: 1,
+      allowWebNotifications: false,
+      order: nextOrder,
+      createdAt: Date.now(),
+      userId: isOrgWorkspace ? undefined : userId ?? undefined,
+    } satisfies Omit<
+      SavedMessage,
+      "_id" | "_creationTime" | "orgId" | "updatedAt" | "version" | "deleted"
+    >;
+    const message = createLocalMessage(workspaceId, commonPayload);
+    refreshLocalMessages();
+    enqueueSyncOperation(
+      workspaceId,
+      "message",
+      String(message._id),
+      "create",
+      message,
+    );
+    setSelectedId(message._id);
     setIsDetailOpen(true);
   };
 
@@ -474,9 +576,16 @@ export function MessagesTabPanel({
               <button
                 type="button"
                 onClick={() => {
-                  void removeMessage({ messageId: selected._id }).then(() => {
-                    if (activeOverlay?.id === selected._id) onShowOverlay(null);
-                  });
+                  removeMessageLocal(workspaceId, String(selected._id));
+                  refreshLocalMessages();
+                  enqueueSyncOperation(
+                    workspaceId,
+                    "message",
+                    String(selected._id),
+                    "delete",
+                    { id: selected._id },
+                  );
+                  if (activeOverlay?.id === selected._id) onShowOverlay(null);
                 }}
                 className="flex h-9 items-center gap-1.5 rounded-sm border border-border/70 bg-background/40 px-2.5 text-[11px] text-muted-foreground hover:border-red-500/60 hover:text-red-400"
                 aria-label="Delete message"

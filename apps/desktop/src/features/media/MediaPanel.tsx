@@ -25,6 +25,7 @@ import {
   ArrowDown,
   FilePlus,
   FolderPlus as FolderPlusIcon,
+  Pencil,
 } from "lucide-react";
 import { Input } from "../../renderer/shared/components/ui/input";
 import {
@@ -71,6 +72,8 @@ const MediaItemCard = memo(function MediaItemCard({
   isActive,
   onSelect,
   onAddToService,
+  onRename,
+  onDelete,
   isInsideService,
   isGridView,
 }: {
@@ -78,6 +81,8 @@ const MediaItemCard = memo(function MediaItemCard({
   isActive: boolean;
   onSelect: (item: MediaItem) => void;
   onAddToService: (item: MediaItem) => void;
+  onRename: (item: MediaItem) => void;
+  onDelete: (item: MediaItem) => void;
   isInsideService: boolean;
   isGridView?: boolean;
 }) {
@@ -198,6 +203,17 @@ const MediaItemCard = memo(function MediaItemCard({
             Add to Service
           </ContextMenuItem>
         )}
+        <ContextMenuItem onClick={() => onRename(item)}>
+          <Pencil className="mr-2 h-4 w-4" />
+          Rename
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => onDelete(item)}
+          className="text-destructive focus:text-destructive"
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          Remove from media
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -209,6 +225,11 @@ interface MediaPanelProps {
   isInsideService: boolean;
   selectedServiceId: Id<"services"> | null;
   onAddToService: (mediaId: string, mediaName: string) => Promise<void>;
+  onRenameInServices: (
+    oldMediaId: string,
+    nextMedia: { id: string; name: string },
+  ) => Promise<void>;
+  onRemoveFromServices: (mediaId: string) => Promise<void>;
   orgId: Id<"organizations"> | null;
 }
 
@@ -224,6 +245,8 @@ export const MediaPanel = memo(
       isInsideService,
       selectedServiceId,
       onAddToService,
+      onRenameInServices,
+      onRemoveFromServices,
       orgId,
     }: MediaPanelProps,
     ref
@@ -241,10 +264,17 @@ export const MediaPanel = memo(
       addMediaFile,
       createFolder,
       renameFolder,
+      renameMediaItem,
+      deleteMediaItem,
     } = mediaState;
 
     const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
     const [editName, setEditName] = useState("");
+    const [renameMediaTarget, setRenameMediaTarget] = useState<MediaItem | null>(
+      null,
+    );
+    const [renameMediaName, setRenameMediaName] = useState("");
+    const [mediaToRemove, setMediaToRemove] = useState<MediaItem | null>(null);
 
     const [filter, setFilter] = useState<MediaFilter>("all");
     const [folderToRemove, setFolderToRemove] = useState<MediaFolder | null>(
@@ -303,6 +333,15 @@ export const MediaPanel = memo(
     const videoCount = filteredItems.filter(
       (item) => item.type === "video"
     ).length;
+    const visibleMediaItems = useMemo(() => {
+      if (filter === "images") {
+        return filteredItems.filter((item) => item.type === "image");
+      }
+      if (filter === "videos") {
+        return filteredItems.filter((item) => item.type === "video");
+      }
+      return filteredItems;
+    }, [filter, filteredItems]);
 
     const handleAddToService = async (item: MediaItem) => {
       if (!selectedServiceId) {
@@ -365,6 +404,54 @@ export const MediaPanel = memo(
       }
     };
 
+    const openRenameMedia = (item: MediaItem) => {
+      setRenameMediaTarget(item);
+      setRenameMediaName(item.name);
+    };
+
+    const handleConfirmRenameMedia = async () => {
+      if (!renameMediaTarget || !renameMediaName.trim()) return;
+      try {
+        const oldMediaId = renameMediaTarget.id;
+        const nextItem = await renameMediaItem(
+          renameMediaTarget,
+          renameMediaName.trim(),
+        );
+        await onRenameInServices(oldMediaId, {
+          id: nextItem.id,
+          name: nextItem.name,
+        });
+        if (activeMediaItem?.id === oldMediaId) {
+          onSelectForOutput(nextItem);
+        }
+        toast.success(`Renamed media to "${nextItem.name}"`);
+        setRenameMediaTarget(null);
+        setRenameMediaName("");
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to rename media",
+        );
+      }
+    };
+
+    const handleConfirmRemoveMedia = async () => {
+      if (!mediaToRemove) return;
+      try {
+        const mediaId = mediaToRemove.id;
+        await deleteMediaItem(mediaToRemove);
+        await onRemoveFromServices(mediaId);
+        if (activeMediaItem?.id === mediaId) {
+          onSelectForOutput(null);
+        }
+        toast.success(`Removed "${mediaToRemove.name}" from media`);
+        setMediaToRemove(null);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to remove media",
+        );
+      }
+    };
+
     // Check if File System Access API is supported
     const isSupported =
       typeof window !== "undefined" && "showDirectoryPicker" in window;
@@ -414,6 +501,7 @@ export const MediaPanel = memo(
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button
+                        type="button"
                         className="rounded p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
                         title="Add..."
                       >
@@ -602,7 +690,10 @@ export const MediaPanel = memo(
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button className="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition hover:bg-secondary hover:text-foreground">
+                      <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+                      >
                         <ArrowUpDown className="h-3 w-3" />
                       </button>
                     </DropdownMenuTrigger>
@@ -649,7 +740,7 @@ export const MediaPanel = memo(
                 </div>
               </div>
 
-              {/* Media items grid - using Activity for each filter view to pre-render */}
+              {/* Media items grid */}
               <div className="relative flex-1 overflow-hidden">
                 {isLoading ? (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -661,114 +752,48 @@ export const MediaPanel = memo(
                     <span>Add a folder to see media</span>
                   </div>
                 ) : (
-                  <>
+                  <div className="absolute inset-0 overflow-auto p-3" data-media-scroll>
                     <div
-                      className={cn("absolute inset-0 overflow-auto p-3", filter !== "all" && "hidden")}
-                      data-media-scroll
+                      className={cn("pb-3", isGridView ? "grid" : "flex flex-col")}
+                      style={{
+                        gap: `${itemGap}px`,
+                        gridTemplateColumns: isGridView
+                          ? `repeat(auto-fill, minmax(${minItemWidth}px, 1fr))`
+                          : undefined,
+                      }}
                     >
-                      <div 
-                        className={cn("pb-8", isGridView ? "grid" : "flex flex-col")}
-                        style={{
-                          gap: `${itemGap}px`,
-                          gridTemplateColumns: isGridView 
-                            ? `repeat(auto-fill, minmax(${minItemWidth}px, 1fr))` 
-                            : undefined
-                        }}
-                      >
-                        {filteredItems.map((item) => (
-                          <div key={item.id}>
-                            <MediaItemCard
-                              item={item}
-                              isActive={activeMediaItem?.id === item.id}
-                              onSelect={handleSelectMedia}
-                              onAddToService={handleAddToService}
-                              isInsideService={isInsideService}
-                              isGridView={isGridView}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                      {/* Empty state overlay */}
-                      {filteredItems.length === 0 && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                          <Image className="h-8 w-8" />
-                          <span>No items found</span>
+                      {visibleMediaItems.map((item) => (
+                        <div key={item.id}>
+                          <MediaItemCard
+                            item={item}
+                            isActive={activeMediaItem?.id === item.id}
+                            onSelect={handleSelectMedia}
+                            onAddToService={handleAddToService}
+                            onRename={openRenameMedia}
+                            onDelete={setMediaToRemove}
+                            isInsideService={isInsideService}
+                            isGridView={isGridView}
+                          />
                         </div>
-                      )}
+                      ))}
                     </div>
-                    <div
-                      className={cn("absolute inset-0 overflow-auto p-3", filter !== "images" && "hidden")}
-                      data-media-scroll
-                    >
-                      <div 
-                         className={cn("pb-8", isGridView ? "grid" : "flex flex-col")}
-                         style={{
-                           gap: `${itemGap}px`,
-                           gridTemplateColumns: isGridView 
-                             ? `repeat(auto-fill, minmax(${minItemWidth}px, 1fr))` 
-                             : undefined
-                         }}
-                      >
-                        {filteredItems
-                          .filter((item) => item.type === "image")
-                          .map((item) => (
-                            <div key={item.id}>
-                              <MediaItemCard
-                                item={item}
-                                isActive={activeMediaItem?.id === item.id}
-                                onSelect={handleSelectMedia}
-                                onAddToService={handleAddToService}
-                                isInsideService={isInsideService}
-                                isGridView={isGridView}
-                              />
-                            </div>
-                          ))}
-                      </div>
-                      {/* Empty state overlay */}
-                      {imageCount === 0 && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                          <Image className="h-8 w-8" />
-                          <span>No images found</span>
-                        </div>
-                      )}
-                    </div>
-                    <div
-                      className={cn("absolute inset-0 overflow-auto p-3", filter !== "videos" && "hidden")}
-                      data-media-scroll
-                    >
-                      <div 
-                         className={cn("pb-8", isGridView ? "grid" : "flex flex-col")}
-                         style={{
-                           gap: `${itemGap}px`,
-                           gridTemplateColumns: isGridView 
-                             ? `repeat(auto-fill, minmax(${minItemWidth}px, 1fr))` 
-                             : undefined
-                         }}
-                      >
-                        {filteredItems
-                          .filter((item) => item.type === "video")
-                          .map((item) => (
-                            <div key={item.id}>
-                              <MediaItemCard
-                                item={item}
-                                isActive={activeMediaItem?.id === item.id}
-                                onSelect={handleSelectMedia}
-                                onAddToService={handleAddToService}
-                                isInsideService={isInsideService}
-                                isGridView={isGridView}
-                              />
-                            </div>
-                          ))}
-                      </div>
-                      {/* Empty state overlay */}
-                      {videoCount === 0 && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                    {visibleMediaItems.length === 0 ? (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                        {filter === "videos" ? (
                           <Video className="h-8 w-8" />
-                          <span>No videos found</span>
-                        </div>
-                      )}
-                    </div>
-                  </>
+                        ) : (
+                          <Image className="h-8 w-8" />
+                        )}
+                        <span>
+                          {filter === "images"
+                            ? "No images found"
+                            : filter === "videos"
+                              ? "No videos found"
+                              : "No items found"}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
                 )}
               </div>
 
@@ -812,6 +837,69 @@ export const MediaPanel = memo(
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>
+
+        {renameMediaTarget ? (
+          <AlertDialog
+            open={!!renameMediaTarget}
+            onOpenChange={(open) => {
+              if (!open) {
+                setRenameMediaTarget(null);
+                setRenameMediaName("");
+              }
+            }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Rename media</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Rename this file in its media folder.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <Input
+                value={renameMediaName}
+                onChange={(event) => setRenameMediaName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void handleConfirmRenameMedia();
+                  }
+                }}
+                autoFocus
+              />
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleConfirmRenameMedia}>
+                  Save
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
+
+        <AlertDialog
+          open={!!mediaToRemove}
+          onOpenChange={(open) => {
+            if (!open) setMediaToRemove(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove media file?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This deletes &quot;{mediaToRemove?.name}&quot; from disk and
+                removes it from any services that use it.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleConfirmRemoveMedia}
+                className="bg-destructive text-white hover:bg-destructive/90"
+              >
+                Remove
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Remove folder confirmation dialog */}
         <AlertDialog

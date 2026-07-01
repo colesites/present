@@ -182,6 +182,7 @@ export function normalizeLibrarySlide(
     label: cleanOptionalText(slide.label),
     labelColor: cleanOptionalText(slide.labelColor),
     modifier: cleanOptionalText(slide.modifier),
+    sectionRepeat: cleanOptionalText(slide.sectionRepeat),
     backgroundId: cleanOptionalText(slide.backgroundId),
     backgroundColor: cleanOptionalText(slide.backgroundColor),
     useBackgroundColor: Boolean(slide.useBackgroundColor),
@@ -292,11 +293,12 @@ export function slidesToBody(slides: LibrarySlide[]): string {
     const lines: string[] = [];
     const label = cleanOptionalText(slide.label);
     const modifier = cleanOptionalText(slide.modifier);
+    const sectionRepeat = cleanOptionalText(slide.sectionRepeat);
 
-    // Always emit label WITHOUT modifier in the bracket header.
-    // Modifiers are per-slide inline annotations and must stay in the text.
+    // Section repeat belongs to the bracket header. Per-slide modifiers stay
+    // inline in square brackets so parentheses remain normal lyric text.
     if (label) {
-      lines.push(`[${label}]`);
+      lines.push(`[${[label, sectionRepeat].filter(Boolean).join(" ")}]`);
     }
 
     const primaryTextElement =
@@ -311,8 +313,6 @@ export function slidesToBody(slides: LibrarySlide[]): string {
       );
     let slideText = (primaryTextElement?.content ?? slide.text).trim();
 
-    // Append modifier as inline bracket at the end of the first line
-    // so round-tripping through parseLyricsToSlides preserves it correctly.
     if (modifier && !slideText.includes(`[${modifier}]`)) {
       const textLines = slideText.split("\n");
       textLines[0] = `${textLines[0]} [${modifier}]`;
@@ -348,6 +348,7 @@ export function normalizeLibraryItem(
         ...slide,
         label: freshParsed[i]?.label ?? slide.label,
         modifier: freshParsed[i]?.modifier,
+        sectionRepeat: freshParsed[i]?.sectionRepeat,
       }));
     }
   }
@@ -484,6 +485,8 @@ export function createComposedLibraryDraft(
                 selection && selection.length > 0
                   ? selection.length
                   : item.slides.length,
+              slideIndexes:
+                selection && selection.length > 0 ? selection : undefined,
             };
           }),
           createdAt: Date.now(),

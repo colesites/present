@@ -7,6 +7,8 @@ import {
   useImperativeHandle,
   useRef,
   useMemo,
+  useCallback,
+  useId,
 } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { LibraryItem, Category, ContentSource, LibraryItemDraft } from "../../shared/types";
@@ -47,6 +49,7 @@ import {
   Music2,
   BookOpenText,
   FileText,
+  NotebookPen,
   Pencil,
   Plus,
   Trash2,
@@ -67,6 +70,7 @@ import {
 
 interface LibrariesPanelProps {
   libraryItems: LibraryItem[];
+  composeLibraryItems: LibraryItem[];
   categories: Category[];
   selectedLibraryId: string | null;
   selectedCategoryId: string | null;
@@ -93,9 +97,21 @@ interface LibrariesPanelProps {
     categoryId?: string,
     slideSelections?: Record<string, number[]>,
   ) => Promise<unknown>;
-  onRenameLibraryItem: (id: string, title: string) => Promise<void>;
+  onUpdateComposedLibraryItem: (
+    itemId: string,
+    title: string,
+    itemIds: string[],
+    categoryId?: string,
+    slideSelections?: Record<string, number[]>,
+  ) => Promise<unknown>;
+  onRenameLibraryItem: (
+    id: string,
+    title: string,
+    categoryId?: string,
+  ) => Promise<void>;
   onDeleteLibraryItem: (id: string) => Promise<void>;
   onAddToService: (libraryId: string) => void;
+  onOpenMiniEditor: (libraryId: string) => void;
   onCreateCategory: (name: string) => Promise<unknown>;
   onFixLyrics: (lyrics: string) => Promise<string>;
   searchQuery: string;
@@ -111,10 +127,13 @@ export interface LibrariesPanelRef {
   focusSearch: () => void;
 }
 
+const normalizedCategoryKey = (name: string) => name.trim().toLowerCase();
+
 export const LibrariesPanel = memo(
   forwardRef<LibrariesPanelRef, LibrariesPanelProps>(function LibrariesPanel(
     {
       libraryItems,
+      composeLibraryItems,
       categories,
       selectedLibraryId,
       selectedCategoryId,
@@ -126,9 +145,11 @@ export const LibrariesPanel = memo(
       onNewLibraryItem,
       onCreateLibraryItemFromDraft,
       onCreateComposedLibraryItem,
+      onUpdateComposedLibraryItem,
       onRenameLibraryItem,
       onDeleteLibraryItem,
       onAddToService,
+      onOpenMiniEditor,
       onCreateCategory,
       searchQuery,
       onSearchChange,
@@ -142,9 +163,13 @@ export const LibrariesPanel = memo(
   ) {
     const [showNewCategoryDialog, setShowNewCategoryDialog] = useState(false);
     const [showComposeDialog, setShowComposeDialog] = useState(false);
+    const [composeEditTarget, setComposeEditTarget] = useState<LibraryItem | null>(
+      null,
+    );
     const [renameTarget, setRenameTarget] = useState<{
       id: string;
       title: string;
+      categoryId?: string;
     } | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<{
       id: string;
@@ -186,10 +211,46 @@ export const LibrariesPanel = memo(
       focusSearch: () => searchInputRef.current?.focus(),
     }));
 
+    const { visibleCategories, canonicalCategoryIdById } = useMemo(() => {
+      const byName = new Map<string, Category>();
+      const canonicalById = new Map<string, string>();
+
+      for (const category of categories) {
+        const key = normalizedCategoryKey(category.name);
+        const existing = byName.get(key);
+        const canonical = existing ?? category;
+
+        if (!existing) {
+          byName.set(key, category);
+        }
+
+        canonicalById.set(String(category._id), String(canonical._id));
+      }
+
+      return {
+        visibleCategories: Array.from(byName.values()),
+        canonicalCategoryIdById: canonicalById,
+      };
+    }, [categories]);
+
+    const resolveCategoryId = useCallback((categoryId: unknown) => {
+      if (!categoryId) {
+        return null;
+      }
+      const id = String(categoryId);
+      return canonicalCategoryIdById.get(id) ?? id;
+    }, [canonicalCategoryIdById]);
+
+    const activeCategoryId = selectedCategoryId
+      ? resolveCategoryId(selectedCategoryId)
+      : null;
+
     // Filter library items by category
     const filteredItems = useMemo(() => {
-      let result = selectedCategoryId
-        ? libraryItems.filter((s) => s.categoryId === selectedCategoryId)
+      let result = activeCategoryId
+        ? libraryItems.filter(
+            (s) => resolveCategoryId(s.categoryId) === activeCategoryId,
+          )
         : libraryItems;
 
       if (!searchQuery.trim()) {
@@ -207,7 +268,14 @@ export const LibrariesPanel = memo(
       }
 
       return result;
-    }, [libraryItems, searchQuery, selectedCategoryId, sortBy, sortOrder]);
+    }, [
+      activeCategoryId,
+      libraryItems,
+      resolveCategoryId,
+      searchQuery,
+      sortBy,
+      sortOrder,
+    ]);
 
     const hasActiveSearch = searchQuery.trim().length > 0;
 
@@ -244,7 +312,13 @@ export const LibrariesPanel = memo(
 
       try {
         const categoryNameById = new Map(
-          categories.map((category) => [String(category._id), category.name]),
+          categories.map((category) => [
+            String(category._id),
+            visibleCategories.find(
+              (visibleCategory) =>
+                String(visibleCategory._id) === resolveCategoryId(category._id),
+            )?.name ?? category.name,
+          ]),
         );
         const result = await window.electronAPI.exportLibraryBundle(
           destinationPath,
@@ -283,7 +357,10 @@ export const LibrariesPanel = memo(
       try {
         const imported = await window.electronAPI.importLibraryBundle(selectedFolder.path);
         const categoryIdByName = new Map(
-          categories.map((category) => [category.name.trim().toLowerCase(), String(category._id)]),
+          visibleCategories.map((category) => [
+            normalizedCategoryKey(category.name),
+            String(category._id),
+          ]),
         );
 
         let importedCount = 0;
@@ -294,11 +371,12 @@ export const LibrariesPanel = memo(
           }
 
           let categoryId: string | undefined;
-          const normalizedCategoryName = item.categoryName?.trim().toLowerCase();
-          if (normalizedCategoryName) {
+          const categoryName = item.categoryName?.trim();
+          if (categoryName) {
+            const normalizedCategoryName = normalizedCategoryKey(categoryName);
             categoryId = categoryIdByName.get(normalizedCategoryName);
             if (!categoryId) {
-              const created = await onCreateCategory(item.categoryName!.trim());
+              const created = await onCreateCategory(categoryName);
               if (typeof created === "string") {
                 categoryId = created;
                 categoryIdByName.set(normalizedCategoryName, created);
@@ -396,14 +474,17 @@ export const LibrariesPanel = memo(
               </span>
             </button>
 
-            {categories.map((cat) => {
-              const count = libraryItems.filter(item => item.categoryId === cat._id).length;
-              const isActive = selectedCategoryId === cat._id;
+            {visibleCategories.map((cat) => {
+              const categoryId = String(cat._id);
+              const count = libraryItems.filter(
+                (item) => resolveCategoryId(item.categoryId) === categoryId,
+              ).length;
+              const isActive = activeCategoryId === categoryId;
               return (
                 <button
-                  key={cat._id}
+                  key={categoryId}
                   type="button"
-                  onClick={() => onSelectCategory(cat._id)}
+                  onClick={() => onSelectCategory(categoryId)}
                   className={cn(
                     "group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs transition",
                     isActive
@@ -574,7 +655,10 @@ export const LibrariesPanel = memo(
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button className="flex h-10 w-10 items-center justify-center rounded-xl border border-input bg-background text-muted-foreground shadow-sm transition hover:bg-secondary">
+                    <button
+                      type="button"
+                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-input bg-background text-muted-foreground shadow-sm transition hover:bg-secondary"
+                    >
                       <ArrowUpDown className="h-4 w-4" />
                     </button>
                   </DropdownMenuTrigger>
@@ -696,7 +780,20 @@ export const LibrariesPanel = memo(
                     showAddToService={isInsideService && !!selectedServiceId}
                     onSelect={() => onSelectLibraryItem(item._id)}
                     onRename={() =>
-                      setRenameTarget({ id: item._id, title: item.title })
+                      setRenameTarget({
+                        id: item._id,
+                        title: item.title,
+                        categoryId: resolveCategoryId(item.categoryId) ?? undefined,
+                      })
+                    }
+                    onOpenMiniEditor={() => onOpenMiniEditor(String(item._id))}
+                    onEditFlow={
+                      item.content?.composition
+                        ? () => {
+                            setComposeEditTarget(item);
+                            setShowComposeDialog(true);
+                          }
+                        : undefined
                     }
                     onDelete={() =>
                       setDeleteTarget({ id: item._id, title: item.title })
@@ -716,7 +813,20 @@ export const LibrariesPanel = memo(
                     showAddToService={isInsideService && !!selectedServiceId}
                     onSelect={() => onSelectLibraryItem(item._id)}
                     onRename={() =>
-                      setRenameTarget({ id: item._id, title: item.title })
+                      setRenameTarget({
+                        id: item._id,
+                        title: item.title,
+                        categoryId: resolveCategoryId(item.categoryId) ?? undefined,
+                      })
+                    }
+                    onOpenMiniEditor={() => onOpenMiniEditor(String(item._id))}
+                    onEditFlow={
+                      item.content?.composition
+                        ? () => {
+                            setComposeEditTarget(item);
+                            setShowComposeDialog(true);
+                          }
+                        : undefined
                     }
                     onDelete={() =>
                       setDeleteTarget({ id: item._id, title: item.title })
@@ -741,9 +851,14 @@ export const LibrariesPanel = memo(
         {showComposeDialog && (
           <ComposeLibrariesDialog
             libraryItems={libraryItems}
-            categories={categories}
-            categoryId={selectedCategoryId}
-            onClose={() => setShowComposeDialog(false)}
+            composeLibraryItems={composeLibraryItems}
+            categories={visibleCategories}
+            categoryId={activeCategoryId}
+            editItem={composeEditTarget}
+            onClose={() => {
+              setShowComposeDialog(false);
+              setComposeEditTarget(null);
+            }}
             onCreate={async (title, itemIds, categoryId, slideSelections) => {
               await onCreateComposedLibraryItem(
                 title,
@@ -752,16 +867,30 @@ export const LibrariesPanel = memo(
                 slideSelections,
               );
               setShowComposeDialog(false);
+              setComposeEditTarget(null);
+            }}
+            onUpdate={async (itemId, title, itemIds, categoryId, slideSelections) => {
+              await onUpdateComposedLibraryItem(
+                itemId,
+                title,
+                itemIds,
+                categoryId,
+                slideSelections,
+              );
+              setShowComposeDialog(false);
+              setComposeEditTarget(null);
             }}
           />
         )}
 
         {renameTarget && (
-          <RenameLibraryItemDialog
+          <EditLibraryItemDialog
             title={renameTarget.title}
+            categoryId={renameTarget.categoryId}
+            categories={visibleCategories}
             onClose={() => setRenameTarget(null)}
-            onSave={(newTitle) => {
-              onRenameLibraryItem(renameTarget.id, newTitle);
+            onSave={(newTitle, categoryId) => {
+              void onRenameLibraryItem(renameTarget.id, newTitle, categoryId);
               setRenameTarget(null);
             }}
           />
@@ -829,6 +958,8 @@ interface LibraryItemCardProps {
   showAddToService: boolean;
   onSelect: () => void;
   onRename: () => void;
+  onOpenMiniEditor: () => void;
+  onEditFlow?: () => void;
   onDelete: () => void;
   onAddToService: () => void;
 }
@@ -839,6 +970,8 @@ const LibraryItemCard = memo(function LibraryItemCard({
   showAddToService,
   onSelect,
   onRename,
+  onOpenMiniEditor,
+  onEditFlow,
   onDelete,
   onAddToService,
 }: LibraryItemCardProps) {
@@ -878,6 +1011,32 @@ const LibraryItemCard = memo(function LibraryItemCard({
       </button>
 
       <div className="absolute right-2 top-2 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
+        <button
+          type="button"
+          aria-label="Open mini editor"
+          title="Open mini editor"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenMiniEditor();
+          }}
+          className="rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+        >
+          <NotebookPen className="h-3 w-3" />
+        </button>
+        {onEditFlow ? (
+          <button
+            type="button"
+            aria-label="Edit flow"
+            title="Edit flow"
+            onClick={(event) => {
+              event.stopPropagation();
+              onEditFlow();
+            }}
+            className="rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+          >
+            <Layers3 className="h-3 w-3" />
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label="Rename library item"
@@ -946,6 +1105,8 @@ const LibraryItemRow = memo(function LibraryItemRow({
   showAddToService,
   onSelect,
   onRename,
+  onOpenMiniEditor,
+  onEditFlow,
   onDelete,
   onAddToService,
 }: LibraryItemCardProps) {
@@ -993,6 +1154,26 @@ const LibraryItemRow = memo(function LibraryItemRow({
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
         <button
           type="button"
+          aria-label="Open mini editor"
+          title="Open mini editor"
+          onClick={onOpenMiniEditor}
+          className="rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+        >
+          <NotebookPen className="h-3.5 w-3.5" />
+        </button>
+        {onEditFlow ? (
+          <button
+            type="button"
+            aria-label="Edit flow"
+            title="Edit flow"
+            onClick={onEditFlow}
+            className="rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+          >
+            <Layers3 className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+        <button
+          type="button"
           aria-label="Rename library item"
           onClick={onRename}
           className="rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
@@ -1026,16 +1207,28 @@ const LibraryItemRow = memo(function LibraryItemRow({
  */
 function ComposeLibrariesDialog({
   libraryItems,
+  composeLibraryItems,
   categories,
   categoryId,
+  editItem,
   onClose,
   onCreate,
+  onUpdate,
 }: {
   libraryItems: LibraryItem[];
+  composeLibraryItems: LibraryItem[];
   categories: Category[];
   categoryId: string | null;
+  editItem?: LibraryItem | null;
   onClose: () => void;
   onCreate: (
+    title: string,
+    itemIds: string[],
+    categoryId?: string,
+    slideSelections?: Record<string, number[]>,
+  ) => Promise<unknown>;
+  onUpdate: (
+    itemId: string,
     title: string,
     itemIds: string[],
     categoryId?: string,
@@ -1050,19 +1243,41 @@ function ComposeLibrariesDialog({
   };
 
   const itemsById = useMemo(
-    () => new Map(libraryItems.map((item) => [String(item._id), item])),
-    [libraryItems],
+    () => new Map(composeLibraryItems.map((item) => [String(item._id), item])),
+    [composeLibraryItems],
+  );
+  const initialPicked = useMemo<SongSelection[]>(
+    () => {
+      const editableSources = editItem?.content?.composition?.sourceItems ?? [];
+      return editableSources
+        .map((source) => {
+          const item = itemsById.get(String(source.libraryId));
+          if (!item) return null;
+          const slideIndexes =
+            Array.isArray(source.slideIndexes) && source.slideIndexes.length > 0
+              ? source.slideIndexes.filter(
+                  (index) => index >= 0 && index < item.slides.length,
+                )
+              : item.slides.map((_, index) => index);
+          return {
+            libraryId: String(source.libraryId),
+            slideIndexes,
+          };
+        })
+        .filter((entry): entry is SongSelection => entry !== null);
+    },
+    [editItem, itemsById],
   );
 
-  const [step, setStep] = useState<Step>("pick");
+  const [step, setStep] = useState<Step>(editItem ? "arrange" : "pick");
   const [search, setSearch] = useState("");
-  const [picked, setPicked] = useState<SongSelection[]>([]);
+  const [picked, setPicked] = useState<SongSelection[]>(initialPicked);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [hasManualTitle, setHasManualTitle] = useState(false);
+  const [title, setTitle] = useState(editItem?.title ?? "");
+  const [hasManualTitle, setHasManualTitle] = useState(Boolean(editItem));
   const [targetCategoryId, setTargetCategoryId] = useState<string>(
-    categoryId ?? categories[0]?._id ?? "",
+    String(editItem?.categoryId ?? categoryId ?? categories[0]?._id ?? ""),
   );
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1074,14 +1289,14 @@ function ComposeLibrariesDialog({
 
   const searchResults = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const available = libraryItems.filter(
+    const available = composeLibraryItems.filter(
       (item) => !pickedIds.has(String(item._id)),
     );
     if (!query) return available;
     return available.filter((item) =>
       item.title.toLowerCase().includes(query),
     );
-  }, [libraryItems, pickedIds, search]);
+  }, [composeLibraryItems, pickedIds, search]);
 
   // Keep the title in sync with the picked songs until the user types
   // something themselves — then leave it alone.
@@ -1148,7 +1363,7 @@ function ComposeLibrariesDialog({
     0,
   );
 
-  const handleCreate = async () => {
+  const handleSave = async () => {
     if (picked.length < 1) {
       setError("Add at least one song");
       return;
@@ -1169,17 +1384,29 @@ function ComposeLibrariesDialog({
       for (const p of picked) {
         slideSelections[p.libraryId] = p.slideIndexes;
       }
-      await onCreate(
-        title.trim(),
-        picked.map((p) => p.libraryId),
-        targetCategoryId || undefined,
-        slideSelections,
-      );
+      if (editItem) {
+        await onUpdate(
+          String(editItem._id),
+          title.trim(),
+          picked.map((p) => p.libraryId),
+          targetCategoryId || undefined,
+          slideSelections,
+        );
+      } else {
+        await onCreate(
+          title.trim(),
+          picked.map((p) => p.libraryId),
+          targetCategoryId || undefined,
+          slideSelections,
+        );
+      }
     } catch (createError) {
       setError(
         createError instanceof Error
           ? createError.message
-          : "Failed to create flow",
+          : editItem
+            ? "Failed to update flow"
+            : "Failed to create flow",
       );
       setIsCreating(false);
       return;
@@ -1191,8 +1418,12 @@ function ComposeLibrariesDialog({
     <Dialog
       title={
         step === "pick"
-          ? "Create flow — pick songs"
-          : "Create flow — arrange slides"
+          ? editItem
+            ? "Edit flow — pick songs"
+            : "Create flow — pick songs"
+          : editItem
+            ? "Edit flow — arrange slides"
+            : "Create flow — arrange slides"
       }
       onClose={onClose}
     >
@@ -1203,7 +1434,7 @@ function ComposeLibrariesDialog({
           results={searchResults}
           picked={picked}
           itemsById={itemsById}
-          totalCount={libraryItems.length}
+          totalCount={composeLibraryItems.length}
           onAdd={addSong}
           onRemove={removeSong}
           onMove={moveSong}
@@ -1239,8 +1470,9 @@ function ComposeLibrariesDialog({
           setTargetCategoryId={setTargetCategoryId}
           categories={categories}
           onBack={() => setStep("pick")}
-          onCreate={handleCreate}
+          onCreate={handleSave}
           isCreating={isCreating}
+          isEditing={Boolean(editItem)}
           error={error}
           totalSlides={totalSlides}
         />
@@ -1421,6 +1653,7 @@ function ArrangeStep({
   onBack,
   onCreate,
   isCreating,
+  isEditing,
   error,
   totalSlides,
 }: {
@@ -1442,17 +1675,25 @@ function ArrangeStep({
   onBack: () => void;
   onCreate: () => void;
   isCreating: boolean;
+  isEditing: boolean;
   error: string | null;
   totalSlides: number;
 }) {
+  const titleInputId = useId();
+  const categoryInputId = useId();
+
   return (
     <div className="flex max-h-[78vh] flex-col gap-3">
       <div className="grid grid-cols-1 gap-2 md:grid-cols-[1.4fr_1fr]">
         <div className="space-y-1">
-          <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <label
+            htmlFor={titleInputId}
+            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+          >
             Flow title
           </label>
           <input
+            id={titleInputId}
             value={title}
             onChange={(event) => onTitleChange(event.target.value)}
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:border-primary focus:outline-none"
@@ -1460,11 +1701,17 @@ function ArrangeStep({
           />
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <label
+            htmlFor={categoryInputId}
+            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+          >
             Save to library
           </label>
           <Select value={targetCategoryId} onValueChange={setTargetCategoryId}>
-            <SelectTrigger className="h-9 w-full border border-input bg-background px-3 text-sm text-foreground focus-visible:border-primary focus-visible:ring-0">
+            <SelectTrigger
+              id={categoryInputId}
+              className="h-9 w-full border border-input bg-background px-3 text-sm text-foreground focus-visible:border-primary focus-visible:ring-0"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1597,7 +1844,13 @@ function ArrangeStep({
           disabled={isCreating}
           className="rounded-md bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          {isCreating ? "Creating…" : "Create flow"}
+          {isCreating
+            ? isEditing
+              ? "Saving..."
+              : "Creating..."
+            : isEditing
+              ? "Save flow"
+              : "Create flow"}
         </button>
       </div>
     </div>
@@ -1736,27 +1989,81 @@ function NewCategoryDialog({
   );
 }
 
-function RenameLibraryItemDialog({
+const ALL_CATEGORY_VALUE = "__all__";
+
+function EditLibraryItemDialog({
   title,
+  categoryId,
+  categories,
   onClose,
   onSave,
 }: {
   title: string;
+  categoryId?: string;
+  categories: Category[];
   onClose: () => void;
-  onSave: (newTitle: string) => void;
+  onSave: (newTitle: string, categoryId?: string) => void;
 }) {
   const [newTitle, setNewTitle] = useState(title);
+  const [selectedCategoryId, setSelectedCategoryId] = useState(
+    categoryId ?? ALL_CATEGORY_VALUE,
+  );
+  const titleInputId = "edit-library-item-title";
+  const categoryInputId = "edit-library-item-category";
+  const handleSave = () => {
+    onSave(
+      newTitle,
+      selectedCategoryId === ALL_CATEGORY_VALUE
+        ? undefined
+        : selectedCategoryId,
+    );
+  };
 
   return (
-    <Dialog title="Rename library item" onClose={onClose}>
+    <Dialog title="Edit library item" onClose={onClose}>
       <div className="space-y-3">
-        <input
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
-          autoFocus
-          onKeyDown={(e) => e.key === "Enter" && onSave(newTitle)}
-        />
+        <div className="space-y-1.5">
+          <label
+            htmlFor={titleInputId}
+            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+          >
+            Name
+          </label>
+          <input
+            id={titleInputId}
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+            autoFocus
+            onKeyDown={(e) => e.key === "Enter" && handleSave()}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label
+            htmlFor={categoryInputId}
+            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+          >
+            Category
+          </label>
+          <Select
+            value={selectedCategoryId}
+            onValueChange={setSelectedCategoryId}
+          >
+            <SelectTrigger id={categoryInputId} className="h-9 w-full">
+              <SelectValue placeholder="Choose category" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_CATEGORY_VALUE}>
+                All
+              </SelectItem>
+              {categories.map((cat) => (
+                <SelectItem key={String(cat._id)} value={String(cat._id)}>
+                  {cat.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="flex gap-2">
           <button
             type="button"
@@ -1767,7 +2074,7 @@ function RenameLibraryItemDialog({
           </button>
           <button
             type="button"
-            onClick={() => onSave(newTitle)}
+            onClick={handleSave}
             className="flex-1 rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
           >
             Save

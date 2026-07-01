@@ -8,6 +8,7 @@ export type MediaItem = {
   name: string;
   type: "image" | "video";
   url: string; // local-media:// protocol URL
+  path: string;
   folderId: string;
   lastModified: number;
 };
@@ -147,6 +148,12 @@ function getMediaType(fileName: string): "image" | "video" | null {
   return null;
 }
 
+const createMediaId = (folderId: string, fileName: string) =>
+  `${folderId}-${fileName}`;
+
+const createMediaUrl = (filePath: string) =>
+  `local-media://media${encodeURI(filePath)}`;
+
 export function filtersToCSS(filters: MediaFilters): string {
   const parts: string[] = [];
   if (filters.brightness !== 100)
@@ -245,10 +252,11 @@ export function useMediaFolders() {
             if (mediaType) {
               const fullPath = `${folder.path}/${file.name}`;
                 items.push({
-                  id: `${folder.id}-${file.name}`,
+                  id: createMediaId(folder.id, file.name),
                   name: file.name,
                   type: mediaType,
-                  url: `local-media://media${encodeURI(fullPath)}`,
+                  url: createMediaUrl(fullPath),
+                  path: fullPath,
                   folderId: folder.id,
                   lastModified: file.lastModified || 0,
                 });
@@ -454,6 +462,39 @@ export function useMediaFolders() {
     }
   }, [folders]);
 
+  const renameMediaItem = useCallback(
+    async (item: MediaItem, newName: string) => {
+      const mediaType = getMediaType(newName) ?? item.type;
+      const result = await window.electronAPI.renameMediaFile(item.path, newName);
+      const nextItem: MediaItem = {
+        ...item,
+        id: createMediaId(item.folderId, result.name),
+        name: result.name,
+        type: mediaType,
+        path: result.path,
+        url: createMediaUrl(result.path),
+        lastModified: Date.now(),
+      };
+
+      setAllMediaItems((prev) =>
+        prev.map((current) => (current.id === item.id ? nextItem : current)),
+      );
+      setActiveMediaItem((current) =>
+        current?.id === item.id ? nextItem : current,
+      );
+      return nextItem;
+    },
+    [],
+  );
+
+  const deleteMediaItem = useCallback(async (item: MediaItem) => {
+    await window.electronAPI.deleteMediaFile(item.path);
+    setAllMediaItems((prev) =>
+      prev.filter((current) => current.id !== item.id),
+    );
+    setActiveMediaItem((current) => (current?.id === item.id ? null : current));
+  }, []);
+
   return {
     folders,
     mediaItems,
@@ -477,5 +518,7 @@ export function useMediaFolders() {
     addMediaFile,
     createFolder,
     renameFolder,
+    renameMediaItem,
+    deleteMediaItem,
   };
 }

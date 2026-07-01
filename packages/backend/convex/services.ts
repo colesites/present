@@ -58,6 +58,15 @@ export const create = mutation({
     workspaceId: v.optional(v.string()),
     name: v.string(),
     date: v.optional(v.string()),
+    groups: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          name: v.string(),
+          order: v.number(),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const workspace = await validateWorkspace(ctx, args.workspaceId);
@@ -75,6 +84,7 @@ export const create = mutation({
         name: args.name,
         date: args.date,
         order: maxOrder + 1,
+        groups: args.groups ?? [],
         items: [],
         createdAt: now,
       });
@@ -90,6 +100,7 @@ export const create = mutation({
         name: args.name,
         date: args.date,
         order: maxOrder + 1,
+        groups: args.groups ?? [],
         items: [],
         createdAt: now,
       });
@@ -106,9 +117,11 @@ export const addItem = mutation({
       v.literal("media"),
       v.literal("scripture"),
       v.literal("presentation"),
+      v.literal("group"),
     ),
     refId: v.string(),
     label: v.optional(v.string()),
+    groupId: v.optional(v.union(v.string(), v.null())),
     presentation: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -140,7 +153,8 @@ export const addItem = mutation({
     const newItem = {
       type: args.type,
       refId: args.refId,
-      label: args.label,
+      label: args.type === "group" ? (args.label ?? "Group") : args.label,
+      groupId: args.groupId ?? undefined,
       presentation: args.type === "presentation" ? normalizedPresentation : undefined,
       addedAt: Date.now(),
     };
@@ -180,6 +194,15 @@ export const update = mutation({
     serviceId: v.string(),
     name: v.optional(v.string()),
     date: v.optional(v.string()),
+    groups: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          name: v.string(),
+          order: v.number(),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const workspace = await validateWorkspace(ctx, args.workspaceId);
@@ -195,6 +218,7 @@ export const update = mutation({
     const updates: any = {};
     if (args.name !== undefined) updates.name = args.name;
     if (args.date !== undefined) updates.date = args.date;
+    if (args.groups !== undefined) updates.groups = args.groups;
 
     await ctx.db.patch(serviceId, updates);
     return serviceId;
@@ -307,7 +331,12 @@ export const removeMediaForFolder = mutation({
 
       for (const service of services) {
         const remainingItems = service.items.filter(
-          (item) => !(item.type === "media" && item.refId.startsWith(`${args.folderId}:`))
+          (item) =>
+            !(
+              item.type === "media" &&
+              (item.refId.startsWith(`${args.folderId}-`) ||
+                item.refId.startsWith(`${args.folderId}:`))
+            )
         );
         if (remainingItems.length !== service.items.length) {
           await ctx.db.patch(service._id, { items: remainingItems });
@@ -321,7 +350,12 @@ export const removeMediaForFolder = mutation({
 
       for (const service of services) {
         const remainingItems = service.items.filter(
-          (item) => !(item.type === "media" && item.refId.startsWith(`${args.folderId}:`))
+          (item) =>
+            !(
+              item.type === "media" &&
+              (item.refId.startsWith(`${args.folderId}-`) ||
+                item.refId.startsWith(`${args.folderId}:`))
+            )
         );
         if (remainingItems.length !== service.items.length) {
           await ctx.db.patch(service._id, { items: remainingItems });

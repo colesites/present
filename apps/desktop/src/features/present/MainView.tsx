@@ -43,6 +43,7 @@ import type { LibrarySearchMode } from "../library/hooks";
 import { MediaPanel } from "../media";
 import type { UseTimersResult } from "../../renderer/shared/hooks";
 import { fixLyrics } from "../../renderer/shared/lib/lyrics";
+import type { ServiceTemplate } from "../services/hooks/useServices";
 import { ScriptureSlide } from "../../features/scripture/lib/slides";
 import type { MediaPanelRef } from "../media/MediaPanel";
 import type { ScripturePanelRef } from "../scripture/components/ScripturePanel";
@@ -53,6 +54,8 @@ export interface MainViewPresentState {
   activeSlideId: string | null;
   outputActiveSlideId: string | null;
   selected: { libraryId: string | null; index: number } | null;
+  isGridView: boolean;
+  setIsGridView: (isGridView: boolean) => void;
   selectedLibraryItem: LibraryItem | null;
   scriptureEditorItem: LibraryItem | null;
   selectedLibraryId: string | null;
@@ -63,6 +66,7 @@ export interface MainViewPresentState {
     footer?: string
   ) => Promise<void>;
   handleEditSlide: (libraryId: string, slideIndex: number) => void;
+  handleOpenMiniEditorForSlide: (libraryId: string, slideIndex: number) => void;
   handleSaveLibraryItem: (draft: LibraryItemDraft) => Promise<void>;
   handleSaveScriptureEditor: (draft: LibraryItemDraft) => Promise<void>;
   handleUpdateEditedSlideOutput: EditorUpdateOutputHandler;
@@ -106,6 +110,11 @@ export interface MainViewMediaState {
     mediaId: string,
     mediaName: string
   ) => Promise<void>;
+  handleRenameMediaInServices: (
+    oldMediaId: string,
+    nextMedia: { id: string; name: string },
+  ) => Promise<void>;
+  handleRemoveMediaFromServices: (mediaId: string) => Promise<void>;
   updateVideoSettings: (s: Partial<VideoSettings>) => void | Promise<void>;
   showMediaInOutput: boolean;
   setShowMediaInOutput: (show: boolean) => void;
@@ -118,6 +127,7 @@ export interface MainViewMediaState {
 }
 
 export interface MainViewLibraryState {
+  libraryItems: LibraryItem[];
   filteredLibraryItems: LibraryItem[];
   libraryLoading: boolean;
   categories: Category[];
@@ -139,13 +149,22 @@ export interface MainViewLibraryState {
     categoryId?: string,
     slideSelections?: Record<string, number[]>,
   ) => Promise<void>;
+  updateComposedLibraryItem: (
+    itemId: string,
+    title: string,
+    itemIds: string[],
+    categoryId?: string,
+    slideSelections?: Record<string, number[]>,
+  ) => Promise<void>;
   handleRenameLibraryItem: (
     libraryId: string,
-    newTitle: string
+    newTitle: string,
+    categoryId?: string,
   ) => Promise<void>;
   deleteLibraryItem: (libraryId: string) => Promise<void>;
   handleAddToService: (libraryId: string) => Promise<void>;
-  createNewCategory: (name: string) => Promise<void>;
+  onOpenMiniEditor: (libraryId: string) => void;
+  createNewCategory: (name: string) => Promise<unknown>;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   searchMode: LibrarySearchMode;
@@ -229,6 +248,8 @@ interface MainViewProps {
   viewMode: ViewMode;
   bottomTab: BottomTab;
   orgId: Id<"organizations"> | undefined;
+  localOrgId: Id<"organizations"> | null;
+  userId: string | null;
 
   servicesSidebarProps: {
     services: Service[];
@@ -237,13 +258,47 @@ interface MainViewProps {
     isInsideService: boolean;
     selectedService: Service | null;
     serviceItems: ServiceItem[];
-    serviceItemIndex: number;
+    serviceGroups: Service["groups"];
+    serviceTemplates: ServiceTemplate[];
+    selectedServiceTemplateId: string | null;
+    templateLibraryItems: LibraryItem[];
+    templateMediaItems: MediaItem[];
+    serviceItemIndex: number | null;
+    selectedServiceGroupId: string | null;
     onEnterService: (serviceId: Id<"services">) => void;
     onExitService: () => void;
     onSelectServiceItem: (index: number) => void;
+    onSelectServiceGroup: (groupId: string | null) => void;
     onDoubleClickServiceItem: (index: number) => void;
+    onOpenMiniEditor: (libraryId: string) => void;
     onRemoveFromService: (index: number) => Promise<void>;
-    onCreateService: (name: string) => Promise<void>;
+    onAddGroupToService: (label: string) => Promise<void>;
+    onRenameServiceGroup: (groupId: string, label: string) => Promise<void>;
+    onDeleteServiceGroup: (groupId: string) => Promise<void>;
+    onMoveServiceItemToGroup: (index: number, groupId: string | null) => Promise<void>;
+    onRenameServiceItem: (index: number, label: string) => Promise<void>;
+    onSelectServiceTemplate: (templateId: string | null) => void;
+    onCreateServiceTemplate: (name: string) => string | null;
+    onRenameServiceTemplate: (templateId: string, name: string) => void;
+    onAddGroupToServiceTemplate: (templateId: string, label: string) => string | null;
+    onRenameServiceTemplateGroup: (
+      templateId: string,
+      groupId: string,
+      label: string,
+    ) => void;
+    onDeleteServiceTemplateGroup: (templateId: string, groupId: string) => void;
+    onAddItemToServiceTemplate: (
+      templateId: string,
+      item: Omit<Service["items"][number], "addedAt">,
+    ) => void;
+    onRemoveItemFromServiceTemplate: (templateId: string, index: number) => void;
+    onMoveServiceTemplateItemToGroup: (
+      templateId: string,
+      index: number,
+      groupId: string | null,
+    ) => void;
+    onDeleteServiceTemplate: (templateId: string) => void;
+    onCreateService: (name: string, templateId?: string | null) => Promise<void>;
     onRenameService: (
       serviceId: Id<"services">,
       newName: string
@@ -276,6 +331,8 @@ export function MainView({
   viewMode,
   bottomTab,
   orgId,
+  localOrgId,
+  userId,
   servicesSidebarProps,
   presentState,
   mediaState,
@@ -320,6 +377,8 @@ export function MainView({
     onToggleVideoPlayback,
     handleMediaPanelSelect,
     handleAddMediaToService,
+    handleRenameMediaInServices,
+    handleRemoveMediaFromServices,
     updateVideoSettings,
     showMediaInOutput,
     setShowMediaInOutput,
@@ -336,12 +395,15 @@ export function MainView({
     activeSlideId,
     outputActiveSlideId,
     selected,
+    isGridView,
+    setIsGridView,
     selectedLibraryItem,
     scriptureEditorItem,
     selectedLibraryId,
     setSelectedLibraryId,
     handleSelectSlide,
     handleEditSlide,
+    handleOpenMiniEditorForSlide,
     handleSaveLibraryItem,
     handleSaveScriptureEditor,
     handleUpdateEditedSlideOutput,
@@ -355,6 +417,7 @@ export function MainView({
   } = presentState;
 
   const {
+    libraryItems,
     filteredLibraryItems,
     libraryLoading,
     categories,
@@ -363,9 +426,11 @@ export function MainView({
     createNewLibraryItem,
     createLibraryItemFromDraft,
     createComposedLibraryItem,
+    updateComposedLibraryItem,
     handleRenameLibraryItem,
     deleteLibraryItem,
     handleAddToService,
+    onOpenMiniEditor,
     createNewCategory,
     searchQuery,
     setSearchQuery,
@@ -402,12 +467,35 @@ export function MainView({
     isInsideService,
     selectedService,
     serviceItems,
+    serviceGroups,
+    serviceTemplates,
+    selectedServiceTemplateId,
+    templateLibraryItems,
+    templateMediaItems,
     serviceItemIndex,
+    selectedServiceGroupId,
     onEnterService: enterService,
     onExitService: exitService,
     onSelectServiceItem: handleSelectServiceItem,
+    onSelectServiceGroup: handleSelectServiceGroup,
     onDoubleClickServiceItem: handleDoubleClickServiceItem,
+    onOpenMiniEditor: handleOpenMiniEditorFromService,
     onRemoveFromService: handleRemoveFromService,
+    onAddGroupToService,
+    onRenameServiceGroup,
+    onDeleteServiceGroup,
+    onMoveServiceItemToGroup,
+    onRenameServiceItem,
+    onSelectServiceTemplate,
+    onCreateServiceTemplate,
+    onRenameServiceTemplate,
+    onAddGroupToServiceTemplate,
+    onRenameServiceTemplateGroup,
+    onDeleteServiceTemplateGroup,
+    onAddItemToServiceTemplate,
+    onRemoveItemFromServiceTemplate,
+    onMoveServiceTemplateItemToGroup,
+    onDeleteServiceTemplate,
     onCreateService: createNewService,
     onRenameService: renameExistingService,
     onDeleteService: deleteService,
@@ -465,6 +553,7 @@ export function MainView({
   const showsPanelProps = React.useMemo(
     () => ({
       libraryItems: filteredLibraryItems,
+      composeLibraryItems: libraryItems,
       isLoading: libraryLoading,
       categories,
       selectedLibraryId,
@@ -490,9 +579,11 @@ export function MainView({
       },
       onCreateLibraryItemFromDraft: createLibraryItemFromDraft,
       onCreateComposedLibraryItem: createComposedLibraryItem,
+      onUpdateComposedLibraryItem: updateComposedLibraryItem,
       onRenameLibraryItem: handleRenameLibraryItem,
       onDeleteLibraryItem: deleteLibraryItem,
       onAddToService: handleAddToService,
+      onOpenMiniEditor,
       onCreateCategory: createNewCategory,
       onFixLyrics: fixLyrics,
       searchQuery,
@@ -507,12 +598,16 @@ export function MainView({
       categories,
       contentSource,
       createComposedLibraryItem,
+      updateComposedLibraryItem,
       createLibraryItemFromDraft,
+      libraryItems,
       createNewCategory,
       createNewLibraryItem,
       deleteLibraryItem,
       filteredLibraryItems,
       handleAddToService,
+      onOpenMiniEditor,
+      handleEditSlide,
       handleRenameLibraryItem,
       isInsideService,
       libraryLoading,
@@ -680,12 +775,35 @@ export function MainView({
       isInsideService,
       selectedService,
       serviceItems,
+      serviceGroups,
+      serviceTemplates,
+      selectedServiceTemplateId,
+      templateLibraryItems,
+      templateMediaItems,
       serviceItemIndex,
+      selectedServiceGroupId,
       onEnterService: enterService,
       onExitService: exitService,
       onSelectServiceItem: handleSelectServiceItem,
+      onSelectServiceGroup: handleSelectServiceGroup,
       onDoubleClickServiceItem: handleDoubleClickServiceItem,
+      onOpenMiniEditor: handleOpenMiniEditorFromService,
       onRemoveFromService: handleRemoveFromService,
+      onAddGroupToService,
+      onRenameServiceGroup,
+      onDeleteServiceGroup,
+      onMoveServiceItemToGroup,
+      onRenameServiceItem,
+      onSelectServiceTemplate,
+      onCreateServiceTemplate,
+      onRenameServiceTemplate,
+      onAddGroupToServiceTemplate,
+      onRenameServiceTemplateGroup,
+      onDeleteServiceTemplateGroup,
+      onAddItemToServiceTemplate,
+      onRemoveItemFromServiceTemplate,
+      onMoveServiceTemplateItemToGroup,
+      onDeleteServiceTemplate,
       onCreateService: createNewService,
       onRenameService: renameExistingService,
       onDeleteService: deleteService,
@@ -698,9 +816,26 @@ export function MainView({
       enterService,
       exitService,
       handleDoubleClickServiceItem,
+      handleOpenMiniEditorFromService,
       handleRemoveFromService,
+      onAddGroupToService,
+      onRenameServiceGroup,
+      onDeleteServiceGroup,
+      onMoveServiceItemToGroup,
+      onRenameServiceItem,
+      onSelectServiceTemplate,
+      onCreateServiceTemplate,
+      onRenameServiceTemplate,
+      onAddGroupToServiceTemplate,
+      onRenameServiceTemplateGroup,
+      onDeleteServiceTemplateGroup,
+      onAddItemToServiceTemplate,
+      onRemoveItemFromServiceTemplate,
+      onMoveServiceTemplateItemToGroup,
+      onDeleteServiceTemplate,
       handleReorderServiceItemsSafe,
       handleSelectServiceItem,
+      handleSelectServiceGroup,
       isInsideService,
       renameExistingService,
       reorderServices,
@@ -708,6 +843,12 @@ export function MainView({
       selectedServiceId,
       serviceItemIndex,
       serviceItems,
+      serviceGroups,
+      serviceTemplates,
+      selectedServiceTemplateId,
+      templateLibraryItems,
+      templateMediaItems,
+      selectedServiceGroupId,
       services,
       servicesLoading,
     ],
@@ -739,11 +880,14 @@ export function MainView({
                   slidesForGrid={slidesForGrid}
                   activeSlideId={activeSlideId}
                   selectedIndex={selected?.index ?? null}
+                  isGridView={isGridView}
+                  onGridViewChange={setIsGridView}
                   selectedLibraryItem={selectedLibraryItem}
                   scriptureEditorItem={scriptureEditorItem}
                   selectedLibraryId={selectedLibraryId}
                   onSelectSlide={handleSelectSlide}
                   onEditSlide={handleEditSlide}
+                  onOpenMiniEditor={handleOpenMiniEditorForSlide}
                   onReorderSlides={handleReorderLibrarySlides}
                   editorProps={editorProps}
                   onSaveScriptureEditor={handleSaveScriptureEditor}
@@ -789,6 +933,8 @@ export function MainView({
                   isInsideService={isInsideService}
                   selectedServiceId={selectedServiceId}
                   onAddToService={handleAddMediaToService}
+                  onRenameInServices={handleRenameMediaInServices}
+                  onRemoveFromServices={handleRemoveMediaFromServices}
                   orgId={orgId ?? null}
                 />
               </div>
@@ -815,6 +961,8 @@ export function MainView({
           <ResizablePanel defaultSize="55" minSize="30">
             <SidebarRail
               orgId={orgId ?? null}
+              localOrgId={localOrgId ?? null}
+              userId={userId}
               isTimerLayerEnabled={isTimerLayerEnabled}
               onToggleTimerLayer={handleToggleTimerLayer}
               isTextLayerEnabled={showTextInOutput}
@@ -842,11 +990,14 @@ export function MainView({
         slidesForGrid={slidesForGrid}
         activeSlideId={activeSlideId}
         selectedIndex={selected?.index ?? null}
+        isGridView={isGridView}
+        onGridViewChange={setIsGridView}
         selectedLibraryItem={selectedLibraryItem}
         scriptureEditorItem={scriptureEditorItem}
         selectedLibraryId={selectedLibraryId}
         onSelectSlide={handleSelectSlide}
         onEditSlide={handleEditSlide}
+        onOpenMiniEditor={handleOpenMiniEditorForSlide}
         onReorderSlides={handleReorderLibrarySlides}
         editorProps={editorProps}
         onSaveScriptureEditor={handleSaveScriptureEditor}

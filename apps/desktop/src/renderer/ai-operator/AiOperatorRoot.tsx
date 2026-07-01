@@ -1,13 +1,36 @@
+import { useState } from "react";
 import { AiGlow } from "./AiGlow";
 import { useRealtimeOperator } from "./useRealtimeOperator";
-import { useSpacebarToggle } from "./useSpacebarToggle";
+import { useActivationKeyToggle } from "./useActivationKeyToggle";
 
-export function AiOperatorRoot() {
-  const operator = useRealtimeOperator();
+interface AiOperatorRootProps {
+  sessionToken?: string | null;
+  speechInputDeviceId?: string | null;
+  speechLang?: string;
+}
 
-  // Long-press spacebar toggles the operator (and the glow) on/off. The glow
-  // is only present while a session is active — its state drives the look.
-  useSpacebarToggle(operator.toggle);
+export function AiOperatorRoot({
+  sessionToken = null,
+  speechInputDeviceId = null,
+  speechLang = "en-US",
+}: AiOperatorRootProps) {
+  const operator = useRealtimeOperator({
+    sessionToken,
+    speechInputDeviceId,
+    speechLang,
+  });
+  const [isPressing, setIsPressing] = useState(false);
+  const showPressPreview = isPressing && operator.visualState === "idle";
 
-  return <AiGlow state={operator.visualState} error={operator.error} />;
+  useActivationKeyToggle(operator.toggle, {
+    onPressStart: () => setIsPressing(true),
+    onPressEnd: () => setIsPressing(false),
+  });
+
+  return (
+    <AiGlow
+      state={showPressPreview ? "connecting" : operator.visualState}
+      error={operator.error}
+    />
+  );
 }

@@ -52,11 +52,12 @@ function useDesktopConvexAuth() {
 
   const fetchAccessToken = useCallback(
     async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
-      // `forceRefreshToken` is true when Convex's server rejected the previous
-      // token. `ensureFreshDesktopAccessToken` already covers expiry-based
-      // refresh; we just call it and Convex will retry on its own if needed.
-      void forceRefreshToken;
-      const nextToken = await ensureFreshDesktopAccessToken();
+      // A forced refresh means Convex rejected the token it already has. Never
+      // hand that same cached token back or the client can remain stuck in an
+      // unauthenticated reconnect loop until its local expiry timestamp.
+      const nextToken = await ensureFreshDesktopAccessToken({
+        forceRefresh: forceRefreshToken,
+      });
       return nextToken;
     },
     [],

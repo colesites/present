@@ -4,6 +4,11 @@ import { db, type BibleVersion, type BibleVerse } from "../lib/db";
 import { importBibleModule, type ImportProgress } from "../lib/import-pipeline";
 import { type ParsedReference } from "../lib/parser";
 import { toast } from "sonner";
+import {
+  buildVerseSearchIndex,
+  normalizeVerseSearchText,
+  searchVerseIndex,
+} from "../lib/verse-search-index.mjs";
 
 export interface HostedBibleVersion {
   id: string;
@@ -15,76 +20,6 @@ export interface HostedBibleVersion {
   sizeMB?: number;
   description?: string;
 }
-
-type SearchPoolEntry = {
-  verse: BibleVerse;
-  lowerText: string;
-  normalizedText: string;
-};
-
-const SEARCH_STOP_WORDS = new Set([
-  "a",
-  "an",
-  "and",
-  "are",
-  "as",
-  "at",
-  "be",
-  "can",
-  "for",
-  "from",
-  "i",
-  "in",
-  "is",
-  "it",
-  "me",
-  "my",
-  "of",
-  "on",
-  "or",
-  "show",
-  "that",
-  "the",
-  "their",
-  "them",
-  "there",
-  "these",
-  "this",
-  "those",
-  "to",
-  "us",
-  "was",
-  "we",
-  "what",
-  "where",
-  "which",
-  "who",
-  "with",
-  "you",
-  "your",
-]);
-
-const normalizeSearchText = (value: string): string =>
-  value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-const tokenizeSearchText = (value: string): string[] => {
-  const seen = new Set<string>();
-  const tokens: string[] = [];
-
-  for (const token of normalizeSearchText(value).split(" ")) {
-    if (token.length < 3 || SEARCH_STOP_WORDS.has(token) || seen.has(token)) {
-      continue;
-    }
-    seen.add(token);
-    tokens.push(token);
-  }
-
-  return tokens;
-};
 
 const getCatalogUrlFromRuntime = (): string => {
   const runtimeEnv =
@@ -107,6 +42,7 @@ const getCatalogUrlFromRuntime = (): string => {
 };
 
 const DEFAULT_CATALOG_URL = getCatalogUrlFromRuntime();
+type VerseSearchIndex = ReturnType<typeof buildVerseSearchIndex>;
 
 function normalizeHostedCatalog(payload: unknown): HostedBibleVersion[] {
   const rawItems = Array.isArray(payload)
@@ -199,8 +135,6 @@ const getFileNameFromPath = (filePath: string): string => {
   return parts[parts.length - 1] || "bible.xml";
 };
 
-const SEARCH_SCAN_CHUNK_SIZE = 400;
-
 async function yieldToRenderer() {
   await new Promise<void>((resolve) => {
     window.setTimeout(resolve, 0);
@@ -213,10 +147,16 @@ export function useScripture() {
   const [hostedVersions, setHostedVersions] = useState<HostedBibleVersion[]>([]);
   const [isHostedCatalogLoading, setIsHostedCatalogLoading] = useState(false);
   const [hostedCatalogError, setHostedCatalogError] = useState<string | null>(null);
-  const verseSearchPoolCacheRef = useRef<Map<string, SearchPoolEntry[]>>(new Map());
+  const verseSearchIndexCacheRef = useRef<
+    Map<string, VerseSearchIndex>
+  >(new Map());
+  const verseSearchIndexPendingRef = useRef<Map<string, Promise<VerseSearchIndex>>>(
+    new Map(),
+  );
 
   const clearVerseSearchCache = useCallback(() => {
-    verseSearchPoolCacheRef.current.clear();
+    verseSearchIndexCacheRef.current.clear();
+    verseSearchIndexPendingRef.current.clear();
   }, []);
 
   const resolveVersion = useCallback(
@@ -403,20 +343,27 @@ export function useScripture() {
     return results.sort((a, b) => a.verse - b.verse);
   }, [resolveVersion]);
 
-  const getSearchPool = useCallback(async (versionId: string) => {
-    const cached = verseSearchPoolCacheRef.current.get(versionId);
-    if (cached) {
-      return cached;
-    }
+  const getSearchIndex = useCallback(async (versionId: string) => {
+    const cached = verseSearchIndexCacheRef.current.get(versionId);
+    if (cached) return cached;
 
-    const pool = await db.verses.where("version").equals(versionId).toArray();
-    const normalizedPool = pool.map((verse) => ({
-      verse,
-      lowerText: verse.text.toLowerCase(),
-      normalizedText: normalizeSearchText(verse.text),
-    }));
-    verseSearchPoolCacheRef.current.set(versionId, normalizedPool);
-    return normalizedPool;
+    const pending = verseSearchIndexPendingRef.current.get(versionId);
+    if (pending) return pending;
+
+    const nextPending = (async () => {
+      const versesForVersion = await db.verses.where("version").equals(versionId).toArray();
+      await yieldToRenderer();
+      const index = buildVerseSearchIndex(versesForVersion);
+      verseSearchIndexCacheRef.current.set(versionId, index);
+      return index;
+    })();
+
+    verseSearchIndexPendingRef.current.set(versionId, nextPending);
+    try {
+      return await nextPending;
+    } finally {
+      verseSearchIndexPendingRef.current.delete(versionId);
+    }
   }, []);
 
   const searchVersesByText = useCallback(
@@ -424,17 +371,11 @@ export function useScripture() {
       query: string;
       versionCode?: string | null;
       limit?: number;
+      mode?: "exact" | "broad";
     }): Promise<BibleVerse[]> => {
-      const { query, versionCode, limit = 50 } = input;
-      const normalizedQuery = normalizeSearchText(query);
+      const { query, versionCode, limit = 50, mode = "broad" } = input;
+      const normalizedQuery = normalizeVerseSearchText(query);
       if (normalizedQuery.length < 2) {
-        return [];
-      }
-      const rawTokens = normalizedQuery
-        .split(" ")
-        .filter((token) => token.length >= 2);
-      const queryTokens = tokenizeSearchText(query);
-      if (rawTokens.length === 0 && queryTokens.length === 0) {
         return [];
       }
 
@@ -443,67 +384,10 @@ export function useScripture() {
         return [];
       }
 
-      const pool = await getSearchPool(targetVersion.id);
-      const matches: Array<{ verse: BibleVerse; score: number }> = [];
-
-      for (let index = 0; index < pool.length; index += 1) {
-        if (index > 0 && index % SEARCH_SCAN_CHUNK_SIZE === 0) {
-          await yieldToRenderer();
-        }
-
-        const candidate = pool[index];
-        let score = 0;
-        const exactIndex = candidate.normalizedText.indexOf(normalizedQuery);
-        if (exactIndex !== -1) {
-          score += 500 - Math.min(exactIndex, 240);
-        }
-
-        let matchedTokens = 0;
-        for (const token of queryTokens) {
-          if (!candidate.normalizedText.includes(token)) {
-            continue;
-          }
-          matchedTokens += 1;
-          score += 30 + Math.min(token.length, 8);
-        }
-
-        if (queryTokens.length > 0) {
-          const coverage = matchedTokens / queryTokens.length;
-          if (coverage < 0.34 && exactIndex === -1) {
-            continue;
-          }
-          score += Math.round(coverage * 140);
-        } else if (exactIndex === -1) {
-          let looseMatches = 0;
-          for (const token of rawTokens) {
-            if (candidate.normalizedText.includes(token)) {
-              looseMatches += 1;
-            }
-          }
-          if (looseMatches === 0) {
-            continue;
-          }
-          score += Math.round((looseMatches / rawTokens.length) * 100);
-        }
-
-        if (candidate.normalizedText.startsWith(normalizedQuery)) {
-          score += 80;
-        }
-
-        if (score <= 0) {
-          continue;
-        }
-
-        matches.push({
-          verse: candidate.verse,
-          score,
-        });
-      }
-
-      matches.sort((a, b) => b.score - a.score || a.verse.pk.localeCompare(b.verse.pk));
-      return matches.slice(0, limit).map((item) => item.verse);
+      const index = await getSearchIndex(targetVersion.id);
+      return searchVerseIndex(index, { query, limit, mode }) as BibleVerse[];
     },
-    [getSearchPool, resolveVersion],
+    [getSearchIndex, resolveVersion],
   );
 
   const identifyVerseFromText = useCallback(
@@ -511,7 +395,7 @@ export function useScripture() {
       query: string;
       versionCode?: string | null;
     }): Promise<BibleVerse | null> => {
-      const normalizedQuery = normalizeSearchText(input.query);
+      const normalizedQuery = normalizeVerseSearchText(input.query);
       if (normalizedQuery.length < 3) {
         return null;
       }
@@ -521,66 +405,15 @@ export function useScripture() {
         return null;
       }
 
-      const queryTokens = tokenizeSearchText(input.query);
-      const pool = await getSearchPool(targetVersion.id);
-
-      let bestMatch: { verse: BibleVerse; score: number } | null = null;
-
-      for (let index = 0; index < pool.length; index += 1) {
-        if (index > 0 && index % SEARCH_SCAN_CHUNK_SIZE === 0) {
-          await yieldToRenderer();
-        }
-
-        const candidate = pool[index];
-        let score = 0;
-        const exactIndex = candidate.normalizedText.indexOf(normalizedQuery);
-
-        if (exactIndex !== -1) {
-          score += 500 - Math.min(exactIndex, 240);
-        }
-
-        let matchedTokens = 0;
-        for (const token of queryTokens) {
-          if (!candidate.normalizedText.includes(token)) {
-            continue;
-          }
-          matchedTokens += 1;
-          score += 35 + Math.min(token.length, 8);
-        }
-
-        if (queryTokens.length > 0) {
-          const coverage = matchedTokens / queryTokens.length;
-          if (coverage < 0.5 && exactIndex === -1) {
-            continue;
-          }
-          score += Math.round(coverage * 160);
-        } else if (exactIndex === -1) {
-          continue;
-        }
-
-        if (candidate.normalizedText.startsWith(normalizedQuery)) {
-          score += 80;
-        }
-
-        if (score <= 0) {
-          continue;
-        }
-
-        if (
-          !bestMatch
-          || score > bestMatch.score
-          || (score === bestMatch.score && candidate.verse.pk < bestMatch.verse.pk)
-        ) {
-          bestMatch = {
-            verse: candidate.verse,
-            score,
-          };
-        }
-      }
-
-      return bestMatch?.verse ?? null;
+      const index = await getSearchIndex(targetVersion.id);
+      const [bestMatch] = searchVerseIndex(index, {
+        query: input.query,
+        limit: 1,
+        mode: "broad",
+      }) as BibleVerse[];
+      return bestMatch ?? null;
     },
-    [getSearchPool, resolveVersion],
+    [getSearchIndex, resolveVersion],
   );
 
   const prewarmSearchPool = useCallback(
@@ -590,9 +423,9 @@ export function useScripture() {
         return;
       }
       await yieldToRenderer();
-      await getSearchPool(targetVersion.id);
+      await getSearchIndex(targetVersion.id);
     },
-    [getSearchPool, resolveVersion],
+    [getSearchIndex, resolveVersion],
   );
 
   return {

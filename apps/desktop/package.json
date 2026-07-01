@@ -1,7 +1,7 @@
 {
   "name": "@present/desktop",
   "productName": "Present",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Church presentation software for worship services",
   "main": ".webpack/main",
   "private": true,
@@ -17,9 +17,11 @@
     "publish": "electron-forge publish",
     "icons": "node scripts/generate-icons.cjs",
     "stage-ndi": "node scripts/stage-ndi.cjs",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "quality": "pnpm run test && pnpm run typecheck && pnpm run lint",
     "lint": "eslint --ext .ts,.tsx .",
-    "convex": "pnpm --filter @present/backend run convex",
-    "whisper:model": "node scripts/fetch-whisper-model.cjs"
+    "convex": "pnpm --filter @present/backend run convex"
   },
   "keywords": [],
   "author": {

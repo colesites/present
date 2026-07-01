@@ -20,13 +20,6 @@ const { stageNdiModules, STAGE_NODE_MODULES } = require(
   stageNdiModules: () => boolean;
   STAGE_NODE_MODULES: string;
 };
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { stageWhisper, STAGE_WHISPER } = require(
-  path.resolve(__dirname, 'scripts/stage-whisper.cjs'),
-) as {
-  stageWhisper: () => boolean;
-  STAGE_WHISPER: string;
-};
 
 const iconBasePath = path.resolve(__dirname, 'assets/icons/present');
 const linuxIconPath = path.resolve(__dirname, 'assets/icons/present.png');
@@ -43,10 +36,6 @@ const config: ForgeConfig = {
       // addon loads and the ESM entry resolves by absolute path at runtime.
       // Populated by the prePackage hook below → Resources/node_modules.
       STAGE_NODE_MODULES,
-      // Self-contained whisper-cli + dylibs + ggml backends + base.en model,
-      // shipped UNPACKED → Resources/whisper/<platform> and
-      // Resources/whisper/models. Populated by the prePackage hook.
-      STAGE_WHISPER,
     ],
     icon: iconBasePath,
     extendInfo: {
@@ -67,11 +56,9 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   hooks: {
     // Stage native sidecars before packaging so the extraResource copies pick
-    // them up: NDI modules → Resources/node_modules, whisper bundle →
-    // Resources/whisper.
+    // them up: NDI modules → Resources/node_modules.
     prePackage: async () => {
       stageNdiModules();
-      stageWhisper();
     },
   },
   makers: [

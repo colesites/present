@@ -3,6 +3,49 @@ import { v, ConvexError } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { getPresentPlanDefinition } from "../../shared/src/billing";
 
+const isOrganizationDocument = (
+  value: unknown,
+): value is {
+  _id: Id<"organizations">;
+  name: string;
+  slug: string;
+  logo?: string;
+  createdAt: number;
+} => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as {
+    name?: unknown;
+    slug?: unknown;
+    createdAt?: unknown;
+  };
+
+  return (
+    typeof candidate.name === "string" &&
+    typeof candidate.slug === "string" &&
+    typeof candidate.createdAt === "number"
+  );
+};
+
+const buildOrganizationSlug = (name: string) => {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
+
+  return slug || "organization";
+};
+
+const resolveOrganization = async (
+  ctx: { db: { get: (id: Id<"organizations">) => Promise<unknown> } },
+  orgId: Id<"organizations">,
+) => {
+  const organization = await ctx.db.get(orgId);
+  return isOrganizationDocument(organization) ? organization : null;
+};
+
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
@@ -19,7 +62,7 @@ export const getCurrentUser = query({
 
     const organizations = await Promise.all(
       userProfiles.map(async (profile) => {
-        const organization = await ctx.db.get(profile.orgId);
+        const organization = await resolveOrganization(ctx, profile.orgId);
         if (!organization) {
           return null;
         }
@@ -232,7 +275,11 @@ export const getCurrentWithOrg = query({
       return null;
     }
 
-    const org = await ctx.db.get(userProfile.orgId);
+    const org = await resolveOrganization(ctx, userProfile.orgId);
+    if (!org) {
+      return null;
+    }
+
     return {
       user: {
         _id: userId,
@@ -241,7 +288,7 @@ export const getCurrentWithOrg = query({
         image: identity.pictureUrl,
       },
       org,
-      userProfile
+      userProfile,
     };
   },
 });
@@ -264,7 +311,7 @@ export const listMyOrganizations = query({
 
     const organizations = await Promise.all(
       userProfiles.map(async (profile) => {
-        const org = await ctx.db.get(profile.orgId);
+        const org = await resolveOrganization(ctx, profile.orgId);
         if (!org) return null;
 
         // Handle logo: if it's already a data URL or regular URL, use it as-is
@@ -317,9 +364,28 @@ export const ensureCurrent = mutation({
       .first();
 
     if (existingProfile) {
+      let orgId = existingProfile.orgId;
+      const existingOrg = await resolveOrganization(ctx, existingProfile.orgId);
+
+      if (!existingOrg) {
+        const now = Date.now();
+        const orgName =
+          args.orgName || identity.name || identity.email || "Untitled Organization";
+
+        orgId = await ctx.db.insert("organizations", {
+          name: orgName,
+          slug: buildOrganizationSlug(orgName),
+          ...(args.logo !== undefined ? { logo: args.logo } : {}),
+          ...(args.orgType !== undefined ? { orgType: args.orgType } : {}),
+          createdAt: now,
+        });
+
+        await ctx.db.patch(existingProfile._id, { orgId });
+      }
+
       // Update existing org if metadata provided
       if (args.orgName !== undefined || args.logo !== undefined || args.orgType !== undefined) {
-        await ctx.db.patch(existingProfile.orgId, {
+        await ctx.db.patch(orgId, {
           ...(args.orgName !== undefined ? { name: args.orgName } : {}),
           ...(args.logo !== undefined ? { logo: args.logo } : {}),
           ...(args.orgType !== undefined ? { orgType: args.orgType } : {}),
@@ -333,17 +399,14 @@ export const ensureCurrent = mutation({
         });
       }
 
-      return { userId, orgId: existingProfile.orgId };
+      return { userId, orgId };
     }
 
     // Create new organization and user profile
     const now = Date.now();
     const orgName = args.orgName || identity.name || identity.email || "Untitled Organization";
 
-    const slug = orgName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)+/g, "");
+    const slug = buildOrganizationSlug(orgName);
 
     const orgId = await ctx.db.insert("organizations", {
       name: orgName,

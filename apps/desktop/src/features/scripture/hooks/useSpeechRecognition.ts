@@ -23,6 +23,7 @@ interface UseSpeechRecognitionOptions {
   sessionToken?: string | null;
   keyterms?: string[];
   usageSource?: "bible" | "library";
+  throwOnStartFailure?: boolean;
 }
 
 interface UseSpeechRecognitionReturn {
@@ -132,6 +133,8 @@ interface StreamingSession {
 const DEFAULT_WEB_APP_URL = "https://present.c-technology-inc.com";
 const ASSEMBLYAI_STREAM_URL = "wss://streaming.assemblyai.com/v3/ws";
 const ASSEMBLYAI_TOKEN_PATH = "/api/assemblyai/token";
+const SPEECH_QUOTA_EXHAUSTED_MESSAGE =
+  "You've used all of your speech-to-search time for this billing period. Upgrade your plan or wait for the next billing period to continue using voice search.";
 
 const resolveWebBaseUrl = (): string => {
   const configured = process.env.WEB_APP_URL;
@@ -166,7 +169,8 @@ const buildAssemblyAiSocketUrl = (input: {
   url.searchParams.set("format_turns", "false");
 
   if (input.lang.toLowerCase().startsWith("en")) {
-    url.searchParams.set("speech_model", "u3-rt-pro");
+    url.searchParams.set("speech_model", "universal-3-5-pro");
+    url.searchParams.set("language_code", "en");
   } else {
     url.searchParams.set("speech_model", "universal-streaming-multilingual");
     url.searchParams.set("language_detection", "true");
@@ -177,6 +181,20 @@ const buildAssemblyAiSocketUrl = (input: {
   }
 
   return url.toString();
+};
+
+const shouldEmitTranscriptForLanguage = (transcript: string, lang: string): boolean => {
+  if (!lang.toLowerCase().startsWith("en")) {
+    return true;
+  }
+
+  const letters = transcript.match(/\p{Letter}/gu) ?? [];
+  if (letters.length === 0) {
+    return true;
+  }
+
+  const latinLetters = transcript.match(/\p{Script=Latin}/gu) ?? [];
+  return latinLetters.length / letters.length >= 0.7;
 };
 
 const float32ToPcm16 = (input: Float32Array): Int16Array => {
@@ -190,14 +208,38 @@ const float32ToPcm16 = (input: Float32Array): Int16Array => {
 
 const formatSpeechError = (error: unknown): string => {
   if (typeof error === "string" && error.trim()) {
+    if (/speech-to-search quota exhausted|quota exhausted/i.test(error)) {
+      return SPEECH_QUOTA_EXHAUSTED_MESSAGE;
+    }
+
     return error;
   }
 
   if (error instanceof Error && error.message.trim()) {
+    if (/speech-to-search quota exhausted|quota exhausted/i.test(error.message)) {
+      return SPEECH_QUOTA_EXHAUSTED_MESSAGE;
+    }
+
     return error.message;
   }
 
   return "Voice input failed to start.";
+};
+
+const parseAssemblyAiTokenPayload = (
+  payload: AssemblyAiTokenResponse | AssemblyAiTokenErrorPayload | null,
+  fallbackMessage: string,
+): AssemblyAiTokenResponse => {
+  if (!payload || !("token" in payload) || typeof payload.token !== "string") {
+    const errorPayload = payload as AssemblyAiTokenErrorPayload | null;
+    throw new Error(
+      errorPayload?.message
+      ?? errorPayload?.error
+      ?? fallbackMessage,
+    );
+  }
+
+  return payload;
 };
 
 const computeBoundedSessionUsageSeconds = (input: {
@@ -282,6 +324,7 @@ export function useSpeechRecognition(
     sessionToken = null,
     keyterms,
     usageSource = "bible",
+    throwOnStartFailure = false,
   } = options;
 
   const [isListening, setIsListening] = useState(false);
@@ -355,7 +398,7 @@ export function useSpeechRecognition(
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         const text = result[0].transcript.trim();
-        if (!text) {
+        if (!text || !shouldEmitTranscriptForLanguage(text, lang)) {
           continue;
         }
 
@@ -532,65 +575,43 @@ export function useSpeechRecognition(
       throw new Error("Sign in to use voice search.");
     }
 
-    // For IPC (Electron), always send the HMAC sessionToken — the server
-    // verifies it via verifyDesktopSessionToken and mints a fresh Convex JWT
-    // server-side.  Sending a Clerk JWT here causes kid-mismatch errors when
-    // the JWT was issued by a different Clerk instance (e.g. prod fallback).
-    const authBearer =
-      (typeof window !== "undefined" && window.electronAPI)
-        ? sessionToken
-        : sessionToken;
+    const fetchFromWebRoute = async (): Promise<AssemblyAiTokenResponse> => {
+      const response = await fetch(`${resolveWebBaseUrl()}${ASSEMBLYAI_TOKEN_PATH}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ source: usageSource }),
+        cache: "no-store",
+      });
 
-    if (window.electronAPI?.requestAssemblyAiToken) {
-      const payload = await window.electronAPI.requestAssemblyAiToken(
-        authBearer,
-        usageSource,
-      ) as
-        | AssemblyAiTokenResponse
-        | AssemblyAiTokenErrorPayload
-        | null;
+      const raw = await response.text();
+      let payload: AssemblyAiTokenResponse | AssemblyAiTokenErrorPayload | null = null;
 
-      if (!payload || !("token" in payload) || typeof payload.token !== "string") {
+      try {
+        payload = raw ? JSON.parse(raw) as AssemblyAiTokenResponse : null;
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
         const errorPayload = payload as AssemblyAiTokenErrorPayload | null;
-        throw new Error(
-          errorPayload?.error
-          ?? errorPayload?.message
-          ?? "Live transcription could not start.",
-        );
+        const message =
+          errorPayload?.message
+          ?? errorPayload?.error
+          ?? raw
+          ?? "Live transcription could not start.";
+        throw new Error(formatSpeechError(message));
       }
-      if (payload.billing) {
-        updateDesktopBillingSnapshot(payload.billing);
-      }
-      return payload;
-    }
 
-    const response = await fetch(`${resolveWebBaseUrl()}${ASSEMBLYAI_TOKEN_PATH}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${authBearer}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ source: usageSource }),
-      cache: "no-store",
-    });
+      return parseAssemblyAiTokenPayload(
+        payload,
+        "Live transcription could not start.",
+      );
+    };
 
-    const raw = await response.text();
-    let payload: AssemblyAiTokenResponse | AssemblyAiTokenErrorPayload | null = null;
-
-    try {
-      payload = raw ? JSON.parse(raw) as AssemblyAiTokenResponse : null;
-    } catch {
-      payload = null;
-    }
-
-    if (!response.ok || !payload || !("token" in payload) || typeof payload.token !== "string") {
-      const errorPayload = payload as AssemblyAiTokenErrorPayload | null;
-      const message =
-        errorPayload?.error
-        ?? errorPayload?.message
-        ?? raw;
-      throw new Error(message || "Live transcription could not start.");
-    }
+    const payload = await fetchFromWebRoute();
     if (payload.billing) {
       updateDesktopBillingSnapshot(payload.billing);
     }
@@ -622,7 +643,9 @@ export function useSpeechRecognition(
 
     if (mediaStreamResult.status === "rejected") {
       if (!osPermission.granted) {
-        throw new Error("Microphone access is blocked by macOS. Please enable it in System Settings > Privacy & Security > Microphone.");
+        throw new Error(
+          "Microphone access is blocked by macOS. Enable Present in System Settings > Privacy & Security > Microphone. If no prompt appears, run `tccutil reset Microphone` and fully restart Present.",
+        );
       }
       throw mediaStreamResult.reason;
     }
@@ -760,7 +783,7 @@ export function useSpeechRecognition(
           Boolean(utterance) ||
           Boolean(payload.turn_is_formatted);
 
-        if (runningTranscript) {
+        if (runningTranscript && shouldEmitTranscriptForLanguage(runningTranscript, lang)) {
           setTranscript(runningTranscript);
           setInterimTranscript(isFinalTurn ? "" : runningTranscript);
           onResultRef.current?.({
@@ -770,7 +793,7 @@ export function useSpeechRecognition(
         }
 
         const finalTranscript = utterance || (isFinalTurn ? runningTranscript : "");
-        if (finalTranscript) {
+        if (finalTranscript && shouldEmitTranscriptForLanguage(finalTranscript, lang)) {
           finalTranscriptRef.current = finalTranscript;
           onFinalResultRef.current?.(finalTranscript);
         }
@@ -856,20 +879,28 @@ export function useSpeechRecognition(
         stopStreamingSession();
         activeModeRef.current = null;
         if (isElectronRuntime || !hasBrowserSpeechRecognition) {
+          const message = formatSpeechError(error);
           setIsStarting(false);
-          setError(formatSpeechError(error));
+          setError(message);
           setSharedActiveSessionStartedAtMs(null);
           setPendingCommittedUsageSeconds(0);
+          if (throwOnStartFailure) {
+            throw new Error(message);
+          }
           return;
         }
       }
     }
 
     if (!recognitionRef.current) {
+      const message = "Voice input is unavailable in this runtime.";
       setIsStarting(false);
-      setError("Voice input is unavailable in this runtime.");
+      setError(message);
       setSharedActiveSessionStartedAtMs(null);
       setPendingCommittedUsageSeconds(0);
+      if (throwOnStartFailure) {
+        throw new Error(message);
+      }
       return;
     }
 
@@ -882,11 +913,15 @@ export function useSpeechRecognition(
         recognitionRef.current?.start();
       })
       .catch((e: unknown) => {
+        const message = formatSpeechError(e);
         setIsStarting(false);
-        setError(formatSpeechError(e));
+        setError(message);
         setActiveSessionStartedAtMs(null);
         setSharedActiveSessionStartedAtMs(null);
         setPendingCommittedUsageSeconds(0);
+        if (throwOnStartFailure) {
+          throw new Error(message);
+        }
       });
   }, [
     sessionToken,
@@ -900,6 +935,7 @@ export function useSpeechRecognition(
     setPendingCommittedUsageSeconds,
     startAssemblyAiListening,
     stopStreamingSession,
+    throwOnStartFailure,
   ]);
 
   const stopListening = useCallback(() => {

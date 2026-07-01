@@ -13,9 +13,29 @@ import {
 } from "../../shared/lib/font";
 
 const CUSTOM_FONT_DIRECTORY_NAME = "custom-fonts";
+const FONT_LIST_DARWIN_HELPERS = ["fontlist", "fontlist2"] as const;
 
 function getCustomFontDirectory() {
   return path.join(app.getPath("userData"), CUSTOM_FONT_DIRECTORY_NAME);
+}
+
+async function ensureFontListHelperPermissions() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  await Promise.all(
+    FONT_LIST_DARWIN_HELPERS.map(async (helperName) => {
+      const helperPath = path.join(__dirname, "native_modules", helperName);
+      try {
+        await fs.promises.chmod(helperPath, 0o755);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          console.warn(`Unable to update ${helperName} permissions`, error);
+        }
+      }
+    }),
+  );
 }
 
 async function ensureCustomFontDirectory() {
@@ -88,6 +108,7 @@ async function buildCustomFontFace(filePath: string): Promise<CustomFontFace> {
 }
 
 export async function getSystemFontFamilies() {
+  await ensureFontListHelperPermissions();
   const fonts = await fontList.getFonts({ disableQuoting: true });
   return Array.from(
     new Set(fonts.map((font) => font.trim()).filter(Boolean)),
@@ -95,6 +116,7 @@ export async function getSystemFontFamilies() {
 }
 
 export async function getSystemFontFaces() {
+  await ensureFontListHelperPermissions();
   try {
     const faces = await fontList.getFonts2({ disableQuoting: true });
     return dedupeFontFaces(

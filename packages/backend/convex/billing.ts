@@ -11,6 +11,60 @@ import {
 } from "../../shared/src/billing";
 
 const DEFAULT_SPEECH_SESSION_MAX_SECONDS = 15 * 60;
+const DEFAULT_ALLOWLISTED_SPEECH_QUOTA_SECONDS = 100 * 365 * 24 * 60 * 60;
+
+function normalizeEmail(value: unknown): string | null {
+  return typeof value === "string" && value.trim()
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function getIdentityEmail(identity: unknown): string | null {
+  const record = identity as
+    | {
+        email?: unknown;
+        emailAddress?: unknown;
+        email_address?: unknown;
+      }
+    | null
+    | undefined;
+
+  return (
+    normalizeEmail(record?.email) ??
+    normalizeEmail(record?.emailAddress) ??
+    normalizeEmail(record?.email_address)
+  );
+}
+
+async function resolveAllowlistedSpeechQuotaSeconds(
+  ctx: any,
+  email: string | null,
+): Promise<number | null> {
+  if (!email) {
+    return null;
+  }
+
+  const allowlistEntry = await ctx.db
+    .query("speechQuotaAllowlist")
+    .withIndex("by_normalized_email", (q: any) => q.eq("normalizedEmail", email))
+    .first();
+
+  return allowlistEntry?.quotaSeconds ?? null;
+}
+
+function withSpeechQuotaOverride<T extends { quotaSeconds: number }>(
+  billing: T,
+  quotaSeconds: number | null,
+): T {
+  if (typeof quotaSeconds !== "number") {
+    return billing;
+  }
+
+  return {
+    ...billing,
+    quotaSeconds: Math.max(billing.quotaSeconds, quotaSeconds),
+  };
+}
 
 function getCurrentBillingPeriodWindow() {
   const now = new Date();
@@ -55,20 +109,25 @@ function clampSessionDurationSeconds(input: {
 async function resolveUserBillingState(
   ctx: any,
   userId: string,
+  email?: string | null,
 ) {
+  const allowlistedQuotaSeconds = await resolveAllowlistedSpeechQuotaSeconds(
+    ctx,
+    email ?? null,
+  );
   const existing = await ctx.db
     .query("userBilling")
     .withIndex("by_user", (q: any) => q.eq("userId", userId))
     .first();
 
   if (existing) {
-    return existing;
+    return withSpeechQuotaOverride(existing, allowlistedQuotaSeconds);
   }
 
   const { periodStartMs, periodEndMs } = getCurrentBillingPeriodWindow();
   const freePlan = getPresentPlanDefinition("free");
 
-  return {
+  return withSpeechQuotaOverride({
     _id: null,
     _creationTime: 0,
     userId,
@@ -82,7 +141,7 @@ async function resolveUserBillingState(
     stripeSubscriptionId: undefined,
     stripeCustomerId: undefined,
     updatedAt: 0,
-  };
+  }, allowlistedQuotaSeconds);
 }
 
 async function computeSpeechUsage(ctx: {
@@ -126,7 +185,11 @@ export const getMyBillingStatus = query({
       return null;
     }
 
-    const billing = await resolveUserBillingState(ctx, identity.subject);
+    const billing = await resolveUserBillingState(
+      ctx,
+      identity.subject,
+      getIdentityEmail(identity),
+    );
     const usedSeconds = await computeSpeechUsage(ctx, {
       userId: identity.subject,
       periodStartMs: billing.periodStartMs,
@@ -146,6 +209,51 @@ export const getMyBillingStatus = query({
       periodEndMs: billing.periodEndMs,
       updatedAt: billing.updatedAt,
     };
+  },
+});
+
+export const upsertSpeechQuotaAllowlistEntry = mutation({
+  args: {
+    secret: v.string(),
+    email: v.string(),
+    quotaSeconds: v.optional(v.number()),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    assertBillingSyncSecret(args.secret);
+
+    const normalizedEmail = normalizeEmail(args.email);
+    if (!normalizedEmail) {
+      throw new ConvexError("Email is required.");
+    }
+
+    const now = Date.now();
+    const quotaSeconds =
+      args.quotaSeconds ?? DEFAULT_ALLOWLISTED_SPEECH_QUOTA_SECONDS;
+    const existing = await ctx.db
+      .query("speechQuotaAllowlist")
+      .withIndex("by_normalized_email", (q) =>
+        q.eq("normalizedEmail", normalizedEmail),
+      )
+      .first();
+
+    const patch = {
+      email: args.email.trim(),
+      normalizedEmail,
+      quotaSeconds,
+      reason: args.reason?.trim() || undefined,
+      updatedAt: now,
+    };
+
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+      return existing._id;
+    }
+
+    return await ctx.db.insert("speechQuotaAllowlist", {
+      ...patch,
+      createdAt: now,
+    });
   },
 });
 
@@ -253,7 +361,11 @@ export const startSpeechUsageSession = mutation({
     }
 
     const userId = identity.subject;
-    const billing = await resolveUserBillingState(ctx, userId);
+    const billing = await resolveUserBillingState(
+      ctx,
+      userId,
+      getIdentityEmail(identity),
+    );
     const usedSeconds = await computeSpeechUsage(ctx, {
       userId,
       periodStartMs: billing.periodStartMs,
@@ -331,7 +443,11 @@ export const completeSpeechUsageSession = mutation({
       updatedAt: Date.now(),
     });
 
-    const billing = await resolveUserBillingState(ctx, identity.subject);
+    const billing = await resolveUserBillingState(
+      ctx,
+      identity.subject,
+      getIdentityEmail(identity),
+    );
     const usedSeconds = await computeSpeechUsage(ctx, {
       userId: identity.subject,
       periodStartMs: billing.periodStartMs,

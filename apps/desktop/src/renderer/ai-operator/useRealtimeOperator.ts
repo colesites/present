@@ -1,12 +1,67 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  AiOperatorSessionMemory,
-  AiOperatorVisualState,
-  AiToolResult,
+import {
+  type AiOperatorSessionMemory,
+  type AiOperatorVisualState,
+  type AiToolResult,
 } from "../../shared/ai-operator/types";
+import { useSpeechRecognition } from "../../features/scripture/hooks/useSpeechRecognition";
 import { aiOperatorBus } from "./operatorBus";
 import { parseOperatorIntent } from "./intentParser";
-import { useWhisperMic } from "./useWhisperMic";
+
+const OPERATOR_SPEECH_KEYTERMS = [
+  "Bible",
+  "library",
+  "libraries",
+  "media",
+  "search",
+  "text",
+  "lyrics",
+  "grid",
+  "edit",
+  "presentation",
+  "countdown",
+  "livestream",
+  "background",
+];
+
+const INSTANT_INTERIM_TOOLS = new Set([
+  "next_slide",
+  "previous_slide",
+  "go_to_slide",
+  "set_text_visibility",
+  "toggle_text",
+  "set_media_visibility",
+  "toggle_media",
+  "set_background_visibility",
+  "toggle_background",
+  "set_output_freeze",
+  "toggle_output_freeze",
+  "set_timer_layer",
+  "toggle_timer_layer",
+  "set_message_layer",
+  "toggle_message_layer",
+  "set_slide_grid",
+  "toggle_slide_grid",
+  "set_view_mode",
+  "open_panel",
+  "close_panel",
+  "open_sidebar_tab",
+  "open_display",
+  "close_display",
+  "open_library",
+  "open_notes",
+  "open_schedule",
+  "open_settings",
+  "stop_countdown",
+  "reset_countdown",
+  "stop_presentation",
+]);
+
+interface UseRealtimeOperatorOptions {
+  sessionToken?: string | null;
+  speechInputDeviceId?: string | null;
+  speechLang?: string;
+}
 
 function createSessionMemory(): AiOperatorSessionMemory {
   return {
@@ -71,7 +126,11 @@ function appendToolResult(
   return next;
 }
 
-export function useRealtimeOperator() {
+export function useRealtimeOperator({
+  sessionToken = null,
+  speechInputDeviceId = null,
+  speechLang = "en-US",
+}: UseRealtimeOperatorOptions = {}) {
   const [isActive, setIsActive] = useState(false);
   const [visualState, setVisualState] = useState<AiOperatorVisualState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -79,31 +138,33 @@ export function useRealtimeOperator() {
   const [lastResult, setLastResult] = useState<AiToolResult | null>(null);
   const memoryRef = useRef<AiOperatorSessionMemory>(createSessionMemory());
   const lastCommandKeyRef = useRef("");
-  const sessionIdRef = useRef<string | null>(null);
+  const lastCommandAtRef = useRef(0);
 
-  const mic = useWhisperMic({
-    onError: (message) => {
-      setError(message);
-      setVisualState("error");
-    },
-  });
-
-  const executeTranscript = useCallback(async (transcript: string) => {
-    const call = parseOperatorIntent(transcript, memoryRef.current);
-    if (!call) {
-      setVisualState("listening");
-      return;
-    }
-
+  const executeToolCall = useCallback(async (call: ReturnType<typeof parseOperatorIntent>) => {
+    if (!call) return;
     const commandKey = `${call.name}:${JSON.stringify(call.arguments)}`;
-    if (lastCommandKeyRef.current === commandKey) {
+    const now = Date.now();
+    if (
+      lastCommandKeyRef.current === commandKey &&
+      now - lastCommandAtRef.current < 1600
+    ) {
       setVisualState("listening");
       return;
     }
     lastCommandKeyRef.current = commandKey;
+    lastCommandAtRef.current = now;
 
     setVisualState("executing");
+    console.info("[AI Operator] executing tool", {
+      tool: call.name,
+      arguments: call.arguments,
+    });
     const result = await aiOperatorBus.executeTool(call);
+    console.info("[AI Operator] tool result", {
+      tool: call.name,
+      ok: result.ok,
+      error: result.error,
+    });
     setLastResult(result);
     memoryRef.current = appendToolResult(
       memoryRef.current,
@@ -123,81 +184,132 @@ export function useRealtimeOperator() {
     }, result.ok ? 650 : 1200);
   }, []);
 
-  // Subscribe to whisper transcripts for the active session. Interim updates
-  // keep the glow in "listening"; a committed (final) transcript runs the
-  // intent → tool pipeline.
-  useEffect(() => {
-    if (!window.electronAPI?.onWhisperTranscript) return;
-    const unsubscribe = window.electronAPI.onWhisperTranscript((event) => {
-      if (event.sessionId !== sessionIdRef.current) return;
-      setLastTranscript(event.transcript);
-      aiOperatorBus.emitTranscript({
-        transcript: event.transcript,
-        isFinal: event.isFinal,
+  const handleTranscript = useCallback(
+    (transcript: string, isFinal: boolean) => {
+      const cleanTranscript = transcript.trim();
+      if (!cleanTranscript) {
+        return;
+      }
+
+      const call = parseOperatorIntent(cleanTranscript, memoryRef.current);
+      console.info("[AI Operator] transcript", {
+        transcript: cleanTranscript,
+        isFinal,
+        parsedTool: call?.name ?? null,
+        parsedArguments: call?.arguments ?? null,
       });
-      if (event.isFinal) {
-        setVisualState("thinking");
-        void executeTranscript(event.transcript);
-      } else {
+
+      setLastTranscript(cleanTranscript);
+      aiOperatorBus.emitTranscript({
+        transcript: cleanTranscript,
+        isFinal,
+      });
+
+      if (!call) {
         setVisualState((current) =>
           current === "executing" ? current : "listening",
         );
+        return;
       }
+
+      if (!isFinal && !INSTANT_INTERIM_TOOLS.has(call.name)) {
+        setVisualState((current) =>
+          current === "executing" ? current : "listening",
+        );
+        return;
+      }
+
+      setVisualState("thinking");
+      void executeToolCall(call);
+    },
+    [executeToolCall],
+  );
+
+  const {
+    error: speechError,
+    isSupported: isSpeechRecognitionSupported,
+    startListening,
+    stopListening,
+  } = useSpeechRecognition({
+    continuous: true,
+    interimResults: true,
+    lang: speechLang,
+    inputDeviceId: speechInputDeviceId,
+    sessionToken,
+    keyterms: OPERATOR_SPEECH_KEYTERMS,
+    usageSource: "library",
+    throwOnStartFailure: true,
+    onResult: ({ transcript, isFinal }) => {
+      handleTranscript(transcript, isFinal);
+    },
+    onFinalResult: (transcript) => {
+      handleTranscript(transcript, true);
+    },
+  });
+
+  useEffect(() => {
+    if (!isActive || !speechError) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      setError(speechError);
+      setVisualState("error");
     });
-    return unsubscribe;
-  }, [executeTranscript]);
+    return () => window.cancelAnimationFrame(frame);
+  }, [isActive, speechError]);
+
+  useEffect(() => {
+    return () => {
+      stopListening();
+    };
+  }, [stopListening]);
 
   const activate = useCallback(async () => {
     memoryRef.current = createSessionMemory();
     lastCommandKeyRef.current = "";
+    lastCommandAtRef.current = 0;
     setError(null);
     setIsActive(true);
     setVisualState("connecting");
-    console.info("[AI Operator] activating…");
+    console.info("[AI Operator] activating AssemblyAI stream…");
 
-    const sessionId = crypto.randomUUID();
-    sessionIdRef.current = sessionId;
-
-    // 1. Start the microphone first — this requests OS permission and is the
-    //    visible "listening" feedback. It must work even if whisper isn't set
-    //    up yet, so the operator never silently does nothing.
-    //    NOTE: we stay engaged (isActive stays true) even on failure, so the
-    //    next long-press always TURNS IT OFF rather than re-trying.
-    const started = await mic.start(sessionId);
-    if (!started) {
-      console.error("[AI Operator] mic failed to start");
+    if (!sessionToken) {
+      console.error("[AI Operator] activation failed: missing desktop session token");
+      setIsActive(false);
+      setError("Sign in to use AI Operator voice control.");
       setVisualState("error");
-      return; // mic.start already surfaced the error message
+      return;
     }
-    setVisualState("listening");
-    console.info("[AI Operator] mic listening");
 
-    // 2. Start the whisper transcription session (non-fatal if unavailable —
-    //    the mic still streams; transcripts simply won't arrive).
-    try {
-      const status = await window.electronAPI?.getWhisperStatus?.();
-      console.info("[AI Operator] whisper status:", status);
-      if (status?.available) {
-        await window.electronAPI?.startWhisper?.(sessionId);
-      } else {
-        setError(
-          status?.error ??
-            "Listening, but the voice engine isn't installed — transcription is off.",
-        );
-      }
-    } catch (err) {
-      console.error("[AI Operator] whisper start failed:", err);
+    if (!isSpeechRecognitionSupported) {
+      console.error("[AI Operator] activation failed: speech runtime unavailable");
+      setIsActive(false);
+      setError("AssemblyAI live transcription is unavailable in this desktop session.");
+      setVisualState("error");
+      return;
     }
-  }, [mic]);
+
+    try {
+      await startListening();
+      setVisualState("listening");
+      console.info("[AI Operator] AssemblyAI stream listening");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "AI Operator voice failed to start.";
+      console.error("[AI Operator] AssemblyAI start failed:", err);
+      setIsActive(false);
+      setError(message);
+      setVisualState("error");
+    }
+  }, [isSpeechRecognitionSupported, sessionToken, startListening]);
 
   const deactivate = useCallback(() => {
-    const sessionId = sessionIdRef.current;
-    sessionIdRef.current = null;
-    mic.stop(sessionId ?? undefined);
+    stopListening();
     setIsActive(false);
     setVisualState("idle");
     setError(null);
-  }, [mic]);
+  }, [stopListening]);
 
   const toggle = useCallback(() => {
     if (isActive) {
@@ -206,15 +318,6 @@ export function useRealtimeOperator() {
     }
     void activate();
   }, [activate, deactivate, isActive]);
-
-  // Ensure the mic + main-process session are torn down on unmount.
-  useEffect(() => {
-    return () => {
-      const sessionId = sessionIdRef.current;
-      sessionIdRef.current = null;
-      mic.stop(sessionId ?? undefined);
-    };
-  }, [mic]);
 
   return useMemo(
     () => ({

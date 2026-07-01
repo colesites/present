@@ -47,6 +47,8 @@ import { useAppNavigation } from "../../renderer/shared/hooks/useAppNavigation";
 import { useAppHandlers } from "../../renderer/shared/hooks/useAppHandlers";
 import { MainView } from "./MainView";
 import {
+  buildSlidesFromBody,
+  createComposedLibraryDraft,
   DEFAULT_CANVAS_SIZE,
   getSlideBackgroundColor,
   reorderLibrarySlides,
@@ -122,6 +124,7 @@ function buildServicePresentationLibraryItem(
 
 interface PresentContainerProps {
   orgId: Id<"organizations"> | undefined;
+  localOrgId: Id<"organizations"> | null;
   userId: string | null;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
@@ -149,6 +152,7 @@ interface PresentContainerProps {
 
 export function PresentContainer({
   orgId,
+  localOrgId,
   userId,
   viewMode,
   setViewMode,
@@ -173,6 +177,7 @@ export function PresentContainer({
   isMessageLayerEnabled,
   setIsMessageLayerEnabled,
 }: PresentContainerProps) {
+  const localWorkspaceOrgId = localOrgId ?? null;
   const {
     activeMediaItem,
     allMediaItems,
@@ -261,7 +266,7 @@ export function PresentContainer({
     deleteItem: deleteLibraryItem,
     isLoading: libraryLoading,
   } = useLibrary(
-    { orgId: orgId ?? null, userId: userId ?? null },
+    { orgId: localWorkspaceOrgId, userId: userId ?? null },
     contentSource,
     {
       defaultTextStyle: libraryTextDefaults,
@@ -276,12 +281,33 @@ export function PresentContainer({
     isInsideService,
     serviceItemIndex,
     serviceItems,
+    serviceTemplates,
+    selectedServiceTemplateId,
     setServiceItemIndex,
+    selectedServiceGroupId,
+    setSelectedServiceGroupId,
     createNewService,
+    selectDefaultServiceTemplate,
+    createServiceTemplate,
+    renameServiceTemplate,
+    addGroupToServiceTemplate,
+    renameServiceTemplateGroup,
+    deleteServiceTemplateGroup,
+    addItemToServiceTemplate,
+    removeItemFromServiceTemplate,
+    moveServiceTemplateItemToGroup,
+    deleteServiceTemplate,
     renameExistingService,
     deleteService,
     addLibraryItemToService: addLibraryToService,
     addPresentationToService,
+    addGroupToService,
+    renameServiceGroup,
+    deleteServiceGroup,
+    moveServiceItemToGroup,
+    renameServiceItem,
+    updateMediaInServices,
+    removeMediaFromServices,
     updatePresentationInService,
     addMediaToService,
     addScriptureToService,
@@ -290,7 +316,7 @@ export function PresentContainer({
     reorderServices,
     enterService,
     exitService,
-  } = useServices({ orgId: orgId ?? null, userId }, libraryItems);
+  } = useServices({ orgId: localWorkspaceOrgId, userId }, libraryItems);
 
   const { categories, createNewCategory } = useCategories({
     orgId: orgId ?? null,
@@ -321,6 +347,7 @@ export function PresentContainer({
     libraryId: string | null;
     index: number;
   } | null>(null);
+  const [isGridView, setIsGridView] = useState(true);
   const [selectedPresentationLibraryId, setSelectedPresentationLibraryId] =
     useState<string | null>(null);
   const [editScrollToSlide, setEditScrollToSlide] = useState<number | null>(
@@ -404,7 +431,6 @@ export function PresentContainer({
     () => [...libraryItems, ...servicePresentationLibraryItems],
     [libraryItems, servicePresentationLibraryItems],
   );
-
   useEffect(() => {
     if (!selectedPresentationLibraryId) {
       return;
@@ -502,7 +528,9 @@ export function PresentContainer({
     if (activeSlideId?.startsWith("scripture:")) {
       const indexStr = activeSlideId.split(":")[1];
       const index = parseInt(indexStr, 10);
-      const slide = scriptureSlides[index];
+      const slide =
+        scriptureSlides.find((candidate) => candidate.id === activeSlideId) ??
+        (Number.isFinite(index) ? scriptureSlides[index] : null);
       return slide
         ? {
             text: slide.content,
@@ -656,9 +684,7 @@ export function PresentContainer({
     handleSelectScripture,
   } = useAppHandlers({
     setSelected,
-    setViewMode: () => {
-      /* No-op in PresentContainer */
-    },
+    setViewMode,
     setSelectedLibraryId: handleSetSelectedDeckLibraryId,
     setScriptureSlides,
     setShowTextInOutput,
@@ -835,6 +861,87 @@ export function PresentContainer({
     ],
   );
 
+  const saveMiniLyricsBody = useCallback(
+    async (libraryId: string, body: string) => {
+      const item = libraryItems.find(
+        (candidate) => String(candidate._id) === libraryId,
+      );
+      if (!item) {
+        throw new Error("Library item not found.");
+      }
+
+      await updateExistingLibraryItem(
+        libraryId,
+        {
+          title: item.title,
+          body,
+          slides: buildSlidesFromBody(
+            body,
+            item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
+            libraryTextDefaults,
+          ),
+          content: item.content,
+        },
+        item.categoryId ? String(item.categoryId) : undefined,
+      );
+    },
+    [libraryItems, libraryTextDefaults, updateExistingLibraryItem],
+  );
+
+  const handleOpenMiniEditor = useCallback(
+    (libraryId: string, initialSlideIndex?: number | null) => {
+      const item = libraryItems.find(
+        (candidate) => String(candidate._id) === libraryId,
+      );
+      if (!item) {
+        toast.error("Library item not found.");
+        return;
+      }
+
+      void window.electronAPI?.openMiniLyricsWindow?.({
+        libraryId: String(item._id),
+        title: item.title,
+        body: item.body,
+        initialSlideIndex: initialSlideIndex ?? null,
+      });
+    },
+    [libraryItems],
+  );
+
+  const handleOpenMiniEditorForSlide = useCallback(
+    (libraryId: string, slideIndex: number) => {
+      handleOpenMiniEditor(libraryId, slideIndex);
+    },
+    [handleOpenMiniEditor],
+  );
+
+  useEffect(() => {
+    if (!window.electronAPI?.onMiniLyricsSaveRequest) {
+      return;
+    }
+
+    return window.electronAPI.onMiniLyricsSaveRequest((request) => {
+      void saveMiniLyricsBody(
+        request.payload.libraryId,
+        request.payload.body,
+      )
+        .then(() => {
+          window.electronAPI.respondMiniLyricsSave({
+            requestId: request.requestId,
+            ok: true,
+          });
+        })
+        .catch((error) => {
+          window.electronAPI.respondMiniLyricsSave({
+            requestId: request.requestId,
+            ok: false,
+            error:
+              error instanceof Error ? error.message : "Failed to save lyrics.",
+          });
+        });
+    });
+  }, [saveMiniLyricsBody]);
+
   const handleReorderLibrarySlides = async (fromIndex: number, toIndex: number) => {
     if (!selectedDeckLibraryId) {
       return;
@@ -914,7 +1021,10 @@ export function PresentContainer({
     serviceItems,
     allMediaItems,
     activeMediaItem,
-    setServiceItemIndex,
+    setServiceItemIndex: (index) => {
+      setSelectedServiceGroupId(null);
+      setServiceItemIndex(index);
+    },
     setSelectedLibraryId,
     selectMediaForOutput: selectMediaForOutputWithComposer,
     setShouldAutoPlay,
@@ -1042,6 +1152,19 @@ export function PresentContainer({
     addLibraryItemToService: addLibraryToService,
     timers,
     toggleVideoPlayback,
+    showTextInOutput,
+    setShowMediaInOutput,
+    showMediaInOutput,
+    hideBackgroundInOutput,
+    setHideBackgroundInOutput,
+    isOutputFrozen,
+    setIsOutputFrozen,
+    isTimerLayerEnabled,
+    setIsTimerLayerEnabled,
+    isMessageLayerEnabled,
+    setIsMessageLayerEnabled,
+    isGridView,
+    setIsGridView,
   });
 
   useStageBroadcast({
@@ -1284,6 +1407,7 @@ export function PresentContainer({
             importedCount += 1;
             const presentationLibraryId = `presentation_${refId}`;
             setServiceItemIndex(serviceItems.length + importedCount - 1);
+            setSelectedServiceGroupId(null);
             setSelectedLibraryId(null);
             setSelectedPresentationLibraryId(presentationLibraryId);
             setSelected({ libraryId: presentationLibraryId, index: 0 });
@@ -1326,6 +1450,7 @@ export function PresentContainer({
       serviceItems.length,
       setSelected,
       setServiceItemIndex,
+      setSelectedServiceGroupId,
       setSelectedLibraryId,
       setSelectedPresentationLibraryId,
     ],
@@ -1383,184 +1508,254 @@ export function PresentContainer({
 
   return (
     <>
-        <MainView
-      viewMode={viewMode}
-      bottomTab={bottomTab}
-      contentSource={contentSource}
-      orgId={orgId}
-      servicesSidebarProps={{
-        services,
-        isLoading: servicesLoading,
-        selectedServiceId,
-        isInsideService,
-        selectedService,
-        serviceItems,
-        serviceItemIndex,
-        onEnterService: enterService,
-        onExitService: exitService,
-        onSelectServiceItem: handleSelectServiceItem,
-        onDoubleClickServiceItem: handleDoubleClickServiceItem,
-        onRemoveFromService: handleRemoveFromService,
-        onCreateService: async (name) => {
-          await createNewService(name);
-        },
-        onRenameService: renameExistingService,
-        onDeleteService: deleteService,
-        onReorderServiceItems: selectedServiceId
-          ? (from: number, to: number) =>
-              reorderServiceItems(selectedServiceId, from, to)
-          : () => Promise.resolve(),
-        onReorderServices: reorderServices,
-        onAddScriptureToService: addScriptureToService,
-      }}
-      presentState={{
-        slidesForGrid,
-        activeSlideId,
-        outputActiveSlideId,
-        selected,
-        selectedLibraryItem: selectedDeckItem,
-        selectedLibraryId: selectedDeckLibraryId,
-        setSelectedLibraryId: handleSetSelectedDeckLibraryId,
-        handleSelectSlide: handleLiveSlideSelect,
-        handleEditSlide,
-        handleSaveLibraryItem: handleSaveSelectedDeckItem,
-        handleUpdateEditedSlideOutput,
-        scriptureEditorItem,
-        handleSaveScriptureEditor,
-        handleUpdateScriptureEditedSlideOutput,
-        handleReorderLibrarySlides,
-        editScrollToSlide,
-        setEditScrollToSlide,
-        handleScriptureOutput: handleLiveScriptureOutput,
-        activeSlideContent: outputSlideContent,
-        slideGroups,
-      }}
-      mediaState={{
-        mediaState,
-        showViewMedia,
-        effectiveActiveMediaItem,
-        showVideoRef,
-        videoSettings,
-        handleOutputPreviewMedia,
-        handleVideoPlay,
-        handleVideoPause,
-        handleVideoEnded,
-        handleVideoSeeked,
-        onToggleVideoPlayback: toggleVideoPlayback,
-        handleMediaPanelSelect,
-        handleAddMediaToService,
-        updateVideoSettings,
-        showMediaInOutput,
-        setShowMediaInOutput,
-        onClearMedia: () => selectMediaForOutputWithComposer(null),
-        mediaFilters,
-        onMediaFiltersChange: updateMediaFilters,
-        onResetFilters: resetMediaFilters,
-        isVideoPlaying,
-        videoCurrentTime,
-      }}
-      libraryState={{
-        filteredLibraryItems,
-        libraryLoading,
-        categories,
-        selectedCategoryId,
-        setSelectedCategoryId,
-        createNewLibraryItem: async (title, body, categoryId, content) => {
-          return createNewLibraryItem(title, body, categoryId, content);
-        },
-        createLibraryItemFromDraft: async (draft, categoryId) => {
-          await createLibraryItemFromDraft(draft, categoryId);
-        },
-        createComposedLibraryItem: async (
-          title,
-          itemIds,
-          categoryId,
-          slideSelections,
-        ) => {
-          await createComposedLibraryItem(
+      <MainView
+        viewMode={viewMode}
+        bottomTab={bottomTab}
+        contentSource={contentSource}
+        orgId={orgId}
+        localOrgId={localWorkspaceOrgId}
+        userId={userId}
+        servicesSidebarProps={{
+          services,
+          isLoading: servicesLoading,
+          selectedServiceId,
+          isInsideService,
+          selectedService,
+          serviceItems,
+          serviceGroups: selectedService?.groups ?? [],
+          serviceTemplates,
+          selectedServiceTemplateId,
+          templateLibraryItems: libraryItems,
+          templateMediaItems: allMediaItems,
+          serviceItemIndex,
+          selectedServiceGroupId,
+          onEnterService: enterService,
+          onExitService: exitService,
+          onSelectServiceItem: handleSelectServiceItem,
+          onSelectServiceGroup: (groupId) => {
+            setSelectedServiceGroupId(groupId);
+            setServiceItemIndex(null);
+          },
+          onDoubleClickServiceItem: handleDoubleClickServiceItem,
+          onOpenMiniEditor: handleOpenMiniEditor,
+          onRemoveFromService: handleRemoveFromService,
+          onAddGroupToService: selectedServiceId
+            ? (label: string) => addGroupToService(selectedServiceId, label)
+            : () => Promise.resolve(),
+          onRenameServiceGroup: selectedServiceId
+            ? (groupId: string, label: string) =>
+                renameServiceGroup(selectedServiceId, groupId, label)
+            : () => Promise.resolve(),
+          onDeleteServiceGroup: selectedServiceId
+            ? (groupId: string) => deleteServiceGroup(selectedServiceId, groupId)
+            : () => Promise.resolve(),
+          onMoveServiceItemToGroup: selectedServiceId
+            ? (index: number, groupId: string | null) =>
+                moveServiceItemToGroup(selectedServiceId, index, groupId)
+            : () => Promise.resolve(),
+          onRenameServiceItem: selectedServiceId
+            ? (index: number, label: string) =>
+                renameServiceItem(selectedServiceId, index, label)
+            : () => Promise.resolve(),
+          onSelectServiceTemplate: selectDefaultServiceTemplate,
+          onCreateServiceTemplate: createServiceTemplate,
+          onRenameServiceTemplate: renameServiceTemplate,
+          onAddGroupToServiceTemplate: addGroupToServiceTemplate,
+          onRenameServiceTemplateGroup: renameServiceTemplateGroup,
+          onDeleteServiceTemplateGroup: deleteServiceTemplateGroup,
+          onAddItemToServiceTemplate: addItemToServiceTemplate,
+          onRemoveItemFromServiceTemplate: removeItemFromServiceTemplate,
+          onMoveServiceTemplateItemToGroup: moveServiceTemplateItemToGroup,
+          onDeleteServiceTemplate: deleteServiceTemplate,
+          onCreateService: async (name, templateId) => {
+            await createNewService(name, templateId);
+          },
+          onRenameService: renameExistingService,
+          onDeleteService: deleteService,
+          onReorderServiceItems: selectedServiceId
+            ? (from: number, to: number) =>
+                reorderServiceItems(selectedServiceId, from, to)
+            : () => Promise.resolve(),
+          onReorderServices: reorderServices,
+          onAddScriptureToService: addScriptureToService,
+        }}
+        presentState={{
+          slidesForGrid,
+          activeSlideId,
+          outputActiveSlideId,
+          selected,
+          isGridView,
+          setIsGridView,
+          selectedLibraryItem: selectedDeckItem,
+          selectedLibraryId: selectedDeckLibraryId,
+          setSelectedLibraryId: handleSetSelectedDeckLibraryId,
+          handleSelectSlide: handleLiveSlideSelect,
+          handleEditSlide,
+          handleOpenMiniEditorForSlide,
+          handleSaveLibraryItem: handleSaveSelectedDeckItem,
+          handleUpdateEditedSlideOutput,
+          scriptureEditorItem,
+          handleSaveScriptureEditor,
+          handleUpdateScriptureEditedSlideOutput,
+          handleReorderLibrarySlides,
+          editScrollToSlide,
+          setEditScrollToSlide,
+          handleScriptureOutput: handleLiveScriptureOutput,
+          activeSlideContent: outputSlideContent,
+          slideGroups,
+        }}
+        mediaState={{
+          mediaState,
+          showViewMedia,
+          effectiveActiveMediaItem,
+          showVideoRef,
+          videoSettings,
+          handleOutputPreviewMedia,
+          handleVideoPlay,
+          handleVideoPause,
+          handleVideoEnded,
+          handleVideoSeeked,
+          onToggleVideoPlayback: toggleVideoPlayback,
+          handleMediaPanelSelect,
+          handleAddMediaToService,
+          handleRenameMediaInServices: updateMediaInServices,
+          handleRemoveMediaFromServices: removeMediaFromServices,
+          updateVideoSettings,
+          showMediaInOutput,
+          setShowMediaInOutput,
+          onClearMedia: () => selectMediaForOutputWithComposer(null),
+          mediaFilters,
+          onMediaFiltersChange: updateMediaFilters,
+          onResetFilters: resetMediaFilters,
+          isVideoPlaying,
+          videoCurrentTime,
+        }}
+        libraryState={{
+          libraryItems,
+          filteredLibraryItems,
+          libraryLoading,
+          categories,
+          selectedCategoryId,
+          setSelectedCategoryId,
+          createNewLibraryItem: async (title, body, categoryId, content) => {
+            return createNewLibraryItem(title, body, categoryId, content);
+          },
+          createLibraryItemFromDraft: async (draft, categoryId) => {
+            await createLibraryItemFromDraft(draft, categoryId);
+          },
+          createComposedLibraryItem: async (
             title,
             itemIds,
             categoryId,
             slideSelections,
-          );
-        },
-        handleRenameLibraryItem,
-        deleteLibraryItem,
-        handleAddToService,
-        createNewCategory: async (name) => {
-          await createNewCategory(name);
-        },
-        searchQuery,
-        setSearchQuery,
-        searchMode: librarySearchMode,
-        setSearchMode: setLibrarySearchMode,
-        contentSource,
-        presentationImportState,
-      }}
-      styleState={{
-        fontFamily,
-        fontSize,
-        fontBold,
-        fontItalic,
-        fontUnderline,
-        scriptureFontFamily: settingsScriptureFontFamily,
-        scriptureFontSize: settingsScriptureFontSize,
-        scriptureFooterFontSize: settingsScriptureFooterFontSize,
-        scriptureFontWeight: settingsScriptureFontWeight,
-        scriptureTextAlign: settingsScriptureTextAlign,
-        scriptureVerticalAlign: settingsScriptureVerticalAlign,
-        scriptureFooterAlign: settingsScriptureFooterAlign,
-        scriptureFooterPosition: settingsScriptureFooterPosition,
-        libraryDefaultFontFamily: settingsLibraryFontFamily,
-        libraryDefaultFontSize: settingsLibraryFontSize,
-        libraryDefaultFontWeight: settingsLibraryFontWeight,
-        setScriptureFontSize: setSettingsScriptureFontSize,
-        setScriptureTextAlign: setSettingsScriptureTextAlign,
-        setScriptureVerticalAlign: setSettingsScriptureVerticalAlign,
-        setScriptureFooterAlign: setSettingsScriptureFooterAlign,
-        setScriptureFooterPosition: setSettingsScriptureFooterPosition,
-        timerLayout: {
-          xPercent: settingsTimerXPercent,
-          yPercent: settingsTimerYPercent,
-          clockFontPx: settingsTimerClockFontPx,
-          nameFontPx: settingsTimerNameFontPx,
-          clockColor: settingsTimerClockColor,
-          nameColor: settingsTimerNameColor,
-          nameBannerEnabled: settingsTimerNameBannerEnabled,
-          nameBannerColor: settingsTimerNameBannerColor,
-          titlePosition: settingsTimerTitlePosition,
-        },
-        updateFontStyle,
-      }}
-      speechSettings={{
-        lang: settingsLang,
-        inputDeviceId: settingsSpeechInputDeviceId,
-      }}
-      isPptxSelection={selectedPresentationSourceType === "pptx"}
-      panelRefs={{
-        showsPanelRef,
-        mediaPanelRef,
-        scripturePanelRef,
-      }}
-      outputState={{
-        isFrozen: isOutputFrozen,
-        onToggleFreeze: () => setIsOutputFrozen((prev) => !prev),
-        showTextInOutput,
-        setShowTextInOutput,
-        hideBackgroundInOutput,
-        setHideBackgroundInOutput,
-        outputTextPosition,
-        isTimerLayerEnabled,
-        setIsTimerLayerEnabled,
-        isMessageLayerEnabled,
-        setIsMessageLayerEnabled,
-        activeMessageOverlay,
-        onShowMessageOverlay: setActiveMessageOverlay,
-        activePropIds,
-        onSetActivePropIds: setActivePropIds,
-        onPushMasterSlide: handlePushMasterSlide,
-        timers,
-      }}
+          ) => {
+            await createComposedLibraryItem(
+              title,
+              itemIds,
+              categoryId,
+              slideSelections,
+            );
+          },
+          updateComposedLibraryItem: async (
+            itemId,
+            title,
+            itemIds,
+            categoryId,
+            slideSelections,
+          ) => {
+            const byId = new Map(libraryItems.map((item) => [String(item._id), item]));
+            const selectedItems = itemIds
+              .map((id) => byId.get(String(id)))
+              .filter((item): item is (typeof libraryItems)[number] =>
+                Boolean(item),
+              );
+            if (selectedItems.length === 0) return;
+            const draft = createComposedLibraryDraft(
+              title,
+              selectedItems,
+              libraryTextDefaults,
+              slideSelections,
+            );
+            await updateExistingLibraryItem(itemId, draft, categoryId);
+          },
+          handleRenameLibraryItem,
+          deleteLibraryItem,
+          handleAddToService,
+          onOpenMiniEditor: handleOpenMiniEditor,
+          createNewCategory: async (name) => {
+            return createNewCategory(name);
+          },
+          searchQuery,
+          setSearchQuery,
+          searchMode: librarySearchMode,
+          setSearchMode: setLibrarySearchMode,
+          contentSource,
+          presentationImportState,
+        }}
+        styleState={{
+          fontFamily,
+          fontSize,
+          fontBold,
+          fontItalic,
+          fontUnderline,
+          scriptureFontFamily: settingsScriptureFontFamily,
+          scriptureFontSize: settingsScriptureFontSize,
+          scriptureFooterFontSize: settingsScriptureFooterFontSize,
+          scriptureFontWeight: settingsScriptureFontWeight,
+          scriptureTextAlign: settingsScriptureTextAlign,
+          scriptureVerticalAlign: settingsScriptureVerticalAlign,
+          scriptureFooterAlign: settingsScriptureFooterAlign,
+          scriptureFooterPosition: settingsScriptureFooterPosition,
+          libraryDefaultFontFamily: settingsLibraryFontFamily,
+          libraryDefaultFontSize: settingsLibraryFontSize,
+          libraryDefaultFontWeight: settingsLibraryFontWeight,
+          setScriptureFontSize: setSettingsScriptureFontSize,
+          setScriptureTextAlign: setSettingsScriptureTextAlign,
+          setScriptureVerticalAlign: setSettingsScriptureVerticalAlign,
+          setScriptureFooterAlign: setSettingsScriptureFooterAlign,
+          setScriptureFooterPosition: setSettingsScriptureFooterPosition,
+          timerLayout: {
+            xPercent: settingsTimerXPercent,
+            yPercent: settingsTimerYPercent,
+            clockFontPx: settingsTimerClockFontPx,
+            nameFontPx: settingsTimerNameFontPx,
+            clockColor: settingsTimerClockColor,
+            nameColor: settingsTimerNameColor,
+            nameBannerEnabled: settingsTimerNameBannerEnabled,
+            nameBannerColor: settingsTimerNameBannerColor,
+            titlePosition: settingsTimerTitlePosition,
+          },
+          updateFontStyle,
+        }}
+        speechSettings={{
+          lang: settingsLang,
+          inputDeviceId: settingsSpeechInputDeviceId,
+        }}
+        isPptxSelection={selectedPresentationSourceType === "pptx"}
+        panelRefs={{
+          showsPanelRef,
+          mediaPanelRef,
+          scripturePanelRef,
+        }}
+        outputState={{
+          isFrozen: isOutputFrozen,
+          onToggleFreeze: () => setIsOutputFrozen((prev) => !prev),
+          showTextInOutput,
+          setShowTextInOutput,
+          hideBackgroundInOutput,
+          setHideBackgroundInOutput,
+          outputTextPosition,
+          isTimerLayerEnabled,
+          setIsTimerLayerEnabled,
+          isMessageLayerEnabled,
+          setIsMessageLayerEnabled,
+          activeMessageOverlay,
+          onShowMessageOverlay: setActiveMessageOverlay,
+          activePropIds,
+          onSetActivePropIds: setActivePropIds,
+          onPushMasterSlide: handlePushMasterSlide,
+          timers,
+        }}
       />
     </>
   );

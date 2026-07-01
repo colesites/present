@@ -1,6 +1,7 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import {
+  decodeDesktopSessionToken,
   issueDesktopSessionToken,
   verifyDesktopSessionToken,
 } from "../../../../../lib/server/desktop-auth";
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
       sessionId: claims.sessionId,
       userId: claims.userId,
     });
+    const nextSessionClaims = decodeDesktopSessionToken(nextSessionToken);
     const accessToken = token.jwt;
     let accessTokenExpiresAt: number | null = null;
     try {
@@ -80,7 +82,9 @@ export async function POST(request: Request) {
       {
         accessToken,
         accessTokenExpiresAt,
-        sessionExpiresAt: claims.expiresAt,
+        // Report the rotated token's expiry. Returning the old token's expiry
+        // prevents the desktop's persisted session lifetime from extending.
+        sessionExpiresAt: nextSessionClaims?.expiresAt ?? claims.expiresAt,
         sessionToken: nextSessionToken,
         // Compatibility for older desktop versions.
         refreshToken: nextSessionToken,

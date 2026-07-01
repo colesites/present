@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { Filter, LayoutGrid, LayoutList, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "@present/backend/convex/_generated/api";
@@ -69,7 +69,7 @@ export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
   if (!orgId) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-[11px] text-muted-foreground">
-        Sign in and join an organization to manage masters.
+        Join or select an organization to manage masters.
       </div>
     );
   }
@@ -197,6 +197,7 @@ export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
       {/* Edit drawer */}
       {editing && (
         <MasterEditDrawer
+          key={editing._id}
           master={editing}
           onClose={() => setEditingId(null)}
           onUpdate={(patch) =>
@@ -310,13 +311,6 @@ function MasterEditDrawer({
   const [name, setName] = useState(master.name);
   const [color, setColor] = useState(master.color);
   const [body, setBody] = useState(master.body ?? "");
-
-  // Keep local form in sync when a different master is opened.
-  useEffect(() => {
-    setName(master.name);
-    setColor(master.color);
-    setBody(master.body ?? "");
-  }, [master._id]);
 
   return (
     <div className="absolute inset-x-0 bottom-0 z-10 max-h-[70%] overflow-y-auto border-t border-border/70 bg-card p-3 shadow-2xl">

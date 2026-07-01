@@ -239,6 +239,45 @@ export const registerFileIPC = (): void => {
     }
   });
 
+  ipcMain.handle('rename-media-file', async (_, oldPath: string, newName: string) => {
+    try {
+      const trimmedName = String(newName ?? '').trim();
+      if (!trimmedName) {
+        throw new Error('File name is required');
+      }
+
+      const sanitizedName = path.basename(trimmedName);
+      const oldExtension = path.extname(oldPath);
+      const nextName = path.extname(sanitizedName)
+        ? sanitizedName
+        : `${sanitizedName}${oldExtension}`;
+      const nextPath = path.join(path.dirname(oldPath), nextName);
+
+      if (oldPath === nextPath) {
+        return { path: nextPath, name: nextName };
+      }
+      if (fs.existsSync(nextPath)) {
+        throw new Error('Name already exists');
+      }
+
+      await fs.promises.rename(oldPath, nextPath);
+      return { path: nextPath, name: nextName };
+    } catch (error) {
+      console.error('Failed to rename media file', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('delete-media-file', async (_, filePath: string) => {
+    try {
+      await fs.promises.unlink(filePath);
+      return true;
+    } catch (error) {
+      console.error('Failed to delete media file', error);
+      throw error;
+    }
+  });
+
   // Create directory
   ipcMain.handle('create-directory', async (_, parentPath: string, name: string) => {
     try {

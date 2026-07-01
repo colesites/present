@@ -1,6 +1,13 @@
 "use client";
 
-import { memo, useMemo, useState, type DragEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+} from "react";
 import type { LibraryItem, LibrarySlide } from "../../shared/types";
 import { stripBracketsForDisplay } from "../../renderer/shared/lib/lyrics";
 import { getLabelColor } from "../../shared/types";
@@ -13,7 +20,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "../../renderer/shared/components/ui/context-menu";
-import { GripVertical, Pencil } from "lucide-react";
+import { ArrowRight, GripVertical, NotebookPen, Pencil } from "lucide-react";
 import { getSlideBackgroundColor } from "../library/lib/library-items";
 
 // Fixed slide box height
@@ -58,6 +65,7 @@ interface SlidesGridProps {
   selectedIndex: number | null;
   onSelectSlide: (slideId: string, text: string, footer?: string) => void;
   onEditSlide?: (libraryId: string, index: number) => void;
+  onOpenMiniEditor?: (libraryId: string, index: number) => void;
   onReorderSlides?: (fromIndex: number, toIndex: number) => Promise<void>;
   fontFamily?: string;
   fontSize?: number;
@@ -75,6 +83,7 @@ export const SlidesGrid = memo(function SlidesGrid({
   selectedIndex,
   onSelectSlide,
   onEditSlide,
+  onOpenMiniEditor,
   onReorderSlides,
   fontFamily,
   fontSize,
@@ -87,6 +96,8 @@ export const SlidesGrid = memo(function SlidesGrid({
 }: SlidesGridProps) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+  const [slideNodeRefs] = useState(() => new Map<number, HTMLDivElement>());
+  const previousFocusedSlideIndexRef = useRef<number | null>(null);
   const scaleFactor = externalScale / 60;
   const slideHeight = useMemo(
     () => Math.round((forceSingleColumn ? BASE_SLIDE_HEIGHT * 2 : BASE_SLIDE_HEIGHT) * scaleFactor),
@@ -100,6 +111,85 @@ export const SlidesGrid = memo(function SlidesGrid({
     () => Math.max(8, Math.round(16 * scaleFactor)),
     [scaleFactor]
   );
+  const focusedSlideIndex = useMemo(() => {
+    if (selectedIndex != null) {
+      return selectedIndex;
+    }
+    if (activeSlideId) {
+      const activeIndex = slides.findIndex(({ libraryItem, slide, index, id }) => {
+        const slideId =
+          id ||
+          (libraryItem
+            ? `${libraryItem._id}:${slide.id ?? index}`
+            : `scripture:${index}`);
+        return slideId === activeSlideId;
+      });
+      if (activeIndex >= 0) {
+        return slides[activeIndex]?.index ?? activeIndex;
+      }
+    }
+    return null;
+  }, [activeSlideId, selectedIndex, slides]);
+
+  useEffect(() => {
+    if (focusedSlideIndex == null) return;
+    const node = slideNodeRefs.get(focusedSlideIndex);
+    if (!node) return;
+
+    window.requestAnimationFrame(() => {
+      const scrollRoot =
+        node.closest("[data-slides-scroll]") ??
+        node.parentElement?.closest(".overflow-auto") ??
+        null;
+      if (!(scrollRoot instanceof HTMLElement)) {
+        node.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+          inline: "nearest",
+        });
+        previousFocusedSlideIndexRef.current = focusedSlideIndex;
+        return;
+      }
+
+      const previousIndex = previousFocusedSlideIndexRef.current;
+      const direction =
+        previousIndex == null
+          ? 0
+          : focusedSlideIndex > previousIndex
+            ? 1
+            : focusedSlideIndex < previousIndex
+              ? -1
+              : 0;
+      previousFocusedSlideIndexRef.current = focusedSlideIndex;
+
+      const rootRect = scrollRoot.getBoundingClientRect();
+      const nodeRect = node.getBoundingClientRect();
+      const step = node.offsetHeight + gridGap;
+      const topBuffer = step;
+      const bottomBuffer = step;
+      const maxScrollTop = scrollRoot.scrollHeight - scrollRoot.clientHeight;
+      let nextScrollTop: number | null = null;
+
+      if (nodeRect.bottom > rootRect.bottom - bottomBuffer) {
+        nextScrollTop =
+          direction > 0
+            ? scrollRoot.scrollTop + step
+            : scrollRoot.scrollTop + (nodeRect.bottom - rootRect.bottom) + bottomBuffer;
+      } else if (nodeRect.top < rootRect.top + topBuffer) {
+        nextScrollTop =
+          direction < 0
+            ? scrollRoot.scrollTop - step
+            : scrollRoot.scrollTop - (rootRect.top - nodeRect.top) - topBuffer;
+      }
+
+      if (nextScrollTop == null) return;
+
+      scrollRoot.scrollTo({
+        top: Math.max(0, Math.min(maxScrollTop, nextScrollTop)),
+        behavior: "smooth",
+      });
+    });
+  }, [focusedSlideIndex, gridGap, isGridView, slideNodeRefs]);
 
   if (slides.length === 0) {
     return (
@@ -135,69 +225,84 @@ export const SlidesGrid = memo(function SlidesGrid({
           const isSelected = selectedIndex === index;
 
           return (
-            <SlideCard
+            <div
               key={slideId}
-              slide={slide}
-              index={index}
-              isActive={isActive}
-              isSelected={isSelected}
-              onClick={() => onSelectSlide(slideId, slide.text, slide.footer)}
-              onEdit={
-                onEditSlide && libraryItem
-                  ? () => onEditSlide(libraryItem._id, index)
-                  : undefined
-              }
-              onDragStart={(event) => {
-                if (!onReorderSlides || !libraryItem) return;
-                setDraggedIndex(index);
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData(SLIDE_DRAG_DATA_KEY, String(index));
-                event.dataTransfer.setData("text/plain", String(index));
-              }}
-              onDragOver={(event) => {
-                if (!onReorderSlides || !libraryItem) return;
-                event.preventDefault();
-                if (draggedIndex !== index) {
-                  setDropTargetIndex(index);
+              ref={(node) => {
+                if (node) {
+                  slideNodeRefs.set(index, node);
+                } else {
+                  slideNodeRefs.delete(index);
                 }
               }}
-              onDragLeave={() => {
-                if (!onReorderSlides) return;
-                setDropTargetIndex(null);
-              }}
-              onDrop={async (event) => {
-                if (!onReorderSlides || !libraryItem) return;
-                event.preventDefault();
-                const droppedIndex = Number.parseInt(
-                  event.dataTransfer.getData(SLIDE_DRAG_DATA_KEY) ||
-                    event.dataTransfer.getData("text/plain"),
-                  10,
-                );
-                const fromIndex =
-                  draggedIndex ?? (Number.isFinite(droppedIndex) ? droppedIndex : null);
-                setDraggedIndex(null);
-                setDropTargetIndex(null);
-                if (fromIndex != null && fromIndex !== index) {
-                  await onReorderSlides(fromIndex, index);
+            >
+              <SlideCard
+                slide={slide}
+                index={index}
+                isActive={isActive}
+                isSelected={isSelected}
+                onClick={() => onSelectSlide(slideId, slide.text, slide.footer)}
+                onEdit={
+                  onEditSlide && libraryItem
+                    ? () => onEditSlide(libraryItem._id, index)
+                    : undefined
                 }
-              }}
-              onDragEnd={() => {
-                setDraggedIndex(null);
-                setDropTargetIndex(null);
-              }}
-              isDragging={draggedIndex === index}
-              isDropTarget={dropTargetIndex === index}
-              canReorder={Boolean(onReorderSlides && libraryItem)}
-              backgroundColor={getSlideBackgroundColor(slide, libraryItem?.content)}
-              isScripture={!libraryItem}
-              fontFamily={fontFamily}
-              fontSize={fontSize}
-              fontBold={fontBold}
-              fontItalic={fontItalic}
-              fontUnderline={fontUnderline}
-              slideHeight={slideHeight}
-              isGridView={isGridView}
-            />
+                onOpenMiniEditor={
+                  onOpenMiniEditor && libraryItem
+                    ? () => onOpenMiniEditor(libraryItem._id, index)
+                    : undefined
+                }
+                onDragStart={(event) => {
+                  if (!onReorderSlides || !libraryItem) return;
+                  setDraggedIndex(index);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData(SLIDE_DRAG_DATA_KEY, String(index));
+                  event.dataTransfer.setData("text/plain", String(index));
+                }}
+                onDragOver={(event) => {
+                  if (!onReorderSlides || !libraryItem) return;
+                  event.preventDefault();
+                  if (draggedIndex !== index) {
+                    setDropTargetIndex(index);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (!onReorderSlides) return;
+                  setDropTargetIndex(null);
+                }}
+                onDrop={async (event) => {
+                  if (!onReorderSlides || !libraryItem) return;
+                  event.preventDefault();
+                  const droppedIndex = Number.parseInt(
+                    event.dataTransfer.getData(SLIDE_DRAG_DATA_KEY) ||
+                      event.dataTransfer.getData("text/plain"),
+                    10,
+                  );
+                  const fromIndex =
+                    draggedIndex ?? (Number.isFinite(droppedIndex) ? droppedIndex : null);
+                  setDraggedIndex(null);
+                  setDropTargetIndex(null);
+                  if (fromIndex != null && fromIndex !== index) {
+                    await onReorderSlides(fromIndex, index);
+                  }
+                }}
+                onDragEnd={() => {
+                  setDraggedIndex(null);
+                  setDropTargetIndex(null);
+                }}
+                isDragging={draggedIndex === index}
+                isDropTarget={dropTargetIndex === index}
+                canReorder={Boolean(onReorderSlides && libraryItem)}
+                backgroundColor={getSlideBackgroundColor(slide, libraryItem?.content)}
+                isScripture={!libraryItem}
+                fontFamily={fontFamily}
+                fontSize={fontSize}
+                fontBold={fontBold}
+                fontItalic={fontItalic}
+                fontUnderline={fontUnderline}
+                slideHeight={slideHeight}
+                isGridView={isGridView}
+              />
+            </div>
           );
         })}
       </div>
@@ -215,6 +320,7 @@ interface SlideCardProps {
   isSelected: boolean;
   onClick: () => void;
   onEdit?: () => void;
+  onOpenMiniEditor?: () => void;
   onDragStart?: (event: DragEvent<HTMLButtonElement>) => void;
   onDragOver?: (event: DragEvent<HTMLButtonElement>) => void;
   onDragLeave?: () => void;
@@ -241,6 +347,7 @@ const SlideCard = memo(function SlideCard({
   isSelected,
   onClick,
   onEdit,
+  onOpenMiniEditor,
   onDragStart,
   onDragOver,
   onDragLeave,
@@ -266,7 +373,7 @@ const SlideCard = memo(function SlideCard({
       }
     : undefined;
 
-  // Strip bracket annotations (e.g. [x3], [2x], [repeat]) from element content for display.
+  // Strip square-bracket annotations (e.g. [x3], [2x], [repeat]) from element content for display.
   // Skip for scripture — Bible verses can have meaningful brackets like [a] or [1].
   const displayElements = useMemo(() => {
     if (isScripture || !slide.elements?.length) return slide.elements;
@@ -283,10 +390,18 @@ const SlideCard = memo(function SlideCard({
   const displayModifier = useMemo(() => {
     if (isScripture) return slide.modifier || "";
     if (slide.modifier) return slide.modifier;
-    const matches = slide.text.match(/\[([^\]]+)\]/g);
-    if (!matches) return "";
-    return matches.map((m) => m.slice(1, -1)).join(" ");
+    const bracketMatches = slide.text.match(/\[([^\]]+)\]/g) ?? [];
+    if (bracketMatches.length === 0) return "";
+    return bracketMatches.map((m) => m.slice(1, -1)).join(" ");
   }, [slide.text, slide.modifier, isScripture]);
+
+  const displayText = useMemo(
+    () =>
+      isScripture
+        ? slide.text
+        : stripBracketsForDisplay(slide.text),
+    [isScripture, slide.text],
+  );
 
   return (
     <ContextMenu>
@@ -325,7 +440,7 @@ const SlideCard = memo(function SlideCard({
             {!isScripture && displayElements && displayElements.length > 0 ? (
               <div className="relative h-full w-full overflow-hidden rounded-sm">
                 <CanvasSlideLayer
-                  text={stripBracketsForDisplay(slide.text)}
+                  text={displayText}
                   elements={displayElements}
                   className="absolute inset-0"
                   libraryStyle={{
@@ -339,7 +454,7 @@ const SlideCard = memo(function SlideCard({
               </div>
             ) : (
               <AutoFitText
-                text={isScripture ? slide.text : stripBracketsForDisplay(slide.text)}
+                text={displayText}
                 className={cn(
                   "pointer-events-none select-none text-white",
                   fontBold && "font-bold",
@@ -374,7 +489,18 @@ const SlideCard = memo(function SlideCard({
           >
             <div className="flex items-center gap-4">
               <span className="opacity-60">{index + 1}</span>
-              <span>{slide.label || ""}</span>
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <span className="truncate">{slide.label || ""}</span>
+                {!isScripture && slide.sectionRepeat ? (
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full bg-black/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none"
+                    title="Section repeat"
+                  >
+                    <ArrowRight className="h-3 w-3" />
+                    {slide.sectionRepeat}
+                  </span>
+                ) : null}
+              </span>
             </div>
             <span>{displayModifier || ""}</span>
           </div>
@@ -384,7 +510,13 @@ const SlideCard = memo(function SlideCard({
         {onEdit && (
           <ContextMenuItem onClick={onEdit} className="gap-2">
             <Pencil className="h-4 w-4" />
-            Edit in Editor
+            Open in editor
+          </ContextMenuItem>
+        )}
+        {onOpenMiniEditor && (
+          <ContextMenuItem onClick={onOpenMiniEditor} className="gap-2">
+            <NotebookPen className="h-4 w-4" />
+            Open in mini editor
           </ContextMenuItem>
         )}
       </ContextMenuContent>

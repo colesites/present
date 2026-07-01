@@ -4,12 +4,20 @@ import { v } from "convex/values";
 export const listByOrg = query({
   args: { orgId: v.id("organizations") },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const categories = await ctx.db
       .query("categories")
       .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
       .collect();
+
+    return categories.sort(
+      (left, right) =>
+        (left.order ?? 0) - (right.order ?? 0) ||
+        left.name.localeCompare(right.name),
+    );
   },
 });
+
+const normalizeCategoryName = (name: string) => name.trim().toLowerCase();
 
 export const ensureDefaults = mutation({
   args: { orgId: v.id("organizations") },
@@ -49,15 +57,27 @@ export const create = mutation({
     name: v.string(),
   },
   handler: async (ctx, args) => {
+    const name = args.name.trim();
+    if (!name) {
+      throw new Error("Category name is required");
+    }
+
     const existing = await ctx.db
       .query("categories")
       .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
       .collect();
+    const existingMatch = existing.find(
+      (category) =>
+        normalizeCategoryName(category.name) === normalizeCategoryName(name),
+    );
+    if (existingMatch) {
+      return existingMatch._id;
+    }
 
     const now = Date.now();
     return await ctx.db.insert("categories", {
       orgId: args.orgId,
-      name: args.name,
+      name,
       isDefault: false,
       order: existing.length,
       createdAt: now,

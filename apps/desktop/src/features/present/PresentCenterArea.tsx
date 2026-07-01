@@ -35,6 +35,8 @@ type Props = {
   slidesForGrid: SlideData[];
   activeSlideId: string | null;
   selectedIndex: number | null;
+  isGridView: boolean;
+  onGridViewChange: (isGridView: boolean) => void;
 
   selectedLibraryItem: EditorProps["libraryItem"] | null;
   scriptureEditorItem: EditorProps["libraryItem"] | null;
@@ -43,6 +45,7 @@ type Props = {
   // handlers
   onSelectSlide: ComponentProps<typeof SlidesGrid>["onSelectSlide"];
   onEditSlide?: ComponentProps<typeof SlidesGrid>["onEditSlide"];
+  onOpenMiniEditor?: ComponentProps<typeof SlidesGrid>["onOpenMiniEditor"];
   onReorderSlides?: ComponentProps<typeof SlidesGrid>["onReorderSlides"];
 
   // editor (FULL CONTRACT)
@@ -117,11 +120,14 @@ export function PresentCenterArea({
   slidesForGrid,
   activeSlideId,
   selectedIndex,
+  isGridView,
+  onGridViewChange,
   selectedLibraryItem,
   scriptureEditorItem,
   selectedLibraryId,
   onSelectSlide,
   onEditSlide,
+  onOpenMiniEditor,
   onReorderSlides,
   editorProps,
   onSaveScriptureEditor,
@@ -147,13 +153,12 @@ export function PresentCenterArea({
 }: Props) {
   // Footer state
   const [scale, setScale] = useState(60);
-  const [isGridView, setIsGridView] = useState(true);
   const effectiveScale = lockSingleSlideView ? 100 : scale;
   const effectiveIsGridView = lockSingleSlideView ? true : isGridView;
 
   const mediaPane = useMemo(
     () => (
-      <div className="absolute inset-0 overflow-auto p-4">
+      <div className="absolute inset-0 overflow-auto p-4" data-slides-scroll>
         {showViewMedia && !selectedLibraryId ? (
           <button
             type="button"
@@ -188,6 +193,7 @@ export function PresentCenterArea({
             selectedIndex={selectedIndex}
             onSelectSlide={onSelectSlide}
             onEditSlide={onEditSlide}
+            onOpenMiniEditor={onOpenMiniEditor}
             onReorderSlides={selectedLibraryItem ? onReorderSlides : undefined}
             externalScale={effectiveScale}
             isGridView={effectiveIsGridView}
@@ -204,6 +210,7 @@ export function PresentCenterArea({
       effectiveScale,
       lockSingleSlideView,
       onEditSlide,
+      onOpenMiniEditor,
       onOutputPreviewMedia,
       onReorderSlides,
       onSelectSlide,
@@ -241,11 +248,13 @@ export function PresentCenterArea({
           isActive={viewMode === "show" && bottomTab === "scripture"}
           speechLang={speechLang}
           speechInputDeviceId={speechInputDeviceId}
+          activeSlideId={activeSlideId}
         />
       </div>
     ),
     [
       bottomTab,
+      activeSlideId,
       onAddScriptureToService,
       onSendScripture,
       speechInputDeviceId,
@@ -352,7 +361,7 @@ export function PresentCenterArea({
       {viewMode === "show" && (
         <WorkspaceFooter 
           isGridView={effectiveIsGridView}
-          onViewModeChange={setIsGridView}
+          onViewModeChange={onGridViewChange}
           scale={effectiveScale}
           onScaleChange={setScale}
           disableViewModeToggle={lockSingleSlideView}

@@ -45,10 +45,15 @@ function normalizeBookLookup(value: string): string {
   return value
     .trim()
     .toLowerCase()
+    .replace(/^(?:the\s+book\s+of|book\s+of)\s+/, "")
     .replace(/^(first|1st|i)\b/, "1")
     .replace(/^(second|2nd|ii)\b/, "2")
     .replace(/^(third|3rd|iii)\b/, "3")
     .replace(/\s+/g, " ");
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parseSpokenNumberTokens(tokens: string[]): number | null {
@@ -101,6 +106,24 @@ function replaceSpokenNumberPhrases(input: string): string {
       lookahead += 1;
     }
 
+    const isAdjacentUnitSequence =
+      phraseTokens.length > 1 &&
+      phraseTokens.every((phraseToken) => {
+        if (phraseToken === "and") return true;
+        const value = SPOKEN_NUMBER_VALUES.get(phraseToken);
+        return value !== undefined && value < 20;
+      });
+
+    if (isAdjacentUnitSequence) {
+      normalizedTokens.push(
+        ...phraseTokens
+          .filter((phraseToken) => phraseToken !== "and")
+          .map((phraseToken) => String(SPOKEN_NUMBER_VALUES.get(phraseToken))),
+      );
+      index = lookahead - 1;
+      continue;
+    }
+
     const parsedNumber = parseSpokenNumberTokens(phraseTokens);
     if (parsedNumber === null) {
       normalizedTokens.push(...tokens.slice(index, lookahead));
@@ -120,6 +143,9 @@ function normalizeReferenceInput(input: string): string {
     input
       .trim()
       .replace(/[.,]/g, " ")
+      .replace(/\b(first|1st)\b/gi, "1")
+      .replace(/\b(second|2nd)\b/gi, "2")
+      .replace(/\b(third|3rd)\b/gi, "3")
       .replace(/\s+/g, " ")
       .replace(/^(first|1st|i)\b/i, "1")
       .replace(/^(second|2nd|ii)\b/i, "2")
@@ -133,6 +159,105 @@ function normalizeReferenceInput(input: string): string {
     .replace(/\s*-\s*/g, "-")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function getBookAliases(book: BibleBookRecord): string[] {
+  return Array.from(
+    new Set(
+      [book.name, book.id, book.abbreviation]
+        .filter((value): value is string => Boolean(value?.trim()))
+        .map(normalizeBookLookup),
+    ),
+  ).sort((left, right) => right.length - left.length);
+}
+
+function findReferencedBook(
+  input: string,
+  availableBooks: BibleBookRecord[],
+): { book: BibleBookRecord; rawBook: string; tail: string } | null {
+  let bestMatch:
+    | {
+        book: BibleBookRecord;
+        rawBook: string;
+        start: number;
+        end: number;
+      }
+    | null = null;
+
+  for (const book of availableBooks) {
+    for (const alias of getBookAliases(book)) {
+      if (!alias) continue;
+
+      const match = new RegExp(`(^|\\s)(${escapeRegex(alias)})(?=\\s|$)`, "i").exec(input);
+      if (!match || match.index === undefined) continue;
+
+      const start = match.index + (match[1]?.length ?? 0);
+      const end = start + (match[2]?.length ?? alias.length);
+      const rawBook = input.slice(start, end);
+
+      if (
+        !bestMatch ||
+        start < bestMatch.start ||
+        (start === bestMatch.start && rawBook.length > bestMatch.rawBook.length)
+      ) {
+        bestMatch = { book, rawBook, start, end };
+      }
+    }
+  }
+
+  if (!bestMatch) return null;
+  return {
+    book: bestMatch.book,
+    rawBook: bestMatch.rawBook,
+    tail: input.slice(bestMatch.end).trim(),
+  };
+}
+
+function parseChapterVerseTail(tail: string): {
+  chapter: number | null;
+  verseStart: number | null;
+  verseEnd: number | null;
+  versionCode: string | null;
+} {
+  const result = {
+    chapter: null as number | null,
+    verseStart: null as number | null,
+    verseEnd: null as number | null,
+    versionCode: null as string | null,
+  };
+
+  const match = tail.match(/^(\d+)(?::(\d+)(?:-(\d+))?)?(?:\s+(.+))?$/);
+  if (!match) return result;
+
+  result.chapter = parseInt(match[1], 10);
+  if (match[2]) {
+    result.verseStart = parseInt(match[2], 10);
+  }
+  if (match[3]) {
+    result.verseEnd = parseInt(match[3], 10);
+  }
+
+  const rest = match[4]?.trim();
+  if (!rest) return result;
+
+  const [firstToken, secondToken] = rest.split(/\s+/);
+  const verseRange = firstToken.match(/^(\d+)(?:-(\d+))?$/);
+  if (verseRange) {
+    result.verseStart = parseInt(verseRange[1], 10);
+    if (verseRange[2]) {
+      result.verseEnd = parseInt(verseRange[2], 10);
+    }
+    if (secondToken && /^[A-Za-z][A-Za-z0-9]*$/.test(secondToken)) {
+      result.versionCode = secondToken.toUpperCase();
+    }
+    return result;
+  }
+
+  if (/^[A-Za-z][A-Za-z0-9]*$/.test(firstToken)) {
+    result.versionCode = firstToken.toUpperCase();
+  }
+
+  return result;
 }
 
 export function parseReference(
@@ -151,67 +276,42 @@ export function parseReference(
   const trimInput = normalizeReferenceInput(input);
   if (!trimInput) return result;
 
-  // Regex to match: [Book] [Chapter]:[Verse]-[Verse] [Version]
-  // Improved to handle optional spaces and simpler grouping
-  // Group 1: Book (allow "1 John", "Song of Songs")
-  // Group 2: Chapter
-  // Group 3: Verse Start (Optional)
-  // Group 4: Verse End (Optional range)
-  // Group 5: Version (Optional)
-  const regex =
-    /^([1-3]?\s*[A-Za-z]+(?:[A-Za-z\s]*))\s+(\d+)(?::\s*(\d+)(?:\s*-\s*(\d+))?)?(?:\s+([A-Za-z0-9]+))?$/i;
-  const match = trimInput.match(regex);
-
-  if (!match) {
+  const bookMatch = findReferencedBook(trimInput, availableBooks);
+  if (!bookMatch) {
     result.errors.push(
       "Invalid format. Expected: Book Chapter or Book Chapter:Verse",
     );
     return result;
   }
 
-  const [, bookRaw, chapterRaw, verseStartRaw, verseEndRaw, versionRaw] = match;
-
-  // 1. Resolve Book
-  const bookSearch = normalizeBookLookup(bookRaw);
-  const book = availableBooks.find(
-    (b) =>
-      normalizeBookLookup(b.name) === bookSearch ||
-      normalizeBookLookup(b.id) === bookSearch ||
-      normalizeBookLookup(b.abbreviation ?? "") === bookSearch,
-  );
-
-  if (!book) {
-    result.errors.push(`Unknown book: "${bookRaw.trim()}"`);
-  } else {
-    result.book = book;
-  }
+  result.book = bookMatch.book;
 
   // 2. Resolve Chapter
-  const chapter = parseInt(chapterRaw, 10);
-  if (book && (chapter < 1 || chapter > book.chapters)) {
+  const parsedTail = parseChapterVerseTail(bookMatch.tail);
+  const chapter = parsedTail.chapter;
+  if (!chapter) {
+    result.errors.push("Missing chapter number.");
+    return result;
+  }
+
+  if (chapter < 1 || chapter > bookMatch.book.chapters) {
     result.errors.push(
-      `Invalid chapter: ${chapter}. ${book.name} has ${book.chapters} chapters.`,
+      `Invalid chapter: ${chapter}. ${bookMatch.book.name} has ${bookMatch.book.chapters} chapters.`,
     );
   }
   result.chapter = chapter;
 
   // 3. Resolve Verse Start
-  if (verseStartRaw) {
-    result.verseStart = parseInt(verseStartRaw, 10);
-  }
+  result.verseStart = parsedTail.verseStart;
 
   // 4. Resolve Verse End
-  if (verseEndRaw) {
-    result.verseEnd = parseInt(verseEndRaw, 10);
-    if (result.verseStart && result.verseEnd <= result.verseStart) {
-      result.errors.push("End verse must be greater than start verse.");
-    }
+  result.verseEnd = parsedTail.verseEnd;
+  if (result.verseStart && result.verseEnd && result.verseEnd <= result.verseStart) {
+    result.errors.push("End verse must be greater than start verse.");
   }
 
   // 5. Version
-  if (versionRaw) {
-    result.versionCode = versionRaw.toUpperCase();
-  }
+  result.versionCode = parsedTail.versionCode;
 
   return result;
 }

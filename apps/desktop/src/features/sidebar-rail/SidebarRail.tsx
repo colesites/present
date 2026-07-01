@@ -40,6 +40,8 @@ const TAB_META: Record<
 
 export interface SidebarRailProps {
   orgId: Id<"organizations"> | null;
+  localOrgId: Id<"organizations"> | null;
+  userId: string | null;
 
   // Timer toggle (shared with the OutputPreview button)
   isTimerLayerEnabled: boolean;
@@ -132,14 +134,15 @@ function SidebarPanelContent({
     case "masters":
       return (
         <MastersTabPanel
-          orgId={props.orgId ?? null}
+          orgId={props.localOrgId ?? props.orgId ?? null}
           onPushSlide={props.onPushMasterSlide}
         />
       );
     case "messages":
       return (
         <MessagesTabPanel
-          orgId={props.orgId ?? null}
+          orgId={props.localOrgId ?? props.orgId ?? null}
+          userId={props.userId ?? null}
           isMessageLayerEnabled={props.isMessageLayerEnabled}
           activeOverlay={props.activeMessageOverlay}
           onShowOverlay={props.onShowMessageOverlay}
@@ -166,7 +169,7 @@ function SidebarPanelContent({
     case "layers":
       return (
         <LayersTabPanel
-          orgId={props.orgId ?? null}
+          orgId={props.localOrgId ?? props.orgId ?? null}
           activePropIds={props.activePropIds}
           onSetActivePropIds={props.onSetActivePropIds}
         />
