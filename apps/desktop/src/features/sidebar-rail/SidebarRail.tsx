@@ -79,7 +79,7 @@ export function SidebarRail(props: SidebarRailProps) {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-card">
       <SidebarIconStrip activeTab={activeTab} onSelect={setActiveTab} />
-      <div className="min-h-0 min-w-0 flex-1">
+      <div className="h-full min-h-0 min-w-0 flex-1 overflow-hidden">
         <SidebarPanelContent tab={activeTab} {...props} />
       </div>
     </div>

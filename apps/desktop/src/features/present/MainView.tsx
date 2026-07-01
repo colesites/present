@@ -963,23 +963,25 @@ export function MainView({
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize="55" minSize="30">
-            <SidebarRail
-              orgId={orgId ?? null}
-              localOrgId={localOrgId ?? null}
-              userId={userId}
-              isTimerLayerEnabled={isTimerLayerEnabled}
-              onToggleTimerLayer={handleToggleTimerLayer}
-              isTextLayerEnabled={showTextInOutput}
-              onToggleTextLayer={handleToggleTextInOutput}
-              isMessageLayerEnabled={isMessageLayerEnabled}
-              onSetMessageLayerEnabled={setIsMessageLayerEnabled}
-              activeMessageOverlay={activeMessageOverlay}
-              onShowMessageOverlay={onShowMessageOverlay}
-              onPushMasterSlide={onPushMasterSlide}
-              activePropIds={activePropIds}
-              onSetActivePropIds={onSetActivePropIds}
-              timers={timers}
-            />
+            <div className="h-full min-h-0 overflow-hidden">
+              <SidebarRail
+                orgId={orgId ?? null}
+                localOrgId={localOrgId ?? null}
+                userId={userId}
+                isTimerLayerEnabled={isTimerLayerEnabled}
+                onToggleTimerLayer={handleToggleTimerLayer}
+                isTextLayerEnabled={showTextInOutput}
+                onToggleTextLayer={handleToggleTextInOutput}
+                isMessageLayerEnabled={isMessageLayerEnabled}
+                onSetMessageLayerEnabled={setIsMessageLayerEnabled}
+                activeMessageOverlay={activeMessageOverlay}
+                onShowMessageOverlay={onShowMessageOverlay}
+                onPushMasterSlide={onPushMasterSlide}
+                activePropIds={activePropIds}
+                onSetActivePropIds={onSetActivePropIds}
+                timers={timers}
+              />
+            </div>
           </ResizablePanel>
         </ResizablePanelGroup>
       </ResizablePanel>

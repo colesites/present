@@ -77,7 +77,7 @@ export function TimerTabPanel({
       </header>
 
       {/* List */}
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overscroll-contain p-2">
         {items.length === 0 ? (
           <p className="px-2 py-6 text-center text-[11px] text-muted-foreground">
             No timers yet. Click + to add one.
@@ -157,6 +157,7 @@ export function TimerTabPanel({
                   <div className="space-y-2 border-t border-border/70 px-2 py-2">
                     <Field label="Name">
                       <input
+                        aria-label="Timer name"
                         value={timer.name}
                         onChange={(event) =>
                           updateTimer(timer.id, { name: event.target.value })
@@ -167,6 +168,7 @@ export function TimerTabPanel({
 
                     <Field label="Type">
                       <select
+                        aria-label="Timer type"
                         value={timer.type}
                         onChange={(event) =>
                           updateTimer(timer.id, {
@@ -189,6 +191,7 @@ export function TimerTabPanel({
                     {timer.type === "countdown" && (
                       <Field label="Duration (HH:MM:SS)">
                         <input
+                          aria-label="Timer duration"
                           value={timer.duration}
                           onChange={(event) =>
                             updateTimer(timer.id, {
@@ -204,6 +207,7 @@ export function TimerTabPanel({
                       <div className="grid grid-cols-3 gap-1.5">
                         <Field label="Hour">
                           <select
+                            aria-label="Timer hour"
                             value={String(timer.hour)}
                             onChange={(event) =>
                               updateTimer(timer.id, {
@@ -223,6 +227,7 @@ export function TimerTabPanel({
                         </Field>
                         <Field label="Minute">
                           <select
+                            aria-label="Timer minute"
                             value={String(timer.minute)}
                             onChange={(event) =>
                               updateTimer(timer.id, {
@@ -240,6 +245,7 @@ export function TimerTabPanel({
                         </Field>
                         <Field label="Period">
                           <select
+                            aria-label="Timer period"
                             value={timer.meridiem}
                             onChange={(event) =>
                               updateTimer(timer.id, {
@@ -260,6 +266,7 @@ export function TimerTabPanel({
                         <Field label="Start">
                           <input
                             type="time"
+                            aria-label="Timer elapsed start"
                             value={timer.elapsedStart}
                             onChange={(event) =>
                               updateTimer(timer.id, {
@@ -272,6 +279,7 @@ export function TimerTabPanel({
                         <Field label="End">
                           <input
                             type="time"
+                            aria-label="Timer elapsed end"
                             value={timer.elapsedEnd}
                             onChange={(event) =>
                               updateTimer(timer.id, {

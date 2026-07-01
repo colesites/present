@@ -13,7 +13,7 @@ export const PresentServicesSidebar = memo(function PresentServicesSidebar({
   servicesSidebarProps,
 }: Props) {
   return (
-    <div className="h-full border-r border-border bg-card">
+    <div className="h-full min-h-0 overflow-hidden border-r border-border bg-card">
       <ServicesSidebar {...servicesSidebarProps} />
     </div>
   );

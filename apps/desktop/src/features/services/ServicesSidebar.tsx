@@ -205,7 +205,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
   };
 
   return (
-    <aside className="flex h-full flex-col">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="border-b border-border px-3 py-2.5">
         <div className="flex items-center justify-between">
           <div className="flex min-w-0 items-center gap-2">
@@ -274,7 +274,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden p-2">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
         {isLoading ? (
           <ServiceListSkeleton />
         ) : isInsideService && selectedService ? (

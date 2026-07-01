@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type MutableRefObject,
 } from "react";
 import type { LibraryItem, LibrarySlide } from "../../shared/types";
 import { stripBracketsForDisplay } from "../../renderer/shared/lib/lyrics";
@@ -28,6 +29,47 @@ const BASE_SLIDE_HEIGHT = 160;
 // Minimum width for each slide (controls when columns reduce)
 const BASE_MIN_SLIDE_WIDTH = 220;
 const SLIDE_DRAG_DATA_KEY = "application/x-present-slide-index";
+const SMART_SCROLL_DURATION_MS = 650;
+
+function easeInOutCubic(progress: number) {
+  return progress < 0.5
+    ? 4 * progress * progress * progress
+    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+}
+
+function animateScrollTop(
+  element: HTMLElement,
+  targetTop: number,
+  animationRef: MutableRefObject<number | null>,
+) {
+  if (animationRef.current !== null) {
+    window.cancelAnimationFrame(animationRef.current);
+  }
+
+  const startTop = element.scrollTop;
+  const distance = targetTop - startTop;
+  if (Math.abs(distance) <= 1) {
+    element.scrollTop = targetTop;
+    animationRef.current = null;
+    return;
+  }
+
+  const startTime = window.performance.now();
+  const tick = (currentTime: number) => {
+    const elapsed = currentTime - startTime;
+    const progress = Math.min(1, elapsed / SMART_SCROLL_DURATION_MS);
+    element.scrollTop = startTop + distance * easeInOutCubic(progress);
+
+    if (progress < 1) {
+      animationRef.current = window.requestAnimationFrame(tick);
+    } else {
+      element.scrollTop = targetTop;
+      animationRef.current = null;
+    }
+  };
+
+  animationRef.current = window.requestAnimationFrame(tick);
+}
 
 function getReadableTextColor(backgroundColor: string) {
   const hex = backgroundColor.replace("#", "");
@@ -98,6 +140,7 @@ export const SlidesGrid = memo(function SlidesGrid({
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const [slideNodeRefs] = useState(() => new Map<number, HTMLDivElement>());
   const previousFocusedSlideIndexRef = useRef<number | null>(null);
+  const smartScrollAnimationRef = useRef<number | null>(null);
   const scaleFactor = externalScale / 60;
   const slideHeight = useMemo(
     () => Math.round((forceSingleColumn ? BASE_SLIDE_HEIGHT * 2 : BASE_SLIDE_HEIGHT) * scaleFactor),
@@ -130,6 +173,14 @@ export const SlidesGrid = memo(function SlidesGrid({
     }
     return null;
   }, [activeSlideId, selectedIndex, slides]);
+
+  useEffect(() => {
+    return () => {
+      if (smartScrollAnimationRef.current !== null) {
+        window.cancelAnimationFrame(smartScrollAnimationRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (focusedSlideIndex == null) return;
@@ -184,10 +235,11 @@ export const SlidesGrid = memo(function SlidesGrid({
 
       if (nextScrollTop == null) return;
 
-      scrollRoot.scrollTo({
-        top: Math.max(0, Math.min(maxScrollTop, nextScrollTop)),
-        behavior: "smooth",
-      });
+      animateScrollTop(
+        scrollRoot,
+        Math.max(0, Math.min(maxScrollTop, nextScrollTop)),
+        smartScrollAnimationRef,
+      );
     });
   }, [focusedSlideIndex, gridGap, isGridView, slideNodeRefs]);
 
