@@ -17,6 +17,7 @@ import {
   type MessageOverlay,
 } from "../../shared/types";
 import type { PropsOverlayItem } from "../../shared/types/output-window";
+import type { MediaItem } from "../media/hooks";
 import type { UseTimersResult } from "../../renderer/shared/hooks";
 import { cn } from "../../renderer/shared/lib/utils";
 import { MastersTabPanel } from "./panels/MastersTabPanel";
@@ -65,6 +66,7 @@ export interface SidebarRailProps {
   }) => void;
 
   // Active prop overlays
+  mediaItems: MediaItem[];
   activePropIds: string[];
   onSetLivePropDraft: (
     propId: string,
@@ -175,6 +177,7 @@ function SidebarPanelContent({
       return (
         <LayersTabPanel
           orgId={props.localOrgId ?? props.orgId ?? null}
+          mediaItems={props.mediaItems}
           activePropIds={props.activePropIds}
           onSetLivePropDraft={props.onSetLivePropDraft}
           onClearLivePropDraft={props.onClearLivePropDraft}

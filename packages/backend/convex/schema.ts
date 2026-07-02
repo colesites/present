@@ -211,11 +211,13 @@ export default defineSchema({
       v.literal("youtube"),
       v.literal("ndi"),
     ),
-    // For image props: a data URL (small) or an external URL. We don't
-    // store binaries in Convex storage at this scope.
+    // For local media props: reference the operator's local media library by id.
+    // The media file/url is resolved locally by the desktop app and is not
+    // stored in Convex.
+    mediaId: v.optional(v.string()),
+    // Legacy fields retained for old prop documents. New media props should
+    // use mediaId instead of storing URLs/data in Convex.
     imageUrl: v.optional(v.string()),
-    // For local video props: a local-media:// URL. The video remains on the
-    // operator machine instead of being uploaded into the document.
     mediaUrl: v.optional(v.string()),
     // For hosted video props: the original YouTube URL pasted by the user.
     youtubeUrl: v.optional(v.string()),

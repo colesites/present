@@ -32,6 +32,7 @@ export const create = mutation({
     orgId: v.id("organizations"),
     name: v.string(),
     kind: propKindValidator,
+    mediaId: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
     mediaUrl: v.optional(v.string()),
     youtubeUrl: v.optional(v.string()),
@@ -57,6 +58,7 @@ export const create = mutation({
       orgId: args.orgId,
       name: args.name.trim() || "Prop",
       kind: args.kind,
+      mediaId: args.mediaId,
       imageUrl: args.imageUrl,
       mediaUrl: args.mediaUrl,
       youtubeUrl: args.youtubeUrl,
@@ -78,6 +80,7 @@ export const update = mutation({
   args: {
     propId: v.id("props"),
     name: v.optional(v.string()),
+    mediaId: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
     mediaUrl: v.optional(v.string()),
     youtubeUrl: v.optional(v.string()),
@@ -96,6 +99,7 @@ export const update = mutation({
     if (!existing) throw new ConvexError("Prop not found");
     const patch: Partial<typeof existing> = { updatedAt: Date.now() };
     if (args.name !== undefined) patch.name = args.name;
+    if (args.mediaId !== undefined) patch.mediaId = args.mediaId;
     if (args.imageUrl !== undefined) patch.imageUrl = args.imageUrl;
     if (args.mediaUrl !== undefined) patch.mediaUrl = args.mediaUrl;
     if (args.youtubeUrl !== undefined) patch.youtubeUrl = args.youtubeUrl;

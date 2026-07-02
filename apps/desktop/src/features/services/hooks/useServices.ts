@@ -521,6 +521,7 @@ export function useServices(
     templateId: string,
     index: number,
     groupId: string | null,
+    toIndex?: number,
   ) => {
     updateServiceTemplate(templateId, (template) => {
       const targetExists =
@@ -528,11 +529,57 @@ export function useServices(
       if (!targetExists || !template.items[index]) {
         return template;
       }
+      if (typeof toIndex === "number" && Number.isFinite(toIndex)) {
+        const itemToMove = {
+          ...template.items[index],
+          groupId,
+        };
+        const nextItems = template.items.filter((_, itemIndex) => itemIndex !== index);
+        const adjustedIndex = toIndex > index ? toIndex - 1 : toIndex;
+        const boundedIndex = Math.max(0, Math.min(nextItems.length, adjustedIndex));
+        nextItems.splice(boundedIndex, 0, itemToMove);
+        return {
+          ...template,
+          items: nextItems,
+          updatedAt: Date.now(),
+        };
+      }
       return {
         ...template,
         items: template.items.map((item, itemIndex) =>
           itemIndex === index ? { ...item, groupId } : item,
         ),
+        updatedAt: Date.now(),
+      };
+    });
+  };
+
+  const reorderServiceTemplateGroup = (
+    templateId: string,
+    groupId: string,
+    targetGroupId: string,
+    position: "before" | "after",
+  ) => {
+    if (groupId === targetGroupId) return;
+    updateServiceTemplate(templateId, (template) => {
+      const orderedGroups = [...template.groups].sort(
+        (left, right) => left.order - right.order,
+      );
+      const movingGroup = orderedGroups.find((group) => group.id === groupId);
+      if (!movingGroup) return template;
+      const withoutMovingGroup = orderedGroups.filter((group) => group.id !== groupId);
+      const targetIndex = withoutMovingGroup.findIndex(
+        (group) => group.id === targetGroupId,
+      );
+      if (targetIndex < 0) return template;
+      const insertIndex = position === "after" ? targetIndex + 1 : targetIndex;
+      withoutMovingGroup.splice(insertIndex, 0, movingGroup);
+      return {
+        ...template,
+        groups: withoutMovingGroup.map((group, order) => ({
+          ...group,
+          order,
+        })),
         updatedAt: Date.now(),
       };
     });
@@ -1017,6 +1064,7 @@ export function useServices(
     addItemToServiceTemplate,
     removeItemFromServiceTemplate,
     moveServiceTemplateItemToGroup,
+    reorderServiceTemplateGroup,
     deleteServiceTemplate,
     renameExistingService,
     deleteService,

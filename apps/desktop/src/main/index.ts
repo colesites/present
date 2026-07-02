@@ -29,6 +29,7 @@ import {
   unregisterAiOperatorShortcuts,
 } from './services/ai-operator-shortcuts.service';
 import { initializeErrorReporting } from './services/error-reporting.service';
+import { configureYoutubeEmbedSession } from './services/youtube-embed.service';
 
 // Handle Squirrel startup events on Windows
 if (require('electron-squirrel-startup')) {
@@ -55,6 +56,7 @@ app.on('ready', () => {
 
   // Register protocol handlers
   registerProtocolHandlers();
+  configureYoutubeEmbedSession();
 
   // Register all IPC handlers
   registerAllIPC();

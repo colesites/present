@@ -21,10 +21,12 @@ import { toast } from "sonner";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { PropsOverlayItem } from "../../../shared/types/output-window";
+import type { MediaItem } from "../../media/hooks";
 import { cn } from "../../../renderer/shared/lib/utils";
 
 interface LayersTabPanelProps {
   orgId: Id<"organizations"> | null;
+  mediaItems: MediaItem[];
   activePropIds: string[];
   onSetLivePropDraft: (
     propId: string,
@@ -38,6 +40,7 @@ type Prop = {
   _id: Id<"props">;
   name: string;
   kind: "image" | "text" | "video" | "youtube" | "ndi";
+  mediaId?: string;
   imageUrl?: string;
   mediaUrl?: string;
   youtubeUrl?: string;
@@ -67,6 +70,7 @@ type PropDraft = Partial<
     Prop,
     | "color"
     | "fontSize"
+    | "mediaId"
     | "name"
     | "ndiSourceName"
     | "opacity"
@@ -87,6 +91,7 @@ const POSITIONS: Prop["position"][] = [
 
 export function LayersTabPanel({
   orgId,
+  mediaItems,
   activePropIds,
   onSetLivePropDraft,
   onClearLivePropDraft,
@@ -104,6 +109,7 @@ export function LayersTabPanel({
   const [selectedId, setSelectedId] = useState<Id<"props"> | null>(null);
   const [drafts, setDrafts] = useState<Record<string, PropDraft>>({});
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [isMediaPickerOpen, setIsMediaPickerOpen] = useState(false);
   const [ndiSources, setNdiSources] = useState<NdiSource[]>([]);
   const [isLoadingNdiSources, setIsLoadingNdiSources] = useState(false);
 
@@ -124,6 +130,10 @@ export function LayersTabPanel({
     ? drafts[selected._id as unknown as string] ?? {}
     : {};
   const selectedView = selected ? { ...selected, ...selectedDraft } : null;
+  const mediaById = useMemo(
+    () => new Map(mediaItems.map((item) => [item.id, item])),
+    [mediaItems],
+  );
 
   const setPropDraft = (propId: Id<"props">, patch: PropDraft) => {
     const key = propId as unknown as string;
@@ -194,48 +204,24 @@ export function LayersTabPanel({
     }
   };
 
-  const handleCreateMedia = async () => {
-    if (!window.electronAPI?.selectPropMedia) return;
-    const picked = await window.electronAPI.selectPropMedia();
-    if (!picked) return;
-    const baseName = picked.name.replace(/\.[^.]+$/, "");
+  const handleCreateMedia = (item: MediaItem) => {
     const toastId = toast.loading("Adding media prop...");
     setPendingAction("create-media");
-    if (picked.mediaType === "video") {
-      void createProp({
-        orgId,
-        name: baseName,
-        kind: "video",
-        mediaUrl: picked.mediaUrl,
-        position: "center",
-        opacity: 1,
-        sizePercent: 45,
-      }).then((id) => {
-        setSelectedId(id);
-        toast.success("Media prop added.", { id: toastId });
-      }).catch((error: unknown) => {
-        toast.error("Could not add media prop.", { id: toastId });
-        console.error("Failed to create video prop", error);
-      }).then(() => {
-        setPendingAction(null);
-      });
-      return;
-    }
-
     void createProp({
       orgId,
-      name: baseName,
-      kind: "image",
-      imageUrl: picked.dataUrl,
-      position: "bottom-right",
+      name: item.name.replace(/\.[^.]+$/, "") || item.name,
+      kind: item.type,
+      mediaId: item.id,
+      position: item.type === "video" ? "center" : "bottom-right",
       opacity: 1,
-      sizePercent: 20,
+      sizePercent: item.type === "video" ? 45 : 20,
     }).then((id) => {
       setSelectedId(id);
+      setIsMediaPickerOpen(false);
       toast.success("Media prop added.", { id: toastId });
     }).catch((error: unknown) => {
       toast.error("Could not add media prop.", { id: toastId });
-      console.error("Failed to create image prop", error);
+      console.error("Failed to create media prop", error);
     }).then(() => {
       setPendingAction(null);
     });
@@ -350,7 +336,7 @@ export function LayersTabPanel({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={handleCreateMedia}
+            onClick={() => setIsMediaPickerOpen((value) => !value)}
             disabled={Boolean(pendingAction)}
             className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
             title="Add media prop"
@@ -407,6 +393,38 @@ export function LayersTabPanel({
         </div>
       </header>
 
+      {isMediaPickerOpen ? (
+        <div className="border-b border-border/70 p-2">
+          <div className="max-h-36 overflow-y-auto rounded-sm border border-border/60 bg-background/40 p-1">
+            {mediaItems.length ? (
+              mediaItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleCreateMedia(item)}
+                  disabled={Boolean(pendingAction)}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-foreground/5 disabled:opacity-50"
+                >
+                  <MediaPropThumb item={item} className="h-7 w-10 shrink-0 rounded-sm" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[11px] text-foreground">
+                      {item.name}
+                    </span>
+                    <span className="block text-[9px] text-muted-foreground">
+                      {item.type}
+                    </span>
+                  </span>
+                </button>
+              ))
+            ) : (
+              <p className="px-2 py-3 text-[10px] text-muted-foreground">
+                Add media in the Media panel first.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
         {sorted.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
@@ -422,6 +440,7 @@ export function LayersTabPanel({
           sorted.map((prop, index) => {
             const isVisible = activePropIds.includes(prop._id as unknown as string);
             const propKey = prop._id as unknown as string;
+            const propMedia = prop.mediaId ? mediaById.get(prop.mediaId) ?? null : null;
             return (
               <div
                 key={prop._id}
@@ -442,7 +461,9 @@ export function LayersTabPanel({
                     className="relative flex h-7 w-9 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-[repeating-conic-gradient(#1a1a1a_0_25%,#2a2a2a_0_50%)] bg-[length:8px_8px]"
                     style={{ opacity: prop.opacity }}
                   >
-                    {prop.kind === "image" && prop.imageUrl ? (
+                    {propMedia ? (
+                      <MediaPropThumb item={propMedia} className="h-full w-full" />
+                    ) : prop.kind === "image" && prop.imageUrl ? (
                       <img
                         src={prop.imageUrl}
                         alt=""
@@ -475,7 +496,7 @@ export function LayersTabPanel({
                         ? prop.youtubeUrl || "YouTube source"
                         : prop.kind === "ndi"
                           ? prop.ndiSourceName || "NDI source"
-                          : prop.kind}
+                          : propMedia?.name ?? prop.kind}
                     </span>
                   </span>
                 </button>
@@ -567,6 +588,33 @@ export function LayersTabPanel({
               )}
             </button>
           </div>
+
+          {(selected.kind === "image" || selected.kind === "video") && (
+            <label className="mb-2 block text-[10px] text-muted-foreground">
+              <span className="mb-1 block">Media</span>
+              <select
+                value={selectedView.mediaId ?? ""}
+                onChange={(event) => {
+                  const mediaItem = mediaById.get(event.target.value);
+                  if (!mediaItem) return;
+                  commitPropUpdate(selected._id, {
+                    mediaId: mediaItem.id,
+                    name: mediaItem.name.replace(/\.[^.]+$/, "") || mediaItem.name,
+                  });
+                }}
+                className="w-full rounded-sm border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-foreground focus:border-primary/60 focus:outline-hidden"
+              >
+                <option value="">Select local media</option>
+                {mediaItems
+                  .filter((item) => item.type === selected.kind)
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
 
           {selected.kind === "text" && (
             <textarea
@@ -801,5 +849,43 @@ export function LayersTabPanel({
         </div>
       )}
     </div>
+  );
+}
+
+function MediaPropThumb({
+  item,
+  className,
+}: {
+  item: MediaItem;
+  className?: string;
+}) {
+  if (item.type === "image") {
+    return (
+      <img
+        src={item.url}
+        alt=""
+        className={cn("object-cover", className)}
+        loading="lazy"
+      />
+    );
+  }
+
+  return (
+    <span className={cn("relative block overflow-hidden bg-black", className)}>
+      <video
+        src={item.url}
+        aria-label={`${item.name} preview`}
+        tabIndex={-1}
+        className="h-full w-full object-cover"
+        muted
+        preload="metadata"
+        playsInline
+      >
+        <track kind="captions" />
+      </video>
+      <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/70 p-0.5 text-white">
+        <Video className="h-3 w-3" strokeWidth={1.8} />
+      </span>
+    </span>
   );
 }

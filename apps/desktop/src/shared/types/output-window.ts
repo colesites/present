@@ -93,10 +93,12 @@ export type OutputState = {
 export type PropsOverlayItem = {
   id: string;
   kind: "image" | "text" | "video" | "youtube" | "ndi";
+  mediaId?: string;
   imageUrl?: string;
   mediaUrl?: string;
   youtubeUrl?: string;
   ndiSourceName?: string;
+  shownAtMs?: number;
   text?: string;
   position:
     | "top-left"

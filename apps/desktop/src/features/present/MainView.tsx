@@ -97,6 +97,7 @@ export type EditorUpdateOutputHandler = (payload: {
 export interface MainViewMediaState {
   mediaState: MediaState;
   showViewMedia: MediaItem | null;
+  isPreviewOutputting: boolean;
   effectiveActiveMediaItem: MediaItem | null;
   showVideoRef: React.RefObject<HTMLVideoElement | null>;
   videoSettings: VideoSettings;
@@ -105,6 +106,7 @@ export interface MainViewMediaState {
   handleVideoPause: () => void;
   handleVideoEnded: () => void;
   handleVideoSeeked: (e: React.SyntheticEvent<HTMLVideoElement, Event>) => void;
+  handleVideoTimeUpdate: (e: React.SyntheticEvent<HTMLVideoElement, Event>) => void;
   onToggleVideoPlayback: () => void;
   handleMediaPanelSelect: (item: MediaItem | null) => void;
   handleAddMediaToService: (
@@ -307,6 +309,13 @@ interface MainViewProps {
       templateId: string,
       index: number,
       groupId: string | null,
+      toIndex?: number,
+    ) => void;
+    onReorderServiceTemplateGroup: (
+      templateId: string,
+      groupId: string,
+      targetGroupId: string,
+      position: "before" | "after",
     ) => void;
     onDeleteServiceTemplate: (templateId: string) => void;
     onCreateService: (name: string, templateId?: string | null) => Promise<void>;
@@ -380,6 +389,7 @@ export function MainView({
 
   const {
     showViewMedia,
+    isPreviewOutputting,
     effectiveActiveMediaItem,
     showVideoRef,
     videoSettings,
@@ -388,6 +398,7 @@ export function MainView({
     handleVideoPause,
     handleVideoEnded,
     handleVideoSeeked,
+    handleVideoTimeUpdate,
     onToggleVideoPlayback,
     handleMediaPanelSelect,
     handleAddMediaToService,
@@ -509,6 +520,7 @@ export function MainView({
     onAddItemToServiceTemplate,
     onRemoveItemFromServiceTemplate,
     onMoveServiceTemplateItemToGroup,
+    onReorderServiceTemplateGroup,
     onDeleteServiceTemplate,
     onCreateService: createNewService,
     onRenameService: renameExistingService,
@@ -819,6 +831,7 @@ export function MainView({
       onAddItemToServiceTemplate,
       onRemoveItemFromServiceTemplate,
       onMoveServiceTemplateItemToGroup,
+      onReorderServiceTemplateGroup,
       onDeleteServiceTemplate,
       onCreateService: createNewService,
       onRenameService: renameExistingService,
@@ -848,6 +861,7 @@ export function MainView({
       onAddItemToServiceTemplate,
       onRemoveItemFromServiceTemplate,
       onMoveServiceTemplateItemToGroup,
+      onReorderServiceTemplateGroup,
       onDeleteServiceTemplate,
       handleReorderServiceItemsSafe,
       handleSelectServiceItem,
@@ -911,6 +925,7 @@ export function MainView({
                     handleUpdateScriptureEditedSlideOutput
                   }
                   showViewMedia={showViewMedia}
+                  isPreviewOutputting={isPreviewOutputting}
                   showVideoRef={showVideoRef}
                   videoSettings={videoSettings}
                   onOutputPreviewMedia={handleOutputPreviewMediaClick}
@@ -918,6 +933,7 @@ export function MainView({
                   onVideoPause={handleVideoPause}
                   onVideoEnded={handleVideoEnded}
                   onVideoSeeked={handleVideoSeeked}
+                  onVideoTimeUpdate={handleVideoTimeUpdate}
                   showsPanelRef={showsPanelRef}
                   scripturePanelRef={scripturePanelRef}
                   showsPanelProps={showsPanelProps}
@@ -989,6 +1005,7 @@ export function MainView({
                 activeMessageOverlay={activeMessageOverlay}
                 onShowMessageOverlay={onShowMessageOverlay}
                 onPushMasterSlide={onPushMasterSlide}
+                mediaItems={mediaState.mediaState.allMediaItems}
                 activePropIds={activePropIds}
                 onSetLivePropDraft={onSetLivePropDraft}
                 onClearLivePropDraft={onClearLivePropDraft}
@@ -1025,6 +1042,7 @@ export function MainView({
           handleUpdateScriptureEditedSlideOutput
         }
         showViewMedia={showViewMedia}
+        isPreviewOutputting={isPreviewOutputting}
         showVideoRef={showVideoRef}
         videoSettings={videoSettings}
         onOutputPreviewMedia={handleOutputPreviewMediaClick}
@@ -1032,6 +1050,7 @@ export function MainView({
         onVideoPause={handleVideoPause}
         onVideoEnded={handleVideoEnded}
         onVideoSeeked={handleVideoSeeked}
+        onVideoTimeUpdate={handleVideoTimeUpdate}
         showsPanelRef={showsPanelRef}
         scripturePanelRef={scripturePanelRef}
         showsPanelProps={showsPanelProps}

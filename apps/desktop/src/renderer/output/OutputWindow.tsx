@@ -54,6 +54,9 @@ const DEFAULT_SCREEN_LAYOUT: ScreenComposerLayout = {
   ],
 };
 
+const YOUTUBE_EMBED_REFERRER = "https://present.app/";
+const YOUTUBE_EMBED_ORIGIN = "https://present.app";
+
 function parseScreenComposerLayout(
   incoming: unknown
 ): ScreenComposerLayout | null {
@@ -912,12 +915,11 @@ function PropsOverlayLayer({
           );
         }
         if (item.kind === "youtube" && item.youtubeUrl) {
-          const embedUrl = getYouTubeEmbedUrl(item.youtubeUrl);
-          if (!embedUrl) return null;
           return (
             <YouTubePropLayer
               key={item.id}
-              src={embedUrl}
+              youtubeUrl={item.youtubeUrl}
+              shownAtMs={item.shownAtMs}
               style={baseStyle}
             />
           );
@@ -958,18 +960,27 @@ function PropsOverlayLayer({
 }
 
 function YouTubePropLayer({
-  src,
+  youtubeUrl,
+  shownAtMs,
   style,
 }: {
-  src: string;
+  youtubeUrl: string;
+  shownAtMs?: number;
   style: React.CSSProperties;
 }) {
   type WebviewProps = HTMLAttributes<HTMLElement> & {
     allow?: string;
     allowpopups?: string;
+    httpreferrer?: string;
     partition?: string;
     src: string;
   };
+  const src = useMemo(
+    () => getYouTubeEmbedUrl(youtubeUrl, getElapsedSeconds(shownAtMs)),
+    [shownAtMs, youtubeUrl],
+  );
+
+  if (!src) return null;
 
   return createElement("webview", {
     src,
@@ -978,6 +989,7 @@ function YouTubePropLayer({
     partition: "persist:present-youtube-props",
     allow: "autoplay; encrypted-media; picture-in-picture",
     allowpopups: "false",
+    httpreferrer: YOUTUBE_EMBED_REFERRER,
   } satisfies WebviewProps);
 }
 
@@ -1023,7 +1035,7 @@ function NdiPropLayer({
   );
 }
 
-function getYouTubeEmbedUrl(value: string): string | null {
+function getYouTubeEmbedUrl(value: string, startSeconds = 0): string | null {
   try {
     const url = new URL(value.trim());
     let videoId: string | null = null;
@@ -1050,15 +1062,23 @@ function getYouTubeEmbedUrl(value: string): string | null {
       loop: "1",
       modestbranding: "1",
       mute: "1",
-      origin: "https://www.youtube-nocookie.com",
+      origin: YOUTUBE_EMBED_ORIGIN,
       playsinline: "1",
       playlist: videoId,
       rel: "0",
     });
+    if (startSeconds > 0) {
+      params.set("start", String(startSeconds));
+    }
     return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
   } catch {
     return null;
   }
+}
+
+function getElapsedSeconds(startedAtMs?: number): number {
+  if (!startedAtMs || !Number.isFinite(startedAtMs)) return 0;
+  return Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
 }
 
 function getPropSlotStyle(

@@ -23,6 +23,7 @@ export function useShowVideoSync(params: {
 
   const showVideoRef = useRef<HTMLVideoElement>(null);
   const isProgrammaticPlayRef = useRef(false);
+  const lastTimeUpdateMsRef = useRef(0);
 
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
@@ -33,22 +34,37 @@ export function useShowVideoSync(params: {
         ? showViewMedia
         : null;
 
-  const [prevMediaId, setPrevMediaId] = useState(activeMediaItem?.id);
-  if (activeMediaItem?.id !== prevMediaId) {
-    setPrevMediaId(activeMediaItem?.id);
+  const previousActiveMediaIdRef = useRef(activeMediaItem?.id ?? null);
+
+  useEffect(() => {
+    if (activeMediaItem?.id === previousActiveMediaIdRef.current) {
+      return;
+    }
+
+    previousActiveMediaIdRef.current = activeMediaItem?.id ?? null;
     setVideoCurrentTime(0);
 
-    if (activeMediaItem?.id) {
-      if (shouldAutoPlay && activeMediaItem?.type === "video") {
-        setIsVideoPlaying(true);
-        onAutoPlayConsumed();
-      } else {
-        setIsVideoPlaying(false);
-      }
-    } else {
-      setIsVideoPlaying(false);
+    if (activeMediaItem?.type === "video" && shouldAutoPlay) {
+      setIsVideoPlaying(true);
+      onAutoPlayConsumed();
+      return;
     }
-  }
+
+    setIsVideoPlaying(false);
+  }, [
+    activeMediaItem?.id,
+    activeMediaItem?.type,
+    onAutoPlayConsumed,
+    shouldAutoPlay,
+  ]);
+
+  useEffect(() => {
+    if (activeMediaItem?.type !== "video" || !shouldAutoPlay) {
+      return;
+    }
+    setIsVideoPlaying(true);
+    onAutoPlayConsumed();
+  }, [activeMediaItem?.type, onAutoPlayConsumed, shouldAutoPlay]);
 
   const effectiveIsVideoPlaying = forcePlay || isVideoPlaying;
 
@@ -98,6 +114,18 @@ export function useShowVideoSync(params: {
     [],
   );
 
+  const handleVideoTimeUpdate = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      const now = performance.now();
+      if (now - lastTimeUpdateMsRef.current < 250) {
+        return;
+      }
+      lastTimeUpdateMsRef.current = now;
+      setVideoCurrentTime(e.currentTarget.currentTime);
+    },
+    [],
+  );
+
   return {
     showVideoRef,
     isVideoPlaying: effectiveIsVideoPlaying,
@@ -107,6 +135,7 @@ export function useShowVideoSync(params: {
     handleVideoPause,
     handleVideoEnded,
     handleVideoSeeked,
+    handleVideoTimeUpdate,
     toggleVideoPlayback,
   };
 }

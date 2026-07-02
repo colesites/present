@@ -93,6 +93,13 @@ interface ServicesSidebarProps {
     templateId: string,
     index: number,
     groupId: string | null,
+    toIndex?: number,
+  ) => void;
+  onReorderServiceTemplateGroup: (
+    templateId: string,
+    groupId: string,
+    targetGroupId: string,
+    position: "before" | "after",
   ) => void;
   onDeleteServiceTemplate: (templateId: string) => void;
   onCreateService: (name: string, templateId?: string | null) => Promise<unknown>;
@@ -137,6 +144,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
   onAddItemToServiceTemplate,
   onRemoveItemFromServiceTemplate,
   onMoveServiceTemplateItemToGroup,
+  onReorderServiceTemplateGroup,
   onDeleteServiceTemplate,
   onCreateService,
   onRenameService,
@@ -412,6 +420,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
             onAddItem={onAddItemToServiceTemplate}
             onRemoveItem={onRemoveItemFromServiceTemplate}
             onMoveItemToGroup={onMoveServiceTemplateItemToGroup}
+            onReorderGroup={onReorderServiceTemplateGroup}
           />
         </Dialog>
       )}
@@ -497,6 +506,7 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
   onAddItem,
   onRemoveItem,
   onMoveItemToGroup,
+  onReorderGroup,
 }: {
   templates: ServiceTemplate[];
   selectedTemplateId: string | null;
@@ -520,6 +530,13 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
     templateId: string,
     index: number,
     groupId: string | null,
+    toIndex?: number,
+  ) => void;
+  onReorderGroup: (
+    templateId: string,
+    groupId: string,
+    targetGroupId: string,
+    position: "before" | "after",
   ) => void;
 }) {
   const selectedTemplate =
@@ -568,11 +585,141 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
     },
     [orderedGroups, selectedTemplate],
   );
+  const templateRows = useMemo(() => {
+    const looseItems = [...ungroupedItems].sort((left, right) => left.index - right.index);
+    let looseIndex = 0;
+    const rows: Array<
+      | { type: "item"; item: ServiceTemplate["items"][number]; index: number }
+      | {
+          type: "group";
+          group: ServiceGroup;
+          items: { item: ServiceTemplate["items"][number]; index: number }[];
+        }
+    > = [];
+
+    for (const entry of groupedItems) {
+      const firstGroupItemIndex = entry.items.length
+        ? Math.min(...entry.items.map((item) => item.index))
+        : Number.POSITIVE_INFINITY;
+      while (
+        looseIndex < looseItems.length &&
+        looseItems[looseIndex].index < firstGroupItemIndex
+      ) {
+        rows.push({ type: "item", ...looseItems[looseIndex] });
+        looseIndex += 1;
+      }
+      rows.push({ type: "group", group: entry.group, items: entry.items });
+    }
+
+    while (looseIndex < looseItems.length) {
+      rows.push({ type: "item", ...looseItems[looseIndex] });
+      looseIndex += 1;
+    }
+
+    return rows;
+  }, [groupedItems, ungroupedItems]);
+  const [draggedTemplateItemIndex, setDraggedTemplateItemIndex] =
+    useState<number | null>(null);
+  const [draggedTemplateGroupId, setDraggedTemplateGroupId] = useState<string | null>(
+    null,
+  );
+  const [templateDropTarget, setTemplateDropTarget] = useState<string | null>(null);
+  const templateItemDragKey = "application/x-present-template-item-index";
+  const templateGroupDragKey = "application/x-present-template-group-id";
 
   const handleAddGroup = () => {
     if (!selectedTemplate || !groupName.trim()) return;
     onAddGroup(selectedTemplate.id, groupName.trim());
     setGroupName("");
+  };
+
+  const clearTemplateDrag = () => {
+    setDraggedTemplateItemIndex(null);
+    setDraggedTemplateGroupId(null);
+    setTemplateDropTarget(null);
+  };
+
+  const getDraggedTemplateItemIndex = (event: DragEvent<HTMLElement>) => {
+    const rawValue =
+      event.dataTransfer.getData(templateItemDragKey) ||
+      event.dataTransfer.getData("text/plain");
+    const parsed = Number.parseInt(rawValue, 10);
+    return draggedTemplateItemIndex ?? (Number.isFinite(parsed) ? parsed : null);
+  };
+
+  const getDraggedTemplateGroupId = (event: DragEvent<HTMLElement>) =>
+    draggedTemplateGroupId ||
+    event.dataTransfer.getData(templateGroupDragKey) ||
+    null;
+
+  const getTemplateGroupBoundaryIndex = (
+    groupId: string,
+    position: "before" | "after",
+  ) => {
+    const groupItems = selectedTemplate?.items
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.groupId === groupId)
+      .sort((left, right) => left.index - right.index);
+    if (!groupItems || groupItems.length === 0) {
+      return position === "before" ? 0 : selectedTemplate?.items.length ?? 0;
+    }
+    return position === "before"
+      ? groupItems[0].index
+      : groupItems[groupItems.length - 1].index + 1;
+  };
+
+  const handleTemplateBoundaryDrop = (
+    event: DragEvent<HTMLDivElement>,
+    groupId: string,
+    position: "before" | "after",
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!selectedTemplate) return;
+    const itemIndex = getDraggedTemplateItemIndex(event);
+    const draggedGroupId = getDraggedTemplateGroupId(event);
+    clearTemplateDrag();
+    if (itemIndex !== null) {
+      onMoveItemToGroup(
+        selectedTemplate.id,
+        itemIndex,
+        null,
+        getTemplateGroupBoundaryIndex(groupId, position),
+      );
+      return;
+    }
+    if (draggedGroupId) {
+      onReorderGroup(selectedTemplate.id, draggedGroupId, groupId, position);
+    }
+  };
+
+  const handleTemplateGroupDrop = (
+    event: DragEvent<HTMLDivElement>,
+    groupId: string,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!selectedTemplate) return;
+    const itemIndex = getDraggedTemplateItemIndex(event);
+    clearTemplateDrag();
+    if (itemIndex !== null) {
+      onMoveItemToGroup(selectedTemplate.id, itemIndex, groupId);
+    }
+  };
+
+  const handleTemplateItemDrop = (
+    event: DragEvent<HTMLDivElement>,
+    targetIndex: number,
+    targetGroupId: string | null,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!selectedTemplate) return;
+    const itemIndex = getDraggedTemplateItemIndex(event);
+    clearTemplateDrag();
+    if (itemIndex !== null && itemIndex !== targetIndex) {
+      onMoveItemToGroup(selectedTemplate.id, itemIndex, targetGroupId, targetIndex);
+    }
   };
 
   return (
@@ -604,7 +751,7 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                 {template.name}
               </span>
               <span className="mt-1 block text-[11px] text-muted-foreground">
-                {template.groups.length} folder
+                {template.groups.length} group
                 {template.groups.length === 1 ? "" : "s"} · {template.items.length} item
                 {template.items.length === 1 ? "" : "s"}
               </span>
@@ -678,10 +825,10 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
               <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
                 <label className="min-w-0">
                   <span className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                    Add folder
+                    Add group
                   </span>
                   <input
-                    aria-label="New service template folder name"
+                    aria-label="New service template group name"
                     value={groupName}
                     onChange={(event) => setGroupName(event.target.value)}
                     onKeyDown={(event) => {
@@ -703,102 +850,179 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
-              <div className="space-y-3">
-              {groupedItems.map(({ group, items }) => (
-                <section
-                  key={group.id}
-                  className="overflow-hidden rounded-md border border-border/70 bg-background/40"
-                >
-                  <div className="flex items-center gap-2 border-b border-border/60 bg-muted/20 px-3 py-2">
-                    <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <input
-                      aria-label="Service template folder name"
-                      key={group.id}
-                      defaultValue={group.name}
-                      onBlur={(event) =>
-                        onRenameGroup(
-                          selectedTemplate.id,
-                          group.id,
-                          event.currentTarget.value,
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") event.currentTarget.blur();
-                      }}
-                      className="min-w-0 flex-1 bg-transparent text-xs font-semibold uppercase tracking-widest text-muted-foreground outline-none focus:text-foreground"
-                    />
-                    <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                      {items.length} item{items.length === 1 ? "" : "s"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteGroup(selectedTemplate.id, group.id)}
-                      className="text-muted-foreground hover:text-destructive"
-                      aria-label="Delete template folder"
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
-                  <div className="space-y-1 p-2">
-                    {items.length ? (
-                      items.map(({ item, index }) => (
-                        <TemplateItemRow
-                          key={getTemplateItemKey(item)}
-                          item={item}
-                          index={index}
-                          groups={orderedGroups}
-                          libraryItems={libraryItems}
-                          mediaItems={mediaItems}
-                          onMove={(groupId) =>
-                            onMoveItemToGroup(selectedTemplate.id, index, groupId)
-                          }
-                          onRemove={() => onRemoveItem(selectedTemplate.id, index)}
-                        />
-                      ))
-                    ) : (
-                      <p className="rounded-md border border-dashed border-border/80 px-3 py-3 text-xs text-muted-foreground">
-                        No items in this folder yet.
-                      </p>
-                    )}
-                    <AddTemplateItemControl
-                      groupId={group.id}
-                      templateId={selectedTemplate.id}
-                      libraryItems={libraryItems}
-                      mediaItems={mediaItems}
-                      onAddItem={onAddItem}
-                    />
-                  </div>
-                </section>
-              ))}
+              <div className="space-y-1">
+                {templateRows.length === 0 ? (
+                  <p className="px-2 py-3 text-xs text-muted-foreground">
+                    Add groups, songs, scripture, or media to this template.
+                  </p>
+                ) : null}
 
-              {ungroupedItems.length || orderedGroups.length === 0 ? (
-                <section className="space-y-1 rounded-md border border-border/50 bg-background/30 p-2">
-                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                    No folder
-                  </div>
-                  {ungroupedItems.map(({ item, index }) => (
-                    <TemplateItemRow
-                      key={getTemplateItemKey(item)}
-                      item={item}
-                      index={index}
-                      groups={orderedGroups}
-                      libraryItems={libraryItems}
-                      mediaItems={mediaItems}
-                      onMove={(groupId) =>
-                        onMoveItemToGroup(selectedTemplate.id, index, groupId)
-                      }
-                      onRemove={() => onRemoveItem(selectedTemplate.id, index)}
-                    />
-                  ))}
-                  <AddTemplateItemControl
-                    groupId={null}
-                    templateId={selectedTemplate.id}
-                    libraryItems={libraryItems}
-                    mediaItems={mediaItems}
-                    onAddItem={onAddItem}
-                  />
-                </section>
-              ) : null}
+                {templateRows.map((row) => {
+                  if (row.type === "item") {
+                    return (
+                      <TemplateItemRow
+                        key={getTemplateItemKey(row.item)}
+                        item={row.item}
+                        index={row.index}
+                        groups={orderedGroups}
+                        libraryItems={libraryItems}
+                        mediaItems={mediaItems}
+                        isDragging={draggedTemplateItemIndex === row.index}
+                        isDropTarget={templateDropTarget === `item:${row.index}`}
+                        dragDataKey={templateItemDragKey}
+                        onDragStart={() => setDraggedTemplateItemIndex(row.index)}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setTemplateDropTarget(`item:${row.index}`);
+                        }}
+                        onDrop={(event) =>
+                          handleTemplateItemDrop(
+                            event,
+                            row.index,
+                            row.item.groupId ?? null,
+                          )
+                        }
+                        onDragEnd={clearTemplateDrag}
+                        onMove={(groupId) =>
+                          onMoveItemToGroup(selectedTemplate.id, row.index, groupId)
+                        }
+                        onRemove={() => onRemoveItem(selectedTemplate.id, row.index)}
+                      />
+                    );
+                  }
+
+                  return (
+                    <div key={row.group.id}>
+                      <TemplateDropLine
+                        active={templateDropTarget === `group:${row.group.id}:before`}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setTemplateDropTarget(`group:${row.group.id}:before`);
+                        }}
+                        onDrop={(event) =>
+                          handleTemplateBoundaryDrop(event, row.group.id, "before")
+                        }
+                      />
+                      <div
+                        draggable
+                        onDragStart={(event) => {
+                          setDraggedTemplateGroupId(row.group.id);
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData(templateGroupDragKey, row.group.id);
+                          event.dataTransfer.setData("text/plain", row.group.id);
+                        }}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setTemplateDropTarget(`group:${row.group.id}`);
+                        }}
+                        onDrop={(event) => handleTemplateGroupDrop(event, row.group.id)}
+                        onDragEnd={clearTemplateDrag}
+                        className={cn(
+                          "rounded-md border border-transparent transition",
+                          templateDropTarget === `group:${row.group.id}` &&
+                            "border-primary/70 bg-primary/10",
+                          draggedTemplateGroupId === row.group.id && "opacity-50",
+                        )}
+                      >
+                        <div className="group flex items-center gap-2 rounded-md px-2 py-2 hover:bg-secondary/60">
+                          <span className="shrink-0 cursor-grab text-muted-foreground/50 active:cursor-grabbing">
+                            <GripIcon />
+                          </span>
+                          <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <input
+                            aria-label="Service template group name"
+                            key={row.group.id}
+                            defaultValue={row.group.name}
+                            onBlur={(event) =>
+                              onRenameGroup(
+                                selectedTemplate.id,
+                                row.group.id,
+                                event.currentTarget.value,
+                              )
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") event.currentTarget.blur();
+                            }}
+                            className="min-w-0 flex-1 bg-transparent text-xs font-semibold uppercase tracking-widest text-muted-foreground outline-none focus:text-foreground"
+                          />
+                          <span className="text-[10px] font-semibold text-muted-foreground">
+                            {row.items.length}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteGroup(selectedTemplate.id, row.group.id)}
+                            className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+                            aria-label="Delete template group"
+                          >
+                            <TrashIcon />
+                          </button>
+                        </div>
+                        <div className="space-y-1 pl-7">
+                          {row.items.map(({ item, index }) => (
+                            <TemplateItemRow
+                              key={getTemplateItemKey(item)}
+                              item={item}
+                              index={index}
+                              groups={orderedGroups}
+                              libraryItems={libraryItems}
+                              mediaItems={mediaItems}
+                              isDragging={draggedTemplateItemIndex === index}
+                              isDropTarget={templateDropTarget === `item:${index}`}
+                              dragDataKey={templateItemDragKey}
+                              onDragStart={() => setDraggedTemplateItemIndex(index)}
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setTemplateDropTarget(`item:${index}`);
+                              }}
+                              onDrop={(event) =>
+                                handleTemplateItemDrop(
+                                  event,
+                                  index,
+                                  item.groupId ?? null,
+                                )
+                              }
+                              onDragEnd={clearTemplateDrag}
+                              onMove={(groupId) =>
+                                onMoveItemToGroup(selectedTemplate.id, index, groupId)
+                              }
+                              onRemove={() => onRemoveItem(selectedTemplate.id, index)}
+                            />
+                          ))}
+                          <AddTemplateItemControl
+                            groupId={row.group.id}
+                            templateId={selectedTemplate.id}
+                            libraryItems={libraryItems}
+                            mediaItems={mediaItems}
+                            onAddItem={onAddItem}
+                          />
+                        </div>
+                      </div>
+                      <TemplateDropLine
+                        active={templateDropTarget === `group:${row.group.id}:after`}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setTemplateDropTarget(`group:${row.group.id}:after`);
+                        }}
+                        onDrop={(event) =>
+                          handleTemplateBoundaryDrop(event, row.group.id, "after")
+                        }
+                      />
+                    </div>
+                  );
+                })}
+
+                <AddTemplateItemControl
+                  groupId={null}
+                  templateId={selectedTemplate.id}
+                  libraryItems={libraryItems}
+                  mediaItems={mediaItems}
+                  onAddItem={onAddItem}
+                />
               </div>
             </div>
           </>
@@ -978,6 +1202,13 @@ function TemplateItemRow({
   groups,
   libraryItems,
   mediaItems,
+  isDragging,
+  isDropTarget,
+  dragDataKey,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
   onMove,
   onRemove,
 }: {
@@ -986,6 +1217,13 @@ function TemplateItemRow({
   groups: ServiceGroup[];
   libraryItems: LibraryItem[];
   mediaItems: MediaItem[];
+  isDragging?: boolean;
+  isDropTarget?: boolean;
+  dragDataKey?: string;
+  onDragStart?: () => void;
+  onDragOver?: (event: DragEvent<HTMLDivElement>) => void;
+  onDrop?: (event: DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: () => void;
   onMove: (groupId: string | null) => void;
   onRemove: () => void;
 }) {
@@ -996,7 +1234,30 @@ function TemplateItemRow({
       : null;
 
   return (
-    <div className="group flex min-h-10 items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
+    <div
+      draggable={Boolean(dragDataKey)}
+      onDragStart={(event) => {
+        if (!dragDataKey) return;
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData(dragDataKey, String(index));
+        event.dataTransfer.setData("text/plain", String(index));
+        onDragStart?.();
+      }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      className={cn(
+        "group flex min-h-10 items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground transition hover:bg-secondary",
+        dragDataKey && "cursor-grab active:cursor-grabbing",
+        isDragging && "opacity-50",
+        isDropTarget && "bg-primary/10 ring-1 ring-primary/70",
+      )}
+    >
+      {dragDataKey ? (
+        <span className="shrink-0 text-muted-foreground/50">
+          <GripIcon />
+        </span>
+      ) : null}
       <span className="w-5 text-right text-[10px] text-muted-foreground">
         {index + 1}
       </span>
@@ -1019,9 +1280,9 @@ function TemplateItemRow({
         value={item.groupId ?? ""}
         onChange={(event) => onMove(event.target.value || null)}
         className="h-6 max-w-[120px] rounded border border-border bg-background px-1 text-[10px] text-muted-foreground opacity-0 outline-none focus:opacity-100 group-hover:opacity-100"
-        aria-label="Move template item to folder"
+        aria-label="Move template item to group"
       >
-        <option value="">No folder</option>
+        <option value="">Standalone</option>
         {groups.map((group) => (
           <option key={group.id} value={group.id}>
             {group.name}
@@ -1082,6 +1343,26 @@ function TemplateMediaPreview({
         <VideoIcon />
       </span>
     </span>
+  );
+}
+
+function TemplateDropLine({
+  active,
+  onDragOver,
+  onDrop,
+}: {
+  active: boolean;
+  onDragOver: (event: DragEvent<HTMLDivElement>) => void;
+  onDrop: (event: DragEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={() => undefined}
+      onDrop={onDrop}
+      className={cn("h-1 rounded-full transition", active && "bg-primary")}
+      aria-hidden="true"
+    />
   );
 }
 
@@ -1558,7 +1839,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
             <ContextMenuSubTrigger>Move to group</ContextMenuSubTrigger>
             <ContextMenuSubContent className="w-44">
               <ContextMenuItem onClick={() => onMoveToGroup(item.index, null)}>
-                No folder
+                Standalone
               </ContextMenuItem>
               {orderedGroups.map((group) => (
                 <ContextMenuItem
@@ -1780,7 +2061,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
                     groupItems.map(renderItem)
                   ) : (
                     <p className="px-2 py-1.5 text-[10px] text-muted-foreground">
-                      Drop items here, or select this folder before adding.
+                      Drop items here, or select this group before adding.
                     </p>
                   )}
                 </div>

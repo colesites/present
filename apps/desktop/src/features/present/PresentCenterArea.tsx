@@ -74,6 +74,7 @@ type Props = {
 
   // media preview
   showViewMedia: MediaItem | null;
+  isPreviewOutputting: boolean;
   showVideoRef: React.RefObject<HTMLVideoElement | null>;
   videoSettings: VideoSettings;
   onOutputPreviewMedia: () => void;
@@ -81,6 +82,7 @@ type Props = {
   onVideoPause: () => void;
   onVideoEnded: () => void;
   onVideoSeeked: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
+  onVideoTimeUpdate: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
 
   // top panels
   showsPanelRef: React.RefObject<LibrariesPanelRef | null>;
@@ -133,6 +135,7 @@ export function PresentCenterArea({
   onSaveScriptureEditor,
   onUpdateScriptureEditorOutput,
   showViewMedia,
+  isPreviewOutputting,
   showVideoRef,
   videoSettings,
   onOutputPreviewMedia,
@@ -140,6 +143,7 @@ export function PresentCenterArea({
   onVideoPause,
   onVideoEnded,
   onVideoSeeked,
+  onVideoTimeUpdate,
   showsPanelRef,
   scripturePanelRef,
   showsPanelProps,
@@ -160,32 +164,53 @@ export function PresentCenterArea({
     () => (
       <div className="absolute inset-0 overflow-auto p-4" data-slides-scroll>
         {showViewMedia && !selectedLibraryId ? (
-          <button
-            type="button"
-            onClick={onOutputPreviewMedia}
-            className="mx-auto block aspect-video max-w-4xl overflow-hidden rounded-lg bg-black"
-          >
+          <div className="mx-auto max-w-4xl">
             {showViewMedia.type === "image" ? (
-              <img
-                src={showViewMedia.url}
-                alt=""
-                className="h-full w-full object-contain"
-              />
+              <button
+                type="button"
+                onClick={onOutputPreviewMedia}
+                aria-label={`Send ${showViewMedia.name} to output`}
+                className="block aspect-video w-full overflow-hidden rounded-lg bg-black"
+              >
+                <img
+                  src={showViewMedia.url}
+                  alt=""
+                  className="h-full w-full object-contain"
+                />
+              </button>
             ) : (
-              <video
-                ref={showVideoRef}
-                src={showViewMedia.url}
-                className="h-full w-full object-contain"
-                controls
-                loop={videoSettings.loop}
-                muted
-                onPlay={onVideoPlay}
-                onPause={onVideoPause}
-                onEnded={onVideoEnded}
-                onSeeked={onVideoSeeked}
-              />
+              <div className="overflow-hidden rounded-lg bg-black">
+                <video
+                  ref={showVideoRef}
+                  src={showViewMedia.url}
+                  aria-label={`${showViewMedia.name} service preview`}
+                  className="aspect-video w-full object-contain"
+                  controls
+                  loop={videoSettings.loop}
+                  muted={videoSettings.muted}
+                  onClick={(event) => {
+                    if (isPreviewOutputting) {
+                      return;
+                    }
+                    onOutputPreviewMedia();
+                    void event.currentTarget.play();
+                  }}
+                  onPlay={onVideoPlay}
+                  onPause={onVideoPause}
+                  onEnded={onVideoEnded}
+                  onSeeked={onVideoSeeked}
+                  onTimeUpdate={onVideoTimeUpdate}
+                >
+                  <track kind="captions" />
+                </video>
+              </div>
             )}
-          </button>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="min-w-0 truncate text-sm font-medium text-foreground">
+                {showViewMedia.name}
+              </p>
+            </div>
+          </div>
         ) : (
           <SlidesGrid
             slides={slidesForGrid}
@@ -212,12 +237,14 @@ export function PresentCenterArea({
       onEditSlide,
       onOpenMiniEditor,
       onOutputPreviewMedia,
+      isPreviewOutputting,
       onReorderSlides,
       onSelectSlide,
       onVideoEnded,
       onVideoPause,
       onVideoPlay,
       onVideoSeeked,
+      onVideoTimeUpdate,
       selectedIndex,
       selectedLibraryId,
       selectedLibraryItem,

@@ -299,6 +299,7 @@ export function PresentContainer({
     addItemToServiceTemplate,
     removeItemFromServiceTemplate,
     moveServiceTemplateItemToGroup,
+    reorderServiceTemplateGroup,
     deleteServiceTemplate,
     renameExistingService,
     deleteService,
@@ -370,6 +371,9 @@ export function PresentContainer({
   // org's saved props). Stored as strings to stay independent of the Convex
   // generated Id type.
   const [activePropIds, setActivePropIds] = useState<string[]>([]);
+  const [activePropShownAtMsById, setActivePropShownAtMsById] = useState<
+    Record<string, number>
+  >({});
   const [livePropDrafts, setLivePropDrafts] = useState<
     Record<string, Partial<PropsOverlayItem> & { name?: string }>
   >({});
@@ -1016,6 +1020,7 @@ export function PresentContainer({
     onDoubleClickServiceItem: handleDoubleClickServiceItem,
     onOutputPreviewMedia: handleOutputPreviewMedia,
     onMediaPanelSelect: handleMediaPanelSelect,
+    isPreviewOutputting,
   } = usePresentMediaFlow({
     serviceItems,
     allMediaItems,
@@ -1125,6 +1130,7 @@ export function PresentContainer({
     handleVideoPause,
     handleVideoEnded,
     handleVideoSeeked,
+    handleVideoTimeUpdate,
     toggleVideoPlayback,
   } = useShowVideoSync({
     showViewMedia,
@@ -1241,13 +1247,25 @@ export function PresentContainer({
       .map((prop) => {
         const id = prop._id as unknown as string;
         const draft = livePropDrafts[id] ?? {};
+        const mediaId = draft.mediaId ?? prop.mediaId;
+        const mediaItem = mediaId
+          ? allMediaItems.find((item) => item.id === mediaId) ?? null
+          : null;
         return {
           id,
-          kind: prop.kind,
-          imageUrl: prop.imageUrl,
-          mediaUrl: prop.mediaUrl,
+          kind: mediaItem?.type ?? prop.kind,
+          mediaId,
+          imageUrl:
+            mediaItem?.type === "image"
+              ? mediaItem.url
+              : prop.imageUrl,
+          mediaUrl:
+            mediaItem?.type === "video"
+              ? mediaItem.url
+              : prop.mediaUrl,
           youtubeUrl: draft.youtubeUrl ?? prop.youtubeUrl,
           ndiSourceName: draft.ndiSourceName ?? prop.ndiSourceName,
+          shownAtMs: activePropShownAtMsById[id],
           text: draft.text ?? prop.text,
           position: draft.position ?? prop.position,
           opacity: draft.opacity ?? prop.opacity,
@@ -1256,7 +1274,25 @@ export function PresentContainer({
           fontSize: draft.fontSize ?? prop.fontSize,
         };
       });
-  }, [orgPropsList, activePropIds, livePropDrafts]);
+  }, [
+    orgPropsList,
+    activePropIds,
+    activePropShownAtMsById,
+    allMediaItems,
+    livePropDrafts,
+  ]);
+
+  const handleSetActivePropIds = useCallback((ids: string[]) => {
+    setActivePropIds(ids);
+    setActivePropShownAtMsById((current) => {
+      const next: Record<string, number> = {};
+      const now = Date.now();
+      for (const id of ids) {
+        next[id] = current[id] ?? now;
+      }
+      return next;
+    });
+  }, []);
 
   const handleSetLivePropDraft = useCallback(
     (propId: string, patch: Partial<PropsOverlayItem> & { name?: string }) => {
@@ -1596,6 +1632,7 @@ export function PresentContainer({
           onAddItemToServiceTemplate: addItemToServiceTemplate,
           onRemoveItemFromServiceTemplate: removeItemFromServiceTemplate,
           onMoveServiceTemplateItemToGroup: moveServiceTemplateItemToGroup,
+          onReorderServiceTemplateGroup: reorderServiceTemplateGroup,
           onDeleteServiceTemplate: deleteServiceTemplate,
           onCreateService: async (name, templateId) => {
             await createNewService(name, templateId);
@@ -1637,6 +1674,7 @@ export function PresentContainer({
         mediaState={{
           mediaState,
           showViewMedia,
+          isPreviewOutputting,
           effectiveActiveMediaItem,
           showVideoRef,
           videoSettings,
@@ -1645,6 +1683,7 @@ export function PresentContainer({
           handleVideoPause,
           handleVideoEnded,
           handleVideoSeeked,
+          handleVideoTimeUpdate,
           onToggleVideoPlayback: toggleVideoPlayback,
           handleMediaPanelSelect,
           handleAddMediaToService,
@@ -1785,7 +1824,7 @@ export function PresentContainer({
           propsOverlay: resolvedPropsOverlay,
           onSetLivePropDraft: handleSetLivePropDraft,
           onClearLivePropDraft: handleClearLivePropDraft,
-          onSetActivePropIds: setActivePropIds,
+          onSetActivePropIds: handleSetActivePropIds,
           onPushMasterSlide: handlePushMasterSlide,
           timers,
         }}

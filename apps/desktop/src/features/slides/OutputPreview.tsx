@@ -58,6 +58,8 @@ interface SlideGroup {
 
 const OUTPUT_BASE_WIDTH = 1280;
 const OUTPUT_BASE_HEIGHT = 720;
+const YOUTUBE_EMBED_REFERRER = "https://present.app/";
+const YOUTUBE_EMBED_ORIGIN = "https://present.app";
 
 interface OutputPreviewProps {
   text: string | null;
@@ -1129,12 +1131,11 @@ function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {
         }
 
         if (item.kind === "youtube" && item.youtubeUrl) {
-          const embedUrl = getPreviewYouTubeEmbedUrl(item.youtubeUrl);
-          if (!embedUrl) return null;
           return (
             <PreviewYouTubeLayer
               key={item.id}
-              src={embedUrl}
+              youtubeUrl={item.youtubeUrl}
+              shownAtMs={item.shownAtMs}
               style={style}
             />
           );
@@ -1161,30 +1162,43 @@ function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {
 }
 
 function PreviewYouTubeLayer({
-  src,
+  youtubeUrl,
+  shownAtMs,
   style,
 }: {
-  src: string;
+  youtubeUrl: string;
+  shownAtMs?: number;
   style: CSSProperties;
 }) {
   type WebviewProps = HTMLAttributes<HTMLElement> & {
     allow?: string;
     allowpopups?: string;
+    httpreferrer?: string;
     partition?: string;
     src: string;
   };
+  const src = useMemo(
+    () => getPreviewYouTubeEmbedUrl(youtubeUrl, getElapsedSeconds(shownAtMs)),
+    [shownAtMs, youtubeUrl],
+  );
+
+  if (!src) return null;
 
   return createElement("webview", {
     src,
-    className: "pointer-events-none absolute z-30 border-0 bg-black",
+    className: "absolute z-30 border-0 bg-black",
     style: { ...style, aspectRatio: "16 / 9" },
     partition: "persist:present-youtube-props",
     allow: "autoplay; encrypted-media; picture-in-picture",
     allowpopups: "false",
+    httpreferrer: YOUTUBE_EMBED_REFERRER,
   } satisfies WebviewProps);
 }
 
-function getPreviewYouTubeEmbedUrl(value: string): string | null {
+function getPreviewYouTubeEmbedUrl(
+  value: string,
+  startSeconds = 0,
+): string | null {
   try {
     const url = new URL(value.trim());
     let videoId: string | null = null;
@@ -1204,22 +1218,30 @@ function getPreviewYouTubeEmbedUrl(value: string): string | null {
     if (!videoId) return null;
     const params = new URLSearchParams({
       autoplay: "1",
-      controls: "0",
+      controls: "1",
       disablekb: "1",
       fs: "0",
       iv_load_policy: "3",
       loop: "1",
       modestbranding: "1",
       mute: "1",
-      origin: "https://www.youtube-nocookie.com",
+      origin: YOUTUBE_EMBED_ORIGIN,
       playsinline: "1",
       playlist: videoId,
       rel: "0",
     });
+    if (startSeconds > 0) {
+      params.set("start", String(startSeconds));
+    }
     return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
   } catch {
     return null;
   }
+}
+
+function getElapsedSeconds(startedAtMs?: number): number {
+  if (!startedAtMs || !Number.isFinite(startedAtMs)) return 0;
+  return Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
 }
 
 function getPreviewPropSlotStyle(
