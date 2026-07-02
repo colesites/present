@@ -26,6 +26,7 @@ interface PersistedLocalState {
 const LOCAL_DATA_KEY = "present-local-data-v1";
 const SYNC_QUEUE_KEY = "present-sync-queue-v1";
 const MAX_SYNC_QUEUE_ITEMS = 150;
+export const LOCAL_DATA_CHANGED_EVENT = "present-local-data-changed";
 let inMemoryLocalState: PersistedLocalState | null = null;
 
 const now = () => Date.now();
@@ -209,6 +210,9 @@ const readLocalState = (): PersistedLocalState => {
 const writeLocalState = (state: PersistedLocalState) => {
   inMemoryLocalState = state;
   writeJson(LOCAL_DATA_KEY, state);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(LOCAL_DATA_CHANGED_EVENT));
+  }
 };
 
 const nextVersion = (currentVersion?: number) => {
@@ -446,6 +450,27 @@ export const replaceOrgServices = (orgId: string, services: Service[]) => {
       deleted: service.deleted ?? false,
       version: service.version ?? 1,
       updatedAt: service.updatedAt ?? now(),
+    })),
+  ];
+  writeLocalState(state);
+};
+
+export const replaceOrgLibraryItems = (orgId: string, libraryItems: LibraryItem[]) => {
+  const state = readLocalState();
+  const withoutOrg = state.libraryItems.filter(
+    (item) => (item.orgId as string | undefined) !== orgId,
+  );
+  state.libraryItems = [
+    ...withoutOrg,
+    ...libraryItems.map((item) => ({
+      ...item,
+      orgId,
+      deleted: item.deleted ?? false,
+      version: item.version ?? 1,
+      updatedAt: item.updatedAt ?? item.createdAt ?? item._creationTime ?? now(),
+      _creationTime: item._creationTime ?? item.createdAt ?? now(),
+      type: item.type ?? "song",
+      content: item.content ?? {},
     })),
   ];
   writeLocalState(state);

@@ -95,6 +95,7 @@ export const buildDesktopContentSecurityPolicy = (): string => {
       "'self'",
       "data:",
       "local-media:",
+      "ndi-frame:",
       "https://*.convex.cloud",
       "https://*.convex.site",
       "https://*.gravatar.com",
@@ -110,6 +111,8 @@ export const buildDesktopContentSecurityPolicy = (): string => {
       "https://certain-goat-83.clerk.accounts.dev",
       "https://clerk.certain-goat-83.accounts.dev",
       DEFAULT_CLERK_PROD_URL,
+      "https://www.youtube.com",
+      "https://www.youtube-nocookie.com",
     ]),
   ].join(" ");
 };

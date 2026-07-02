@@ -19,6 +19,7 @@ import {
 } from "../../features/media/hooks/useMediaFolders";
 import type {
   OutputTextPosition,
+  PropsOverlayItem,
   ScriptureFooterPosition,
   ScriptureTextAlign,
   ScriptureVerticalAlign,
@@ -235,6 +236,12 @@ export interface MainViewOutputState {
   activeMessageOverlay: MessageOverlay | null;
   onShowMessageOverlay: (overlay: MessageOverlay | null) => void;
   activePropIds: string[];
+  propsOverlay: PropsOverlayItem[];
+  onSetLivePropDraft: (
+    propId: string,
+    patch: Partial<PropsOverlayItem> & { name?: string },
+  ) => void;
+  onClearLivePropDraft: (propId: string) => void;
   onSetActivePropIds: (ids: string[]) => void;
   onPushMasterSlide: (master: {
     name: string;
@@ -363,6 +370,9 @@ export function MainView({
     activeMessageOverlay,
     onShowMessageOverlay,
     activePropIds,
+    propsOverlay,
+    onSetLivePropDraft,
+    onClearLivePropDraft,
     onSetActivePropIds,
     onPushMasterSlide,
     timers,
@@ -711,6 +721,7 @@ export function MainView({
       isMessageLayerEnabled,
       onToggleMessageLayer: handleToggleMessageLayer,
       activeMessageOverlay,
+      propsOverlay,
       timers,
       timerLayout,
     }),
@@ -733,6 +744,7 @@ export function MainView({
       handleToggleTextInOutput,
       handleToggleTimerLayer,
       activeMessageOverlay,
+      propsOverlay,
       hideBackgroundInOutput,
       isMessageLayerEnabled,
       isOutputFrozen,
@@ -978,6 +990,8 @@ export function MainView({
                 onShowMessageOverlay={onShowMessageOverlay}
                 onPushMasterSlide={onPushMasterSlide}
                 activePropIds={activePropIds}
+                onSetLivePropDraft={onSetLivePropDraft}
+                onClearLivePropDraft={onClearLivePropDraft}
                 onSetActivePropIds={onSetActivePropIds}
                 timers={timers}
               />

@@ -1,6 +1,15 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createElement,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type HTMLAttributes,
+} from "react";
 import { cn } from "../../renderer/shared/lib/utils";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../../renderer/shared/components/ScriptureTextLayer";
@@ -36,6 +45,7 @@ import type { UseTimersResult } from "../../renderer/shared/hooks";
 import { getTimerDisplay } from "../../renderer/shared/hooks";
 import type {
   OutputTextPosition,
+  PropsOverlayItem,
   ScriptureFooterPosition,
   ScriptureTextAlign,
   ScriptureVerticalAlign,
@@ -94,6 +104,7 @@ interface OutputPreviewProps {
   isMessageLayerEnabled: boolean;
   onToggleMessageLayer: () => void;
   activeMessageOverlay: MessageOverlay | null;
+  propsOverlay: PropsOverlayItem[];
   // Timer state from the shared `useTimers` hook upstream (PresentContainer).
   // OutputPreview reads `activeTimer` for its small preview overlay and
   // forwards the header-bar controls (reset/play/stop) to the hook's
@@ -135,6 +146,7 @@ const FilterSlider = memo(function FilterSlider({
       </span>
       <input
         type="range"
+        aria-label={`${label} filter`}
         min={min}
         max={max}
         value={value}
@@ -173,15 +185,6 @@ function getPreviewMessageThemeStyle(themeKey: string): React.CSSProperties {
 }
 
 function PreviewMessageOverlay({ overlay }: { overlay: MessageOverlay }) {
-  // Phase-lock the marquee to the shared `shownAtMs` so the preview and the
-  // main output animate in sync regardless of when each mounts. Computed once
-  // per overlay (keyed on id+shownAtMs) so re-renders don't jump it.
-  const animationDelay = useMemo(
-    () => `${-((Date.now() - overlay.shownAtMs) / 1000)}s`,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [overlay.id, overlay.shownAtMs],
-  );
-
   if (!overlay.text.trim()) return null;
 
   const isMarquee =
@@ -223,7 +226,6 @@ function PreviewMessageOverlay({ overlay }: { overlay: MessageOverlay }) {
                 2,
                 overlay.speedSeconds,
               )}s linear infinite`,
-              animationDelay,
               willChange: "transform",
             }}
           >
@@ -288,6 +290,7 @@ export const OutputPreview = memo(function OutputPreview({
   isMessageLayerEnabled,
   onToggleMessageLayer,
   activeMessageOverlay,
+  propsOverlay,
   timers,
   timerLayout,
 }: OutputPreviewProps) {
@@ -495,6 +498,7 @@ export const OutputPreview = memo(function OutputPreview({
                 />
               ) : (
                 <video
+                  aria-label={`${activeMediaItem.name} preview`}
                   ref={videoRef}
                   src={activeMediaItem.url}
                   className="absolute inset-0 h-full w-full object-cover"
@@ -631,7 +635,12 @@ export const OutputPreview = memo(function OutputPreview({
               <PreviewMessageOverlay overlay={activeMessageOverlay} />
             ) : null}
 
-            {hasHiddenTextLayerContent && !activeMediaItem && !isTimerLayerEnabled && (
+            <PreviewPropsOverlay items={propsOverlay} />
+
+            {hasHiddenTextLayerContent &&
+              !activeMediaItem &&
+              !isTimerLayerEnabled &&
+              propsOverlay.length === 0 && (
               <div className="absolute inset-0 z-0 flex h-full items-center justify-center">
                 <p className="text-xs text-zinc-500">Text layer is hidden</p>
               </div>
@@ -640,6 +649,7 @@ export const OutputPreview = memo(function OutputPreview({
             {!text &&
               !activeMediaItem &&
               !isTimerLayerEnabled &&
+              propsOverlay.length === 0 &&
               !hasHiddenTextLayerContent && (
               <div className="absolute inset-0 z-0 flex h-full items-center justify-center">
                 <p className="text-xs text-zinc-600">No content</p>
@@ -1057,3 +1067,185 @@ export const OutputPreview = memo(function OutputPreview({
     </div>
   );
 });
+
+function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {
+  if (items.length === 0) return null;
+
+  return (
+    <>
+      {items.map((item) => {
+        const style: CSSProperties = {
+          ...getPreviewPropSlotStyle(item.position, item.sizePercent),
+          opacity: item.opacity,
+        };
+
+        if (item.kind === "image" && item.imageUrl) {
+          return (
+            <img
+              key={item.id}
+              src={item.imageUrl}
+              alt=""
+              className="pointer-events-none absolute z-30 h-auto object-contain"
+              style={style}
+            />
+          );
+        }
+
+        if (item.kind === "video" && item.mediaUrl) {
+          return (
+            <video
+              key={item.id}
+              aria-label="Video prop preview"
+              src={item.mediaUrl}
+              className="pointer-events-none absolute z-30 h-auto object-contain"
+              style={style}
+              autoPlay
+              loop
+              muted
+              playsInline
+            />
+          );
+        }
+
+        if (item.kind === "text" && item.text) {
+          return (
+            <div
+              key={item.id}
+              className="pointer-events-none absolute z-30 flex items-center justify-center text-center"
+              style={style}
+            >
+              <span
+                className="font-semibold leading-tight"
+                style={{
+                  color: item.color ?? "white",
+                  fontSize: `${Math.max(8, (item.fontSize ?? 48) * 0.2)}px`,
+                  textShadow: "0 1px 5px rgba(0,0,0,0.7)",
+                }}
+              >
+                {item.text}
+              </span>
+            </div>
+          );
+        }
+
+        if (item.kind === "youtube" && item.youtubeUrl) {
+          const embedUrl = getPreviewYouTubeEmbedUrl(item.youtubeUrl);
+          if (!embedUrl) return null;
+          return (
+            <PreviewYouTubeLayer
+              key={item.id}
+              src={embedUrl}
+              style={style}
+            />
+          );
+        }
+
+        if (item.kind === "ndi") {
+          return (
+            <div
+              key={item.id}
+              className="pointer-events-none absolute z-30 flex items-center justify-center rounded-sm border border-white/20 bg-black/70 px-2 py-1 text-center text-[9px] font-medium text-white"
+              style={style}
+            >
+              <span className="line-clamp-2 break-all">
+                {item.ndiSourceName || "NDI source"}
+              </span>
+            </div>
+          );
+        }
+
+        return null;
+      })}
+    </>
+  );
+}
+
+function PreviewYouTubeLayer({
+  src,
+  style,
+}: {
+  src: string;
+  style: CSSProperties;
+}) {
+  type WebviewProps = HTMLAttributes<HTMLElement> & {
+    allow?: string;
+    allowpopups?: string;
+    partition?: string;
+    src: string;
+  };
+
+  return createElement("webview", {
+    src,
+    className: "pointer-events-none absolute z-30 border-0 bg-black",
+    style: { ...style, aspectRatio: "16 / 9" },
+    partition: "persist:present-youtube-props",
+    allow: "autoplay; encrypted-media; picture-in-picture",
+    allowpopups: "false",
+  } satisfies WebviewProps);
+}
+
+function getPreviewYouTubeEmbedUrl(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    let videoId: string | null = null;
+    if (url.hostname === "youtu.be") {
+      videoId = url.pathname.split("/").filter(Boolean)[0] ?? null;
+    } else if (url.hostname.endsWith("youtube.com")) {
+      if (url.pathname === "/watch") {
+        videoId = url.searchParams.get("v");
+      } else {
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (["embed", "shorts", "live"].includes(parts[0] ?? "")) {
+          videoId = parts[1] ?? null;
+        }
+      }
+    }
+
+    if (!videoId) return null;
+    const params = new URLSearchParams({
+      autoplay: "1",
+      controls: "0",
+      disablekb: "1",
+      fs: "0",
+      iv_load_policy: "3",
+      loop: "1",
+      modestbranding: "1",
+      mute: "1",
+      origin: "https://www.youtube-nocookie.com",
+      playsinline: "1",
+      playlist: videoId,
+      rel: "0",
+    });
+    return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
+  } catch {
+    return null;
+  }
+}
+
+function getPreviewPropSlotStyle(
+  position: PropsOverlayItem["position"],
+  sizePercent: number,
+): CSSProperties {
+  const width = `${Math.max(5, Math.min(100, sizePercent))}%`;
+  const inset = "3%";
+  switch (position) {
+    case "top-left":
+      return { top: inset, left: inset, width };
+    case "top-right":
+      return { top: inset, right: inset, width };
+    case "bottom-left":
+      return { bottom: inset, left: inset, width };
+    case "bottom-right":
+      return { bottom: inset, right: inset, width };
+    case "center":
+      return {
+        top: "50%",
+        left: "50%",
+        width,
+        transform: "translate(-50%, -50%)",
+      };
+    case "full":
+    default:
+      return { inset: 0 };
+  }
+}

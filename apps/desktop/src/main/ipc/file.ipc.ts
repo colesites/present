@@ -24,6 +24,25 @@ type LibraryBundleManifest = {
   itemsDirectory: string;
 };
 
+const PROP_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
+const PROP_VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov', 'avi', 'mkv', 'm4v'];
+
+const getImageMimeType = (extension: string) => {
+  if (extension === 'svg') return 'image/svg+xml';
+  if (extension === 'jpg') return 'image/jpeg';
+  return `image/${extension || 'png'}`;
+};
+
+const getPropMediaType = (filePath: string): 'image' | 'video' | null => {
+  const extension = path.extname(filePath).slice(1).toLowerCase();
+  if (PROP_IMAGE_EXTENSIONS.includes(extension)) return 'image';
+  if (PROP_VIDEO_EXTENSIONS.includes(extension)) return 'video';
+  return null;
+};
+
+const createLocalMediaUrl = (filePath: string) =>
+  `local-media://media${encodeURI(filePath)}`;
+
 const sanitizePathSegment = (value: string) => {
   const normalized = value
     .trim()
@@ -177,8 +196,7 @@ export const registerFileIPC = (): void => {
     try {
       const data = await fs.promises.readFile(filePath);
       const ext = path.extname(filePath).slice(1).toLowerCase() || 'png';
-      const mime =
-        ext === 'svg' ? 'image/svg+xml' : ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+      const mime = getImageMimeType(ext);
       return {
         name: path.basename(filePath),
         path: filePath,
@@ -188,6 +206,50 @@ export const registerFileIPC = (): void => {
       console.error('[select-prop-image] failed to read file', error);
       return null;
     }
+  });
+
+  ipcMain.handle('select-prop-media', async (event) => {
+    const parentWindow = BrowserWindow.fromWebContents(event.sender) ?? getMainWindow() ?? undefined;
+    const result = await dialog.showOpenDialog(parentWindow, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'Media', extensions: [...PROP_IMAGE_EXTENSIONS, ...PROP_VIDEO_EXTENSIONS] },
+        { name: 'Images', extensions: PROP_IMAGE_EXTENSIONS },
+        { name: 'Videos', extensions: PROP_VIDEO_EXTENSIONS },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    const filePath = result.filePaths[0];
+    const mediaType = getPropMediaType(filePath);
+    if (!mediaType) {
+      return null;
+    }
+
+    if (mediaType === 'image') {
+      try {
+        const data = await fs.promises.readFile(filePath);
+        const ext = path.extname(filePath).slice(1).toLowerCase() || 'png';
+        return {
+          name: path.basename(filePath),
+          path: filePath,
+          mediaType,
+          dataUrl: `data:${getImageMimeType(ext)};base64,${data.toString('base64')}`,
+        };
+      } catch (error) {
+        console.error('[select-prop-media] failed to read image file', error);
+        return null;
+      }
+    }
+
+    return {
+      name: path.basename(filePath),
+      path: filePath,
+      mediaType,
+      mediaUrl: createLocalMediaUrl(filePath),
+    };
   });
 
   ipcMain.handle('select-presentation-files', async (event) => {

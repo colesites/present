@@ -198,16 +198,29 @@ export default defineSchema({
     .index("by_org", ["orgId"])
     .index("by_org_order", ["orgId", "order"]),
 
-  // Props / layer overlays — image or text overlays composited above the
+  // Props / layer overlays — media or text overlays composited above the
   // active slide on the output window. Stored per-org so the same logo /
   // ticker is available across the operator's devices.
   props: defineTable({
     orgId: v.id("organizations"),
     name: v.string(),
-    kind: v.union(v.literal("image"), v.literal("text")),
+    kind: v.union(
+      v.literal("image"),
+      v.literal("text"),
+      v.literal("video"),
+      v.literal("youtube"),
+      v.literal("ndi"),
+    ),
     // For image props: a data URL (small) or an external URL. We don't
     // store binaries in Convex storage at this scope.
     imageUrl: v.optional(v.string()),
+    // For local video props: a local-media:// URL. The video remains on the
+    // operator machine instead of being uploaded into the document.
+    mediaUrl: v.optional(v.string()),
+    // For hosted video props: the original YouTube URL pasted by the user.
+    youtubeUrl: v.optional(v.string()),
+    // For NDI props: the discovered NDI source name selected on this machine.
+    ndiSourceName: v.optional(v.string()),
     // For text props: the literal text rendered on screen.
     text: v.optional(v.string()),
     // Position preset on the slide canvas.

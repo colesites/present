@@ -150,10 +150,13 @@ const DEFAULT_TIMERS: TimerConfig[] = [
 export interface UseTimersResult {
   timers: TimerItem[];
   activeTimer: TimerItem | null;
+  autoAdvanceEnabled: boolean;
   expandedTimerId: string | null;
   setExpandedTimerId: (id: string | null) => void;
+  setAutoAdvanceEnabled: (enabled: boolean) => void;
   createTimer: () => void;
   updateTimer: (id: string, patch: Partial<TimerConfig>) => void;
+  reorderTimers: (fromIndex: number, toIndex: number) => void;
   toggleTimerPlayback: (id: string) => void;
   resetTimer: (id: string) => void;
   removeTimer: (id: string) => void;
@@ -172,6 +175,7 @@ export function useTimers(): UseTimersResult {
   const [expandedTimerId, setExpandedTimerId] = useState<string | null>(
     "pre-service",
   );
+  const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(false);
 
   const activeTimerId = useMemo(
     () =>
@@ -186,12 +190,40 @@ export function useTimers(): UseTimersResult {
     [timers, activeTimerId],
   );
 
+  const getNextTimerToStart = useCallback(
+    (timerList: TimerItem[], finishedIndex: number): TimerItem | null => {
+      if (!autoAdvanceEnabled) return null;
+      return timerList[finishedIndex + 1] ?? null;
+    },
+    [autoAdvanceEnabled],
+  );
+
+  const startTimerValue = useCallback((timer: TimerItem): number => {
+    if (timer.type === "countdownToTime") {
+      return getCountdownToTimeSeconds(timer.hour, timer.minute, timer.meridiem);
+    }
+    if (timer.type === "elapsed") {
+      return 0;
+    }
+    return getInitialTimerValue(timer);
+  }, []);
+
   // 1Hz tick for any running timer.
   useEffect(() => {
     const intervalId = window.setInterval(() => {
+      let nextExpandedTimerId: string | null = null;
       setTimers((previous) =>
-        previous.map((timer) => {
+        previous.map((timer, index) => {
           if (!timer.isRunning) return timer;
+
+          const nextTimer = getNextTimerToStart(previous, index);
+          const completeTimer = (secondsValue: number) => {
+            if (!nextTimer) {
+              return { ...timer, isRunning: false, secondsValue };
+            }
+            nextExpandedTimerId = nextTimer.id;
+            return { ...timer, isRunning: false, secondsValue };
+          };
 
           if (timer.type === "countdownToTime") {
             const remaining = getCountdownToTimeSeconds(
@@ -200,7 +232,7 @@ export function useTimers(): UseTimersResult {
               timer.meridiem,
             );
             if (remaining <= 0) {
-              return { ...timer, isRunning: false, secondsValue: 0 };
+              return completeTimer(0);
             }
             return { ...timer, secondsValue: remaining };
           }
@@ -209,22 +241,37 @@ export function useTimers(): UseTimersResult {
             const targetSeconds = getElapsedTargetSeconds(timer);
             const nextElapsed = timer.secondsValue + 1;
             if (targetSeconds > 0 && nextElapsed >= targetSeconds) {
-              return { ...timer, isRunning: false, secondsValue: targetSeconds };
+              return completeTimer(targetSeconds);
             }
             return { ...timer, secondsValue: nextElapsed };
           }
 
           const nextRemaining = Math.max(timer.secondsValue - 1, 0);
+          if (nextRemaining <= 0) {
+            return completeTimer(0);
+          }
           return {
             ...timer,
-            isRunning: nextRemaining > 0,
+            isRunning: true,
             secondsValue: nextRemaining,
+          };
+        }).map((timer) => {
+          if (!nextExpandedTimerId || timer.id !== nextExpandedTimerId) {
+            return timer;
+          }
+          return {
+            ...timer,
+            isRunning: true,
+            secondsValue: startTimerValue(timer),
           };
         }),
       );
+      if (nextExpandedTimerId) {
+        setExpandedTimerId(nextExpandedTimerId);
+      }
     }, 1000);
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [getNextTimerToStart, startTimerValue]);
 
   const createTimer = useCallback(() => {
     setTimers((previous) => {
@@ -270,7 +317,27 @@ export function useTimers(): UseTimersResult {
     [],
   );
 
+  const reorderTimers = useCallback((fromIndex: number, toIndex: number) => {
+    setTimers((previous) => {
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= previous.length ||
+        toIndex >= previous.length ||
+        fromIndex === toIndex
+      ) {
+        return previous;
+      }
+
+      const next = [...previous];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }, []);
+
   const toggleTimerPlayback = useCallback((id: string) => {
+    setExpandedTimerId(id);
     setTimers((previous) =>
       previous.map((timer) => {
         if (timer.id !== id) return timer;
@@ -355,10 +422,13 @@ export function useTimers(): UseTimersResult {
   return {
     timers,
     activeTimer,
+    autoAdvanceEnabled,
     expandedTimerId,
     setExpandedTimerId,
+    setAutoAdvanceEnabled,
     createTimer,
     updateTimer,
+    reorderTimers,
     toggleTimerPlayback,
     resetTimer,
     removeTimer,

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app } from 'electron';
+import { app, nativeImage } from 'electron';
 import { getOutputWindow } from '../windows/output.window';
 
 type NdiLibraryKind = 'grandi' | 'grandiose';
@@ -15,6 +15,22 @@ interface GrandioseSender {
   video: (frame: VideoFrame) => Promise<void>;
   destroy?: () => void;
   quit?: () => void;
+}
+
+type NdiSource = {
+  name: string;
+  urlAddress?: string;
+};
+
+interface GrandiFinder {
+  sources: () => NdiSource[];
+  wait: (timeoutMs?: number) => boolean;
+  destroy: () => boolean;
+}
+
+interface GrandiReceiver {
+  video: (timeoutMs?: number) => Promise<VideoFrame & { type?: string }>;
+  destroy: () => boolean;
 }
 
 interface VideoFrame {
@@ -54,6 +70,14 @@ let lastError: string | null = null;
 let framesSent = 0;
 let isFrameInFlight = false;
 let usingFallbackFrame = false;
+let ndiInitialized = false;
+
+let ndiInputReceiver: GrandiReceiver | null = null;
+let ndiInputSourceName: string | null = null;
+let ndiInputLoopActive = false;
+let ndiInputLastError: string | null = null;
+let ndiInputLatestPng: Buffer | null = null;
+let ndiInputLatestFrameAtMs = 0;
 
 const INTERVAL_MS = Math.floor(1000 / 30);
 const FALLBACK_WIDTH = 1280;
@@ -120,6 +144,20 @@ const normalizeNamespace = (mod: Record<string, unknown>): Record<string, unknow
   return mod;
 };
 
+const ensureNdiInitialized = (library: LoadedNdiLibrary): void => {
+  if (ndiInitialized) {
+    return;
+  }
+  const initialize = library.lib['initialize'];
+  if (typeof initialize === 'function') {
+    const ok = initialize();
+    if (ok === false) {
+      throw new Error('NDI initialization failed.');
+    }
+  }
+  ndiInitialized = true;
+};
+
 const loadNdiLibrary = async (): Promise<LoadedNdiLibrary | null> => {
   if (loadedNdiLibrary) {
     return loadedNdiLibrary;
@@ -137,6 +175,7 @@ const loadNdiLibrary = async (): Promise<LoadedNdiLibrary | null> => {
         throw new Error('grandi loaded but no `send` export');
       }
       loadedNdiLibrary = { kind: 'grandi', lib: mod };
+      ensureNdiInitialized(loadedNdiLibrary);
       lastNdiLibraryLoadError = null;
       console.log('[NDI] Loaded grandi backend.');
       return loadedNdiLibrary;
@@ -147,6 +186,7 @@ const loadNdiLibrary = async (): Promise<LoadedNdiLibrary | null> => {
     try {
       const mod = normalizeNamespace(await importGrandiose());
       loadedNdiLibrary = { kind: 'grandiose', lib: mod };
+      ensureNdiInitialized(loadedNdiLibrary);
       lastNdiLibraryLoadError = null;
       console.log('[NDI] Loaded grandiose backend.');
       return loadedNdiLibrary;
@@ -328,6 +368,219 @@ export const stopNdiOutput = async (): Promise<void> => {
     ndiSender = null;
     console.log('[NDI] Sender stopped.');
   }
+};
+
+const getFindFunction = (
+  library: LoadedNdiLibrary,
+): ((opts?: Record<string, unknown>) => Promise<GrandiFinder>) | null => {
+  const findFn = library.lib['find'];
+  return typeof findFn === 'function'
+    ? (findFn as (opts?: Record<string, unknown>) => Promise<GrandiFinder>)
+    : null;
+};
+
+export const listNdiSources = async (
+  options: { groupName?: string } = {},
+): Promise<{ ok: boolean; sources: NdiSource[]; error?: string }> => {
+  const library = await loadNdiLibrary();
+  if (!library) {
+    return {
+      ok: false,
+      sources: [],
+      error: lastNdiLibraryLoadError ?? 'NDI native module is unavailable.',
+    };
+  }
+
+  const findFn = getFindFunction(library);
+  if (!findFn) {
+    return {
+      ok: false,
+      sources: [],
+      error: `NDI backend (${library.kind}) does not expose source discovery.`,
+    };
+  }
+
+  let finder: GrandiFinder | null = null;
+  try {
+    finder = await findFn({
+      showLocalSources: true,
+      groups: options.groupName ? normalizeGroupName(options.groupName) : undefined,
+    });
+    finder.wait(1200);
+    const sources = finder
+      .sources()
+      .filter((source) => typeof source.name === 'string' && source.name.length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { ok: true, sources };
+  } catch (error) {
+    return {
+      ok: false,
+      sources: [],
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    try {
+      finder?.destroy();
+    } catch {
+      void 0;
+    }
+  }
+};
+
+const copyFrameRows = (frame: VideoFrame): Buffer => {
+  const width = frame.xres;
+  const height = frame.yres;
+  const targetStride = width * 4;
+  const sourceStride = frame.lineStrideBytes ?? targetStride;
+  if (sourceStride === targetStride && frame.data.byteLength >= targetStride * height) {
+    return Buffer.from(frame.data.subarray(0, targetStride * height));
+  }
+
+  const output = Buffer.alloc(targetStride * height);
+  for (let row = 0; row < height; row += 1) {
+    frame.data.copy(
+      output,
+      row * targetStride,
+      row * sourceStride,
+      row * sourceStride + targetStride,
+    );
+  }
+  return output;
+};
+
+const captureNdiInputLoop = async (
+  receiver: GrandiReceiver,
+  expectedSourceName: string,
+): Promise<void> => {
+  while (ndiInputLoopActive && ndiInputReceiver === receiver) {
+    try {
+      const frame = await receiver.video(1000);
+      if (!ndiInputLoopActive || ndiInputReceiver !== receiver) {
+        break;
+      }
+      if (!frame || frame.xres <= 0 || frame.yres <= 0 || !frame.data) {
+        continue;
+      }
+
+      const bitmap = copyFrameRows(frame);
+      const image = nativeImage.createFromBitmap(bitmap, {
+        width: frame.xres,
+        height: frame.yres,
+        scaleFactor: 1,
+      });
+      ndiInputLatestPng = image.toPNG();
+      ndiInputLatestFrameAtMs = Date.now();
+      ndiInputLastError = null;
+    } catch (error) {
+      ndiInputLastError = error instanceof Error ? error.message : String(error);
+      if (!ndiInputLoopActive || ndiInputSourceName !== expectedSourceName) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+};
+
+export const startNdiInput = async (
+  nextSourceName: string,
+  options: { groupName?: string } = {},
+): Promise<{ ok: boolean; error?: string; sourceName: string | null }> => {
+  const normalizedSourceName = nextSourceName.trim();
+  if (!normalizedSourceName) {
+    await stopNdiInput();
+    return { ok: false, error: 'Select an NDI source first.', sourceName: null };
+  }
+
+  if (ndiInputReceiver && ndiInputSourceName === normalizedSourceName) {
+    return { ok: true, sourceName: ndiInputSourceName };
+  }
+
+  await stopNdiInput();
+
+  const library = await loadNdiLibrary();
+  if (!library) {
+    return {
+      ok: false,
+      error: lastNdiLibraryLoadError ?? 'NDI native module is unavailable.',
+      sourceName: null,
+    };
+  }
+
+  const receiveFn = library.lib['receive'];
+  if (typeof receiveFn !== 'function') {
+    return {
+      ok: false,
+      error: `NDI backend (${library.kind}) does not expose a receiver.`,
+      sourceName: null,
+    };
+  }
+
+  const discovered = await listNdiSources(options);
+  const source = discovered.sources.find((item) => item.name === normalizedSourceName);
+  if (!source) {
+    return {
+      ok: false,
+      error: `NDI source "${normalizedSourceName}" was not found.`,
+      sourceName: null,
+    };
+  }
+
+  try {
+    const colorFormatEnum = library.lib['ColorFormat'] as
+      | { BGRX_BGRA?: number; UYVY_BGRA?: number; Fastest?: number }
+      | undefined;
+    const bandwidthEnum = library.lib['Bandwidth'] as { Highest?: number } | undefined;
+    ndiInputReceiver = await (receiveFn as (opts: Record<string, unknown>) => Promise<GrandiReceiver>)({
+      source,
+      colorFormat: colorFormatEnum?.BGRX_BGRA ?? colorFormatEnum?.UYVY_BGRA ?? colorFormatEnum?.Fastest,
+      bandwidth: bandwidthEnum?.Highest,
+      name: 'Present NDI Prop Receiver',
+    });
+    ndiInputSourceName = normalizedSourceName;
+    ndiInputLatestPng = null;
+    ndiInputLatestFrameAtMs = 0;
+    ndiInputLastError = null;
+    ndiInputLoopActive = true;
+    void captureNdiInputLoop(ndiInputReceiver, normalizedSourceName);
+    return { ok: true, sourceName: normalizedSourceName };
+  } catch (error) {
+    ndiInputLastError = error instanceof Error ? error.message : String(error);
+    await stopNdiInput();
+    return { ok: false, error: ndiInputLastError, sourceName: null };
+  }
+};
+
+export const stopNdiInput = async (): Promise<void> => {
+  ndiInputLoopActive = false;
+  const receiver = ndiInputReceiver;
+  ndiInputReceiver = null;
+  ndiInputSourceName = null;
+  ndiInputLatestPng = null;
+  ndiInputLatestFrameAtMs = 0;
+  if (receiver) {
+    try {
+      receiver.destroy();
+    } catch {
+      void 0;
+    }
+  }
+};
+
+export const getLatestNdiInputFrame = (
+  sourceName?: string | null,
+): { data: Buffer | null; updatedAtMs: number; error: string | null } => {
+  if (sourceName && ndiInputSourceName && sourceName !== ndiInputSourceName) {
+    return {
+      data: null,
+      updatedAtMs: 0,
+      error: `NDI source "${sourceName}" is not active.`,
+    };
+  }
+  return {
+    data: ndiInputLatestPng,
+    updatedAtMs: ndiInputLatestFrameAtMs,
+    error: ndiInputLastError,
+  };
 };
 
 const getNdiStatusAsync = async (): Promise<NdiStatus> => ({

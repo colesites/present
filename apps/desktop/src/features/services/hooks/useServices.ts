@@ -12,6 +12,7 @@ import type {
 import {
   createLocalService,
   enqueueSyncOperation,
+  LOCAL_DATA_CHANGED_EVENT,
   readOrgServices,
   removeServiceLocal,
   replaceOrgServices,
@@ -273,7 +274,14 @@ export function useServices(
   );
 
   useEffect(() => {
-    setServices(readOrgServices(workspaceId));
+    const refresh = () => {
+      setServices(readOrgServices(workspaceId));
+    };
+    refresh();
+    window.addEventListener(LOCAL_DATA_CHANGED_EVENT, refresh);
+    return () => {
+      window.removeEventListener(LOCAL_DATA_CHANGED_EVENT, refresh);
+    };
   }, [workspaceId]);
 
   // Persist state changes

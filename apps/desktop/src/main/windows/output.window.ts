@@ -60,6 +60,7 @@ export const createOutputWindow = (
       // the main window steals focus, which manifests as a brief blank/white
       // frame on the projector.
       backgroundThrottling: false,
+      webviewTag: true,
     },
   });
 

@@ -4,6 +4,7 @@ import { app, safeStorage } from "electron";
 
 const STORAGE_VERSION = 1;
 const SESSION_FILE_NAME = "desktop-auth-session.v1.json";
+const DEV_SESSION_FILE_NAME = "desktop-auth-session.dev.v1.json";
 
 export type DesktopStoredUser = {
   email: string;
@@ -36,7 +37,8 @@ type StoredSessionEnvelope = {
 };
 
 const getSessionFilePath = (): string => {
-  return path.join(app.getPath("userData"), SESSION_FILE_NAME);
+  const fileName = app.isPackaged ? SESSION_FILE_NAME : DEV_SESSION_FILE_NAME;
+  return path.join(app.getPath("userData"), fileName);
 };
 
 const encodeSessionPayload = (payload: DesktopStoredSession): StoredSessionEnvelope => {

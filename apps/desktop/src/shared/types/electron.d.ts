@@ -233,6 +233,16 @@ interface ElectronAPI {
     framesSent: number;
     usingFallbackFrame: boolean;
   }>;
+  listNdiSources: (groupName?: string) => Promise<{
+    ok: boolean;
+    sources: Array<{ name: string; urlAddress?: string }>;
+    error?: string;
+  }>;
+  startNdiInput: (
+    sourceName: string,
+    groupName?: string,
+  ) => Promise<{ ok: boolean; error?: string; sourceName: string | null }>;
+  stopNdiInput: () => Promise<void>;
 
   // Auth & System URLs
   beginAuthFlow: () => Promise<{ ok: boolean; error?: string }>;
@@ -282,6 +292,21 @@ interface ElectronAPI {
   selectAudioFiles: () => Promise<Array<{ name: string; path: string }>>;
   selectPropImage: () => Promise<
     { name: string; path: string; dataUrl: string } | null
+  >;
+  selectPropMedia: () => Promise<
+    | {
+        name: string;
+        path: string;
+        mediaType: "image";
+        dataUrl: string;
+      }
+    | {
+        name: string;
+        path: string;
+        mediaType: "video";
+        mediaUrl: string;
+      }
+    | null
   >;
   selectPresentationFiles: () => Promise<PresentationImportFile[] | null>;
   copyMediaFile: (source: string, target: string) => Promise<boolean>;

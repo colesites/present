@@ -10,6 +10,7 @@ import type {
 import {
   createLocalLibraryItem,
   enqueueSyncOperation,
+  LOCAL_DATA_CHANGED_EVENT,
   readOrgLibraryItems,
   removeLibraryItemLocal,
   upsertLibraryItem,
@@ -162,15 +163,18 @@ export function useLibrary(
   );
 
   useEffect(() => {
-    const timerId = window.setTimeout(() => {
+    const refresh = () => {
       setLibraryItems(
         readOrgLibraryItems(workspaceId).map((item) =>
           normalizeLibraryItem(item, defaultTextStyle),
         ),
       );
-    }, 0);
+    };
+    const timerId = window.setTimeout(refresh, 0);
+    window.addEventListener(LOCAL_DATA_CHANGED_EVENT, refresh);
     return () => {
       window.clearTimeout(timerId);
+      window.removeEventListener(LOCAL_DATA_CHANGED_EVENT, refresh);
     };
   }, [defaultTextStyle, workspaceId]);
 

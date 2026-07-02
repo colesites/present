@@ -89,11 +89,14 @@ export type OutputState = {
 };
 
 // One visible prop currently overlaid on the audience output. Renderer
-// supports image and text kinds positioned via preset slots.
+// supports media and text kinds positioned via preset slots.
 export type PropsOverlayItem = {
   id: string;
-  kind: "image" | "text";
+  kind: "image" | "text" | "video" | "youtube" | "ndi";
   imageUrl?: string;
+  mediaUrl?: string;
+  youtubeUrl?: string;
+  ndiSourceName?: string;
   text?: string;
   position:
     | "top-left"

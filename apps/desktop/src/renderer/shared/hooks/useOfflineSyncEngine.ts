@@ -10,6 +10,10 @@ import {
   readOrgLibraryItems,
   readOrgServices,
   readSyncQueue,
+  replaceOrgCategories,
+  replaceOrgLibraryItems,
+  replaceOrgMessages,
+  replaceOrgServices,
   removeSyncQueueItems,
 } from "../offline/localData";
 import {
@@ -170,6 +174,20 @@ const getLocalService = (orgId: string, entityId: string) =>
 
 const getLocalMessage = (orgId: string, entityId: string) =>
   readOrgMessages(orgId).find((message) => String(message._id) === entityId) ?? null;
+
+const getWorkspaceIdsToPull = (): string[] => {
+  const state = useDesktopSessionStore.getState();
+  const workspaceIds = new Set<string>(["personal"]);
+  for (const organization of state.organizations) {
+    if (organization.type === "organization" && organization.id) {
+      workspaceIds.add(organization.id);
+    }
+  }
+  if (state.orgId && state.orgId !== "personal") {
+    workspaceIds.add(state.orgId);
+  }
+  return Array.from(workspaceIds);
+};
 
 const toMessagePayload = (message: SavedMessage) => ({
   title: message.title.trim() || "New Message",
@@ -556,6 +574,38 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
     [convex, persistIdMap, syncServiceItems, syncServiceOrder],
   );
 
+  const pullRemoteWorkspace = useCallback(
+    async (orgId: string) => {
+      const workspaceId = normalizeWorkspaceId(orgId);
+      const userId = useDesktopSessionStore.getState().user?.id ?? "";
+      const [remoteLibraries, remoteServices, remoteCategories, remoteMessages] =
+        await Promise.all([
+          convex.query(api.libraries.list, { workspaceId }),
+          convex.query(api.services.list, { workspaceId }),
+          workspaceId
+            ? convex.query(api.categories.listByOrg, {
+                orgId: workspaceId as never,
+              })
+            : userId
+              ? convex.query(api.personalCategories.listByUser, { userId })
+              : Promise.resolve([]),
+          workspaceId
+            ? convex.query(api.messages.listByOrg, {
+                orgId: workspaceId as never,
+              })
+            : userId
+              ? convex.query(api.messages.listByUser, { userId })
+              : Promise.resolve([]),
+        ]);
+
+      replaceOrgLibraryItems(orgId, remoteLibraries as never);
+      replaceOrgServices(orgId, remoteServices as never);
+      replaceOrgCategories(orgId, remoteCategories as never);
+      replaceOrgMessages(orgId, remoteMessages as never);
+    },
+    [convex],
+  );
+
   const runSync = useCallback(async () => {
     if (!enabled || runningRef.current) {
       return;
@@ -609,6 +659,9 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
       }
 
       resetBackoff();
+      for (const workspaceId of getWorkspaceIdsToPull()) {
+        await pullRemoteWorkspace(workspaceId);
+      }
       return;
     } finally {
       runningRef.current = false;
@@ -617,6 +670,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
     clearRetryTimer,
     enabled,
     processItem,
+    pullRemoteWorkspace,
     resetBackoff,
     scheduleRetry,
   ]);

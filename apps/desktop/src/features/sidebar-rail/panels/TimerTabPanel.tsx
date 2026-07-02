@@ -1,10 +1,13 @@
 "use client";
 
+import { useState, type DragEvent } from "react";
 import {
   ChevronDown,
+  GripVertical,
   Pause,
   Play,
   Plus,
+  Repeat2,
   RotateCcw,
   Trash2,
 } from "lucide-react";
@@ -33,14 +36,64 @@ export function TimerTabPanel({
 }: TimerTabPanelProps) {
   const {
     timers: items,
+    autoAdvanceEnabled,
     expandedTimerId,
     setExpandedTimerId,
+    setAutoAdvanceEnabled,
     createTimer,
     updateTimer,
+    reorderTimers,
     toggleTimerPlayback,
     resetTimer,
     removeTimer,
   } = timers;
+  const [draggedTimerIndex, setDraggedTimerIndex] = useState<number | null>(null);
+  const [dropTargetTimerIndex, setDropTargetTimerIndex] = useState<number | null>(null);
+  const dragDataKey = "application/x-present-timer-index";
+
+  const handleTimerDragStart = (
+    event: DragEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    setDraggedTimerIndex(index);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(dragDataKey, String(index));
+    event.dataTransfer.setData("text/plain", String(index));
+  };
+
+  const handleTimerDragOver = (
+    event: DragEvent<HTMLDivElement>,
+    index: number,
+  ) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (draggedTimerIndex !== null && draggedTimerIndex !== index) {
+      setDropTargetTimerIndex(index);
+    }
+  };
+
+  const handleTimerDrop = (
+    event: DragEvent<HTMLDivElement>,
+    toIndex: number,
+  ) => {
+    event.preventDefault();
+    const droppedIndex = Number.parseInt(
+      event.dataTransfer.getData(dragDataKey) || event.dataTransfer.getData("text/plain"),
+      10,
+    );
+    const fromIndex =
+      draggedTimerIndex ?? (Number.isFinite(droppedIndex) ? droppedIndex : null);
+    setDraggedTimerIndex(null);
+    setDropTargetTimerIndex(null);
+    if (fromIndex !== null && fromIndex !== toIndex) {
+      reorderTimers(fromIndex, toIndex);
+    }
+  };
+
+  const clearTimerDragState = () => {
+    setDraggedTimerIndex(null);
+    setDropTargetTimerIndex(null);
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -66,6 +119,25 @@ export function TimerTabPanel({
           </button>
           <button
             type="button"
+            onClick={() => setAutoAdvanceEnabled(!autoAdvanceEnabled)}
+            aria-pressed={autoAdvanceEnabled}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-sm px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition",
+              autoAdvanceEnabled
+                ? "bg-primary/20 text-primary"
+                : "bg-foreground/10 text-muted-foreground hover:text-foreground",
+            )}
+            title={
+              autoAdvanceEnabled
+                ? "Disable automatic next timer"
+                : "Start the next timer automatically"
+            }
+          >
+            <Repeat2 className="h-3 w-3" strokeWidth={1.8} />
+            Auto
+          </button>
+          <button
+            type="button"
             onClick={createTimer}
             className="inline-flex h-6 w-6 items-center justify-center rounded-sm border border-border bg-secondary/30 text-muted-foreground transition hover:text-foreground"
             title="Add timer"
@@ -83,18 +155,35 @@ export function TimerTabPanel({
             No timers yet. Click + to add one.
           </p>
         ) : (
-          items.map((timer) => {
+          items.map((timer, index) => {
             const isExpanded = expandedTimerId === timer.id;
             return (
               <div
                 key={timer.id}
+                onDragOver={(event) => handleTimerDragOver(event, index)}
+                onDragLeave={() => setDropTargetTimerIndex(null)}
+                onDrop={(event) => handleTimerDrop(event, index)}
+                onDragEnd={clearTimerDragState}
                 className={cn(
                   "overflow-hidden rounded-md border bg-secondary/15 transition",
                   isExpanded ? "border-primary/50" : "border-border/80",
+                  draggedTimerIndex === index && "opacity-50",
+                  dropTargetTimerIndex === index && "ring-2 ring-primary ring-inset",
                 )}
               >
                 {/* Row header */}
                 <div className="flex items-center gap-2 px-2 py-1.5">
+                  <button
+                    type="button"
+                    draggable
+                    onDragStart={(event) => handleTimerDragStart(event, index)}
+                    onDragEnd={clearTimerDragState}
+                    className="inline-flex h-5 w-4 shrink-0 cursor-grab items-center justify-center text-muted-foreground/60 transition hover:text-foreground active:cursor-grabbing"
+                    title="Drag to reorder timer"
+                    aria-label="Drag to reorder timer"
+                  >
+                    <GripVertical className="h-3.5 w-3.5" strokeWidth={1.8} />
+                  </button>
                   <button
                     type="button"
                     onClick={() =>

@@ -126,7 +126,10 @@ export function AuthControls() {
   }, [activeSpeechSessionStartedAtMs]);
 
   const isSignedIn = Boolean(
-    sessionToken && user && organizations.length > 0
+    authStatus === "authenticated" &&
+      sessionToken &&
+      user &&
+      organizations.length > 0
   );
 
   if (authStatus === "unauthenticated" && !sessionToken) {
@@ -140,11 +143,10 @@ export function AuthControls() {
             return;
           }
           setIsOpening(true);
-          try {
-            await window.electronAPI.beginAuthFlow();
-          } finally {
-            setIsOpening(false);
-          }
+          await window.electronAPI.beginAuthFlow().catch((error) => {
+            console.warn("[Desktop Auth] failed to open auth flow", error);
+          });
+          setIsOpening(false);
         }}
       >
         {isOpening ? "Opening..." : "Sign In"}

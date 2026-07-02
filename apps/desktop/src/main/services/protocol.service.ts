@@ -4,6 +4,7 @@ import path from 'path';
 import { Readable } from 'stream';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { isDev } from '../utils/app.utils';
+import { getLatestNdiInputFrame } from './ndi.service';
 
 // Webpack entry points (declared globally by Forge)
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
@@ -56,6 +57,16 @@ export const registerProtocolSchemes = (): void => {
         secure: true,
         supportFetchAPI: true,
         corsEnabled: true,
+      },
+    },
+    {
+      scheme: 'ndi-frame',
+      privileges: {
+        standard: true,
+        bypassCSP: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true,
       },
     },
   ]);
@@ -187,5 +198,26 @@ export const registerProtocolHandlers = (): void => {
       console.error('Error handling local-media request:', error);
       return new Response('Not Found', { status: 404 });
     }
+  });
+
+  protocol.handle('ndi-frame', (request) => {
+    const url = new URL(request.url);
+    const sourceName = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
+    const frame = getLatestNdiInputFrame(sourceName || null);
+    if (!frame.data) {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+    return new Response(new Uint8Array(frame.data), {
+      headers: {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'image/png',
+        'X-NDI-Frame-Updated-At': String(frame.updatedAtMs),
+      },
+    });
   });
 };

@@ -393,7 +393,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
         <Dialog
           title="Service templates"
           onClose={() => setShowTemplateDialog(false)}
-          contentClassName="max-w-none"
+          contentClassName="w-[min(980px,calc(100vw-64px))] max-w-none"
         >
           <ServiceTemplateEditor
             templates={serviceTemplates}
@@ -576,8 +576,8 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
   };
 
   return (
-    <div className="grid h-[min(78vh,720px)] min-h-[560px] w-[min(960px,calc(100vw-48px))] grid-cols-[260px_minmax(0,1fr)] overflow-hidden">
-      <div className="flex min-h-0 flex-col border-r border-border bg-background/60 p-4">
+    <div className="grid h-[min(76vh,680px)] min-h-[520px] w-full grid-cols-[240px_minmax(0,1fr)] overflow-hidden rounded-md border border-border/70">
+      <div className="flex min-h-0 flex-col border-r border-border bg-background/70 p-4">
         <div className="mb-3">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
             Templates
@@ -612,7 +612,7 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
           ))}
         </div>
 
-        <div className="mt-4 space-y-2 rounded-md border border-border bg-card/70 p-3">
+        <div className="mt-4 space-y-2 border-t border-border pt-3">
           <input
             aria-label="New service template name"
             value={newTemplateName}
@@ -675,11 +675,11 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                 </button>
               </div>
 
-              <div className="mt-4 rounded-md border border-border bg-background/50 p-3">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                  Add folder
-                </span>
-                <div className="mt-2 flex gap-2">
+              <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                <label className="min-w-0">
+                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    Add folder
+                  </span>
                   <input
                     aria-label="New service template folder name"
                     value={groupName}
@@ -690,15 +690,15 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                     placeholder="Announcements"
                     className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
                   />
-                  <button
-                    type="button"
-                    onClick={handleAddGroup}
-                    disabled={!groupName.trim()}
-                    className="rounded-md border border-border px-4 text-sm font-semibold text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Add
-                  </button>
-                </div>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAddGroup}
+                  disabled={!groupName.trim()}
+                  className="h-9 rounded-md border border-border px-4 text-sm font-semibold text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Add
+                </button>
               </div>
             </div>
 
@@ -707,11 +707,9 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
               {groupedItems.map(({ group, items }) => (
                 <section
                   key={group.id}
-                  className={cn(
-                    "overflow-hidden rounded-md border border-border/70 bg-background/40",
-                  )}
+                  className="overflow-hidden rounded-md border border-border/70 bg-background/40"
                 >
-                  <div className="flex items-center gap-2 border-b border-border/60 bg-muted/25 px-3 py-2">
+                  <div className="flex items-center gap-2 border-b border-border/60 bg-muted/20 px-3 py-2">
                     <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <input
                       aria-label="Service template folder name"
@@ -774,7 +772,7 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
               ))}
 
               {ungroupedItems.length || orderedGroups.length === 0 ? (
-                <section className="space-y-1 rounded-md border border-border/50 p-1">
+                <section className="space-y-1 rounded-md border border-border/50 bg-background/30 p-2">
                   <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                     No folder
                   </div>
@@ -875,14 +873,8 @@ function AddTemplateItemControl({
   };
 
   return (
-    <div
-      className={cn(
-        "mt-2 grid gap-2 rounded-md border border-border/70 bg-muted/20 p-2",
-        itemType === "media"
-          ? "grid-cols-[116px_minmax(0,1fr)_auto] items-start"
-          : "grid-cols-[116px_minmax(0,1fr)_auto]",
-      )}
-    >
+    <div className="mt-2 rounded-md border border-border/70 bg-muted/15 p-2">
+      <div className="grid grid-cols-[112px_minmax(0,1fr)_auto] gap-2">
       <select
         aria-label="Template item type"
         value={itemType}
@@ -913,46 +905,12 @@ function AddTemplateItemControl({
       ) : null}
 
       {itemType === "media" ? (
-        <div
-          className="grid max-h-32 min-h-20 min-w-0 grid-cols-[repeat(auto-fill,minmax(88px,1fr))] gap-1 overflow-auto rounded-md border border-input bg-background p-1"
-          aria-label="Media item to add"
-        >
-          {mediaItems.length ? (
-            mediaItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setSelectedMediaId(item.id)}
-                className={cn(
-                  "group overflow-hidden rounded border text-left transition",
-                  selectedMediaId === item.id
-                    ? "border-primary bg-primary/10"
-                    : "border-border/70 bg-card hover:border-primary/50",
-                )}
-              >
-                <span className="relative block aspect-video bg-black">
-                  {item.type === "image" ? (
-                    <span
-                      className="block h-full w-full bg-cover bg-center"
-                      style={{ backgroundImage: `url("${item.url}")` }}
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <span className="flex h-full w-full items-center justify-center text-muted-foreground">
-                      <VideoIcon />
-                    </span>
-                  )}
-                </span>
-                <span className="block truncate px-1.5 py-1 text-[10px] text-foreground">
-                  {item.name}
-                </span>
-              </button>
-            ))
-          ) : (
-            <span className="col-span-full px-2 py-3 text-xs text-muted-foreground">
-              No media available.
-            </span>
-          )}
+        <div className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-xs text-muted-foreground">
+          <span className="flex h-full items-center truncate">
+            {selectedMediaId
+              ? mediaItems.find((item) => item.id === selectedMediaId)?.name
+              : "Select media below"}
+          </span>
         </div>
       ) : null}
 
@@ -977,6 +935,39 @@ function AddTemplateItemControl({
         <Plus className="h-3.5 w-3.5" />
         Add
       </button>
+      </div>
+
+      {itemType === "media" ? (
+        <div
+          className="mt-2 grid max-h-40 min-h-24 grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-2 overflow-auto rounded-md border border-border/70 bg-background p-2"
+          aria-label="Media item to add"
+        >
+          {mediaItems.length ? (
+            mediaItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setSelectedMediaId(item.id)}
+                className={cn(
+                  "group overflow-hidden rounded-md border text-left transition",
+                  selectedMediaId === item.id
+                    ? "border-primary bg-primary/10 ring-1 ring-primary/40"
+                    : "border-border/70 bg-card hover:border-primary/50",
+                )}
+              >
+                <TemplateMediaPreview item={item} className="aspect-video" />
+                <span className="block truncate px-2 py-1.5 text-[10px] font-medium text-foreground">
+                  {item.name}
+                </span>
+              </button>
+            ))
+          ) : (
+            <span className="col-span-full px-2 py-3 text-xs text-muted-foreground">
+              No media available.
+            </span>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -999,22 +990,30 @@ function TemplateItemRow({
   onRemove: () => void;
 }) {
   const label = getTemplateItemLabel(item, libraryItems, mediaItems);
+  const mediaItem =
+    item.type === "media"
+      ? mediaItems.find((candidate) => candidate.id === item.refId) ?? null
+      : null;
 
   return (
-    <div className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
-      <span className="w-4 text-[10px] text-muted-foreground">{index + 1}</span>
+    <div className="group flex min-h-10 items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
+      <span className="w-5 text-right text-[10px] text-muted-foreground">
+        {index + 1}
+      </span>
       <span className="shrink-0 text-muted-foreground">
         {item.type === "library" ? <MusicIcon /> : null}
-        {item.type === "media" ? (
-          /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(label) ? (
-            <VideoIcon />
-          ) : (
-            <ImageIcon />
-          )
+        {item.type === "media" && !mediaItem ? (
+          /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(label) ? <VideoIcon /> : <ImageIcon />
         ) : null}
         {item.type === "scripture" ? <BookIcon /> : null}
         {item.type === "presentation" ? <FolderIcon /> : null}
       </span>
+      {mediaItem ? (
+        <TemplateMediaPreview
+          item={mediaItem}
+          className="h-8 w-14 shrink-0 rounded-sm"
+        />
+      ) : null}
       <span className="min-w-0 flex-1 truncate">{label}</span>
       <select
         value={item.groupId ?? ""}
@@ -1038,6 +1037,51 @@ function TemplateItemRow({
         <CloseIcon />
       </button>
     </div>
+  );
+}
+
+function TemplateMediaPreview({
+  item,
+  className,
+}: {
+  item: MediaItem;
+  className?: string;
+}) {
+  if (item.type === "image") {
+    return (
+      <span
+        className={cn("block overflow-hidden bg-black", className)}
+        aria-hidden="true"
+      >
+        <img src={item.url} alt="" className="h-full w-full object-cover" loading="lazy" />
+      </span>
+    );
+  }
+
+  return (
+    <span className={cn("relative block overflow-hidden bg-black", className)}>
+      <video
+        src={item.url}
+        className="h-full w-full object-cover"
+        aria-label={`${item.name} preview`}
+        tabIndex={-1}
+        muted
+        preload="metadata"
+        playsInline
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          try {
+            video.currentTime = 0.01;
+            video.pause();
+          } catch {
+            // Some codecs do not allow seeking before enough data is buffered.
+          }
+        }}
+      />
+      <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/70 p-0.5 text-white">
+        <VideoIcon />
+      </span>
+    </span>
   );
 }
 

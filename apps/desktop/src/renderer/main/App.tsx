@@ -403,6 +403,7 @@ function AuthenticatedHome({ windowType }: { windowType: string | null }) {
 function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // Organization & auth
   const { userId } = useOrganization();
+  const authStatus = useDesktopSessionStore((state) => state.authStatus);
   const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
   const desktopUser = useDesktopSessionStore((state) => state.user);
   const desktopOrgId = useDesktopSessionStore((state) => state.orgId);
@@ -419,17 +420,21 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   const isLooksWindow = windowType === "looks";
   const isScreenComposerWindow = windowType === "screen-composer";
   const isMiniLyricsWindow = windowType === "mini-lyrics";
+  const hasAuthenticatedDesktopSession =
+    authStatus === "authenticated" && Boolean(sessionToken && desktopUser);
 
   // Cached session data is useful offline, but it is not authoritative enough
   // to cross a Convex v.id("organizations") boundary. Wait for the signed-in
   // organization query to verify it before enabling organization-scoped data.
-  const effectiveOrgId = (resolveVerifiedOrganizationId({
-    desktopOrganizationId: desktopOrgId,
-    hasVerifiedOrganizationScope,
-    organizations: desktopOrganizations,
-    workspaceOrganizationId: activeWorkspaceId,
-    workspaceType: activeWorkspaceType,
-  }) ?? undefined) as Id<"organizations"> | undefined;
+  const effectiveOrgId = (hasAuthenticatedDesktopSession
+    ? resolveVerifiedOrganizationId({
+        desktopOrganizationId: desktopOrgId,
+        hasVerifiedOrganizationScope,
+        organizations: desktopOrganizations,
+        workspaceOrganizationId: activeWorkspaceId,
+        workspaceType: activeWorkspaceType,
+      })
+    : undefined) as Id<"organizations"> | undefined;
   const cachedLocalOrgId = useMemo(() => {
     const validOrgIds = new Set(
       desktopOrganizations
@@ -454,10 +459,14 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     desktopOrgId,
     desktopOrganizations,
   ]);
-  const localOrgId = (effectiveOrgId ?? cachedLocalOrgId ?? null) as
+  const localOrgId = (hasAuthenticatedDesktopSession
+    ? effectiveOrgId ?? cachedLocalOrgId ?? null
+    : null) as
     | Id<"organizations">
     | null;
-  const localUserId = userId ?? desktopUser?.id ?? null;
+  const localUserId = hasAuthenticatedDesktopSession
+    ? userId ?? desktopUser?.id ?? null
+    : null;
 
   // Root UI state
   const { viewMode, setViewMode, bottomTab, setBottomTab } =

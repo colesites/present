@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { createElement, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, HTMLAttributes } from "react";
 import { Camera } from "lucide-react";
 import type {
   VideoSettings,
@@ -896,6 +896,41 @@ function PropsOverlayLayer({
             />
           );
         }
+        if (item.kind === "video" && item.mediaUrl) {
+          return (
+            <video
+              key={item.id}
+              src={item.mediaUrl}
+              className="pointer-events-none absolute z-40 h-auto object-contain"
+              style={baseStyle}
+              aria-label="Video prop"
+              autoPlay
+              loop
+              muted
+              playsInline
+            />
+          );
+        }
+        if (item.kind === "youtube" && item.youtubeUrl) {
+          const embedUrl = getYouTubeEmbedUrl(item.youtubeUrl);
+          if (!embedUrl) return null;
+          return (
+            <YouTubePropLayer
+              key={item.id}
+              src={embedUrl}
+              style={baseStyle}
+            />
+          );
+        }
+        if (item.kind === "ndi" && item.ndiSourceName) {
+          return (
+            <NdiPropLayer
+              key={item.id}
+              sourceName={item.ndiSourceName}
+              style={baseStyle}
+            />
+          );
+        }
         if (item.kind === "text" && item.text) {
           return (
             <div
@@ -920,6 +955,110 @@ function PropsOverlayLayer({
       })}
     </>
   );
+}
+
+function YouTubePropLayer({
+  src,
+  style,
+}: {
+  src: string;
+  style: React.CSSProperties;
+}) {
+  type WebviewProps = HTMLAttributes<HTMLElement> & {
+    allow?: string;
+    allowpopups?: string;
+    partition?: string;
+    src: string;
+  };
+
+  return createElement("webview", {
+    src,
+    className: "pointer-events-none absolute z-40 border-0",
+    style: { ...style, aspectRatio: "16 / 9" },
+    partition: "persist:present-youtube-props",
+    allow: "autoplay; encrypted-media; picture-in-picture",
+    allowpopups: "false",
+  } satisfies WebviewProps);
+}
+
+function NdiPropLayer({
+  sourceName,
+  style,
+}: {
+  sourceName: string;
+  style: React.CSSProperties;
+}) {
+  const [frameTick, setFrameTick] = useState(0);
+  const encodedSourceName = encodeURIComponent(sourceName);
+
+  useEffect(() => {
+    if (!window.electronAPI?.startNdiInput || !window.electronAPI?.stopNdiInput) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    void window.electronAPI.startNdiInput(sourceName).then((result) => {
+      if (!cancelled && !result.ok && result.error) {
+        console.error("[NDI Prop] failed to start input", result.error);
+      }
+    });
+    const interval = window.setInterval(() => {
+      setFrameTick(Date.now());
+    }, 100);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      void window.electronAPI.stopNdiInput();
+    };
+  }, [sourceName]);
+
+  return (
+    <img
+      src={`ndi-frame://frame/${encodedSourceName}?t=${frameTick}`}
+      alt=""
+      className="pointer-events-none absolute z-40 h-auto object-contain"
+      style={style}
+    />
+  );
+}
+
+function getYouTubeEmbedUrl(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    let videoId: string | null = null;
+    if (url.hostname === "youtu.be") {
+      videoId = url.pathname.split("/").filter(Boolean)[0] ?? null;
+    } else if (url.hostname.endsWith("youtube.com")) {
+      if (url.pathname === "/watch") {
+        videoId = url.searchParams.get("v");
+      } else {
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (["embed", "shorts", "live"].includes(parts[0] ?? "")) {
+          videoId = parts[1] ?? null;
+        }
+      }
+    }
+
+    if (!videoId) return null;
+    const params = new URLSearchParams({
+      autoplay: "1",
+      controls: "0",
+      disablekb: "1",
+      fs: "0",
+      iv_load_policy: "3",
+      loop: "1",
+      modestbranding: "1",
+      mute: "1",
+      origin: "https://www.youtube-nocookie.com",
+      playsinline: "1",
+      playlist: videoId,
+      rel: "0",
+    });
+    return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
+  } catch {
+    return null;
+  }
 }
 
 function getPropSlotStyle(

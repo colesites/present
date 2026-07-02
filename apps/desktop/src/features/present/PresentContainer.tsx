@@ -35,7 +35,10 @@ import {
 } from "../../renderer/shared/hooks";
 import type { useAppSettings } from "../../renderer/shared/hooks/useAppSettings";
 import { MediaState, MediaItem } from "../media/hooks/useMediaFolders";
-import type { OutputTextPosition } from "../../shared/types/output-window";
+import type {
+  OutputTextPosition,
+  PropsOverlayItem,
+} from "../../shared/types/output-window";
 import {
   getActiveLibrarySlide,
   getActiveSlideText,
@@ -367,6 +370,9 @@ export function PresentContainer({
   // org's saved props). Stored as strings to stay independent of the Convex
   // generated Id type.
   const [activePropIds, setActivePropIds] = useState<string[]>([]);
+  const [livePropDrafts, setLivePropDrafts] = useState<
+    Record<string, Partial<PropsOverlayItem> & { name?: string }>
+  >({});
   // Timer state lives here so both the rail Timer tab and the output
   // broadcast effect read from the same source. (Used to be inside
   // OutputPreview, which forced the embedded duplicate UI.)
@@ -1231,18 +1237,48 @@ export function PresentContainer({
     return activePropIds
       .map((id) => byId.get(id))
       .filter((prop): prop is NonNullable<typeof prop> => Boolean(prop))
-      .map((prop) => ({
-        id: prop._id as unknown as string,
-        kind: prop.kind,
-        imageUrl: prop.imageUrl,
-        text: prop.text,
-        position: prop.position,
-        opacity: prop.opacity,
-        sizePercent: prop.sizePercent,
-        color: prop.color,
-        fontSize: prop.fontSize,
+      .sort((left, right) => right.order - left.order)
+      .map((prop) => {
+        const id = prop._id as unknown as string;
+        const draft = livePropDrafts[id] ?? {};
+        return {
+          id,
+          kind: prop.kind,
+          imageUrl: prop.imageUrl,
+          mediaUrl: prop.mediaUrl,
+          youtubeUrl: draft.youtubeUrl ?? prop.youtubeUrl,
+          ndiSourceName: draft.ndiSourceName ?? prop.ndiSourceName,
+          text: draft.text ?? prop.text,
+          position: draft.position ?? prop.position,
+          opacity: draft.opacity ?? prop.opacity,
+          sizePercent: draft.sizePercent ?? prop.sizePercent,
+          color: draft.color ?? prop.color,
+          fontSize: draft.fontSize ?? prop.fontSize,
+        };
+      });
+  }, [orgPropsList, activePropIds, livePropDrafts]);
+
+  const handleSetLivePropDraft = useCallback(
+    (propId: string, patch: Partial<PropsOverlayItem> & { name?: string }) => {
+      setLivePropDrafts((prev) => ({
+        ...prev,
+        [propId]: {
+          ...(prev[propId] ?? {}),
+          ...patch,
+        },
       }));
-  }, [orgPropsList, activePropIds]);
+    },
+    [],
+  );
+
+  const handleClearLivePropDraft = useCallback((propId: string) => {
+    setLivePropDrafts((prev) => {
+      if (!prev[propId]) return prev;
+      const next = { ...prev };
+      delete next[propId];
+      return next;
+    });
+  }, []);
 
   // Pushing a master slide to the live output uses the existing
   // edited-snapshot channel: synthesize an EditedOutputSnapshot with the
@@ -1746,6 +1782,9 @@ export function PresentContainer({
           activeMessageOverlay,
           onShowMessageOverlay: setActiveMessageOverlay,
           activePropIds,
+          propsOverlay: resolvedPropsOverlay,
+          onSetLivePropDraft: handleSetLivePropDraft,
+          onClearLivePropDraft: handleClearLivePropDraft,
           onSetActivePropIds: setActivePropIds,
           onPushMasterSlide: handlePushMasterSlide,
           timers,

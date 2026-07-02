@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectMediaFile: () => ipcRenderer.invoke('select-media-file'),
   selectAudioFiles: () => ipcRenderer.invoke('select-audio-files'),
   selectPropImage: () => ipcRenderer.invoke('select-prop-image'),
+  selectPropMedia: () => ipcRenderer.invoke('select-prop-media'),
   selectPresentationFiles: () => ipcRenderer.invoke('select-presentation-files'),
   copyMediaFile: (source: string, target: string) => ipcRenderer.invoke('copy-media-file', source, target),
   renameMediaFile: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-media-file', oldPath, newName),
@@ -94,6 +95,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('ndi:start', { sourceName, groupName }),
   stopNdiOutput: () => ipcRenderer.invoke('ndi:stop'),
   getNdiStatus: () => ipcRenderer.invoke('ndi:status'),
+  listNdiSources: (groupName?: string) =>
+    ipcRenderer.invoke('ndi:list-sources', { groupName }),
+  startNdiInput: (sourceName: string, groupName?: string) =>
+    ipcRenderer.invoke('ndi:start-input', { sourceName, groupName }),
+  stopNdiInput: () => ipcRenderer.invoke('ndi:stop-input'),
 
   // Auth & System URLs
   beginAuthFlow: () => ipcRenderer.invoke('begin-auth-flow'),

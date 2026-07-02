@@ -66,6 +66,11 @@ export interface SidebarRailProps {
 
   // Active prop overlays
   activePropIds: string[];
+  onSetLivePropDraft: (
+    propId: string,
+    patch: Partial<PropsOverlayItem> & { name?: string },
+  ) => void;
+  onClearLivePropDraft: (propId: string) => void;
   onSetActivePropIds: (ids: string[]) => void;
 
   // Timer state (managed by `useTimers` in PresentContainer)
@@ -171,6 +176,8 @@ function SidebarPanelContent({
         <LayersTabPanel
           orgId={props.localOrgId ?? props.orgId ?? null}
           activePropIds={props.activePropIds}
+          onSetLivePropDraft={props.onSetLivePropDraft}
+          onClearLivePropDraft={props.onClearLivePropDraft}
           onSetActivePropIds={props.onSetActivePropIds}
         />
       );

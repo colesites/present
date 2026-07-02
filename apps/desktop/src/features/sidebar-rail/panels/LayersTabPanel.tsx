@@ -3,28 +3,45 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
+  ChevronDown,
+  ChevronUp,
   Eye,
   EyeOff,
   ImagePlus,
   Layers,
+  Link as LinkIcon,
+  Loader2,
+  Radio,
+  RefreshCw,
   Trash2,
   Type as TypeIcon,
+  Video,
 } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
+import type { PropsOverlayItem } from "../../../shared/types/output-window";
 import { cn } from "../../../renderer/shared/lib/utils";
 
 interface LayersTabPanelProps {
   orgId: Id<"organizations"> | null;
   activePropIds: string[];
+  onSetLivePropDraft: (
+    propId: string,
+    patch: Partial<PropsOverlayItem> & { name?: string },
+  ) => void;
+  onClearLivePropDraft: (propId: string) => void;
   onSetActivePropIds: (ids: string[]) => void;
 }
 
 type Prop = {
   _id: Id<"props">;
   name: string;
-  kind: "image" | "text";
+  kind: "image" | "text" | "video" | "youtube" | "ndi";
   imageUrl?: string;
+  mediaUrl?: string;
+  youtubeUrl?: string;
+  ndiSourceName?: string;
   text?: string;
   position:
     | "top-left"
@@ -40,6 +57,25 @@ type Prop = {
   order: number;
 };
 
+type NdiSource = {
+  name: string;
+  urlAddress?: string;
+};
+
+type PropDraft = Partial<
+  Pick<
+    Prop,
+    | "color"
+    | "fontSize"
+    | "name"
+    | "ndiSourceName"
+    | "opacity"
+    | "position"
+    | "sizePercent"
+    | "youtubeUrl"
+  >
+>;
+
 const POSITIONS: Prop["position"][] = [
   "top-left",
   "top-right",
@@ -52,6 +88,8 @@ const POSITIONS: Prop["position"][] = [
 export function LayersTabPanel({
   orgId,
   activePropIds,
+  onSetLivePropDraft,
+  onClearLivePropDraft,
   onSetActivePropIds,
 }: LayersTabPanelProps) {
   const props = useQuery(
@@ -60,9 +98,14 @@ export function LayersTabPanel({
   ) as Prop[] | undefined;
   const createProp = useMutation(api.props.create);
   const updateProp = useMutation(api.props.update);
+  const moveProp = useMutation(api.props.move);
   const removeProp = useMutation(api.props.remove);
 
   const [selectedId, setSelectedId] = useState<Id<"props"> | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, PropDraft>>({});
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [ndiSources, setNdiSources] = useState<NdiSource[]>([]);
+  const [isLoadingNdiSources, setIsLoadingNdiSources] = useState(false);
 
   const sorted = useMemo(
     () => (props ? [...props].sort((a, b) => a.order - b.order) : []),
@@ -77,6 +120,62 @@ export function LayersTabPanel({
     () => sorted.find((p) => p._id === effectiveSelectedId) ?? null,
     [effectiveSelectedId, sorted],
   );
+  const selectedDraft = selected
+    ? drafts[selected._id as unknown as string] ?? {}
+    : {};
+  const selectedView = selected ? { ...selected, ...selectedDraft } : null;
+
+  const setPropDraft = (propId: Id<"props">, patch: PropDraft) => {
+    const key = propId as unknown as string;
+    onSetLivePropDraft(key, patch);
+    setDrafts((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] ?? {}),
+        ...patch,
+      },
+    }));
+  };
+
+  const commitPropUpdate = (propId: Id<"props">, patch: PropDraft) => {
+    setPropDraft(propId, patch);
+    void updateProp({
+      propId,
+      ...patch,
+    }).then(() => {
+      const key = propId as unknown as string;
+      onClearLivePropDraft(key);
+      setDrafts((prev) => {
+        const nextDraft = { ...(prev[key] ?? {}) };
+        Object.keys(patch).forEach((field) => {
+          delete nextDraft[field as keyof PropDraft];
+        });
+        if (Object.keys(nextDraft).length === 0) {
+          const rest = { ...prev };
+          delete rest[key];
+          return rest;
+        }
+        return { ...prev, [key]: nextDraft };
+      });
+    }).catch((error: unknown) => {
+      toast.error("Could not save prop changes.");
+      console.error("Failed to update prop", error);
+    });
+  };
+
+  const loadNdiSources = async () => {
+    if (!window.electronAPI?.listNdiSources) return;
+    setIsLoadingNdiSources(true);
+    await window.electronAPI
+      .listNdiSources()
+      .then((result) => {
+        setNdiSources(result.sources);
+      })
+      .catch((error: unknown) => {
+        console.error("Failed to list NDI sources", error);
+      });
+    setIsLoadingNdiSources(false);
+  };
 
   if (!orgId) {
     return (
@@ -95,24 +194,102 @@ export function LayersTabPanel({
     }
   };
 
-  const handleCreateImage = async () => {
-    if (!window.electronAPI?.selectPropImage) return;
-    const picked = await window.electronAPI.selectPropImage();
+  const handleCreateMedia = async () => {
+    if (!window.electronAPI?.selectPropMedia) return;
+    const picked = await window.electronAPI.selectPropMedia();
     if (!picked) return;
-    const id = await createProp({
+    const baseName = picked.name.replace(/\.[^.]+$/, "");
+    const toastId = toast.loading("Adding media prop...");
+    setPendingAction("create-media");
+    if (picked.mediaType === "video") {
+      void createProp({
+        orgId,
+        name: baseName,
+        kind: "video",
+        mediaUrl: picked.mediaUrl,
+        position: "center",
+        opacity: 1,
+        sizePercent: 45,
+      }).then((id) => {
+        setSelectedId(id);
+        toast.success("Media prop added.", { id: toastId });
+      }).catch((error: unknown) => {
+        toast.error("Could not add media prop.", { id: toastId });
+        console.error("Failed to create video prop", error);
+      }).then(() => {
+        setPendingAction(null);
+      });
+      return;
+    }
+
+    void createProp({
       orgId,
-      name: picked.name.replace(/\.[^.]+$/, ""),
+      name: baseName,
       kind: "image",
       imageUrl: picked.dataUrl,
       position: "bottom-right",
       opacity: 1,
       sizePercent: 20,
+    }).then((id) => {
+      setSelectedId(id);
+      toast.success("Media prop added.", { id: toastId });
+    }).catch((error: unknown) => {
+      toast.error("Could not add media prop.", { id: toastId });
+      console.error("Failed to create image prop", error);
+    }).then(() => {
+      setPendingAction(null);
     });
-    setSelectedId(id);
+  };
+
+  const handleCreateYoutube = async () => {
+    const toastId = toast.loading("Adding YouTube prop...");
+    setPendingAction("create-youtube");
+    void createProp({
+      orgId,
+      name: "YouTube video",
+      kind: "youtube",
+      youtubeUrl: "",
+      position: "center",
+      opacity: 1,
+      sizePercent: 45,
+    }).then((id) => {
+      setSelectedId(id);
+      toast.success("YouTube prop added.", { id: toastId });
+    }).catch((error: unknown) => {
+      toast.error("Could not add YouTube prop.", { id: toastId });
+      console.error("Failed to create YouTube prop", error);
+    }).then(() => {
+      setPendingAction(null);
+    });
+  };
+
+  const handleCreateNdi = async () => {
+    const toastId = toast.loading("Adding NDI prop...");
+    setPendingAction("create-ndi");
+    void createProp({
+      orgId,
+      name: "NDI source",
+      kind: "ndi",
+      ndiSourceName: "",
+      position: "center",
+      opacity: 1,
+      sizePercent: 55,
+    }).then((id) => {
+      setSelectedId(id);
+      toast.success("NDI prop added.", { id: toastId });
+      void loadNdiSources();
+    }).catch((error: unknown) => {
+      toast.error("Could not add NDI prop.", { id: toastId });
+      console.error("Failed to create NDI prop", error);
+    }).then(() => {
+      setPendingAction(null);
+    });
   };
 
   const handleCreateText = async () => {
-    const id = await createProp({
+    const toastId = toast.loading("Adding text prop...");
+    setPendingAction("create-text");
+    void createProp({
       orgId,
       name: "Text prop",
       kind: "text",
@@ -122,8 +299,48 @@ export function LayersTabPanel({
       sizePercent: 30,
       color: "#ffffff",
       fontSize: 48,
+    }).then((id) => {
+      setSelectedId(id);
+      toast.success("Text prop added.", { id: toastId });
+    }).catch((error: unknown) => {
+      toast.error("Could not add text prop.", { id: toastId });
+      console.error("Failed to create text prop", error);
+    }).then(() => {
+      setPendingAction(null);
     });
-    setSelectedId(id);
+  };
+
+  const handleMoveProp = (propId: Id<"props">, direction: "up" | "down") => {
+    const key = propId as unknown as string;
+    setPendingAction(`move-${key}-${direction}`);
+    void moveProp({ propId, direction })
+      .catch((error: unknown) => {
+        toast.error("Could not reorder prop.");
+        console.error("Failed to reorder prop", error);
+      })
+      .then(() => {
+        setPendingAction(null);
+      });
+  };
+
+  const handleDeleteProp = (propId: Id<"props">) => {
+    const key = propId as unknown as string;
+    const toastId = toast.loading("Deleting prop...");
+    setPendingAction(`delete-${key}`);
+    void removeProp({ propId })
+      .then(() => {
+        onSetActivePropIds(activePropIds.filter((id) => id !== key));
+        onClearLivePropDraft(key);
+        setSelectedId(null);
+        toast.success("Prop deleted.", { id: toastId });
+      })
+      .catch((error: unknown) => {
+        toast.error("Could not delete prop.", { id: toastId });
+        console.error("Failed to delete prop", error);
+      })
+      .then(() => {
+        setPendingAction(null);
+      });
   };
 
   return (
@@ -133,110 +350,199 @@ export function LayersTabPanel({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={handleCreateImage}
-            className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
-            title="Add image prop"
-            aria-label="Add image prop"
+            onClick={handleCreateMedia}
+            disabled={Boolean(pendingAction)}
+            className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
+            title="Add media prop"
+            aria-label="Add media prop"
           >
-            <ImagePlus className="h-3.5 w-3.5" strokeWidth={1.8} />
+            {pendingAction === "create-media" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
+            ) : (
+              <ImagePlus className="h-3.5 w-3.5" strokeWidth={1.8} />
+            )}
           </button>
           <button
             type="button"
             onClick={handleCreateText}
-            className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+            disabled={Boolean(pendingAction)}
+            className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
             title="Add text prop"
             aria-label="Add text prop"
           >
-            <TypeIcon className="h-3.5 w-3.5" strokeWidth={1.8} />
+            {pendingAction === "create-text" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
+            ) : (
+              <TypeIcon className="h-3.5 w-3.5" strokeWidth={1.8} />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleCreateYoutube}
+            disabled={Boolean(pendingAction)}
+            className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
+            title="Add video source"
+            aria-label="Add video source"
+          >
+            {pendingAction === "create-youtube" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
+            ) : (
+              <LinkIcon className="h-3.5 w-3.5" strokeWidth={1.8} />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleCreateNdi}
+            disabled={Boolean(pendingAction)}
+            className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
+            title="Add NDI source"
+            aria-label="Add NDI source"
+          >
+            {pendingAction === "create-ndi" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
+            ) : (
+              <Radio className="h-3.5 w-3.5" strokeWidth={1.8} />
+            )}
           </button>
         </div>
       </header>
 
-      {/* Grid of prop thumbnails */}
-      <div className="grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto p-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
         {sorted.length === 0 ? (
-          <div className="col-span-2 flex flex-col items-center justify-center gap-2 px-6 py-8 text-center">
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
             <Layers
               className="h-8 w-8 text-muted-foreground/60"
               strokeWidth={1.4}
             />
             <p className="text-[11px] text-muted-foreground">
-              No props yet. Add an image or text overlay.
+              No props yet. Add media, text, or a video source.
             </p>
           </div>
         ) : (
-          sorted.map((prop) => {
+          sorted.map((prop, index) => {
             const isVisible = activePropIds.includes(prop._id as unknown as string);
+            const propKey = prop._id as unknown as string;
             return (
-              <button
+              <div
                 key={prop._id}
-                type="button"
-                onClick={() => setSelectedId(prop._id)}
                 className={cn(
-                  "group relative flex flex-col gap-1 rounded-sm border p-1.5 text-left transition",
+                  "group flex min-h-9 items-center gap-2 rounded-sm border px-2 py-1.5 transition",
                   selectedId === prop._id
                     ? "border-primary"
                     : "border-border/40 hover:border-foreground/40",
                 )}
               >
-                <div
-                  className="relative flex h-14 w-full items-center justify-center overflow-hidden rounded-sm bg-[repeating-conic-gradient(#1a1a1a_0_25%,#2a2a2a_0_50%)] bg-[length:10px_10px]"
-                  style={{ opacity: prop.opacity }}
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(prop._id)}
+                  aria-pressed={selectedId === prop._id}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
                 >
-                  {prop.kind === "image" && prop.imageUrl ? (
-                    <img
-                      src={prop.imageUrl}
-                      alt=""
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  ) : (
-                    <span
-                      className="px-1 text-center font-semibold leading-tight"
-                      style={{
-                        color: prop.color ?? "white",
-                        fontSize: "12px",
-                      }}
-                    >
-                      {prop.text}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="truncate text-[10px] text-foreground">
-                    {prop.name}
-                  </span>
-                  <span
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      toggleVisible(prop._id);
-                    }}
-                    className={cn(
-                      "cursor-pointer rounded-sm p-0.5 transition",
-                      isVisible
-                        ? "text-primary"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                    title={isVisible ? "Hide on output" : "Show on output"}
+                  <div
+                    className="relative flex h-7 w-9 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-[repeating-conic-gradient(#1a1a1a_0_25%,#2a2a2a_0_50%)] bg-[length:8px_8px]"
+                    style={{ opacity: prop.opacity }}
                   >
-                    {isVisible ? (
-                      <Eye className="h-3 w-3" strokeWidth={1.8} />
+                    {prop.kind === "image" && prop.imageUrl ? (
+                      <img
+                        src={prop.imageUrl}
+                        alt=""
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    ) : prop.kind === "video" ? (
+                      <Video className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
+                    ) : prop.kind === "youtube" ? (
+                      <LinkIcon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
+                    ) : prop.kind === "ndi" ? (
+                      <Radio className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
                     ) : (
-                      <EyeOff className="h-3 w-3" strokeWidth={1.8} />
+                      <span
+                        className="px-1 text-center font-semibold leading-none"
+                        style={{
+                          color: prop.color ?? "white",
+                          fontSize: "10px",
+                        }}
+                      >
+                        T
+                      </span>
                     )}
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[11px] text-foreground">
+                      {prop.name}
+                    </span>
+                    <span className="block truncate text-[9px] text-muted-foreground">
+                      {prop.kind === "youtube"
+                        ? prop.youtubeUrl || "YouTube source"
+                        : prop.kind === "ndi"
+                          ? prop.ndiSourceName || "NDI source"
+                          : prop.kind}
+                    </span>
                   </span>
+                </button>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => handleMoveProp(prop._id, "up")}
+                    disabled={index === 0 || Boolean(pendingAction)}
+                    aria-label="Move prop up"
+                    className="rounded-sm p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                    title="Move up"
+                  >
+                    {pendingAction === `move-${propKey}-up` ? (
+                      <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.8} />
+                    ) : (
+                      <ChevronUp className="h-3 w-3" strokeWidth={1.8} />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleMoveProp(prop._id, "down")}
+                    disabled={index === sorted.length - 1 || Boolean(pendingAction)}
+                    aria-label="Move prop down"
+                    className="rounded-sm p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                    title="Move down"
+                  >
+                    {pendingAction === `move-${propKey}-down` ? (
+                      <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.8} />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" strokeWidth={1.8} />
+                    )}
+                  </button>
                 </div>
-              </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleVisible(prop._id);
+                  }}
+                  aria-label={isVisible ? "Hide prop on output" : "Show prop on output"}
+                  className={cn(
+                    "shrink-0 rounded-sm p-1 transition",
+                    isVisible
+                      ? "text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  title={isVisible ? "Hide on output" : "Show on output"}
+                >
+                  {isVisible ? (
+                    <Eye className="h-3 w-3" strokeWidth={1.8} />
+                  ) : (
+                    <EyeOff className="h-3 w-3" strokeWidth={1.8} />
+                  )}
+                </button>
+              </div>
             );
           })
         )}
       </div>
 
       {/* Inspector for the selected prop */}
-      {selected && (
+      {selected && selectedView && (
         <div className="border-t border-border/70 bg-background/30 p-3">
           <div className="mb-2 flex items-center justify-between">
             <input
               type="text"
+              aria-label="Prop name"
               defaultValue={selected.name}
               key={selected._id}
               onBlur={(event) =>
@@ -249,25 +555,22 @@ export function LayersTabPanel({
             />
             <button
               type="button"
-              onClick={() =>
-                void removeProp({ propId: selected._id }).then(() => {
-                  onSetActivePropIds(
-                    activePropIds.filter(
-                      (x) => x !== (selected._id as unknown as string),
-                    ),
-                  );
-                  setSelectedId(null);
-                })
-              }
-              className="ml-2 rounded-sm p-1.5 text-muted-foreground hover:bg-red-500/10 hover:text-red-400"
+              onClick={() => handleDeleteProp(selected._id)}
+              disabled={Boolean(pendingAction)}
+              className="ml-2 rounded-sm p-1.5 text-muted-foreground hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
               aria-label="Delete prop"
             >
-              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.6} />
+              {pendingAction === `delete-${selected._id as unknown as string}` ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.6} />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={1.6} />
+              )}
             </button>
           </div>
 
           {selected.kind === "text" && (
             <textarea
+              aria-label="Prop text"
               key={`${selected._id}-text`}
               defaultValue={selected.text}
               onBlur={(event) =>
@@ -280,6 +583,89 @@ export function LayersTabPanel({
             />
           )}
 
+          {selected.kind === "youtube" && (
+            <label className="mb-2 block text-[10px] text-muted-foreground">
+              <span className="mb-1 block">YouTube link</span>
+              <div className="flex gap-1">
+                <input
+                  key={`${selected._id}-youtube`}
+                  type="url"
+                  value={selectedView.youtubeUrl ?? ""}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  onChange={(event) =>
+                    setPropDraft(selected._id, {
+                      youtubeUrl: event.target.value,
+                    })
+                  }
+                  onBlur={(event) =>
+                    commitPropUpdate(selected._id, {
+                      youtubeUrl: event.target.value.trim(),
+                    })
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.currentTarget.blur();
+                  }}
+                  className="min-w-0 flex-1 rounded-sm border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-foreground focus:border-primary/60 focus:outline-hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    commitPropUpdate(selected._id, {
+                      youtubeUrl: (selectedView.youtubeUrl ?? "").trim(),
+                    })
+                  }
+                  className="rounded-sm border border-border/70 px-2 text-[10px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                >
+                  Save
+                </button>
+              </div>
+            </label>
+          )}
+
+          {selected.kind === "ndi" && (
+            <label className="mb-2 block text-[10px] text-muted-foreground">
+              <span className="mb-1 flex items-center justify-between">
+                <span>NDI source</span>
+                <button
+                  type="button"
+                  onClick={() => void loadNdiSources()}
+                  className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] hover:bg-foreground/5 hover:text-foreground"
+                >
+                  <RefreshCw
+                    className={cn("h-3 w-3", isLoadingNdiSources && "animate-spin")}
+                    strokeWidth={1.7}
+                  />
+                  Refresh
+                </button>
+              </span>
+              <select
+                value={selectedView.ndiSourceName ?? ""}
+                onChange={(event) =>
+                  commitPropUpdate(selected._id, {
+                    ndiSourceName: event.target.value,
+                    name: event.target.value || "NDI source",
+                  })
+                }
+                className="w-full rounded-sm border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-foreground focus:border-primary/60 focus:outline-hidden"
+              >
+                <option value="">Select an NDI source</option>
+                {ndiSources.map((source) => (
+                  <option key={source.name} value={source.name}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+              {ndiSources.length === 0 && (
+                <span className="mt-1 block text-[9px] text-muted-foreground/80">
+                  {isLoadingNdiSources
+                    ? "Searching..."
+                    : "No NDI sources found on this network yet."}
+                </span>
+              )}
+            </label>
+          )}
+
           <div className="space-y-2">
             <div className="flex items-center justify-between text-[10px] text-muted-foreground">
               <span>Position</span>
@@ -289,13 +675,13 @@ export function LayersTabPanel({
                     key={position}
                     type="button"
                     onClick={() =>
-                      void updateProp({ propId: selected._id, position })
+                      commitPropUpdate(selected._id, { position })
                     }
-                    aria-pressed={selected.position === position}
+                    aria-pressed={selectedView.position === position}
                     title={position}
                     className={cn(
                       "h-5 w-5 rounded-sm border text-[8px]",
-                      selected.position === position
+                      selectedView.position === position
                         ? "border-primary bg-primary/20 text-primary"
                         : "border-border/60 text-muted-foreground hover:border-foreground/40",
                     )}
@@ -312,16 +698,25 @@ export function LayersTabPanel({
             </div>
 
             <label className="flex items-center justify-between text-[10px] text-muted-foreground">
-              <span>Size {selected.sizePercent}%</span>
+              <span>Size {selectedView.sizePercent}%</span>
               <input
                 type="range"
                 min={5}
                 max={100}
-                value={selected.sizePercent}
+                value={selectedView.sizePercent}
                 onChange={(event) =>
-                  void updateProp({
-                    propId: selected._id,
+                  setPropDraft(selected._id, {
                     sizePercent: Number(event.target.value),
+                  })
+                }
+                onPointerUp={(event) =>
+                  commitPropUpdate(selected._id, {
+                    sizePercent: Number(event.currentTarget.value),
+                  })
+                }
+                onBlur={(event) =>
+                  commitPropUpdate(selected._id, {
+                    sizePercent: Number(event.currentTarget.value),
                   })
                 }
                 className="w-32 accent-primary"
@@ -329,17 +724,26 @@ export function LayersTabPanel({
             </label>
 
             <label className="flex items-center justify-between text-[10px] text-muted-foreground">
-              <span>Opacity {Math.round(selected.opacity * 100)}%</span>
+              <span>Opacity {Math.round(selectedView.opacity * 100)}%</span>
               <input
                 type="range"
                 min={0}
                 max={1}
                 step={0.01}
-                value={selected.opacity}
+                value={selectedView.opacity}
                 onChange={(event) =>
-                  void updateProp({
-                    propId: selected._id,
+                  setPropDraft(selected._id, {
                     opacity: Number(event.target.value),
+                  })
+                }
+                onPointerUp={(event) =>
+                  commitPropUpdate(selected._id, {
+                    opacity: Number(event.currentTarget.value),
+                  })
+                }
+                onBlur={(event) =>
+                  commitPropUpdate(selected._id, {
+                    opacity: Number(event.currentTarget.value),
                   })
                 }
                 className="w-32 accent-primary"
@@ -352,27 +756,40 @@ export function LayersTabPanel({
                   <span>Color</span>
                   <input
                     type="color"
-                    defaultValue={selected.color ?? "#ffffff"}
+                    value={selectedView.color ?? "#ffffff"}
                     onChange={(event) =>
-                      void updateProp({
-                        propId: selected._id,
+                      setPropDraft(selected._id, {
                         color: event.target.value,
+                      })
+                    }
+                    onBlur={(event) =>
+                      commitPropUpdate(selected._id, {
+                        color: event.currentTarget.value,
                       })
                     }
                     className="h-5 w-10 rounded-sm border border-border/60 bg-transparent"
                   />
                 </label>
                 <label className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>Font size {selected.fontSize ?? 48}px</span>
+                  <span>Font size {selectedView.fontSize ?? 48}px</span>
                   <input
                     type="range"
                     min={16}
                     max={160}
-                    value={selected.fontSize ?? 48}
+                    value={selectedView.fontSize ?? 48}
                     onChange={(event) =>
-                      void updateProp({
-                        propId: selected._id,
+                      setPropDraft(selected._id, {
                         fontSize: Number(event.target.value),
+                      })
+                    }
+                    onPointerUp={(event) =>
+                      commitPropUpdate(selected._id, {
+                        fontSize: Number(event.currentTarget.value),
+                      })
+                    }
+                    onBlur={(event) =>
+                      commitPropUpdate(selected._id, {
+                        fontSize: Number(event.currentTarget.value),
                       })
                     }
                     className="w-32 accent-primary"
