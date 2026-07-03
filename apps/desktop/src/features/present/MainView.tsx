@@ -707,6 +707,8 @@ export function MainView({
       label: entry.slide.label ?? null,
       repeat:
         ("sectionRepeat" in entry.slide ? entry.slide.sectionRepeat : undefined) ??
+        null,
+      inlineInstruction:
         ("modifier" in entry.slide ? entry.slide.modifier : undefined) ??
         null,
     }));
@@ -772,10 +774,14 @@ export function MainView({
       onPreviewTargetChange: setPreviewTarget,
       worshipCurrentLabel: worshipPreviewSlides.current?.label ?? null,
       worshipCurrentRepeat: worshipPreviewSlides.current?.repeat ?? null,
+      worshipCurrentInlineInstruction:
+        worshipPreviewSlides.current?.inlineInstruction ?? null,
       worshipNextText: worshipPreviewSlides.next?.text ?? null,
       worshipNextFooter: worshipPreviewSlides.next?.footer ?? null,
       worshipNextLabel: worshipPreviewSlides.next?.label ?? null,
       worshipNextRepeat: worshipPreviewSlides.next?.repeat ?? null,
+      worshipNextInlineInstruction:
+        worshipPreviewSlides.next?.inlineInstruction ?? null,
     }),
     [
       activeSlideContent?.backgroundColor,

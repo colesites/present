@@ -638,10 +638,8 @@ export function PresentContainer({
         text: entry.slide.text ?? null,
         footer: ('footer' in entry.slide ? entry.slide.footer : undefined) ?? null,
         label: entry.slide.label ?? null,
-        repeat:
-          ('sectionRepeat' in entry.slide ? entry.slide.sectionRepeat : undefined) ??
-          ('modifier' in entry.slide ? entry.slide.modifier : undefined) ??
-          null,
+        repeat: ('sectionRepeat' in entry.slide ? entry.slide.sectionRepeat : undefined) ?? null,
+        inlineInstruction: ('modifier' in entry.slide ? entry.slide.modifier : undefined) ?? null,
       })),
     [slidesForGrid],
   );
@@ -1205,10 +1203,12 @@ export function PresentContainer({
     currentFooter: outputSlideContent?.footer ?? null,
     currentLabel: stageCurrentSlide?.label ?? null,
     currentRepeat: stageCurrentSlide?.repeat ?? null,
+    currentInlineInstruction: stageCurrentSlide?.inlineInstruction ?? null,
     nextText: stageNextSlide?.text ?? null,
     nextFooter: stageNextSlide?.footer ?? null,
     nextLabel: stageNextSlide?.label ?? null,
     nextRepeat: stageNextSlide?.repeat ?? null,
+    nextInlineInstruction: stageNextSlide?.inlineInstruction ?? null,
   });
 
   useEffect(() => {

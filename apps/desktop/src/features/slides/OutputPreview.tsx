@@ -131,8 +131,10 @@ interface OutputPreviewProps {
   worshipNextFooter?: string | null;
   worshipCurrentLabel?: string | null;
   worshipCurrentRepeat?: string | null;
+  worshipCurrentInlineInstruction?: string | null;
   worshipNextLabel?: string | null;
   worshipNextRepeat?: string | null;
+  worshipNextInlineInstruction?: string | null;
 }
 
 const FilterSlider = memo(function FilterSlider({
@@ -311,8 +313,10 @@ export const OutputPreview = memo(function OutputPreview({
   worshipNextFooter,
   worshipCurrentLabel,
   worshipCurrentRepeat,
+  worshipCurrentInlineInstruction,
   worshipNextLabel,
   worshipNextRepeat,
+  worshipNextInlineInstruction,
 }: OutputPreviewProps) {
   // Pull the bits of the timers hook the preview's header controls need.
   const {
@@ -337,6 +341,18 @@ export const OutputPreview = memo(function OutputPreview({
   const isMediaPreview = previewTarget === "media";
   const isWorshipPreview = previewTarget === "worship";
   const isAudienceLikePreview = previewTarget === "audience" || isWorshipPreview;
+  const worshipPreviewText = appendInlineInstruction(
+    text,
+    worshipCurrentInlineInstruction,
+  );
+  const worshipPreviewElements = useMemo(
+    () =>
+      appendInlineInstructionToElements(
+        slideElements ?? null,
+        worshipCurrentInlineInstruction,
+      ),
+    [slideElements, worshipCurrentInlineInstruction],
+  );
   const previewTitle =
     previewTarget === "media"
       ? "Media Stage Preview"
@@ -561,7 +577,8 @@ export const OutputPreview = memo(function OutputPreview({
 
             {isAudienceLikePreview ? (
               <>
-            {isWorshipPreview && (worshipCurrentLabel || worshipCurrentRepeat) ? (
+            {isWorshipPreview &&
+            (worshipCurrentLabel || worshipCurrentRepeat) ? (
               <div className="absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] flex-wrap gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-sky-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
                 {worshipCurrentLabel ? <span>[{worshipCurrentLabel}]</span> : null}
                 {worshipCurrentRepeat ? <span>[{worshipCurrentRepeat}]</span> : null}
@@ -597,7 +614,7 @@ export const OutputPreview = memo(function OutputPreview({
                     Math.round(scripturePreviewFontSize),
                     Math.round(scripturePreviewFooterFontSize),
                   ].join("|")}
-                  text={text}
+                  text={isWorshipPreview ? worshipPreviewText : text}
                   footer={footer}
                   fontFamily={scriptureFontFamily || fontFamily || "Inter"}
                   fontSize={scripturePreviewFontSize}
@@ -619,8 +636,8 @@ export const OutputPreview = memo(function OutputPreview({
                 />
                 ) : (
                   <CanvasSlideLayer
-                    text={text}
-                    elements={slideElements}
+                    text={isWorshipPreview ? worshipPreviewText : text}
+                    elements={isWorshipPreview ? worshipPreviewElements : slideElements}
                     canvasSize={canvasSize}
                     libraryStyle={libraryStyle}
                     className="absolute inset-0"
@@ -1285,6 +1302,57 @@ function MediaStageCard({
       </p>
     </div>
   );
+}
+
+function appendInlineInstruction(
+  text: string | null,
+  instruction: string | null | undefined,
+): string {
+  const cleanInstruction = instruction?.trim();
+  if (!cleanInstruction) {
+    return text ?? "";
+  }
+  const marker = `[${cleanInstruction}]`;
+  const lines = (text ?? "").split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]?.trim()) {
+      if (lines[index]?.includes(marker)) {
+        return lines.join("\n");
+      }
+      lines[index] = `${lines[index]} ${marker}`;
+      return lines.join("\n");
+    }
+  }
+  return marker;
+}
+
+function appendInlineInstructionToElements(
+  elements: SlideElement[] | null,
+  instruction: string | null | undefined,
+): SlideElement[] | null {
+  const cleanInstruction = instruction?.trim();
+  if (!elements || !cleanInstruction) {
+    return elements;
+  }
+  const marker = `[${cleanInstruction}]`;
+  let hasApplied = false;
+
+  return elements.map((element) => {
+    if (hasApplied || element.type !== "text" || element.isPlaceholder) {
+      return element;
+    }
+
+    const content = element.content ?? "";
+    if (!content.trim()) {
+      return element;
+    }
+
+    hasApplied = true;
+    return {
+      ...element,
+      content: content.includes(marker) ? content : `${content} ${marker}`,
+    };
+  });
 }
 
 function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {

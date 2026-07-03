@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../../renderer/shared/components/ScriptureTextLayer";
 import type {
@@ -36,6 +36,7 @@ type WorshipStageState = {
   libraryStyle: LibraryStyle;
   currentLabel: string | null;
   currentRepeat: string | null;
+  currentInlineInstruction: string | null;
 };
 
 const initialState: WorshipStageState = {
@@ -82,6 +83,7 @@ const initialState: WorshipStageState = {
   },
   currentLabel: null,
   currentRepeat: null,
+  currentInlineInstruction: null,
 };
 
 export function WorshipStageDisplayWindow() {
@@ -173,6 +175,7 @@ export function WorshipStageDisplayWindow() {
           ...previous,
           currentLabel: asText(message.currentLabel),
           currentRepeat: asText(message.currentRepeat),
+          currentInlineInstruction: asText(message.currentInlineInstruction),
         }));
       } else if (message.type === "clear") {
         setState(initialState);
@@ -217,6 +220,18 @@ export function WorshipStageDisplayWindow() {
     Boolean(state.activeSlideId?.startsWith("scripture:")) &&
     renderableElements === null &&
     Boolean(state.slideText?.trim());
+  const worshipText = appendInlineInstruction(
+    state.slideText,
+    state.currentInlineInstruction,
+  );
+  const worshipElements = useMemo(
+    () =>
+      appendInlineInstructionToElements(
+        renderableElements,
+        state.currentInlineInstruction,
+      ),
+    [renderableElements, state.currentInlineInstruction],
+  );
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-black text-white">
@@ -231,7 +246,9 @@ export function WorshipStageDisplayWindow() {
             muted={state.videoSettings.muted}
             playsInline
             style={{ filter: state.mediaFilterCSS }}
-          />
+          >
+            <track kind="captions" />
+          </video>
         ) : (
           <img
             src={state.mediaUrl}
@@ -259,7 +276,7 @@ export function WorshipStageDisplayWindow() {
       {state.showText ? (
         shouldUseScriptureTextLayer ? (
           <ScriptureTextLayer
-            text={state.slideText}
+            text={worshipText}
             footer={state.slideFooter}
             fontFamily={state.scriptureStyle.fontFamily}
             fontSize={state.scriptureStyle.fontSize}
@@ -281,8 +298,8 @@ export function WorshipStageDisplayWindow() {
           />
         ) : (
           <CanvasSlideLayer
-            text={state.slideText}
-            elements={renderableElements}
+            text={worshipText}
+            elements={worshipElements}
             canvasSize={state.slideCanvasSize}
             libraryStyle={state.libraryStyle}
             className="absolute inset-0 z-10"
@@ -295,4 +312,55 @@ export function WorshipStageDisplayWindow() {
 
 function asText(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function appendInlineInstruction(
+  text: string | null,
+  instruction: string | null,
+): string {
+  const cleanInstruction = instruction?.trim();
+  if (!cleanInstruction) {
+    return text ?? "";
+  }
+  const marker = `[${cleanInstruction}]`;
+  const lines = (text ?? "").split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]?.trim()) {
+      if (lines[index]?.includes(marker)) {
+        return lines.join("\n");
+      }
+      lines[index] = `${lines[index]} ${marker}`;
+      return lines.join("\n");
+    }
+  }
+  return marker;
+}
+
+function appendInlineInstructionToElements(
+  elements: SlideElement[] | null,
+  instruction: string | null,
+): SlideElement[] | null {
+  const cleanInstruction = instruction?.trim();
+  if (!elements || !cleanInstruction) {
+    return elements;
+  }
+  const marker = `[${cleanInstruction}]`;
+  let hasApplied = false;
+
+  return elements.map((element) => {
+    if (hasApplied || element.type !== "text" || element.isPlaceholder) {
+      return element;
+    }
+
+    const content = element.content ?? "";
+    if (!content.trim()) {
+      return element;
+    }
+
+    hasApplied = true;
+    return {
+      ...element,
+      content: content.includes(marker) ? content : `${content} ${marker}`,
+    };
+  });
 }

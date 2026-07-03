@@ -7,10 +7,12 @@ type StageBroadcastParams = {
   currentFooter: string | null;
   currentLabel?: string | null;
   currentRepeat?: string | null;
+  currentInlineInstruction?: string | null;
   nextText: string | null;
   nextFooter: string | null;
   nextLabel?: string | null;
   nextRepeat?: string | null;
+  nextInlineInstruction?: string | null;
 };
 
 export function useStageBroadcast({
@@ -18,10 +20,12 @@ export function useStageBroadcast({
   currentFooter,
   currentLabel,
   currentRepeat,
+  currentInlineInstruction,
   nextText,
   nextFooter,
   nextLabel,
   nextRepeat,
+  nextInlineInstruction,
 }: StageBroadcastParams) {
   const [syncTrigger, setSyncTrigger] = useState(0);
 
@@ -45,25 +49,30 @@ export function useStageBroadcast({
       currentFooter,
       currentLabel,
       currentRepeat,
+      currentInlineInstruction,
       nextText,
       nextFooter,
       nextLabel,
       nextRepeat,
+      nextInlineInstruction,
     });
     window.electronAPI.sendToWorshipStage?.({
       type: "stage-content",
       currentLabel,
       currentRepeat,
+      currentInlineInstruction,
     });
   }, [
     currentText,
     currentFooter,
     currentLabel,
     currentRepeat,
+    currentInlineInstruction,
     nextText,
     nextFooter,
     nextLabel,
     nextRepeat,
+    nextInlineInstruction,
     syncTrigger,
   ]);
 }
