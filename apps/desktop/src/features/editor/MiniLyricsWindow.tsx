@@ -33,7 +33,6 @@ export function MiniLyricsWindow() {
     if (!result.ok) {
       throw new Error(result.error ?? "Failed to save lyrics");
     }
-    setItem((current) => (current ? { ...current, body } : current));
   };
 
   if (!item) {

@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { Filter, LayoutGrid, LayoutList, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { cn } from "../../../renderer/shared/lib/utils";
+import { runAuthenticatedConvexMutation } from "../../../renderer/shared/lib/authenticated-convex-mutation";
 
 interface MastersTabPanelProps {
   orgId: Id<"organizations"> | null;
@@ -38,6 +39,32 @@ const DEFAULT_COLORS = [
   "#0f172a",
 ];
 
+const MASTERS_CACHE_KEY_PREFIX = "present-masters-cache-v1:";
+
+function readCachedMasters(orgId: Id<"organizations"> | null): ConvexMaster[] {
+  if (!orgId || typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(
+      `${MASTERS_CACHE_KEY_PREFIX}${String(orgId)}`,
+    );
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? (parsed as ConvexMaster[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedMasters(
+  orgId: Id<"organizations"> | null,
+  masters: ConvexMaster[],
+) {
+  if (!orgId || typeof window === "undefined") return;
+  window.localStorage.setItem(
+    `${MASTERS_CACHE_KEY_PREFIX}${String(orgId)}`,
+    JSON.stringify(masters),
+  );
+}
+
 export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
   const masters = useQuery(
     api.slideMasters.listByOrg,
@@ -50,16 +77,24 @@ export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
   const [filter, setFilter] = useState("");
   const [view, setView] = useState<"grid" | "list">("list");
   const [editingId, setEditingId] = useState<Id<"slideMasters"> | null>(null);
+  const cachedMasters = useMemo(() => readCachedMasters(orgId), [orgId]);
+
+  useEffect(() => {
+    if (!masters) return;
+    writeCachedMasters(orgId, masters);
+  }, [masters, orgId]);
+
+  const displayMasters = masters ?? cachedMasters;
+  const isHydrating = masters === undefined;
 
   const sorted = useMemo(() => {
-    if (!masters) return [];
     const filtered = filter.trim()
-      ? masters.filter((m) =>
+      ? displayMasters.filter((m) =>
           m.name.toLowerCase().includes(filter.toLowerCase()),
         )
-      : masters;
+      : displayMasters;
     return [...filtered].sort((a, b) => a.order - b.order);
-  }, [filter, masters]);
+  }, [displayMasters, filter]);
 
   const editing = useMemo(
     () => sorted.find((m) => m._id === editingId) ?? null,
@@ -75,16 +110,21 @@ export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
   }
 
   const handleCreate = async () => {
-    const id = await createMaster({
+    const args = {
       orgId,
       name: "New Master",
       color:
         DEFAULT_COLORS[
-          ((masters?.length ?? 0) + Math.floor(Math.random() * 3)) %
+          (displayMasters.length + Math.floor(Math.random() * 3)) %
             DEFAULT_COLORS.length
         ],
       body: "",
-    });
+    };
+    const id = await runAuthenticatedConvexMutation(
+      api.slideMasters.create,
+      args,
+      () => createMaster(args),
+    );
     setEditingId(id);
   };
 
@@ -115,7 +155,11 @@ export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
             : "flex flex-col gap-1",
         )}
       >
-        {sorted.length === 0 ? (
+        {sorted.length === 0 && isHydrating ? (
+          <p className="col-span-2 px-2 py-6 text-center text-[11px] text-muted-foreground">
+            Loading masters...
+          </p>
+        ) : sorted.length === 0 ? (
           <p className="col-span-2 px-2 py-6 text-center text-[11px] text-muted-foreground">
             Click + to create your first master.
           </p>
@@ -160,6 +204,7 @@ export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
           <Filter className="h-3 w-3 text-muted-foreground" strokeWidth={1.6} />
           <input
             type="text"
+            aria-label="Filter masters"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             placeholder="Filter"
@@ -176,6 +221,7 @@ export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
               : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
           )}
           title="Grid view"
+          aria-label="Grid view"
         >
           <LayoutGrid className="h-3.5 w-3.5" strokeWidth={1.8} />
         </button>
@@ -189,6 +235,7 @@ export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
               : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
           )}
           title="List view"
+          aria-label="List view"
         >
           <LayoutList className="h-3.5 w-3.5" strokeWidth={1.8} />
         </button>
@@ -200,14 +247,22 @@ export function MastersTabPanel({ orgId, onPushSlide }: MastersTabPanelProps) {
           key={editing._id}
           master={editing}
           onClose={() => setEditingId(null)}
-          onUpdate={(patch) =>
-            void updateMaster({ masterId: editing._id, ...patch })
-          }
-          onDelete={() =>
-            void removeMaster({ masterId: editing._id }).then(() =>
-              setEditingId(null),
-            )
-          }
+          onUpdate={(patch) => {
+            const args = { masterId: editing._id, ...patch };
+            void runAuthenticatedConvexMutation(
+              api.slideMasters.update,
+              args,
+              () => updateMaster(args),
+            );
+          }}
+          onDelete={() => {
+            const args = { masterId: editing._id };
+            void runAuthenticatedConvexMutation(
+              api.slideMasters.remove,
+              args,
+              () => removeMaster(args),
+            ).then(() => setEditingId(null));
+          }}
         />
       )}
     </div>
@@ -322,6 +377,7 @@ function MasterEditDrawer({
           type="button"
           onClick={onClose}
           className="rounded-sm px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+          aria-label="Close master editor"
         >
           Done
         </button>
@@ -329,12 +385,14 @@ function MasterEditDrawer({
       <div className="space-y-2">
         <input
           type="text"
+          aria-label="Master name"
           value={name}
           onChange={(event) => setName(event.target.value)}
           onBlur={() => onUpdate({ name })}
           className="w-full rounded-sm border border-border/70 bg-background/40 px-2 py-1.5 text-[12px] text-foreground focus:border-primary/60 focus:outline-hidden"
         />
         <textarea
+          aria-label="Master body"
           value={body}
           onChange={(event) => setBody(event.target.value)}
           onBlur={() => onUpdate({ body })}
@@ -354,6 +412,7 @@ function MasterEditDrawer({
                 onUpdate({ color: swatch });
               }}
               aria-pressed={color === swatch}
+              aria-label={`Set master color ${swatch}`}
               className={cn(
                 "h-5 w-5 rounded-sm border transition",
                 color === swatch
@@ -365,6 +424,7 @@ function MasterEditDrawer({
           ))}
           <input
             type="color"
+            aria-label="Custom master color"
             value={color}
             onChange={(event) => {
               setColor(event.target.value);

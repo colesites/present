@@ -7,6 +7,7 @@ import type {
   Service,
   ServiceGroup,
   ServiceItem,
+  ServiceLayoutEntry,
   ServicePresentation,
 } from "../../../shared/types";
 import {
@@ -37,9 +38,12 @@ export type ServiceTemplate = {
   name: string;
   groups: ServiceGroup[];
   items: Service["items"];
+  layout: ServiceTemplateLayoutEntry[];
   createdAt: number;
   updatedAt: number;
 };
+
+export type ServiceTemplateLayoutEntry = ServiceLayoutEntry;
 
 const createId = (prefix: string) =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -58,13 +62,179 @@ const groupsFromNames = (names: string[]): ServiceGroup[] =>
       order: index,
     }));
 
+export const getServiceTemplateItemLayoutKey = (
+  item: Pick<ServiceItem, "type" | "refId" | "addedAt" | "label" | "groupId">,
+) =>
+  [
+    item.type,
+    item.refId,
+    item.addedAt,
+    item.groupId ?? "standalone",
+    item.label ?? "",
+  ].join(":");
+
+const getLegacyServiceItemLayoutKey = (
+  item: Pick<ServiceItem, "type" | "refId" | "addedAt" | "label">,
+) => [item.type, item.refId, item.addedAt, item.label ?? ""].join(":");
+
+const isServiceItemLayoutKeyMatch = (
+  key: string,
+  item: Pick<ServiceItem, "type" | "refId" | "addedAt" | "label" | "groupId">,
+) =>
+  key === getServiceTemplateItemLayoutKey(item) ||
+  key === getLegacyServiceItemLayoutKey(item);
+
+const normalizeServiceLayout = (
+  rawLayout: unknown,
+  groups: ServiceGroup[],
+  items: Service["items"],
+): ServiceLayoutEntry[] => {
+  const orderedGroups = [...groups].sort((left, right) => left.order - right.order);
+  const groupIds = new Set(orderedGroups.map((group) => group.id));
+  const ungroupedItems = items.filter(
+    (item) => !item.groupId || !groupIds.has(item.groupId),
+  );
+  const fallbackLayout: ServiceTemplateLayoutEntry[] = [];
+  const fallbackGroups = new Set<string>();
+  const fallbackItems = new Set<string>();
+  for (const item of items) {
+    if (item.type === "group") continue;
+    if (item.groupId && groupIds.has(item.groupId)) {
+      if (!fallbackGroups.has(item.groupId)) {
+        fallbackGroups.add(item.groupId);
+        fallbackLayout.push({ type: "group", id: item.groupId });
+      }
+      continue;
+    }
+    const key = getServiceTemplateItemLayoutKey(item);
+    if (!fallbackItems.has(key)) {
+      fallbackItems.add(key);
+      fallbackLayout.push({ type: "item", key });
+    }
+  }
+  for (const group of orderedGroups) {
+    if (!fallbackGroups.has(group.id)) {
+      fallbackGroups.add(group.id);
+      fallbackLayout.push({ type: "group", id: group.id });
+    }
+  }
+  const seenGroups = new Set<string>();
+  const seenItems = new Set<string>();
+  const layout: ServiceTemplateLayoutEntry[] = [];
+  const expectedItemKeys = new Set(
+    ungroupedItems.map((item) => getServiceTemplateItemLayoutKey(item)),
+  );
+
+  if (Array.isArray(rawLayout)) {
+    for (const entry of rawLayout) {
+      if (!entry || typeof entry !== "object") continue;
+      const candidate = entry as Partial<ServiceLayoutEntry>;
+      if (
+        candidate.type === "group" &&
+        typeof candidate.id === "string" &&
+        groupIds.has(candidate.id) &&
+        !seenGroups.has(candidate.id)
+      ) {
+        seenGroups.add(candidate.id);
+        layout.push({ type: "group", id: candidate.id });
+      }
+      if (
+        candidate.type === "item" &&
+        typeof candidate.key === "string"
+      ) {
+        const item = ungroupedItems.find((candidateItem) =>
+          isServiceItemLayoutKeyMatch(candidate.key, candidateItem),
+        );
+        if (!item) {
+          continue;
+        }
+        const key = getServiceTemplateItemLayoutKey(item);
+        if (seenItems.has(key)) {
+          continue;
+        }
+        seenItems.add(key);
+        layout.push({ type: "item", key });
+      }
+    }
+  }
+
+  const rawLayoutIsMissingVisibleRows =
+    seenGroups.size < groupIds.size || seenItems.size < expectedItemKeys.size;
+  if (rawLayoutIsMissingVisibleRows) {
+    return fallbackLayout;
+  }
+
+  for (const group of orderedGroups) {
+    if (!seenGroups.has(group.id)) {
+      seenGroups.add(group.id);
+      layout.push({ type: "group", id: group.id });
+    }
+  }
+
+  for (const item of ungroupedItems) {
+    const key = getServiceTemplateItemLayoutKey(item);
+    if (!seenItems.has(key)) {
+      seenItems.add(key);
+      layout.push({ type: "item", key });
+    }
+  }
+
+  return layout;
+};
+
+const normalizeServiceTemplateLayout = normalizeServiceLayout;
+
+const orderServiceItemsByLayout = (
+  rawLayout: unknown,
+  groups: ServiceGroup[],
+  items: Service["items"],
+) => {
+  const layout = normalizeServiceLayout(rawLayout, groups, items);
+  const orderedItems: Service["items"] = [];
+  const usedIndexes = new Set<number>();
+
+  const appendItemAtIndex = (index: number) => {
+    if (usedIndexes.has(index)) return;
+    const item = items[index];
+    if (!item || item.type === "group") return;
+    usedIndexes.add(index);
+    orderedItems.push(item);
+  };
+
+  for (const entry of layout) {
+    if (entry.type === "group") {
+      items.forEach((item, index) => {
+        if (item.groupId === entry.id) {
+          appendItemAtIndex(index);
+        }
+      });
+      continue;
+    }
+
+    const itemIndex = items.findIndex(
+      (item, index) =>
+        !usedIndexes.has(index) &&
+        (!item.groupId || !groups.some((group) => group.id === item.groupId)) &&
+        isServiceItemLayoutKeyMatch(entry.key, item),
+    );
+    if (itemIndex >= 0) {
+      appendItemAtIndex(itemIndex);
+    }
+  }
+
+  items.forEach((_, index) => appendItemAtIndex(index));
+  return orderedItems;
+};
+
 const createDefaultServiceTemplate = (): ServiceTemplate => {
   const stamp = Date.now();
+  const groups = groupsFromNames(DEFAULT_SERVICE_TEMPLATE_GROUPS);
   return {
     id: "default-sunday-service",
     name: "Sunday service template",
-    groups: groupsFromNames(DEFAULT_SERVICE_TEMPLATE_GROUPS),
+    groups,
     items: [],
+    layout: groups.map((group) => ({ type: "group", id: group.id })),
     createdAt: stamp,
     updatedAt: stamp,
   };
@@ -72,6 +242,7 @@ const createDefaultServiceTemplate = (): ServiceTemplate => {
 
 const cloneTemplateForService = (template: ServiceTemplate) => {
   const groupIdMap = new Map<string, string>();
+  const itemKeyMap = new Map<string, string>();
   const groups = template.groups.map((group, index) => {
     const nextId = createId("group");
     groupIdMap.set(group.id, nextId);
@@ -88,15 +259,33 @@ const cloneTemplateForService = (template: ServiceTemplate) => {
       const groupId = item.groupId ? groupIdMap.get(item.groupId) ?? null : null;
       const refId =
         item.type === "presentation" ? createId("presentation") : item.refId;
-      return {
+      const nextItem = {
         ...item,
         refId,
         groupId,
         addedAt: Date.now(),
       };
+      itemKeyMap.set(
+        getServiceTemplateItemLayoutKey(item),
+        getServiceTemplateItemLayoutKey(nextItem),
+      );
+      return nextItem;
     });
 
-  return { groups, items };
+  const layout = normalizeServiceLayout(
+    (template.layout ?? []).map((entry) => {
+      if (entry.type === "group") {
+        const id = groupIdMap.get(entry.id);
+        return id ? { type: "group" as const, id } : null;
+      }
+      const key = itemKeyMap.get(entry.key);
+      return key ? { type: "item" as const, key } : null;
+    }),
+    groups,
+    items,
+  );
+
+  return { groups, items: orderServiceItemsByLayout(layout, groups, items), layout };
 };
 
 const findBibleGroupId = (groups: ServiceGroup[] | undefined): string | null =>
@@ -117,12 +306,16 @@ function loadServiceTemplates(): ServiceTemplate[] {
             .filter(Boolean)
         : [];
       return names.length
-        ? [
-            {
-              ...createDefaultServiceTemplate(),
-              groups: groupsFromNames(names),
-            },
-          ]
+        ? (() => {
+            const groups = groupsFromNames(names);
+            return [
+              {
+                ...createDefaultServiceTemplate(),
+                groups,
+                layout: groups.map((group) => ({ type: "group", id: group.id })),
+              },
+            ];
+          })()
         : fallback;
     }
     const parsed = JSON.parse(stored);
@@ -132,19 +325,22 @@ function loadServiceTemplates(): ServiceTemplate[] {
         if (!template || typeof template !== "object") return null;
         const candidate = template as Partial<ServiceTemplate>;
         if (!candidate.id || !candidate.name) return null;
+        const groups = Array.isArray(candidate.groups)
+          ? candidate.groups.map((group, index) => ({
+              id: String(group.id || createId("group")),
+              name: String(group.name || "Group"),
+              order: Number.isFinite(group.order) ? group.order : index,
+            }))
+          : [];
+        const items = Array.isArray(candidate.items)
+          ? candidate.items.filter((item) => item.type !== "group")
+          : [];
         return {
           id: String(candidate.id),
           name: String(candidate.name),
-          groups: Array.isArray(candidate.groups)
-            ? candidate.groups.map((group, index) => ({
-                id: String(group.id || createId("group")),
-                name: String(group.name || "Group"),
-                order: Number.isFinite(group.order) ? group.order : index,
-              }))
-            : [],
-          items: Array.isArray(candidate.items)
-            ? candidate.items.filter((item) => item.type !== "group")
-            : [],
+          groups,
+          items,
+          layout: normalizeServiceTemplateLayout(candidate.layout, groups, items),
           createdAt: candidate.createdAt ?? Date.now(),
           updatedAt: candidate.updatedAt ?? Date.now(),
         };
@@ -184,15 +380,19 @@ function normalizeServiceGroups(service: Service): Service {
   const needsLegacyMigration = existingGroups.length === 0 && legacyGroupItems.length > 0;
 
   if (!needsLegacyMigration) {
+    const groups = existingGroups
+      .map((group, index) => ({
+        ...group,
+        order: Number.isFinite(group.order) ? group.order : index,
+      }))
+      .sort((left, right) => left.order - right.order);
+    const items = service.items.filter((item) => item.type !== "group");
+    const layout = normalizeServiceLayout(service.layout, groups, items);
     return {
       ...service,
-      groups: existingGroups
-        .map((group, index) => ({
-          ...group,
-          order: Number.isFinite(group.order) ? group.order : index,
-        }))
-        .sort((left, right) => left.order - right.order),
-      items: service.items.filter((item) => item.type !== "group"),
+      groups,
+      items: orderServiceItemsByLayout(layout, groups, items),
+      layout,
     };
   }
 
@@ -212,7 +412,13 @@ function normalizeServiceGroups(service: Service): Service {
     return [{ ...item, groupId: item.groupId ?? currentGroupId }];
   });
 
-  return { ...service, groups, items };
+  const layout = normalizeServiceLayout(undefined, groups, items);
+  return {
+    ...service,
+    groups,
+    items: orderServiceItemsByLayout(layout, groups, items),
+    layout,
+  };
 }
 
 // Load service state from localStorage
@@ -331,6 +537,32 @@ export function useServices(
       : null;
   };
 
+  const appendServiceItem = (
+    service: Service,
+    item: Service["items"][number],
+  ): Service => {
+    const normalizedService = normalizeServiceGroups(service);
+    const groups = normalizedService.groups ?? [];
+    const nextItems = [...normalizedService.items, item];
+    const currentLayout = normalizeServiceLayout(
+      normalizedService.layout,
+      groups,
+      normalizedService.items,
+    );
+    const nextLayout = item.groupId
+      ? currentLayout
+      : [
+          ...currentLayout,
+          { type: "item" as const, key: getServiceTemplateItemLayoutKey(item) },
+        ];
+
+    return {
+      ...normalizedService,
+      items: orderServiceItemsByLayout(nextLayout, groups, nextItems),
+      layout: normalizeServiceLayout(nextLayout, groups, nextItems),
+    };
+  };
+
   // Service items with resolved library items
   const serviceItems = useMemo<ServiceItem[]>(() => {
     if (!selectedService) return [];
@@ -359,11 +591,12 @@ export function useServices(
           createDefaultServiceTemplate());
     const templatePayload = template
       ? cloneTemplateForService(template)
-      : { groups: [], items: [] };
+      : { groups: [], items: [], layout: [] };
     const nextService = createLocalService(workspaceId, {
       name: name.trim(),
       date: undefined,
       groups: templatePayload.groups,
+      layout: templatePayload.layout,
       items: templatePayload.items,
       createdAt: Date.now(),
     });
@@ -403,6 +636,7 @@ export function useServices(
       name: normalizedName,
       groups: [],
       items: [],
+      layout: [],
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -451,6 +685,10 @@ export function useServices(
           order: template.groups.length,
         },
       ],
+      layout: [
+        ...normalizeServiceTemplateLayout(template.layout, template.groups, template.items),
+        { type: "group", id: groupId },
+      ],
       updatedAt: Date.now(),
     }));
     return groupId;
@@ -473,14 +711,47 @@ export function useServices(
   };
 
   const deleteServiceTemplateGroup = (templateId: string, groupId: string) => {
-    updateServiceTemplate(templateId, (template) => ({
-      ...template,
-      groups: template.groups.filter((group) => group.id !== groupId),
-      items: template.items.map((item) =>
-        item.groupId === groupId ? { ...item, groupId: null } : item,
-      ),
-      updatedAt: Date.now(),
-    }));
+    updateServiceTemplate(templateId, (template) => {
+      const nextGroups = template.groups.filter((group) => group.id !== groupId);
+      const releasedItems = template.items
+        .filter((item) => item.groupId === groupId)
+        .map((item) => ({ ...item, groupId: null as string | null }));
+      const releasedKeys = releasedItems.map((item) =>
+        getServiceTemplateItemLayoutKey(item),
+      );
+      const nextItems = template.items.map((item) =>
+        item.groupId === groupId ? { ...item, groupId: null as string | null } : item,
+      );
+      const currentLayout = normalizeServiceTemplateLayout(
+        template.layout,
+        template.groups,
+        template.items,
+      );
+      const groupLayoutIndex = currentLayout.findIndex(
+        (entry) => entry.type === "group" && entry.id === groupId,
+      );
+      const layoutWithoutGroup = currentLayout.filter(
+        (entry) =>
+          !(entry.type === "group" && entry.id === groupId) &&
+          !(entry.type === "item" && releasedKeys.includes(entry.key)),
+      );
+      const insertIndex =
+        groupLayoutIndex >= 0
+          ? Math.min(groupLayoutIndex, layoutWithoutGroup.length)
+          : layoutWithoutGroup.length;
+      layoutWithoutGroup.splice(
+        insertIndex,
+        0,
+        ...releasedKeys.map((key) => ({ type: "item" as const, key })),
+      );
+      return {
+        ...template,
+        groups: nextGroups,
+        items: nextItems,
+        layout: normalizeServiceTemplateLayout(layoutWithoutGroup, nextGroups, nextItems),
+        updatedAt: Date.now(),
+      };
+    });
   };
 
   const addItemToServiceTemplate = (
@@ -492,29 +763,61 @@ export function useServices(
         item.groupId && template.groups.some((group) => group.id === item.groupId)
           ? item.groupId
           : item.type === "scripture"
-            ? findBibleGroupId(template.groups)
-            : null;
+          ? findBibleGroupId(template.groups)
+          : null;
+      const nextItem = {
+        ...item,
+        groupId,
+        addedAt: item.addedAt ?? Date.now(),
+      };
+      const nextItems = [...template.items, nextItem];
+      const nextLayout =
+        groupId === null
+          ? [
+              ...normalizeServiceTemplateLayout(
+                template.layout,
+                template.groups,
+                template.items,
+              ),
+              {
+                type: "item" as const,
+                key: getServiceTemplateItemLayoutKey(nextItem),
+              },
+            ]
+          : normalizeServiceTemplateLayout(
+              template.layout,
+              template.groups,
+              template.items,
+            );
       return {
         ...template,
-        items: [
-          ...template.items,
-          {
-            ...item,
-            groupId,
-            addedAt: item.addedAt ?? Date.now(),
-          },
-        ],
+        items: nextItems,
+        layout: normalizeServiceTemplateLayout(nextLayout, template.groups, nextItems),
         updatedAt: Date.now(),
       };
     });
   };
 
   const removeItemFromServiceTemplate = (templateId: string, index: number) => {
-    updateServiceTemplate(templateId, (template) => ({
-      ...template,
-      items: template.items.filter((_, itemIndex) => itemIndex !== index),
-      updatedAt: Date.now(),
-    }));
+    updateServiceTemplate(templateId, (template) => {
+      const removedItem = template.items[index];
+      const nextItems = template.items.filter((_, itemIndex) => itemIndex !== index);
+      const removedKey = removedItem
+        ? getServiceTemplateItemLayoutKey(removedItem)
+        : null;
+      return {
+        ...template,
+        items: nextItems,
+        layout: normalizeServiceTemplateLayout(
+          template.layout.filter(
+            (entry) => !(entry.type === "item" && entry.key === removedKey),
+          ),
+          template.groups,
+          nextItems,
+        ),
+        updatedAt: Date.now(),
+      };
+    });
   };
 
   const moveServiceTemplateItemToGroup = (
@@ -529,25 +832,76 @@ export function useServices(
       if (!targetExists || !template.items[index]) {
         return template;
       }
-      if (typeof toIndex === "number" && Number.isFinite(toIndex)) {
-        const itemToMove = {
-          ...template.items[index],
-          groupId,
-        };
-        const nextItems = template.items.filter((_, itemIndex) => itemIndex !== index);
-        const adjustedIndex = toIndex > index ? toIndex - 1 : toIndex;
-        const boundedIndex = Math.max(0, Math.min(nextItems.length, adjustedIndex));
-        nextItems.splice(boundedIndex, 0, itemToMove);
+      const sourceItem = template.items[index];
+      const movedItem = {
+        ...sourceItem,
+        groupId,
+      };
+      const currentLayout = normalizeServiceTemplateLayout(
+        template.layout,
+        template.groups,
+        template.items,
+      );
+      const sourceLayoutKey = getServiceTemplateItemLayoutKey(sourceItem);
+      const movedLayoutKey = getServiceTemplateItemLayoutKey(movedItem);
+
+      if (groupId === null) {
+        const nextItems = template.items.map((item, itemIndex) =>
+          itemIndex === index ? movedItem : item,
+        );
+        const layoutWithoutItem = currentLayout.filter(
+          (entry) => !(entry.type === "item" && entry.key === sourceLayoutKey),
+        );
+        const insertIndex =
+          typeof toIndex === "number" && Number.isFinite(toIndex)
+            ? Math.max(0, Math.min(layoutWithoutItem.length, toIndex))
+            : layoutWithoutItem.length;
+        layoutWithoutItem.splice(insertIndex, 0, {
+          type: "item",
+          key: movedLayoutKey,
+        });
         return {
           ...template,
           items: nextItems,
+          layout: normalizeServiceTemplateLayout(
+            layoutWithoutItem,
+            template.groups,
+            nextItems,
+          ),
           updatedAt: Date.now(),
         };
       }
+
+      if (typeof toIndex === "number" && Number.isFinite(toIndex)) {
+        const nextItems = template.items.filter((_, itemIndex) => itemIndex !== index);
+        const adjustedIndex = toIndex > index ? toIndex - 1 : toIndex;
+        const boundedIndex = Math.max(0, Math.min(nextItems.length, adjustedIndex));
+        nextItems.splice(boundedIndex, 0, movedItem);
+        return {
+          ...template,
+          items: nextItems,
+          layout: normalizeServiceTemplateLayout(
+            currentLayout.filter(
+              (entry) => !(entry.type === "item" && entry.key === sourceLayoutKey),
+            ),
+            template.groups,
+            nextItems,
+          ),
+          updatedAt: Date.now(),
+        };
+      }
+      const nextItems = template.items.map((item, itemIndex) =>
+        itemIndex === index ? movedItem : item,
+      );
       return {
         ...template,
-        items: template.items.map((item, itemIndex) =>
-          itemIndex === index ? { ...item, groupId } : item,
+        items: nextItems,
+        layout: normalizeServiceTemplateLayout(
+          currentLayout.filter(
+            (entry) => !(entry.type === "item" && entry.key === sourceLayoutKey),
+          ),
+          template.groups,
+          nextItems,
         ),
         updatedAt: Date.now(),
       };
@@ -574,12 +928,41 @@ export function useServices(
       if (targetIndex < 0) return template;
       const insertIndex = position === "after" ? targetIndex + 1 : targetIndex;
       withoutMovingGroup.splice(insertIndex, 0, movingGroup);
+      const currentLayout = normalizeServiceTemplateLayout(
+        template.layout,
+        template.groups,
+        template.items,
+      );
+      const layoutWithoutMovingGroup = currentLayout.filter(
+        (entry) => !(entry.type === "group" && entry.id === groupId),
+      );
+      const targetLayoutIndex = layoutWithoutMovingGroup.findIndex(
+        (entry) => entry.type === "group" && entry.id === targetGroupId,
+      );
+      const nextLayout =
+        targetLayoutIndex < 0
+          ? layoutWithoutMovingGroup
+          : [
+              ...layoutWithoutMovingGroup.slice(
+                0,
+                position === "after" ? targetLayoutIndex + 1 : targetLayoutIndex,
+              ),
+              { type: "group" as const, id: groupId },
+              ...layoutWithoutMovingGroup.slice(
+                position === "after" ? targetLayoutIndex + 1 : targetLayoutIndex,
+              ),
+            ];
       return {
         ...template,
         groups: withoutMovingGroup.map((group, order) => ({
           ...group,
           order,
         })),
+        layout: normalizeServiceTemplateLayout(
+          nextLayout,
+          withoutMovingGroup,
+          template.items,
+        ),
         updatedAt: Date.now(),
       };
     });
@@ -644,15 +1027,16 @@ export function useServices(
       return;
     }
     const service = normalizeServiceGroups(existingService);
-    const groupId =
-      findBibleGroupId(service.groups) ?? getSelectedGroupIdForService(service, serviceId);
-    const nextService = upsertService(workspaceId, {
-      ...service,
-      items: [
-        ...service.items,
-        { type: "library", refId: libraryItemId, groupId, addedAt: Date.now() },
-      ],
-    });
+    const groupId = getSelectedGroupIdForService(service, serviceId);
+    const nextService = upsertService(
+      workspaceId,
+      appendServiceItem(service, {
+        type: "library",
+        refId: libraryItemId,
+        groupId,
+        addedAt: Date.now(),
+      }),
+    );
     setServices(readOrgServices(workspaceId));
     enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
   };
@@ -668,13 +1052,16 @@ export function useServices(
     }
     const service = normalizeServiceGroups(existingService);
     const groupId = getSelectedGroupIdForService(service, serviceId);
-    const nextService = upsertService(workspaceId, {
-      ...service,
-      items: [
-        ...service.items,
-        { type: "media", refId: mediaId, label: mediaName, groupId, addedAt: Date.now() },
-      ],
-    });
+    const nextService = upsertService(
+      workspaceId,
+      appendServiceItem(service, {
+        type: "media",
+        refId: mediaId,
+        label: mediaName,
+        groupId,
+        addedAt: Date.now(),
+      }),
+    );
     setServices(readOrgServices(workspaceId));
     enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
   };
@@ -689,14 +1076,18 @@ export function useServices(
       return;
     }
     const service = normalizeServiceGroups(existingService);
-    const groupId = getSelectedGroupIdForService(service, serviceId);
-    const nextService = upsertService(workspaceId, {
-      ...service,
-      items: [
-        ...service.items,
-        { type: "scripture", refId: ref, label: text, groupId, addedAt: Date.now() },
-      ],
-    });
+    const groupId =
+      findBibleGroupId(service.groups) ?? getSelectedGroupIdForService(service, serviceId);
+    const nextService = upsertService(
+      workspaceId,
+      appendServiceItem(service, {
+        type: "scripture",
+        refId: ref,
+        label: text,
+        groupId,
+        addedAt: Date.now(),
+      }),
+    );
     setServices(readOrgServices(workspaceId));
     enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
   };
@@ -719,20 +1110,17 @@ export function useServices(
             .toString(36)
             .slice(2)}`;
 
-    const nextService = upsertService(workspaceId, {
-      ...service,
-      items: [
-        ...service.items,
-        {
-          type: "presentation",
-          refId,
-          label: presentation.title,
-          groupId,
-          addedAt: Date.now(),
-          presentation,
-        },
-      ],
-    });
+    const nextService = upsertService(
+      workspaceId,
+      appendServiceItem(service, {
+        type: "presentation",
+        refId,
+        label: presentation.title,
+        groupId,
+        addedAt: Date.now(),
+        presentation,
+      }),
+    );
     setServices(readOrgServices(workspaceId));
     enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
     return refId;
@@ -750,20 +1138,31 @@ export function useServices(
 
     const normalizedService = normalizeServiceGroups(service);
     const groups = normalizedService.groups ?? [];
+    const groupId = createId("group");
+    const nextGroups = [
+      ...groups,
+      {
+        id: groupId,
+        name: normalizedLabel,
+        order: groups.length,
+      },
+    ];
+    const nextLayout = [
+      ...normalizeServiceLayout(
+        normalizedService.layout,
+        groups,
+        normalizedService.items,
+      ),
+      { type: "group" as const, id: groupId },
+    ];
 
     const nextService = upsertService(workspaceId, {
       ...normalizedService,
-      groups: [
-        ...groups,
-        {
-          id: createId("group"),
-          name: normalizedLabel,
-          order: groups.length,
-        },
-      ],
+      groups: nextGroups,
+      layout: normalizeServiceLayout(nextLayout, nextGroups, normalizedService.items),
     });
     setServices(readOrgServices(workspaceId));
-    setSelectedServiceGroupId(nextService.groups?.at(-1)?.id ?? null);
+    setSelectedServiceGroupId(groupId);
     enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
   };
 
@@ -803,11 +1202,48 @@ export function useServices(
     }
 
     const normalizedService = normalizeServiceGroups(service);
+    const releasedItems = normalizedService.items
+      .filter((item) => item.groupId === groupId)
+      .map((item) => ({ ...item, groupId: null as string | null }));
+    const releasedKeys = releasedItems.map((item) =>
+      getServiceTemplateItemLayoutKey(item),
+    );
+    const nextGroups = (normalizedService.groups ?? []).filter(
+      (group) => group.id !== groupId,
+    );
+    const nextItems = normalizedService.items.map((item) =>
+      item.groupId === groupId ? { ...item, groupId: null } : item,
+    );
+    const currentLayout = normalizeServiceLayout(
+      normalizedService.layout,
+      normalizedService.groups ?? [],
+      normalizedService.items,
+    );
+    const groupLayoutIndex = currentLayout.findIndex(
+      (entry) => entry.type === "group" && entry.id === groupId,
+    );
+    const layoutWithoutGroup = currentLayout.filter(
+      (entry) =>
+        !(entry.type === "group" && entry.id === groupId) &&
+        !(entry.type === "item" && releasedKeys.includes(entry.key)),
+    );
+    const insertIndex =
+      groupLayoutIndex >= 0
+        ? Math.min(groupLayoutIndex, layoutWithoutGroup.length)
+        : layoutWithoutGroup.length;
+    layoutWithoutGroup.splice(
+      insertIndex,
+      0,
+      ...releasedKeys.map((key) => ({ type: "item" as const, key })),
+    );
     const nextService = upsertService(workspaceId, {
       ...normalizedService,
-      groups: (normalizedService.groups ?? []).filter((group) => group.id !== groupId),
-      items: normalizedService.items.map((item) =>
-        item.groupId === groupId ? { ...item, groupId: null } : item,
+      groups: nextGroups,
+      items: orderServiceItemsByLayout(layoutWithoutGroup, nextGroups, nextItems),
+      layout: normalizeServiceLayout(
+        layoutWithoutGroup,
+        nextGroups,
+        nextItems,
       ),
     });
     setServices(readOrgServices(workspaceId));
@@ -833,21 +1269,42 @@ export function useServices(
       return;
     }
 
-    const nextItems = normalizedService.items.map((item, itemIndex) =>
-      itemIndex === index ? { ...item, groupId } : item,
+    const groups = normalizedService.groups ?? [];
+    const sourceItem = normalizedService.items[index];
+    const movedItem = { ...sourceItem, groupId };
+    const sourceLayoutKey = getServiceTemplateItemLayoutKey(sourceItem);
+    const movedLayoutKey = getServiceTemplateItemLayoutKey(movedItem);
+    const currentLayout = normalizeServiceLayout(
+      normalizedService.layout,
+      groups,
+      normalizedService.items,
     );
-    if (typeof toIndex === "number" && Number.isFinite(toIndex)) {
-      const [moved] = nextItems.splice(index, 1);
-      if (!moved) {
-        return;
-      }
-      const adjustedIndex = index < toIndex ? toIndex - 1 : toIndex;
-      const clampedIndex = Math.max(0, Math.min(adjustedIndex, nextItems.length));
-      nextItems.splice(clampedIndex, 0, moved);
-    }
+    const nextItems = normalizedService.items.map((item, itemIndex) =>
+      itemIndex === index ? movedItem : item,
+    );
+    const layoutWithoutSourceItem = currentLayout.filter(
+      (entry) => !(entry.type === "item" && entry.key === sourceLayoutKey),
+    );
+    const nextLayout =
+      groupId === null
+        ? (() => {
+            const insertIndex =
+              typeof toIndex === "number" && Number.isFinite(toIndex)
+                ? Math.max(0, Math.min(layoutWithoutSourceItem.length, toIndex))
+                : layoutWithoutSourceItem.length;
+            const layout = [...layoutWithoutSourceItem];
+            layout.splice(insertIndex, 0, {
+              type: "item" as const,
+              key: movedLayoutKey,
+            });
+            return layout;
+          })()
+        : layoutWithoutSourceItem;
+
     const nextService = upsertService(workspaceId, {
       ...normalizedService,
-      items: nextItems,
+      items: orderServiceItemsByLayout(nextLayout, groups, nextItems),
+      layout: normalizeServiceLayout(nextLayout, groups, nextItems),
     });
     setServices(readOrgServices(workspaceId));
     enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
@@ -1022,7 +1479,13 @@ export function useServices(
       return;
     }
     reordered.splice(toIndex, 0, moved);
-    const nextService = upsertService(workspaceId, { ...service, items: reordered });
+    const groups = service.groups ?? [];
+    const layout = normalizeServiceLayout(service.layout, groups, reordered);
+    const nextService = upsertService(workspaceId, {
+      ...service,
+      items: orderServiceItemsByLayout(layout, groups, reordered),
+      layout,
+    });
     setServices(readOrgServices(workspaceId));
     enqueueSyncOperation(workspaceId, "service", String(serviceId), "reorder", nextService);
   };

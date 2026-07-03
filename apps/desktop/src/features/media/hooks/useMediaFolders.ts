@@ -347,6 +347,12 @@ export function useMediaFolders() {
     return itemFilters[activeMediaItem.id] ?? DEFAULT_FILTERS;
   }, [activeMediaItem, itemFilters]);
 
+  const getMediaFiltersForItem = useCallback(
+    (item: MediaItem | null | undefined) =>
+      item ? itemFilters[item.id] ?? DEFAULT_FILTERS : DEFAULT_FILTERS,
+    [itemFilters],
+  );
+
   const selectMediaForOutput = useCallback((item: MediaItem | null) => {
     setActiveMediaItem(item);
   }, []);
@@ -372,6 +378,20 @@ export function useMediaFolders() {
     [activeMediaItem]
   );
 
+  const updateMediaFiltersForItem = useCallback(
+    (item: MediaItem | null | undefined, filters: Partial<MediaFilters>) => {
+      if (!item) return;
+      setItemFilters((prev) => ({
+        ...prev,
+        [item.id]: {
+          ...(prev[item.id] ?? DEFAULT_FILTERS),
+          ...filters,
+        },
+      }));
+    },
+    [],
+  );
+
   const resetMediaFilters = useCallback(() => {
     if (!activeMediaItem) return;
     setItemFilters((prev) => ({
@@ -379,6 +399,17 @@ export function useMediaFolders() {
       [activeMediaItem.id]: DEFAULT_FILTERS,
     }));
   }, [activeMediaItem]);
+
+  const resetMediaFiltersForItem = useCallback(
+    (item: MediaItem | null | undefined) => {
+      if (!item) return;
+      setItemFilters((prev) => ({
+        ...prev,
+        [item.id]: DEFAULT_FILTERS,
+      }));
+    },
+    [],
+  );
 
   const mediaFilterCSS = useMemo(() => filtersToCSS(mediaFilters), [mediaFilters]);
 
@@ -512,8 +543,11 @@ export function useMediaFolders() {
     videoSettings,
     updateVideoSettings,
     mediaFilters,
+    getMediaFiltersForItem,
     updateMediaFilters,
+    updateMediaFiltersForItem,
     resetMediaFilters,
+    resetMediaFiltersForItem,
     mediaFilterCSS,
     addMediaFile,
     createFolder,

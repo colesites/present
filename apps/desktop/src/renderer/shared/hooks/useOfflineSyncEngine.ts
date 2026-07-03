@@ -87,6 +87,11 @@ const resolveMappedId = (
   return idMap[entityType]?.[orgId]?.[localId] ?? localId;
 };
 
+const isLocalOnlyId = (id: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    id,
+  ) || id.startsWith("id_");
+
 const getMappedId = (
   idMap: SyncIdMap,
   entityType: SyncEntityType,
@@ -276,6 +281,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
           refId: item.refId,
           label: item.label,
           groupId: item.groupId ?? null,
+          addedAt: item.addedAt,
           presentation:
             item.type === "presentation" ? item.presentation ?? null : undefined,
         } as never);
@@ -332,10 +338,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
               "library",
               item.orgId,
               entityId,
-            );
-            if (!remoteId) {
-              return "ok";
-            }
+            ) ?? entityId;
             await convex.mutation(api.libraries.remove, {
               workspaceId,
               libraryId: remoteId,
@@ -379,17 +382,13 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
               persistIdMap();
             }
           } else {
-            const createdId = await convex.mutation(api.libraries.create, payload);
-            if (typeof createdId === "string") {
-              setMappedId(
-                idMapRef.current,
-                "library",
-                item.orgId,
-                entityId,
-                createdId,
-              );
-              persistIdMap();
-            }
+            // Item was pulled from the server, so entityId is already the
+            // real Convex document ID — update in place instead of creating
+            // a duplicate.
+            await convex.mutation(api.libraries.update, {
+              ...payload,
+              libraryId: entityId,
+            });
           }
 
           return "ok";
@@ -405,18 +404,18 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
           }
 
           if (item.operation === "delete") {
-            const remoteId = getMappedId(
+            const mappedRemoteId = getMappedId(
               idMapRef.current,
               "service",
               item.orgId,
               entityId,
             );
-            if (!remoteId) {
+            if (!mappedRemoteId && isLocalOnlyId(entityId)) {
               return "ok";
             }
             await convex.mutation(api.services.remove, {
               workspaceId,
-              serviceId: remoteId,
+              serviceId: mappedRemoteId ?? entityId,
             });
             removeMappedId(idMapRef.current, "service", item.orgId, entityId);
             persistIdMap();
@@ -432,21 +431,34 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
             idMapRef.current.service?.[item.orgId]?.[entityId] ?? null;
 
           if (!remoteServiceId) {
-            const createdId = await convex.mutation(api.services.create, {
-              workspaceId,
-              name: localService.name,
-              date: localService.date,
-              groups: localService.groups ?? [],
-            });
-            remoteServiceId = String(createdId);
-            setMappedId(
-              idMapRef.current,
-              "service",
-              item.orgId,
-              entityId,
-              remoteServiceId,
-            );
-            persistIdMap();
+            if (item.operation === "create" || isLocalOnlyId(entityId)) {
+              const createdId = await convex.mutation(api.services.create, {
+                workspaceId,
+                name: localService.name,
+                date: localService.date,
+                groups: localService.groups ?? [],
+                layout: localService.layout ?? [],
+              });
+              remoteServiceId = String(createdId);
+              setMappedId(
+                idMapRef.current,
+                "service",
+                item.orgId,
+                entityId,
+                remoteServiceId,
+              );
+              persistIdMap();
+            } else {
+              remoteServiceId = entityId;
+              await convex.mutation(api.services.update, {
+                workspaceId,
+                serviceId: remoteServiceId,
+                name: localService.name,
+                date: localService.date,
+                groups: localService.groups ?? [],
+                layout: localService.layout ?? [],
+              });
+            }
           } else {
             await convex.mutation(api.services.update, {
               workspaceId,
@@ -454,6 +466,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
               name: localService.name,
               date: localService.date,
               groups: localService.groups ?? [],
+              layout: localService.layout ?? [],
             });
           }
 
@@ -659,7 +672,16 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
       }
 
       resetBackoff();
+      const pendingOrgIds = new Set(
+        readSyncQueue().map((queueItem) => queueItem.orgId),
+      );
       for (const workspaceId of getWorkspaceIdsToPull()) {
+        // Skip pulling workspaces that still have pending sync items to
+        // avoid overwriting local edits (e.g. slides) with stale server
+        // data before the local changes have been pushed.
+        if (pendingOrgIds.has(workspaceId)) {
+          continue;
+        }
         await pullRemoteWorkspace(workspaceId);
       }
       return;

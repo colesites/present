@@ -34,7 +34,12 @@ import {
   getTimerDisplay,
 } from "../../renderer/shared/hooks";
 import type { useAppSettings } from "../../renderer/shared/hooks/useAppSettings";
-import { MediaState, MediaItem } from "../media/hooks/useMediaFolders";
+import {
+  filtersToCSS,
+  MediaState,
+  MediaItem,
+  type MediaFilters,
+} from "../media/hooks/useMediaFolders";
 import type {
   OutputTextPosition,
   PropsOverlayItem,
@@ -187,10 +192,9 @@ export function PresentContainer({
     selectMediaForOutput,
     videoSettings,
     updateVideoSettings,
-    mediaFilters,
-    updateMediaFilters,
-    resetMediaFilters,
-    mediaFilterCSS,
+    getMediaFiltersForItem,
+    updateMediaFiltersForItem,
+    resetMediaFiltersForItem,
   } = mediaState;
 
   const {
@@ -673,6 +677,23 @@ export function PresentContainer({
   const effectiveActiveMediaItem = isScriptureActive
     ? (scriptureBackgroundMediaItem ?? activeMediaItem)
     : activeMediaItem;
+  const effectiveMediaFilters = useMemo<MediaFilters>(
+    () => getMediaFiltersForItem(effectiveActiveMediaItem),
+    [effectiveActiveMediaItem, getMediaFiltersForItem],
+  );
+  const effectiveMediaFilterCSS = useMemo(
+    () => filtersToCSS(effectiveMediaFilters),
+    [effectiveMediaFilters],
+  );
+  const handleEffectiveMediaFiltersChange = useCallback(
+    (filters: Partial<MediaFilters>) => {
+      updateMediaFiltersForItem(effectiveActiveMediaItem, filters);
+    },
+    [effectiveActiveMediaItem, updateMediaFiltersForItem],
+  );
+  const handleResetEffectiveMediaFilters = useCallback(() => {
+    resetMediaFiltersForItem(effectiveActiveMediaItem);
+  }, [effectiveActiveMediaItem, resetMediaFiltersForItem]);
 
   // Handlers Hook
   const {
@@ -1342,7 +1363,7 @@ export function PresentContainer({
     hideBackground: hideBackgroundInOutput,
     textPosition: outputTextPosition,
     videoSettings,
-    mediaFilterCSS,
+    mediaFilterCSS: effectiveMediaFilterCSS,
     isVideoPlaying:
       isScriptureActive && effectiveActiveMediaItem?.type === "video"
         ? true
@@ -1693,9 +1714,9 @@ export function PresentContainer({
           showMediaInOutput,
           setShowMediaInOutput,
           onClearMedia: () => selectMediaForOutputWithComposer(null),
-          mediaFilters,
-          onMediaFiltersChange: updateMediaFilters,
-          onResetFilters: resetMediaFilters,
+          mediaFilters: effectiveMediaFilters,
+          onMediaFiltersChange: handleEffectiveMediaFiltersChange,
+          onResetFilters: handleResetEffectiveMediaFilters,
           isVideoPlaying,
           videoCurrentTime,
         }}

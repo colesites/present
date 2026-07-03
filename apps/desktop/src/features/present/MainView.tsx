@@ -961,6 +961,7 @@ export function MainView({
                 <MediaPanel
                   ref={mediaPanelRef}
                   mediaState={mediaState.mediaState}
+                  liveMediaItem={effectiveActiveMediaItem}
                   onSelectForOutput={handleMediaPanelSelect}
                   isInsideService={isInsideService}
                   selectedServiceId={selectedServiceId}

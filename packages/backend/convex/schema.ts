@@ -121,6 +121,20 @@ export default defineSchema({
         }),
       ),
     ),
+    layout: v.optional(
+      v.array(
+        v.union(
+          v.object({
+            type: v.literal("group"),
+            id: v.string(),
+          }),
+          v.object({
+            type: v.literal("item"),
+            key: v.string(),
+          }),
+        ),
+      ),
+    ),
     items: v.array(
       v.object({
         type: v.union(
@@ -328,6 +342,20 @@ export default defineSchema({
           name: v.string(),
           order: v.number(),
         }),
+      ),
+    ),
+    layout: v.optional(
+      v.array(
+        v.union(
+          v.object({
+            type: v.literal("group"),
+            id: v.string(),
+          }),
+          v.object({
+            type: v.literal("item"),
+            key: v.string(),
+          }),
+        ),
       ),
     ),
     items: v.array(

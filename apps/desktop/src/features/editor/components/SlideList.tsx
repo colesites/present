@@ -36,7 +36,7 @@ interface SlideListProps {
   onAddSlide: () => void;
   onRemoveSlide: (id: string) => void;
   onSelectSlide: (id: string | null) => void;
-  onDragStart: (index: number, event: React.DragEvent<HTMLDivElement>) => void;
+  onDragStart: (index: number, event: React.DragEvent<HTMLElement>) => void;
   onDrop: (toIndex: number, fromIndex?: number) => void;
   setDropSlideIndex: (index: number | null) => void;
   setDraggedSlideIndex: (index: number | null) => void;
@@ -72,7 +72,8 @@ export const SlideList = memo(function SlideList({
   const [draggedLayerIndex, setDraggedLayerIndex] = useState<number | null>(null);
   const [dropLayerIndex, setDropLayerIndex] = useState<number | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const slideRefs = useRef<Map<string, HTMLDivElement> | null>(null);
+  const previousSelectedSlideIdRef = useRef<string | null>(selectedSlideId);
+  const slideRefs = useRef<Map<string, HTMLElement> | null>(null);
   if (slideRefs.current == null) {
     slideRefs.current = new Map<string, HTMLDivElement>();
   }
@@ -107,13 +108,34 @@ export const SlideList = memo(function SlideList({
 
   useLayoutEffect(() => {
     if (sidebarTab !== "slides" || !selectedSlideId) {
+      previousSelectedSlideIdRef.current = selectedSlideId;
       return;
     }
 
+    const previousSelectedSlideId = previousSelectedSlideIdRef.current;
+    previousSelectedSlideIdRef.current = selectedSlideId;
+    if (!previousSelectedSlideId || previousSelectedSlideId === selectedSlideId) {
+      return;
+    }
+
+    const container = scrollContainerRef.current;
     const selectedSlideElement = slideRefs.current?.get(selectedSlideId);
-    selectedSlideElement?.scrollIntoView({
-      block: "center",
-      behavior: "smooth",
+    if (!container || !selectedSlideElement) {
+      return;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const selectedRect = selectedSlideElement.getBoundingClientRect();
+    const isVisible =
+      selectedRect.top >= containerRect.top &&
+      selectedRect.bottom <= containerRect.bottom;
+    if (isVisible) {
+      return;
+    }
+
+    selectedSlideElement.scrollIntoView({
+      block: "nearest",
+      behavior: "auto",
     });
   }, [selectedSlideId, sidebarTab]);
 
@@ -177,106 +199,104 @@ export const SlideList = memo(function SlideList({
               const isSelected = slide.id === selectedSlideId;
               const backgroundColor = getSlideBackgroundColor(slide, content);
               return (
-                <div
-                  key={slide.id ?? index}
-                  ref={(node) => {
-                    if (!slide.id) {
-                      return;
-                    }
-                    if (node) {
-                      slideRefs.current?.set(slide.id, node);
-                    } else {
-                      slideRefs.current?.delete(slide.id);
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData(SLIDE_DRAG_DATA_KEY, String(index));
-                    onDragStart(index, event);
-                  }}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    if (draggedSlideIndex !== index) {
-                      setDropSlideIndex(index);
-                    }
-                  }}
-                  onDragLeave={() => setDropSlideIndex(null)}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const droppedIndex = Number.parseInt(
-                      event.dataTransfer.getData(SLIDE_DRAG_DATA_KEY) ||
-                        event.dataTransfer.getData("text/plain"),
-                      10,
-                    );
-                    onDrop(index, Number.isFinite(droppedIndex) ? droppedIndex : undefined);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedSlideIndex(null);
-                    setDropSlideIndex(null);
-                  }}
-                  onClick={() => {
-                    onSelectSlide(slide.id ?? null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
+                <div key={slide.id ?? index} className="relative">
+                  <button
+                    type="button"
+                    aria-label={`Select slide ${index + 1}`}
+                    ref={(node) => {
+                      if (!slide.id) {
+                        return;
+                      }
+                      if (node) {
+                        slideRefs.current?.set(slide.id, node);
+                      } else {
+                        slideRefs.current?.delete(slide.id);
+                      }
+                    }}
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData(SLIDE_DRAG_DATA_KEY, String(index));
+                      onDragStart(index, event);
+                    }}
+                    onDragOver={(event) => {
                       event.preventDefault();
+                      if (draggedSlideIndex !== index) {
+                        setDropSlideIndex(index);
+                      }
+                    }}
+                    onDragLeave={() => setDropSlideIndex(null)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const droppedIndex = Number.parseInt(
+                        event.dataTransfer.getData(SLIDE_DRAG_DATA_KEY) ||
+                          event.dataTransfer.getData("text/plain"),
+                        10,
+                      );
+                      onDrop(index, Number.isFinite(droppedIndex) ? droppedIndex : undefined);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedSlideIndex(null);
+                      setDropSlideIndex(null);
+                    }}
+                    onClick={() => {
                       onSelectSlide(slide.id ?? null);
-                    }
-                  }}
-                  className={cn(
-                    "group flex w-full flex-col gap-2 rounded-2xl border px-2 py-2 text-left transition",
-                    isSelected
-                      ? "border-primary bg-primary/10"
-                      : "border-border/40 bg-muted/20 hover:border-border hover:bg-muted/40",
-                    dropSlideIndex === index && "ring-2 ring-primary/40",
-                    draggedSlideIndex === index && "opacity-40",
-                  )}
-                >
-                  <div className="flex items-center justify-between px-1">
-                    <div className="flex items-center gap-2">
-                      <GripVertical className="h-4 w-4 text-muted-foreground/30" />
-                      <span className="text-[11px] font-medium text-muted-foreground/70">
-                        {index + 1}.
-                      </span>
-                      <span className={cn(
-                        "truncate text-[11px] font-bold uppercase tracking-tight",
-                        isSelected ? "text-primary" : "text-foreground/80"
-                      )}>
-                        {slide.label?.trim() || "Untitled"}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (slide.id) {
-                          onRemoveSlide(slide.id);
-                        }
-                      }}
-                      className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground/45 transition hover:bg-muted hover:text-destructive"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-
-                  <div
-                    className="relative aspect-video overflow-hidden rounded-xl border border-border px-4 py-3 bg-black shadow-lg shadow-black/20"
-                    style={{ backgroundColor: backgroundColor ?? "var(--background)" }}
+                    }}
+                    className={cn(
+                      "group flex w-full flex-col gap-2 rounded-2xl border px-2 py-2 text-left transition",
+                      isSelected
+                        ? "border-primary bg-primary/10"
+                        : "border-border/40 bg-muted/20 hover:border-border hover:bg-muted/40",
+                      dropSlideIndex === index && "ring-2 ring-primary/40",
+                      draggedSlideIndex === index && "opacity-40",
+                    )}
                   >
-                    <div className="relative flex h-full items-center justify-center">
-                      {slide.text.trim() ? (
-                        <AutoFitText
-                          text={slide.text.trim()}
-                          className="pointer-events-none select-none text-center text-foreground"
-                          style={{ fontFamily }}
-                          maxFontSize={22}
-                          minScale={0.4}
-                        />
-                      ) : null}
+                    <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center gap-2">
+                        <GripVertical className="h-4 w-4 text-muted-foreground/30" />
+                        <span className="text-[11px] font-medium text-muted-foreground/70">
+                          {index + 1}.
+                        </span>
+                        <span
+                          className={cn(
+                            "truncate text-[11px] font-bold uppercase tracking-tight",
+                            isSelected ? "text-primary" : "text-foreground/80",
+                          )}
+                        >
+                          {slide.label?.trim() || "Untitled"}
+                        </span>
+                      </div>
                     </div>
-                  </div>
+
+                    <div
+                      className="relative aspect-video overflow-hidden rounded-xl border border-border bg-black px-4 py-3 shadow-lg shadow-black/20"
+                      style={{ backgroundColor: backgroundColor ?? "var(--background)" }}
+                    >
+                      <div className="relative flex h-full items-center justify-center">
+                        {slide.text.trim() ? (
+                          <AutoFitText
+                            text={slide.text.trim()}
+                            className="pointer-events-none select-none text-center text-foreground"
+                            style={{ fontFamily }}
+                            maxFontSize={22}
+                            minScale={0.4}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (slide.id) {
+                        onRemoveSlide(slide.id);
+                      }
+                    }}
+                    className="absolute right-3 top-3 inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground/45 transition hover:bg-muted hover:text-destructive"
+                    aria-label={`Remove slide ${index + 1}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               );
             })}
@@ -338,67 +358,87 @@ export const SlideList = memo(function SlideList({
                       setDraggedLayerIndex(null);
                       setDropLayerIndex(null);
                     }}
-                    onClick={(e) => { e.stopPropagation(); onSelectElement(el.id); }}
-                    className={cn(
-                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs transition active:scale-[0.98] cursor-pointer group border",
-                      selectedElementId === el.id 
-                        ? "bg-primary/10 text-primary border-primary/30" 
-                        : "text-muted-foreground/80 hover:bg-muted/40 hover:text-foreground border-transparent",
-                      dropLayerIndex === displayIndex && "ring-2 ring-primary/40",
-                      draggedLayerIndex === displayIndex && "opacity-50",
-                      layerCount > 1 && "cursor-grab active:cursor-grabbing",
-                    )}
-                  >
-                    <div className="text-muted-foreground/35">
-                      <GripVertical className="h-4 w-4" />
-                    </div>
-                    <div className={cn(
-                      "flex h-7 w-7 items-center justify-center rounded-lg transition",
-                      selectedElementId === el.id ? "bg-primary/20" : "bg-muted/60"
-                    )}>
-                      {el.type === "text" ? (
-                        <Type className="h-3.5 w-3.5" />
-                      ) : el.type === "image" ? (
-                        <ImageIcon className="h-3.5 w-3.5" />
-                      ) : (
-                        <Square className="h-3.5 w-3.5" />
+                      className={cn(
+                        "flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs transition active:scale-[0.98] group border",
+                        selectedElementId === el.id
+                          ? "bg-primary/10 text-primary border-primary/30"
+                          : "text-muted-foreground/80 hover:bg-muted/40 hover:text-foreground border-transparent",
+                        dropLayerIndex === displayIndex && "ring-2 ring-primary/40",
+                        draggedLayerIndex === displayIndex && "opacity-50",
+                        layerCount > 1 && "cursor-grab active:cursor-grabbing",
                       )}
-                    </div>
-                    <div className="flex flex-1 flex-col overflow-hidden">
-                      <span className="truncate font-bold tracking-tight">
-                        {el.type === "text"
-                          ? el.contentRole === "scriptureVerse"
-                            ? el.content || "Verse"
-                            : el.contentRole === "scriptureFooter"
-                              ? el.content || "Footer"
-                              : el.content || (el.isPlaceholder ? "Text" : "Empty text")
-                          : el.type === "image"
-                            ? el.content?.trim() || `Image ${actualIndex + 1}`
-                            : `Shape ${actualIndex + 1}`}
-                      </span>
-                      <span className="text-[9px] uppercase tracking-widest text-muted-foreground/40">{el.type}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
+                    >
                       <button
                         type="button"
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          onUpdateElement(selectedSlideId, el.id, p => ({ ...p, isVisible: !p.isVisible })); 
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onSelectElement(el.id);
                         }}
-                        className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted"
+                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
                       >
-                        {el.isVisible !== false ? <Eye className="h-3.5 w-3.5 opacity-40 hover:opacity-100" /> : <EyeOff className="h-3.5 w-3.5 text-red-500" />}
+                        <span className="text-muted-foreground/35">
+                          <GripVertical className="h-4 w-4" />
+                        </span>
+                        <span
+                          className={cn(
+                            "flex h-7 w-7 items-center justify-center rounded-lg transition",
+                            selectedElementId === el.id
+                              ? "bg-primary/20"
+                              : "bg-muted/60",
+                          )}
+                        >
+                          {el.type === "text" ? (
+                            <Type className="h-3.5 w-3.5" />
+                          ) : el.type === "image" ? (
+                            <ImageIcon className="h-3.5 w-3.5" />
+                          ) : (
+                            <Square className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                        <span className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                          <span className="truncate font-bold tracking-tight">
+                            {el.type === "text"
+                              ? el.contentRole === "scriptureVerse"
+                                ? el.content || "Verse"
+                                : el.contentRole === "scriptureFooter"
+                                  ? el.content || "Footer"
+                                  : el.content || (el.isPlaceholder ? "Text" : "Empty text")
+                              : el.type === "image"
+                                ? el.content?.trim() || `Image ${actualIndex + 1}`
+                                : `Shape ${actualIndex + 1}`}
+                          </span>
+                          <span className="text-[9px] uppercase tracking-widest text-muted-foreground/40">{el.type}</span>
+                        </span>
                       </button>
-                      <button
-                        type="button"
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          onUpdateElement(selectedSlideId, el.id, p => ({ ...p, isLocked: !p.isLocked })); 
-                        }}
-                        className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted"
-                      >
-                        {el.isLocked ? <Lock className="h-3.5 w-3.5 text-amber-500" /> : <Lock className="h-3.5 w-3.5 opacity-10 hover:opacity-40" />}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label={el.isVisible !== false ? "Hide layer" : "Show layer"}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onUpdateElement(selectedSlideId, el.id, (previous) => ({
+                              ...previous,
+                              isVisible: !previous.isVisible,
+                            }));
+                          }}
+                          className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted"
+                        >
+                          {el.isVisible !== false ? <Eye className="h-3.5 w-3.5 opacity-40 hover:opacity-100" /> : <EyeOff className="h-3.5 w-3.5 text-red-500" />}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={el.isLocked ? "Unlock layer" : "Lock layer"}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onUpdateElement(selectedSlideId, el.id, (previous) => ({
+                              ...previous,
+                              isLocked: !previous.isLocked,
+                            }));
+                          }}
+                          className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted"
+                        >
+                          {el.isLocked ? <Lock className="h-3.5 w-3.5 text-amber-500" /> : <Lock className="h-3.5 w-3.5 opacity-10 hover:opacity-40" />}
+                        </button>
                     </div>
                   </div>
                 ))}

@@ -16,6 +16,7 @@ import {
 import type { Service, LibraryItem, ServiceGroup } from "../../shared/types";
 import type { MediaItem } from "../media/hooks";
 import type { ServiceTemplate } from "./hooks/useServices";
+import { getServiceTemplateItemLayoutKey } from "./hooks/useServices";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import { Skeleton } from "../../renderer/shared/components/ui/skeleton";
 import { cn } from "../../renderer/shared/lib/utils";
@@ -301,6 +302,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
             onMoveToGroup={onMoveServiceItemToGroup}
             onRenameItem={onRenameServiceItem}
             onReorder={onReorderServiceItems}
+            layout={selectedService.layout ?? []}
           />
         ) : (
           <ServiceList
@@ -586,8 +588,6 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
     [orderedGroups, selectedTemplate],
   );
   const templateRows = useMemo(() => {
-    const looseItems = [...ungroupedItems].sort((left, right) => left.index - right.index);
-    let looseIndex = 0;
     const rows: Array<
       | { type: "item"; item: ServiceTemplate["items"][number]; index: number }
       | {
@@ -596,28 +596,75 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
           items: { item: ServiceTemplate["items"][number]; index: number }[];
         }
     > = [];
+    if (!selectedTemplate) return rows;
 
-    for (const entry of groupedItems) {
-      const firstGroupItemIndex = entry.items.length
-        ? Math.min(...entry.items.map((item) => item.index))
-        : Number.POSITIVE_INFINITY;
-      while (
-        looseIndex < looseItems.length &&
-        looseItems[looseIndex].index < firstGroupItemIndex
-      ) {
-        rows.push({ type: "item", ...looseItems[looseIndex] });
-        looseIndex += 1;
+    const groupedItemsByGroupId = new Map(
+      groupedItems.map((entry) => [entry.group.id, entry.items]),
+    );
+    const groupsById = new Map(orderedGroups.map((group) => [group.id, group]));
+    const ungroupedItemsByKey = new Map(
+      ungroupedItems.map((entry) => [
+        getServiceTemplateItemLayoutKey(entry.item),
+        entry,
+      ]),
+    );
+    const seenGroups = new Set<string>();
+    const seenItems = new Set<string>();
+
+    for (const entry of selectedTemplate.layout ?? []) {
+      if (entry.type === "group") {
+        const group = groupsById.get(entry.id);
+        if (!group || seenGroups.has(group.id)) continue;
+        seenGroups.add(group.id);
+        rows.push({
+          type: "group",
+          group,
+          items: groupedItemsByGroupId.get(group.id) ?? [],
+        });
+        continue;
       }
-      rows.push({ type: "group", group: entry.group, items: entry.items });
+
+      const itemEntry = ungroupedItemsByKey.get(entry.key);
+      if (!itemEntry || seenItems.has(entry.key)) continue;
+      seenItems.add(entry.key);
+      rows.push({ type: "item", ...itemEntry });
     }
 
-    while (looseIndex < looseItems.length) {
-      rows.push({ type: "item", ...looseItems[looseIndex] });
-      looseIndex += 1;
+    for (const group of orderedGroups) {
+      if (seenGroups.has(group.id)) continue;
+      seenGroups.add(group.id);
+      rows.push({
+        type: "group",
+        group,
+        items: groupedItemsByGroupId.get(group.id) ?? [],
+      });
+    }
+
+    for (const entry of ungroupedItems) {
+      const key = getServiceTemplateItemLayoutKey(entry.item);
+      if (seenItems.has(key)) continue;
+      seenItems.add(key);
+      rows.push({ type: "item", ...entry });
     }
 
     return rows;
-  }, [groupedItems, ungroupedItems]);
+  }, [groupedItems, orderedGroups, selectedTemplate, ungroupedItems]);
+  const templateItemDisplayNumbers = useMemo(() => {
+    const numbers = new Map<number, number>();
+    let nextNumber = 1;
+    for (const row of templateRows) {
+      if (row.type === "item") {
+        numbers.set(row.index, nextNumber);
+        nextNumber += 1;
+        continue;
+      }
+      for (const { index } of row.items) {
+        numbers.set(index, nextNumber);
+        nextNumber += 1;
+      }
+    }
+    return numbers;
+  }, [templateRows]);
   const [draggedTemplateItemIndex, setDraggedTemplateItemIndex] =
     useState<number | null>(null);
   const [draggedTemplateGroupId, setDraggedTemplateGroupId] = useState<string | null>(
@@ -652,26 +699,10 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
     event.dataTransfer.getData(templateGroupDragKey) ||
     null;
 
-  const getTemplateGroupBoundaryIndex = (
-    groupId: string,
-    position: "before" | "after",
-  ) => {
-    const groupItems = selectedTemplate?.items
-      .map((item, index) => ({ item, index }))
-      .filter(({ item }) => item.groupId === groupId)
-      .sort((left, right) => left.index - right.index);
-    if (!groupItems || groupItems.length === 0) {
-      return position === "before" ? 0 : selectedTemplate?.items.length ?? 0;
-    }
-    return position === "before"
-      ? groupItems[0].index
-      : groupItems[groupItems.length - 1].index + 1;
-  };
-
-  const handleTemplateBoundaryDrop = (
+  const handleTemplateTopLevelDrop = (
     event: DragEvent<HTMLDivElement>,
-    groupId: string,
-    position: "before" | "after",
+    toLayoutIndex: number,
+    boundaryGroup?: { groupId: string; position: "before" | "after" },
   ) => {
     event.preventDefault();
     event.stopPropagation();
@@ -680,16 +711,16 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
     const draggedGroupId = getDraggedTemplateGroupId(event);
     clearTemplateDrag();
     if (itemIndex !== null) {
-      onMoveItemToGroup(
-        selectedTemplate.id,
-        itemIndex,
-        null,
-        getTemplateGroupBoundaryIndex(groupId, position),
-      );
+      onMoveItemToGroup(selectedTemplate.id, itemIndex, null, toLayoutIndex);
       return;
     }
-    if (draggedGroupId) {
-      onReorderGroup(selectedTemplate.id, draggedGroupId, groupId, position);
+    if (draggedGroupId && boundaryGroup) {
+      onReorderGroup(
+        selectedTemplate.id,
+        draggedGroupId,
+        boundaryGroup.groupId,
+        boundaryGroup.position,
+      );
     }
   };
 
@@ -711,6 +742,7 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
     event: DragEvent<HTMLDivElement>,
     targetIndex: number,
     targetGroupId: string | null,
+    targetLayoutIndex?: number,
   ) => {
     event.preventDefault();
     event.stopPropagation();
@@ -718,7 +750,12 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
     const itemIndex = getDraggedTemplateItemIndex(event);
     clearTemplateDrag();
     if (itemIndex !== null && itemIndex !== targetIndex) {
-      onMoveItemToGroup(selectedTemplate.id, itemIndex, targetGroupId, targetIndex);
+      onMoveItemToGroup(
+        selectedTemplate.id,
+        itemIndex,
+        targetGroupId,
+        targetGroupId === null ? targetLayoutIndex : targetIndex,
+      );
     }
   };
 
@@ -857,52 +894,77 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                   </p>
                 ) : null}
 
-                {templateRows.map((row) => {
+                {templateRows.map((row, rowIndex) => {
+                  const boundary =
+                    row.type === "group"
+                      ? {
+                          groupId: row.group.id,
+                          position: "before" as const,
+                        }
+                      : undefined;
+                  const rowKey =
+                    row.type === "group"
+                      ? `group:${row.group.id}`
+                      : `item:${getTemplateItemKey(row.item)}`;
                   if (row.type === "item") {
                     return (
-                      <TemplateItemRow
-                        key={getTemplateItemKey(row.item)}
-                        item={row.item}
-                        index={row.index}
-                        groups={orderedGroups}
-                        libraryItems={libraryItems}
-                        mediaItems={mediaItems}
-                        isDragging={draggedTemplateItemIndex === row.index}
-                        isDropTarget={templateDropTarget === `item:${row.index}`}
-                        dragDataKey={templateItemDragKey}
-                        onDragStart={() => setDraggedTemplateItemIndex(row.index)}
-                        onDragOver={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setTemplateDropTarget(`item:${row.index}`);
-                        }}
-                        onDrop={(event) =>
-                          handleTemplateItemDrop(
-                            event,
-                            row.index,
-                            row.item.groupId ?? null,
-                          )
-                        }
-                        onDragEnd={clearTemplateDrag}
-                        onMove={(groupId) =>
-                          onMoveItemToGroup(selectedTemplate.id, row.index, groupId)
-                        }
-                        onRemove={() => onRemoveItem(selectedTemplate.id, row.index)}
-                      />
+                      <div key={rowKey}>
+                        <TemplateDropLine
+                          active={templateDropTarget === `layout:${rowIndex}`}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setTemplateDropTarget(`layout:${rowIndex}`);
+                          }}
+                          onDrop={(event) =>
+                            handleTemplateTopLevelDrop(event, rowIndex)
+                          }
+                        />
+                        <TemplateItemRow
+                          item={row.item}
+                          index={row.index}
+                          displayNumber={templateItemDisplayNumbers.get(row.index)}
+                          groups={orderedGroups}
+                          libraryItems={libraryItems}
+                          mediaItems={mediaItems}
+                          isDragging={draggedTemplateItemIndex === row.index}
+                          isDropTarget={templateDropTarget === `item:${row.index}`}
+                          dragDataKey={templateItemDragKey}
+                          onDragStart={() => setDraggedTemplateItemIndex(row.index)}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setTemplateDropTarget(`item:${row.index}`);
+                          }}
+                          onDrop={(event) =>
+                            handleTemplateItemDrop(
+                              event,
+                              row.index,
+                              row.item.groupId ?? null,
+                              rowIndex,
+                            )
+                          }
+                          onDragEnd={clearTemplateDrag}
+                          onMove={(groupId) =>
+                            onMoveItemToGroup(selectedTemplate.id, row.index, groupId)
+                          }
+                          onRemove={() => onRemoveItem(selectedTemplate.id, row.index)}
+                        />
+                      </div>
                     );
                   }
 
                   return (
-                    <div key={row.group.id}>
+                    <div key={rowKey}>
                       <TemplateDropLine
-                        active={templateDropTarget === `group:${row.group.id}:before`}
+                        active={templateDropTarget === `layout:${rowIndex}`}
                         onDragOver={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
-                          setTemplateDropTarget(`group:${row.group.id}:before`);
+                          setTemplateDropTarget(`layout:${rowIndex}`);
                         }}
                         onDrop={(event) =>
-                          handleTemplateBoundaryDrop(event, row.group.id, "before")
+                          handleTemplateTopLevelDrop(event, rowIndex, boundary)
                         }
                       />
                       <div
@@ -966,6 +1028,7 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                               key={getTemplateItemKey(item)}
                               item={item}
                               index={index}
+                              displayNumber={templateItemDisplayNumbers.get(index)}
                               groups={orderedGroups}
                               libraryItems={libraryItems}
                               mediaItems={mediaItems}
@@ -1002,19 +1065,38 @@ const ServiceTemplateEditor = memo(function ServiceTemplateEditor({
                         </div>
                       </div>
                       <TemplateDropLine
-                        active={templateDropTarget === `group:${row.group.id}:after`}
+                        active={
+                          templateDropTarget === `layout:${rowIndex + 1}:after`
+                        }
                         onDragOver={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
-                          setTemplateDropTarget(`group:${row.group.id}:after`);
+                          setTemplateDropTarget(`layout:${rowIndex + 1}:after`);
                         }}
                         onDrop={(event) =>
-                          handleTemplateBoundaryDrop(event, row.group.id, "after")
+                          handleTemplateTopLevelDrop(event, rowIndex + 1, {
+                            groupId: row.group.id,
+                            position: "after",
+                          })
                         }
                       />
                     </div>
                   );
                 })}
+
+                {templateRows.length > 0 ? (
+                  <TemplateDropLine
+                    active={templateDropTarget === `layout:${templateRows.length}`}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setTemplateDropTarget(`layout:${templateRows.length}`);
+                    }}
+                    onDrop={(event) =>
+                      handleTemplateTopLevelDrop(event, templateRows.length)
+                    }
+                  />
+                ) : null}
 
                 <AddTemplateItemControl
                   groupId={null}
@@ -1199,6 +1281,7 @@ function AddTemplateItemControl({
 function TemplateItemRow({
   item,
   index,
+  displayNumber,
   groups,
   libraryItems,
   mediaItems,
@@ -1214,6 +1297,7 @@ function TemplateItemRow({
 }: {
   item: ServiceTemplate["items"][number];
   index: number;
+  displayNumber?: number;
   groups: ServiceGroup[];
   libraryItems: LibraryItem[];
   mediaItems: MediaItem[];
@@ -1259,7 +1343,7 @@ function TemplateItemRow({
         </span>
       ) : null}
       <span className="w-5 text-right text-[10px] text-muted-foreground">
-        {index + 1}
+        {displayNumber ?? index + 1}
       </span>
       <span className="shrink-0 text-muted-foreground">
         {item.type === "library" ? <MusicIcon /> : null}
@@ -1360,7 +1444,10 @@ function TemplateDropLine({
       onDragOver={onDragOver}
       onDragLeave={() => undefined}
       onDrop={onDrop}
-      className={cn("h-1 rounded-full transition", active && "bg-primary")}
+      className={cn(
+        "h-px rounded-full border border-transparent transition hover:border-border/40",
+        active && "h-2 border-primary/70 bg-primary/20",
+      )}
       aria-hidden="true"
     />
   );
@@ -1554,6 +1641,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
   onMoveToGroup,
   onRenameItem,
   onReorder,
+  layout,
 }: {
   items: ServiceItem[];
   groups: ServiceGroup[];
@@ -1573,6 +1661,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
   ) => Promise<void>;
   onRenameItem: (index: number, label: string) => Promise<void>;
   onReorder?: (fromIndex: number, toIndex: number) => Promise<void>;
+  layout: NonNullable<Service["layout"]>;
 }) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
@@ -1598,33 +1687,81 @@ const ServiceItemsList = memo(function ServiceItemsList({
     (item) => !item.groupId || !groups.some((group) => group.id === item.groupId),
   );
   const orderedServiceRows = (() => {
-    const looseItems = [...ungroupedItems].sort((left, right) => left.index - right.index);
-    let looseIndex = 0;
     const rows: Array<
-      | { type: "item"; item: ServiceItem }
-      | { type: "group"; group: ServiceGroup; items: ServiceItem[] }
+      | { type: "item"; item: ServiceItem; layoutIndex: number }
+      | {
+          type: "group";
+          group: ServiceGroup;
+          items: ServiceItem[];
+          layoutIndex: number;
+        }
     > = [];
+    const groupedItemsByGroupId = new Map(
+      groupedItems.map((entry) => [entry.group.id, entry.items]),
+    );
+    const groupsById = new Map(orderedGroups.map((group) => [group.id, group]));
+    const ungroupedItemsByKey = new Map(
+      ungroupedItems.map((item) => [getServiceTemplateItemLayoutKey(item), item]),
+    );
+    const seenGroups = new Set<string>();
+    const seenItems = new Set<string>();
 
-    for (const entry of groupedItems) {
-      const firstGroupItemIndex = entry.items.length
-        ? Math.min(...entry.items.map((item) => item.index))
-        : Number.POSITIVE_INFINITY;
-      while (
-        looseIndex < looseItems.length &&
-        looseItems[looseIndex].index < firstGroupItemIndex
-      ) {
-        rows.push({ type: "item", item: looseItems[looseIndex] });
-        looseIndex += 1;
+    for (const entry of layout) {
+      if (entry.type === "group") {
+        const group = groupsById.get(entry.id);
+        if (!group || seenGroups.has(group.id)) continue;
+        seenGroups.add(group.id);
+        rows.push({
+          type: "group",
+          group,
+          items: groupedItemsByGroupId.get(group.id) ?? [],
+          layoutIndex: rows.length,
+        });
+        continue;
       }
-      rows.push({ type: "group", group: entry.group, items: entry.items });
+
+      const item = ungroupedItemsByKey.get(entry.key);
+      if (!item || seenItems.has(entry.key)) continue;
+      seenItems.add(entry.key);
+      rows.push({ type: "item", item, layoutIndex: rows.length });
     }
 
-    while (looseIndex < looseItems.length) {
-      rows.push({ type: "item", item: looseItems[looseIndex] });
-      looseIndex += 1;
+    for (const group of orderedGroups) {
+      if (seenGroups.has(group.id)) continue;
+      seenGroups.add(group.id);
+      rows.push({
+        type: "group",
+        group,
+        items: groupedItemsByGroupId.get(group.id) ?? [],
+        layoutIndex: rows.length,
+      });
+    }
+
+    for (const item of ungroupedItems) {
+      const key = getServiceTemplateItemLayoutKey(item);
+      if (seenItems.has(key)) continue;
+      seenItems.add(key);
+      rows.push({ type: "item", item, layoutIndex: rows.length });
     }
 
     return rows;
+  })();
+
+  const itemDisplayNumbers = (() => {
+    const numbers = new Map<number, number>();
+    let nextNumber = 1;
+    for (const row of orderedServiceRows) {
+      if (row.type === "item") {
+        numbers.set(row.item.index, nextNumber);
+        nextNumber += 1;
+        continue;
+      }
+      for (const item of row.items) {
+        numbers.set(item.index, nextNumber);
+        nextNumber += 1;
+      }
+    }
+    return numbers;
   })();
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
@@ -1642,7 +1779,12 @@ const ServiceItemsList = memo(function ServiceItemsList({
     }
   };
 
-  const handleDrop = async (e: React.DragEvent, toIndex: number) => {
+  const handleDrop = async (
+    e: React.DragEvent,
+    toIndex: number,
+    targetGroupId: string | null,
+    targetLayoutIndex?: number,
+  ) => {
     e.preventDefault();
     const droppedIndex = Number.parseInt(
       e.dataTransfer.getData(dragDataKey) || e.dataTransfer.getData("text/plain"),
@@ -1652,8 +1794,17 @@ const ServiceItemsList = memo(function ServiceItemsList({
       draggedIndex ?? (Number.isFinite(droppedIndex) ? droppedIndex : null);
     setDraggedIndex(null);
     setDropTargetIndex(null);
-    if (fromIndex !== null && fromIndex !== toIndex && onReorder) {
-      await onReorder(fromIndex, toIndex);
+    if (fromIndex !== null && fromIndex !== toIndex) {
+      const fromItem = items.find((item) => item.index === fromIndex);
+      const fromGroupId = fromItem?.groupId ?? null;
+      if (fromGroupId !== targetGroupId || targetGroupId === null) {
+        await onMoveToGroup(fromIndex, targetGroupId, targetLayoutIndex ?? toIndex);
+        onSelectGroup(targetGroupId);
+        return;
+      }
+      if (onReorder) {
+        await onReorder(fromIndex, toIndex);
+      }
     }
   };
 
@@ -1700,43 +1851,6 @@ const ServiceItemsList = memo(function ServiceItemsList({
     }
   };
 
-  const getGroupBoundaryIndex = (
-    groupId: string,
-    position: "before" | "after",
-  ) => {
-    const groupItems = items
-      .filter((item) => item.groupId === groupId)
-      .sort((left, right) => left.index - right.index);
-
-    if (groupItems.length > 0) {
-      return position === "before"
-        ? groupItems[0].index
-        : groupItems[groupItems.length - 1].index + 1;
-    }
-
-    const groupOrder =
-      orderedGroups.find((group) => group.id === groupId)?.order ?? 0;
-    const neighborIndexes: number[] = [];
-    for (const group of orderedGroups) {
-      const isNeighbor =
-        position === "before" ? group.order < groupOrder : group.order > groupOrder;
-      if (!isNeighbor) continue;
-      for (const item of items) {
-        if (item.groupId === group.id) {
-          neighborIndexes.push(item.index);
-        }
-      }
-    }
-
-    if (neighborIndexes.length === 0) {
-      return position === "before" ? 0 : items.length;
-    }
-
-    return position === "before"
-      ? Math.max(...neighborIndexes) + 1
-      : Math.min(...neighborIndexes);
-  };
-
   const handleGroupBoundaryDrop = async (
     event: React.DragEvent,
     groupId: string,
@@ -1754,12 +1868,23 @@ const ServiceItemsList = memo(function ServiceItemsList({
     setDropTargetIndex(null);
     setDropTargetGroupId(null);
     if (fromIndex !== null) {
-      await onMoveToGroup(fromIndex, null, getGroupBoundaryIndex(groupId, position));
+      const groupRow = orderedServiceRows.find(
+        (row) => row.type === "group" && row.group.id === groupId,
+      );
+      const targetLayoutIndex =
+        groupRow && position === "after"
+          ? groupRow.layoutIndex + 1
+          : groupRow?.layoutIndex ?? orderedServiceRows.length;
+      await onMoveToGroup(fromIndex, null, targetLayoutIndex);
       onSelectGroup(null);
     }
   };
 
-  const renderItem = (item: ServiceItem) => {
+  const renderItem = (
+    item: ServiceItem,
+    displayNumber?: number,
+    layoutIndex?: number,
+  ) => {
     const { displayName, icon } = getServiceItemDisplay(item);
     return (
       <ContextMenu key={`${item.refId}-${item.index}`}>
@@ -1780,7 +1905,12 @@ const ServiceItemsList = memo(function ServiceItemsList({
             }}
             onDrop={(event) => {
               event.stopPropagation();
-              void handleDrop(event, item.index);
+              void handleDrop(
+                event,
+                item.index,
+                item.groupId ?? null,
+                layoutIndex,
+              );
             }}
             onDragEnd={handleDragEnd}
             className={cn(
@@ -1808,7 +1938,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
               className="flex min-w-0 flex-1 items-center gap-2 text-left"
             >
               <span className="w-4 text-[10px] text-muted-foreground">
-                {item.index + 1}
+                {displayNumber ?? item.index + 1}
               </span>
               <span className="shrink-0 text-muted-foreground">{icon}</span>
               <span className="flex-1 truncate">{displayName}</span>
@@ -1979,7 +2109,11 @@ const ServiceItemsList = memo(function ServiceItemsList({
 
       {orderedServiceRows.map((row) => {
         if (row.type === "item") {
-          return renderItem(row.item);
+          return renderItem(
+            row.item,
+            itemDisplayNumbers.get(row.item.index),
+            row.layoutIndex,
+          );
         }
 
         const { group, items: groupItems } = row;
@@ -2058,7 +2192,9 @@ const ServiceItemsList = memo(function ServiceItemsList({
               {!collapsedGroupIds.has(group.id) ? (
                 <div className="space-y-1 py-0.5 pl-5 pr-1">
                   {groupItems.length ? (
-                    groupItems.map(renderItem)
+                    groupItems.map((item) =>
+                      renderItem(item, itemDisplayNumbers.get(item.index)),
+                    )
                   ) : (
                     <p className="px-2 py-1.5 text-[10px] text-muted-foreground">
                       Drop items here, or select this group before adding.
@@ -2143,7 +2279,10 @@ function GroupBoundaryDropZone({
       onDrop={(event) => {
         void onDrop(event, groupId, position);
       }}
-      className={cn("h-1 rounded-full transition", isActive && "bg-primary")}
+      className={cn(
+        "h-px rounded-full border border-transparent transition hover:border-border/40",
+        isActive && "h-2 border-primary/70 bg-primary/20",
+      )}
       aria-hidden="true"
     />
   );

@@ -1002,7 +1002,7 @@ export const LyricsEditor = memo(function LyricsEditor({
     [draft.slides, setInspectorTab, setSlides],
   );
 
-  const handleSlideDragStart = (index: number, event: React.DragEvent<HTMLDivElement>) => {
+  const handleSlideDragStart = (index: number, event: React.DragEvent<HTMLElement>) => {
     setDraggedSlideIndex(index);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", String(index));
@@ -1082,6 +1082,7 @@ export const LyricsEditor = memo(function LyricsEditor({
               </label>
               <input
                 type="range"
+                aria-label="Lines per slide"
                 min={1}
                 max={8}
                 step={1}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
   ChevronDown,
@@ -23,6 +23,7 @@ import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { PropsOverlayItem } from "../../../shared/types/output-window";
 import type { MediaItem } from "../../media/hooks";
 import { cn } from "../../../renderer/shared/lib/utils";
+import { runAuthenticatedConvexMutation } from "../../../renderer/shared/lib/authenticated-convex-mutation";
 
 interface LayersTabPanelProps {
   orgId: Id<"organizations"> | null;
@@ -76,6 +77,7 @@ type PropDraft = Partial<
     | "opacity"
     | "position"
     | "sizePercent"
+    | "text"
     | "youtubeUrl"
   >
 >;
@@ -88,6 +90,29 @@ const POSITIONS: Prop["position"][] = [
   "center",
   "full",
 ];
+
+const PROPS_CACHE_KEY_PREFIX = "present-props-cache-v1:";
+
+function readCachedProps(orgId: Id<"organizations"> | null): Prop[] {
+  if (!orgId || typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(
+      `${PROPS_CACHE_KEY_PREFIX}${String(orgId)}`,
+    );
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? (parsed as Prop[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedProps(orgId: Id<"organizations"> | null, props: Prop[]) {
+  if (!orgId || typeof window === "undefined") return;
+  window.localStorage.setItem(
+    `${PROPS_CACHE_KEY_PREFIX}${String(orgId)}`,
+    JSON.stringify(props),
+  );
+}
 
 export function LayersTabPanel({
   orgId,
@@ -112,10 +137,19 @@ export function LayersTabPanel({
   const [isMediaPickerOpen, setIsMediaPickerOpen] = useState(false);
   const [ndiSources, setNdiSources] = useState<NdiSource[]>([]);
   const [isLoadingNdiSources, setIsLoadingNdiSources] = useState(false);
+  const cachedProps = useMemo(() => readCachedProps(orgId), [orgId]);
+
+  useEffect(() => {
+    if (!props) return;
+    writeCachedProps(orgId, props);
+  }, [orgId, props]);
+
+  const displayProps = props ?? cachedProps;
+  const isHydrating = props === undefined;
 
   const sorted = useMemo(
-    () => (props ? [...props].sort((a, b) => a.order - b.order) : []),
-    [props],
+    () => [...displayProps].sort((a, b) => a.order - b.order),
+    [displayProps],
   );
 
   const effectiveSelectedId =
@@ -149,10 +183,13 @@ export function LayersTabPanel({
 
   const commitPropUpdate = (propId: Id<"props">, patch: PropDraft) => {
     setPropDraft(propId, patch);
-    void updateProp({
+    const args = {
       propId,
       ...patch,
-    }).then(() => {
+    };
+    void runAuthenticatedConvexMutation(api.props.update, args, () =>
+      updateProp(args),
+    ).then(() => {
       const key = propId as unknown as string;
       onClearLivePropDraft(key);
       setDrafts((prev) => {
@@ -207,7 +244,7 @@ export function LayersTabPanel({
   const handleCreateMedia = (item: MediaItem) => {
     const toastId = toast.loading("Adding media prop...");
     setPendingAction("create-media");
-    void createProp({
+    const args = {
       orgId,
       name: item.name.replace(/\.[^.]+$/, "") || item.name,
       kind: item.type,
@@ -215,7 +252,10 @@ export function LayersTabPanel({
       position: item.type === "video" ? "center" : "bottom-right",
       opacity: 1,
       sizePercent: item.type === "video" ? 45 : 20,
-    }).then((id) => {
+    } as const;
+    void runAuthenticatedConvexMutation(api.props.create, args, () =>
+      createProp(args),
+    ).then((id) => {
       setSelectedId(id);
       setIsMediaPickerOpen(false);
       toast.success("Media prop added.", { id: toastId });
@@ -230,7 +270,7 @@ export function LayersTabPanel({
   const handleCreateYoutube = async () => {
     const toastId = toast.loading("Adding YouTube prop...");
     setPendingAction("create-youtube");
-    void createProp({
+    const args = {
       orgId,
       name: "YouTube video",
       kind: "youtube",
@@ -238,7 +278,10 @@ export function LayersTabPanel({
       position: "center",
       opacity: 1,
       sizePercent: 45,
-    }).then((id) => {
+    } as const;
+    void runAuthenticatedConvexMutation(api.props.create, args, () =>
+      createProp(args),
+    ).then((id) => {
       setSelectedId(id);
       toast.success("YouTube prop added.", { id: toastId });
     }).catch((error: unknown) => {
@@ -252,7 +295,7 @@ export function LayersTabPanel({
   const handleCreateNdi = async () => {
     const toastId = toast.loading("Adding NDI prop...");
     setPendingAction("create-ndi");
-    void createProp({
+    const args = {
       orgId,
       name: "NDI source",
       kind: "ndi",
@@ -260,7 +303,10 @@ export function LayersTabPanel({
       position: "center",
       opacity: 1,
       sizePercent: 55,
-    }).then((id) => {
+    } as const;
+    void runAuthenticatedConvexMutation(api.props.create, args, () =>
+      createProp(args),
+    ).then((id) => {
       setSelectedId(id);
       toast.success("NDI prop added.", { id: toastId });
       void loadNdiSources();
@@ -275,7 +321,7 @@ export function LayersTabPanel({
   const handleCreateText = async () => {
     const toastId = toast.loading("Adding text prop...");
     setPendingAction("create-text");
-    void createProp({
+    const args = {
       orgId,
       name: "Text prop",
       kind: "text",
@@ -285,7 +331,10 @@ export function LayersTabPanel({
       sizePercent: 30,
       color: "#ffffff",
       fontSize: 48,
-    }).then((id) => {
+    } as const;
+    void runAuthenticatedConvexMutation(api.props.create, args, () =>
+      createProp(args),
+    ).then((id) => {
       setSelectedId(id);
       toast.success("Text prop added.", { id: toastId });
     }).catch((error: unknown) => {
@@ -298,8 +347,11 @@ export function LayersTabPanel({
 
   const handleMoveProp = (propId: Id<"props">, direction: "up" | "down") => {
     const key = propId as unknown as string;
+    const args = { propId, direction };
     setPendingAction(`move-${key}-${direction}`);
-    void moveProp({ propId, direction })
+    void runAuthenticatedConvexMutation(api.props.move, args, () =>
+      moveProp(args),
+    )
       .catch((error: unknown) => {
         toast.error("Could not reorder prop.");
         console.error("Failed to reorder prop", error);
@@ -312,8 +364,11 @@ export function LayersTabPanel({
   const handleDeleteProp = (propId: Id<"props">) => {
     const key = propId as unknown as string;
     const toastId = toast.loading("Deleting prop...");
+    const args = { propId };
     setPendingAction(`delete-${key}`);
-    void removeProp({ propId })
+    void runAuthenticatedConvexMutation(api.props.remove, args, () =>
+      removeProp(args),
+    )
       .then(() => {
         onSetActivePropIds(activePropIds.filter((id) => id !== key));
         onClearLivePropDraft(key);
@@ -339,8 +394,8 @@ export function LayersTabPanel({
             onClick={() => setIsMediaPickerOpen((value) => !value)}
             disabled={Boolean(pendingAction)}
             className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
-            title="Add media prop"
-            aria-label="Add media prop"
+            title="Add media file"
+            aria-label="Add media file"
           >
             {pendingAction === "create-media" ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
@@ -367,8 +422,8 @@ export function LayersTabPanel({
             onClick={handleCreateYoutube}
             disabled={Boolean(pendingAction)}
             className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
-            title="Add video source"
-            aria-label="Add video source"
+            title="Add YouTube link"
+            aria-label="Add YouTube link"
           >
             {pendingAction === "create-youtube" ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
@@ -395,6 +450,9 @@ export function LayersTabPanel({
 
       {isMediaPickerOpen ? (
         <div className="border-b border-border/70 p-2">
+          <p className="mb-1 px-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            Media files
+          </p>
           <div className="max-h-36 overflow-y-auto rounded-sm border border-border/60 bg-background/40 p-1">
             {mediaItems.length ? (
               mediaItems.map((item) => (
@@ -426,7 +484,15 @@ export function LayersTabPanel({
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
-        {sorted.length === 0 ? (
+        {sorted.length === 0 && isHydrating ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
+            <Loader2
+              className="h-5 w-5 animate-spin text-muted-foreground/70"
+              strokeWidth={1.6}
+            />
+            <p className="text-[11px] text-muted-foreground">Loading props...</p>
+          </div>
+        ) : sorted.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
             <Layers
               className="h-8 w-8 text-muted-foreground/60"
@@ -559,7 +625,7 @@ export function LayersTabPanel({
 
       {/* Inspector for the selected prop */}
       {selected && selectedView && (
-        <div className="border-t border-border/70 bg-background/30 p-3">
+        <div className="max-h-[46%] overflow-y-auto border-t border-border/70 bg-background/30 p-3">
           <div className="mb-2 flex items-center justify-between">
             <input
               type="text"
@@ -567,8 +633,7 @@ export function LayersTabPanel({
               defaultValue={selected.name}
               key={selected._id}
               onBlur={(event) =>
-                void updateProp({
-                  propId: selected._id,
+                commitPropUpdate(selected._id, {
                   name: event.target.value,
                 })
               }
@@ -622,8 +687,7 @@ export function LayersTabPanel({
               key={`${selected._id}-text`}
               defaultValue={selected.text}
               onBlur={(event) =>
-                void updateProp({
-                  propId: selected._id,
+                commitPropUpdate(selected._id, {
                   text: event.target.value,
                 })
               }

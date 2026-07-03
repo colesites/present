@@ -149,7 +149,7 @@ export function TimerTabPanel({
       </header>
 
       {/* List */}
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overscroll-contain p-2">
+      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2 [scrollbar-gutter:stable]">
         {items.length === 0 ? (
           <p className="px-2 py-6 text-center text-[11px] text-muted-foreground">
             No timers yet. Click + to add one.

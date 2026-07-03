@@ -2,6 +2,21 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { validateWorkspace } from "./authUtils";
 
+const getServiceLayoutItemKey = (item: {
+  type: string;
+  refId: string;
+  addedAt: number;
+  label?: string;
+  groupId?: string | null;
+}) =>
+  [
+    item.type,
+    item.refId,
+    item.addedAt,
+    item.groupId ?? "standalone",
+    item.label ?? "",
+  ].join(":");
+
 export const list = query({
   args: { workspaceId: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -67,6 +82,20 @@ export const create = mutation({
         }),
       ),
     ),
+    layout: v.optional(
+      v.array(
+        v.union(
+          v.object({
+            type: v.literal("group"),
+            id: v.string(),
+          }),
+          v.object({
+            type: v.literal("item"),
+            key: v.string(),
+          }),
+        ),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const workspace = await validateWorkspace(ctx, args.workspaceId);
@@ -85,6 +114,7 @@ export const create = mutation({
         date: args.date,
         order: maxOrder + 1,
         groups: args.groups ?? [],
+        layout: args.layout ?? [],
         items: [],
         createdAt: now,
       });
@@ -101,6 +131,7 @@ export const create = mutation({
         date: args.date,
         order: maxOrder + 1,
         groups: args.groups ?? [],
+        layout: args.layout ?? [],
         items: [],
         createdAt: now,
       });
@@ -122,6 +153,7 @@ export const addItem = mutation({
     refId: v.string(),
     label: v.optional(v.string()),
     groupId: v.optional(v.union(v.string(), v.null())),
+    addedAt: v.optional(v.number()),
     presentation: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -156,10 +188,28 @@ export const addItem = mutation({
       label: args.type === "group" ? (args.label ?? "Group") : args.label,
       groupId: args.groupId ?? undefined,
       presentation: args.type === "presentation" ? normalizedPresentation : undefined,
-      addedAt: Date.now(),
+      addedAt: args.addedAt ?? Date.now(),
     };
 
-    await ctx.db.patch(serviceId, { items: [...(service as any).items, newItem] });
+    const currentLayout = Array.isArray((service as any).layout)
+      ? [...(service as any).layout]
+      : [];
+    const newItemLayoutKey = getServiceLayoutItemKey(newItem);
+    const layout = newItem.groupId
+      ? currentLayout
+      : currentLayout.some(
+            (entry: any) => entry?.type === "item" && entry.key === newItemLayoutKey,
+          )
+        ? currentLayout
+        : [
+            ...currentLayout,
+            { type: "item" as const, key: newItemLayoutKey },
+          ];
+
+    await ctx.db.patch(serviceId, {
+      items: [...(service as any).items, newItem],
+      layout,
+    });
     return serviceId;
   },
 });
@@ -182,8 +232,17 @@ export const removeItem = mutation({
     if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) throw new Error("Unauthorized");
 
     const items = [...(service as any).items];
-    items.splice(args.itemIndex, 1);
-    await ctx.db.patch(serviceId, { items });
+    const [removed] = items.splice(args.itemIndex, 1);
+    const removedKey = removed ? getServiceLayoutItemKey(removed) : null;
+    const layout = Array.isArray((service as any).layout)
+      ? (service as any).layout.filter(
+          (entry: any) => !(entry?.type === "item" && entry.key === removedKey),
+        )
+      : undefined;
+    await ctx.db.patch(serviceId, {
+      items,
+      ...(layout ? { layout } : {}),
+    });
     return serviceId;
   },
 });
@@ -203,6 +262,20 @@ export const update = mutation({
         }),
       ),
     ),
+    layout: v.optional(
+      v.array(
+        v.union(
+          v.object({
+            type: v.literal("group"),
+            id: v.string(),
+          }),
+          v.object({
+            type: v.literal("item"),
+            key: v.string(),
+          }),
+        ),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const workspace = await validateWorkspace(ctx, args.workspaceId);
@@ -219,6 +292,7 @@ export const update = mutation({
     if (args.name !== undefined) updates.name = args.name;
     if (args.date !== undefined) updates.date = args.date;
     if (args.groups !== undefined) updates.groups = args.groups;
+    if (args.layout !== undefined) updates.layout = args.layout;
 
     await ctx.db.patch(serviceId, updates);
     return serviceId;

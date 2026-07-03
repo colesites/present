@@ -84,6 +84,7 @@ const compactSyncPayload = (
       _id: service._id,
       name: service.name,
       groups: service.groups,
+      layout: service.layout,
       updatedAt: service.updatedAt,
       version: service.version,
       operation,
@@ -352,7 +353,9 @@ export const removeLibraryItemLocal = (orgId: string, itemId: string) => {
 
 export const upsertService = (orgId: string, input: Service): Service => {
   const state = readLocalState();
-  const existingIndex = state.services.findIndex((service) => service._id === input._id);
+  const existingIndex = state.services.findIndex(
+    (service) => String(service._id) === String(input._id),
+  );
   const existing = existingIndex >= 0 ? state.services[existingIndex] : null;
   const stamp = now();
   const nextService: Service = {
@@ -441,10 +444,30 @@ export const removeMessageLocal = (orgId: string, messageId: string) => {
 
 export const replaceOrgServices = (orgId: string, services: Service[]) => {
   const state = readLocalState();
-  const withoutOrg = state.services.filter((service) => (service.orgId as string | undefined) !== orgId);
+  const deletedOrgServices = state.services.filter(
+    (service) =>
+      (service.orgId as string | undefined) === orgId &&
+      (service.deleted ?? false),
+  );
+  const deletedIds = new Set(
+    deletedOrgServices.map((service) => String(service._id)),
+  );
+  const withoutOrg = state.services.filter(
+    (service) => (service.orgId as string | undefined) !== orgId,
+  );
+  const seenIds = new Set<string>();
+  const incomingServices = services.filter((service) => {
+    const id = String(service._id);
+    if (deletedIds.has(id) || seenIds.has(id)) {
+      return false;
+    }
+    seenIds.add(id);
+    return true;
+  });
   state.services = [
     ...withoutOrg,
-    ...services.map((service) => ({
+    ...deletedOrgServices,
+    ...incomingServices.map((service) => ({
       ...service,
       orgId: orgId as Service["orgId"],
       deleted: service.deleted ?? false,

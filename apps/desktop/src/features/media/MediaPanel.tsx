@@ -140,6 +140,7 @@ const MediaItemCard = memo(function MediaItemCard({
             ) : (
               <video
                 src={item.url}
+                aria-label={`${item.name} preview`}
                 className="h-full w-full object-cover"
                 muted
                 preload={isInView ? "metadata" : "none"}
@@ -221,6 +222,7 @@ const MediaItemCard = memo(function MediaItemCard({
 
 interface MediaPanelProps {
   mediaState: MediaState;
+  liveMediaItem?: MediaItem | null;
   onSelectForOutput: (item: MediaItem | null) => void;
   isInsideService: boolean;
   selectedServiceId: Id<"services"> | null;
@@ -241,6 +243,7 @@ export const MediaPanel = memo(
   forwardRef<MediaPanelRef, MediaPanelProps>(function MediaPanel(
     {
       mediaState,
+      liveMediaItem,
       onSelectForOutput,
       isInsideService,
       selectedServiceId,
@@ -267,6 +270,7 @@ export const MediaPanel = memo(
       renameMediaItem,
       deleteMediaItem,
     } = mediaState;
+    const outputMediaItem = liveMediaItem ?? activeMediaItem;
 
     const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
     const [editName, setEditName] = useState("");
@@ -397,7 +401,7 @@ export const MediaPanel = memo(
 
     const handleSelectMedia = (item: MediaItem) => {
       // Toggle selection - if same item, deselect
-      if (activeMediaItem?.id === item.id) {
+      if (outputMediaItem?.id === item.id) {
         onSelectForOutput(null);
       } else {
         onSelectForOutput(item);
@@ -766,7 +770,7 @@ export const MediaPanel = memo(
                         <div key={item.id}>
                           <MediaItemCard
                             item={item}
-                            isActive={activeMediaItem?.id === item.id}
+                            isActive={outputMediaItem?.id === item.id}
                             onSelect={handleSelectMedia}
                             onAddToService={handleAddToService}
                             onRename={openRenameMedia}

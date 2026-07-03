@@ -261,6 +261,10 @@ export type ServiceGroup = {
   order: number;
 };
 
+export type ServiceLayoutEntry =
+  | { type: "group"; id: string }
+  | { type: "item"; key: string };
+
 export type ServiceItemType =
   | "library"
   | "media"
@@ -287,6 +291,7 @@ export type Service = {
   name: string;
   date?: string;
   groups?: ServiceGroup[];
+  layout?: ServiceLayoutEntry[];
   items: Array<{
     type: ServiceItemType;
     refId: string;

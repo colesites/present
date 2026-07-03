@@ -25,6 +25,13 @@ export type TimerItem = TimerConfig & {
   secondsValue: number;
 };
 
+type StoredTimerState = {
+  timers: TimerItem[];
+  expandedTimerId: string | null;
+  activeTimerId: string | null;
+  autoAdvanceEnabled: boolean;
+};
+
 const TIMER_AFFECTS_RUNTIME_FIELDS: (keyof TimerConfig)[] = [
   "type",
   "duration",
@@ -34,6 +41,8 @@ const TIMER_AFFECTS_RUNTIME_FIELDS: (keyof TimerConfig)[] = [
   "elapsedStart",
   "elapsedEnd",
 ];
+
+const TIMER_STATE_STORAGE_KEY = "present-timer-state-v1";
 
 export function parseDurationToSeconds(value: string): number {
   const parts = value.split(":").map((part) => Number.parseInt(part, 10));
@@ -147,6 +156,109 @@ const DEFAULT_TIMERS: TimerConfig[] = [
   },
 ];
 
+const createDefaultTimerItems = (): TimerItem[] =>
+  DEFAULT_TIMERS.map((timer) => ({
+    ...timer,
+    isRunning: false,
+    secondsValue: getInitialTimerValue(timer),
+  }));
+
+function normalizeTimerType(value: unknown): TimerType {
+  return value === "countdownToTime" || value === "elapsed" ? value : "countdown";
+}
+
+function normalizeMeridiem(value: unknown): "AM" | "PM" {
+  return value === "PM" ? "PM" : "AM";
+}
+
+function normalizeTimerItem(candidate: unknown, index: number): TimerItem | null {
+  if (!candidate || typeof candidate !== "object") return null;
+  const timer = candidate as Partial<TimerItem>;
+  const config: TimerConfig = {
+    id:
+      typeof timer.id === "string" && timer.id.trim()
+        ? timer.id
+        : `timer-${index + 1}`,
+    name:
+      typeof timer.name === "string" && timer.name.trim()
+        ? timer.name
+        : `Timer ${index + 1}`,
+    type: normalizeTimerType(timer.type),
+    duration:
+      typeof timer.duration === "string" && timer.duration.trim()
+        ? timer.duration
+        : "00:05:00",
+    hour:
+      typeof timer.hour === "number" && Number.isFinite(timer.hour)
+        ? Math.min(Math.max(Math.floor(timer.hour), 1), 12)
+        : 5,
+    minute:
+      typeof timer.minute === "number" && Number.isFinite(timer.minute)
+        ? Math.min(Math.max(Math.floor(timer.minute), 0), 59)
+        : 0,
+    meridiem: normalizeMeridiem(timer.meridiem),
+    elapsedStart:
+      typeof timer.elapsedStart === "string" && timer.elapsedStart.trim()
+        ? timer.elapsedStart
+        : "00:00",
+    elapsedEnd:
+      typeof timer.elapsedEnd === "string" && timer.elapsedEnd.trim()
+        ? timer.elapsedEnd
+        : "00:15",
+  };
+  return {
+    ...config,
+    isRunning: false,
+    secondsValue:
+      typeof timer.secondsValue === "number" && Number.isFinite(timer.secondsValue)
+        ? Math.max(0, Math.floor(timer.secondsValue))
+        : getInitialTimerValue(config),
+  };
+}
+
+function loadTimerState(): StoredTimerState {
+  const fallbackTimers = createDefaultTimerItems();
+  const fallback: StoredTimerState = {
+    timers: fallbackTimers,
+    expandedTimerId: fallbackTimers[0]?.id ?? null,
+    activeTimerId: fallbackTimers[0]?.id ?? null,
+    autoAdvanceEnabled: false,
+  };
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(TIMER_STATE_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<StoredTimerState>;
+    const timers = Array.isArray(parsed.timers)
+      ? parsed.timers
+          .map((timer, index) => normalizeTimerItem(timer, index))
+          .filter((timer): timer is TimerItem => timer !== null)
+      : [];
+    if (timers.length === 0) return fallback;
+    const timerIds = new Set(timers.map((timer) => timer.id));
+    return {
+      timers,
+      expandedTimerId:
+        typeof parsed.expandedTimerId === "string" &&
+        timerIds.has(parsed.expandedTimerId)
+          ? parsed.expandedTimerId
+          : null,
+      activeTimerId:
+        typeof parsed.activeTimerId === "string" && timerIds.has(parsed.activeTimerId)
+          ? parsed.activeTimerId
+          : timers[0]?.id ?? null,
+      autoAdvanceEnabled: Boolean(parsed.autoAdvanceEnabled),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveTimerState(state: StoredTimerState) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(TIMER_STATE_STORAGE_KEY, JSON.stringify(state));
+}
+
 export interface UseTimersResult {
   timers: TimerItem[];
   activeTimer: TimerItem | null;
@@ -165,30 +277,46 @@ export interface UseTimersResult {
 }
 
 export function useTimers(): UseTimersResult {
-  const [timers, setTimers] = useState<TimerItem[]>(() =>
-    DEFAULT_TIMERS.map((timer) => ({
-      ...timer,
-      isRunning: false,
-      secondsValue: getInitialTimerValue(timer),
-    })),
+  const [initialTimerState] = useState<StoredTimerState>(() => loadTimerState());
+  const [timers, setTimers] = useState<TimerItem[]>(initialTimerState.timers);
+  const [expandedTimerId, setExpandedTimerIdState] = useState<string | null>(
+    initialTimerState.expandedTimerId,
   );
-  const [expandedTimerId, setExpandedTimerId] = useState<string | null>(
-    "pre-service",
+  const [selectedTimerId, setSelectedTimerId] = useState<string | null>(
+    initialTimerState.activeTimerId,
   );
-  const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(false);
+  const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(
+    initialTimerState.autoAdvanceEnabled,
+  );
 
   const activeTimerId = useMemo(
     () =>
-      expandedTimerId && timers.some((t) => t.id === expandedTimerId)
-        ? expandedTimerId
-        : (timers[0]?.id ?? null),
-    [expandedTimerId, timers],
+      selectedTimerId && timers.some((timer) => timer.id === selectedTimerId)
+        ? selectedTimerId
+        : (timers.find((timer) => timer.isRunning)?.id ?? timers[0]?.id ?? null),
+    [selectedTimerId, timers],
   );
 
   const activeTimer = useMemo(
-    () => timers.find((t) => t.id === activeTimerId) ?? null,
+    () => timers.find((timer) => timer.id === activeTimerId) ?? null,
     [timers, activeTimerId],
   );
+
+  const setExpandedTimerId = useCallback((id: string | null) => {
+    setExpandedTimerIdState(id);
+    if (id !== null) {
+      setSelectedTimerId(id);
+    }
+  }, []);
+
+  useEffect(() => {
+    saveTimerState({
+      timers,
+      expandedTimerId,
+      activeTimerId,
+      autoAdvanceEnabled,
+    });
+  }, [activeTimerId, autoAdvanceEnabled, expandedTimerId, timers]);
 
   const getNextTimerToStart = useCallback(
     (timerList: TimerItem[], finishedIndex: number): TimerItem | null => {
@@ -375,6 +503,7 @@ export function useTimers(): UseTimersResult {
   }, []);
 
   const resetTimer = useCallback((id: string) => {
+    setSelectedTimerId(id);
     setTimers((previous) =>
       previous.map((timer) =>
         timer.id === id
@@ -390,7 +519,8 @@ export function useTimers(): UseTimersResult {
 
   const removeTimer = useCallback((id: string) => {
     setTimers((previous) => previous.filter((timer) => timer.id !== id));
-    setExpandedTimerId((current) => (current === id ? null : current));
+    setExpandedTimerIdState((current) => (current === id ? null : current));
+    setSelectedTimerId((current) => (current === id ? null : current));
   }, []);
 
   const stopAllTimers = useCallback(() => {

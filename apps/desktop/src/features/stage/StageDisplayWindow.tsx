@@ -131,7 +131,7 @@ export function StageDisplayWindow() {
                 label={state.timerLabel ?? "Time Remaining"}
                 value={state.timerText ?? "--:--:--"}
                 valueClassName="text-[#e35f4a]"
-                visible={stageLooks.layers.props && state.timerVisible}
+                visible={stageLooks.layers.props}
               />
               <MetricCard
                 label="Clock"
