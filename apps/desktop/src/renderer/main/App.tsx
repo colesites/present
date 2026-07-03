@@ -35,6 +35,7 @@ import { useThemesModalStore } from "../shared/store/themesModal";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
 import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
+import { WorshipStageDisplayWindow } from "../../features/stage/WorshipStageDisplayWindow";
 import { LooksWindow } from "../../features/looks/LooksWindow";
 import { ScreenComposerWindow } from "../../features/screen-composer";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
@@ -160,6 +161,7 @@ function AuthenticatedHome({ windowType }: { windowType: string | null }) {
     const titleMap: Record<string, string> = {
       looks: "Looks",
       "media-stage": "Media Stage",
+      "worship-stage": "Worship Stage",
       "mini-lyrics": "Mini Lyrics Editor",
       "screen-composer": "Screen Composer",
       settings: "Settings",
@@ -417,6 +419,7 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     useWorkspaceStore();
   const isSettingsWindow = windowType === "settings";
   const isMediaStageWindow = windowType === "media-stage";
+  const isWorshipStageWindow = windowType === "worship-stage";
   const isLooksWindow = windowType === "looks";
   const isScreenComposerWindow = windowType === "screen-composer";
   const isMiniLyricsWindow = windowType === "mini-lyrics";
@@ -511,7 +514,13 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   const mediaState = useMediaFolders();
   const { folders, allMediaItems, selectMediaForOutput } = mediaState;
   const settings = useAppSettings({ folders, allMediaItems });
-  const { settingsOutputDisplayId, setSettingsOutputDisplayId } = settings;
+  const {
+    settingsOutputDisplayId,
+    setSettingsOutputDisplayId,
+    settingsScreenDisplayIds,
+    setSettingsScreenDisplayIds,
+    settingsScreenResolutions,
+  } = settings;
   const { looksConfig, liveLook, setLayerEnabledForLook } = useLooksConfig();
   const programLooks = liveLook.targets.program;
   const showTextInOutput =
@@ -611,6 +620,42 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   }, [settingsOutputDisplayId]);
 
   useEffect(() => {
+    if (!window.electronAPI?.setPreferredDisplay) {
+      return;
+    }
+    void window.electronAPI.setPreferredDisplay(
+      "audience",
+      settingsScreenDisplayIds.audience,
+    );
+    void window.electronAPI.setPreferredDisplay(
+      "media",
+      settingsScreenDisplayIds.media,
+    );
+    void window.electronAPI.setPreferredDisplay(
+      "worship",
+      settingsScreenDisplayIds.worship,
+    );
+  }, [settingsScreenDisplayIds]);
+
+  useEffect(() => {
+    if (!window.electronAPI?.setPreferredResolution) {
+      return;
+    }
+    void window.electronAPI.setPreferredResolution(
+      "audience",
+      settingsScreenResolutions.audience,
+    );
+    void window.electronAPI.setPreferredResolution(
+      "media",
+      settingsScreenResolutions.media,
+    );
+    void window.electronAPI.setPreferredResolution(
+      "worship",
+      settingsScreenResolutions.worship,
+    );
+  }, [settingsScreenResolutions]);
+
+  useEffect(() => {
     if (!hasLoadedDisplays) {
       return;
     }
@@ -622,10 +667,28 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     ) {
       setSettingsOutputDisplayId(null);
     }
+    const missingScreenRoles = (["audience", "media", "worship"] as const).filter(
+      (role) =>
+        settingsScreenDisplayIds[role] !== null &&
+        !availableDisplays.some(
+          (display) => display.id === settingsScreenDisplayIds[role],
+        ),
+    );
+    if (missingScreenRoles.length > 0) {
+      setSettingsScreenDisplayIds((previous) => {
+        const next = { ...previous };
+        for (const role of missingScreenRoles) {
+          next[role] = null;
+        }
+        return next;
+      });
+    }
   }, [
     availableDisplays,
     hasLoadedDisplays,
     setSettingsOutputDisplayId,
+    setSettingsScreenDisplayIds,
+    settingsScreenDisplayIds,
     settingsOutputDisplayId,
   ]);
 
@@ -647,11 +710,28 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       return;
     }
     try {
-      await window.electronAPI.openMediaStageWindow();
+      await window.electronAPI.openMediaStageWindow(
+        settingsScreenDisplayIds.media,
+        settingsScreenResolutions.media,
+      );
     } catch (error) {
       console.error("Failed to open media stage window:", error);
     }
-  }, []);
+  }, [settingsScreenDisplayIds.media, settingsScreenResolutions.media]);
+
+  const openWorshipStageWindow = useCallback(async () => {
+    if (!window.electronAPI?.openWorshipStageWindow) {
+      return;
+    }
+    try {
+      await window.electronAPI.openWorshipStageWindow(
+        settingsScreenDisplayIds.worship,
+        settingsScreenResolutions.worship,
+      );
+    } catch (error) {
+      console.error("Failed to open worship stage window:", error);
+    }
+  }, [settingsScreenDisplayIds.worship, settingsScreenResolutions.worship]);
 
   const openLooksWindow = useCallback(async () => {
     if (!window.electronAPI?.openLooksWindow) {
@@ -732,6 +812,10 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     return <StageDisplayWindow />;
   }
 
+  if (isWorshipStageWindow) {
+    return <WorshipStageDisplayWindow />;
+  }
+
   if (isLooksWindow) {
     return <LooksWindow />;
   }
@@ -772,6 +856,9 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
         }}
         onOpenStage={() => {
           void openMediaStageWindow();
+        }}
+        onOpenWorshipStage={() => {
+          void openWorshipStageWindow();
         }}
         onOpenLooks={() => {
           void openLooksWindow();

@@ -17,8 +17,18 @@ import {
   createScreenComposerWindow,
 } from "../windows/screen-composer.window";
 import {
+  closeWorshipStageWindow,
+  createWorshipStageWindow,
+  getWorshipStageWindow,
+} from '../windows/worship-stage.window';
+import {
+  getPreferredDisplayId,
   getPreferredOutputDisplayId,
+  parseResolution,
+  setPreferredDisplayId,
+  setPreferredResolution,
   setPreferredOutputDisplayId,
+  type PresentScreenRole,
 } from '../services/display.service';
 
 /**
@@ -34,7 +44,7 @@ export const registerWindowIPC = (): void => {
   ipcMain.handle('get-displays', () => {
     return screen.getAllDisplays().map(d => ({
       id: d.id,
-      label: d.label,
+      label: d.label?.trim() || (d.id === screen.getPrimaryDisplay().id ? 'Primary Display' : `Screen ${d.id}`),
       bounds: d.bounds,
       workArea: d.workArea,
       scaleFactor: d.scaleFactor,
@@ -51,10 +61,33 @@ export const registerWindowIPC = (): void => {
     return getPreferredOutputDisplayId();
   });
 
+  ipcMain.handle('set-preferred-display', (_event, role: PresentScreenRole, displayId: number | null) => {
+    if (role !== 'audience' && role !== 'media' && role !== 'worship') {
+      return false;
+    }
+    setPreferredDisplayId(role, displayId);
+    return true;
+  });
+
+  ipcMain.handle('set-preferred-resolution', (_event, role: PresentScreenRole, resolution: string | null) => {
+    if (role !== 'audience' && role !== 'media' && role !== 'worship') {
+      return false;
+    }
+    setPreferredResolution(role, parseResolution(resolution));
+    return true;
+  });
+
+  ipcMain.handle('get-preferred-display', (_event, role: PresentScreenRole) => {
+    if (role !== 'audience' && role !== 'media' && role !== 'worship') {
+      return null;
+    }
+    return getPreferredDisplayId(role);
+  });
+
   // Open output window
-  ipcMain.handle('open-output-window', (_event, displayId?: number | null) => {
+  ipcMain.handle('open-output-window', (_event, displayId?: number | null, resolution?: string | null) => {
     const mainWindow = getMainWindow();
-    return createOutputWindow(mainWindow, { displayId });
+    return createOutputWindow(mainWindow, { displayId, resolution });
   });
 
   // Close output window
@@ -62,12 +95,20 @@ export const registerWindowIPC = (): void => {
     return closeOutputWindow();
   });
 
-  ipcMain.handle('open-media-stage-window', () => {
-    return createMediaStageWindow();
+  ipcMain.handle('open-media-stage-window', (_event, displayId?: number | null, resolution?: string | null) => {
+    return createMediaStageWindow({ displayId, resolution });
   });
 
   ipcMain.handle('close-media-stage-window', () => {
     return closeMediaStageWindow();
+  });
+
+  ipcMain.handle('open-worship-stage-window', (_event, displayId?: number | null, resolution?: string | null) => {
+    return createWorshipStageWindow({ displayId, resolution });
+  });
+
+  ipcMain.handle('close-worship-stage-window', () => {
+    return closeWorshipStageWindow();
   });
 
   ipcMain.handle('open-looks-window', () => {
@@ -163,11 +204,18 @@ export const registerWindowIPC = (): void => {
     }
   });
 
-  // Relay: main window sends data to media stage window
+  // Relay: main window sends confidence-monitor data to the media stage window.
   ipcMain.on('send-to-stage', (_event, data) => {
     const stageWindow = getMediaStageWindow();
     if (stageWindow && !stageWindow.isDestroyed()) {
       stageWindow.webContents.send('stage-data', data);
+    }
+  });
+
+  ipcMain.on('send-to-worship-stage', (_event, data) => {
+    const worshipStageWindow = getWorshipStageWindow();
+    if (worshipStageWindow && !worshipStageWindow.isDestroyed()) {
+      worshipStageWindow.webContents.send('worship-stage-data', data);
     }
   });
 
@@ -176,6 +224,13 @@ export const registerWindowIPC = (): void => {
     const mainWindow = getMainWindow();
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('stage-ready');
+    }
+  });
+
+  ipcMain.on('worship-stage-ready', () => {
+    const mainWindow = getMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('worship-stage-ready');
     }
   });
 };

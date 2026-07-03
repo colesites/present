@@ -22,6 +22,7 @@ import {
   Music,
   LayoutList,
   Palette,
+  Mic2,
 } from "lucide-react";
 import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
 import { AuthControls } from "../../renderer/shared/components/AuthControls";
@@ -55,6 +56,7 @@ interface AppHeaderProps {
   onOpenBible: () => void;
   onOpenBrowser: () => void;
   onOpenStage: () => void;
+  onOpenWorshipStage: () => void;
   onOpenLooks: () => void;
   /** Navigation callbacks from global search */
   onSelectService?: (serviceId: string) => void;
@@ -94,6 +96,7 @@ export const AppHeader = memo(function AppHeader({
   onOpenBible,
   onOpenBrowser,
   onOpenStage,
+  onOpenWorshipStage,
   onOpenLooks,
 }: AppHeaderProps) {
   // Read search data from the global store (populated by PresentContainer)
@@ -108,6 +111,7 @@ export const AppHeader = memo(function AppHeader({
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const searchDialogRef = useRef<HTMLDialogElement>(null);
 
   // ── Keyboard shortcut: Cmd/Ctrl + K ──
   useEffect(() => {
@@ -131,6 +135,24 @@ export const AppHeader = memo(function AppHeader({
   useEffect(() => {
     if (isSearchOpen) {
       requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [isSearchOpen]);
+
+  useEffect(() => {
+    const dialog = searchDialogRef.current;
+    if (!dialog) {
+      return;
+    }
+
+    if (isSearchOpen) {
+      if (!dialog.open) {
+        dialog.showModal();
+      }
+      return;
+    }
+
+    if (dialog.open) {
+      dialog.close();
     }
   }, [isSearchOpen]);
 
@@ -354,6 +376,12 @@ export const AppHeader = memo(function AppHeader({
       isActive: viewMode === "stage",
       onClick: onOpenStage,
     },
+    {
+      key: "worship-stage",
+      label: "Worship Stage",
+      Icon: Mic2,
+      onClick: onOpenWorshipStage,
+    },
     { key: "looks", label: "Looks", Icon: Check, onClick: onOpenLooks },
     {
       key: "composer",
@@ -451,24 +479,26 @@ export const AppHeader = memo(function AppHeader({
       </header>
 
       {/* ── Global Search Command Palette ── */}
-      {isSearchOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/60"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setIsSearchOpen(false);
-          }}
-        >
-          <div
-            className="w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Global search"
-          >
+      <dialog
+        ref={searchDialogRef}
+        aria-label="Global search"
+        onClose={() => setIsSearchOpen(false)}
+        className="m-0 h-screen max-h-none w-screen max-w-none border-0 bg-transparent p-0 text-foreground backdrop:bg-black/60"
+      >
+        <div className="relative flex h-full items-start justify-center pt-[15vh]">
+          <button
+            type="button"
+            aria-label="Close global search"
+            className="absolute inset-0 cursor-default"
+            onClick={() => setIsSearchOpen(false)}
+          />
+          <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
             {/* Search input */}
             <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
               <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
               <input
                 ref={inputRef}
+                aria-label="Search services, libraries, or scripture"
                 type="text"
                 value={query}
                 onChange={(e) => {
@@ -571,7 +601,7 @@ export const AppHeader = memo(function AppHeader({
             </div>
           </div>
         </div>
-      )}
+      </dialog>
     </>
   );
 });

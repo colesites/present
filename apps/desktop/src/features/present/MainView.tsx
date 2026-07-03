@@ -11,6 +11,7 @@ import { PresentCenterArea } from "./PresentCenterArea";
 import { PresentOutputSidebar } from "./PresentOutputSidebar";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { SlideData } from "../../features/slides";
+import type { OutputPreviewTarget } from "../../features/slides/OutputPreview";
 import {
   MediaItem,
   VideoSettings,
@@ -531,6 +532,8 @@ export function MainView({
   } = servicesSidebarProps;
 
   const { showsPanelRef, mediaPanelRef, scripturePanelRef } = panelRefs;
+  const [previewTarget, setPreviewTarget] =
+    React.useState<OutputPreviewTarget>("audience");
 
   const handleEditorScrollComplete = React.useCallback(() => {
     setEditScrollToSlide(null);
@@ -687,6 +690,35 @@ export function MainView({
     setIsMessageLayerEnabled,
   ]);
 
+  const worshipPreviewSlides = React.useMemo(() => {
+    const sequence = slidesForGrid.map((entry) => ({
+      id:
+        entry.id ??
+        (entry.libraryItem
+          ? `${entry.libraryItem._id}:${
+              "id" in entry.slide && entry.slide.id != null
+                ? entry.slide.id
+                : entry.index
+            }`
+          : `scripture:${entry.index}`),
+      text: entry.slide.text ?? null,
+      footer:
+        ("footer" in entry.slide ? entry.slide.footer : undefined) ?? null,
+      label: entry.slide.label ?? null,
+      repeat:
+        ("sectionRepeat" in entry.slide ? entry.slide.sectionRepeat : undefined) ??
+        ("modifier" in entry.slide ? entry.slide.modifier : undefined) ??
+        null,
+    }));
+    const activeIndex = outputActiveSlideId
+      ? sequence.findIndex((entry) => entry.id === outputActiveSlideId)
+      : selected?.index ?? -1;
+    return {
+      current: activeIndex >= 0 ? sequence[activeIndex] ?? null : null,
+      next: activeIndex >= 0 ? sequence[activeIndex + 1] ?? null : null,
+    };
+  }, [outputActiveSlideId, selected?.index, slidesForGrid]);
+
   const outputPreviewProps = React.useMemo(
     () => ({
       text: activeSlideContent?.text ?? null,
@@ -736,6 +768,14 @@ export function MainView({
       propsOverlay,
       timers,
       timerLayout,
+      previewTarget,
+      onPreviewTargetChange: setPreviewTarget,
+      worshipCurrentLabel: worshipPreviewSlides.current?.label ?? null,
+      worshipCurrentRepeat: worshipPreviewSlides.current?.repeat ?? null,
+      worshipNextText: worshipPreviewSlides.next?.text ?? null,
+      worshipNextFooter: worshipPreviewSlides.next?.footer ?? null,
+      worshipNextLabel: worshipPreviewSlides.next?.label ?? null,
+      worshipNextRepeat: worshipPreviewSlides.next?.repeat ?? null,
     }),
     [
       activeSlideContent?.backgroundColor,
@@ -780,6 +820,8 @@ export function MainView({
       slideGroups,
       timers,
       timerLayout,
+      previewTarget,
+      worshipPreviewSlides,
       onToggleVideoPlayback,
       updateMediaFilters,
       updateVideoSettings,

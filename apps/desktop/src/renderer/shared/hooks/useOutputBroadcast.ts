@@ -108,11 +108,15 @@ export function useOutputBroadcast({
 
   // Force re-send when a new output window connects
   const [syncTrigger, setSyncTrigger] = useState(0);
+  const [worshipStageSyncTrigger, setWorshipStageSyncTrigger] = useState(0);
 
   useEffect(() => {
     if (!window.electronAPI) return;
     window.electronAPI.onOutputReady(() => {
       setSyncTrigger((t: number) => t + 1);
+    });
+    window.electronAPI.onWorshipStageReady?.(() => {
+      setWorshipStageSyncTrigger((t: number) => t + 1);
     });
   }, []);
 
@@ -141,7 +145,7 @@ export function useOutputBroadcast({
     prevVideoTimeRef.current = videoCurrentTime;
 
     // Send media update
-    window.electronAPI.sendToOutput({
+    const mediaPayload = {
       type: "media-update",
       mediaUrl,
       mediaId,
@@ -160,10 +164,12 @@ export function useOutputBroadcast({
       timerLayout,
       screenComposerEnabled,
       screenComposerLayout,
-    });
+    };
+    window.electronAPI.sendToOutput(mediaPayload);
+    window.electronAPI.sendToWorshipStage?.(mediaPayload);
 
     // Send active slide text
-    window.electronAPI.sendToOutput({
+    const activeSlidePayload = {
       type: "active-slide",
       slideId: activeSlideId,
       slideText: slideText,
@@ -171,7 +177,9 @@ export function useOutputBroadcast({
       slideElements,
       slideCanvasSize,
       slideBackgroundColor,
-    });
+    };
+    window.electronAPI.sendToOutput(activeSlidePayload);
+    window.electronAPI.sendToWorshipStage?.(activeSlidePayload);
 
     // Broadcast the current banner-message overlay (or null to clear it).
     window.electronAPI.sendToOutput({
@@ -230,5 +238,6 @@ export function useOutputBroadcast({
     slideCanvasSize,
     slideBackgroundColor,
     syncTrigger,
+    worshipStageSyncTrigger,
   ]);
 }

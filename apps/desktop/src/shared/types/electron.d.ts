@@ -8,7 +8,7 @@ import type {
 declare global {
 interface Display {
   id: number;
-  label?: string;
+  label: string;
   bounds: { x: number; y: number; width: number; height: number };
   workArea: { x: number; y: number; width: number; height: number };
   scaleFactor: number;
@@ -130,10 +130,21 @@ interface PptxAPI {
 }
 
 interface ElectronAPI {
-  openOutputWindow: (displayId?: number | null) => Promise<boolean>;
+  openOutputWindow: (
+    displayId?: number | null,
+    resolution?: string | null,
+  ) => Promise<boolean>;
   closeOutputWindow: () => Promise<boolean>;
-  openMediaStageWindow: () => Promise<boolean>;
+  openMediaStageWindow: (
+    displayId?: number | null,
+    resolution?: string | null,
+  ) => Promise<boolean>;
   closeMediaStageWindow: () => Promise<boolean>;
+  openWorshipStageWindow: (
+    displayId?: number | null,
+    resolution?: string | null,
+  ) => Promise<boolean>;
+  closeWorshipStageWindow: () => Promise<boolean>;
   openLooksWindow: () => Promise<boolean>;
   closeLooksWindow: () => Promise<boolean>;
   openScreenComposerWindow: () => Promise<boolean>;
@@ -143,6 +154,17 @@ interface ElectronAPI {
   getDisplays: () => Promise<Display[]>;
   setPreferredOutputDisplay: (displayId: number | null) => Promise<boolean>;
   getPreferredOutputDisplay: () => Promise<number | null>;
+  setPreferredDisplay: (
+    role: "audience" | "media" | "worship",
+    displayId: number | null,
+  ) => Promise<boolean>;
+  getPreferredDisplay: (
+    role: "audience" | "media" | "worship",
+  ) => Promise<number | null>;
+  setPreferredResolution: (
+    role: "audience" | "media" | "worship",
+    resolution: string | null,
+  ) => Promise<boolean>;
   onOutputWindowClosed: (callback: () => void) => void;
   selectFolder: () => Promise<{ id: string; name: string; path: string } | null>;
   selectLibraryExportDestination: (suggestedName?: string) => Promise<string | null>;
@@ -205,6 +227,10 @@ interface ElectronAPI {
   onStageData: (callback: (data: unknown) => void) => void;
   notifyStageReady: () => void;
   onStageReady: (callback: () => void) => () => void;
+  sendToWorshipStage: (data: unknown) => void;
+  onWorshipStageData: (callback: (data: unknown) => void) => () => void;
+  notifyWorshipStageReady: () => void;
+  onWorshipStageReady: (callback: () => void) => () => void;
 
   // NDI Native Transport
   startNdiOutput: (

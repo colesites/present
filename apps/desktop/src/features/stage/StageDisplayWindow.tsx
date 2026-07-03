@@ -6,8 +6,12 @@ import { useLooksConfig } from "../../renderer/shared/hooks";
 type StageWindowState = {
   currentText: string | null;
   currentFooter: string | null;
+  currentLabel: string | null;
+  currentRepeat: string | null;
   nextText: string | null;
   nextFooter: string | null;
+  nextLabel: string | null;
+  nextRepeat: string | null;
   timerText: string | null;
   timerLabel: string | null;
   timerVisible: boolean;
@@ -16,8 +20,12 @@ type StageWindowState = {
 const initialState: StageWindowState = {
   currentText: null,
   currentFooter: null,
+  currentLabel: null,
+  currentRepeat: null,
   nextText: null,
   nextFooter: null,
+  nextLabel: null,
+  nextRepeat: null,
   timerText: null,
   timerLabel: null,
   timerVisible: true,
@@ -57,8 +65,12 @@ export function StageDisplayWindow() {
           ...previous,
           currentText: asText(message.currentText),
           currentFooter: asText(message.currentFooter),
+          currentLabel: asText(message.currentLabel),
+          currentRepeat: asText(message.currentRepeat),
           nextText: asText(message.nextText),
           nextFooter: asText(message.nextFooter),
+          nextLabel: asText(message.nextLabel),
+          nextRepeat: asText(message.nextRepeat),
         }));
       } else if (message.type === "timer-update") {
         setState((previous) => ({
@@ -114,15 +126,17 @@ export function StageDisplayWindow() {
                 title="Current Slide"
                 text={state.currentText}
                 footer={state.currentFooter}
+                label={state.currentLabel}
+                repeat={state.currentRepeat}
                 tone="white"
-                visible={stageLooks.layers.slide || stageLooks.layers.presentation}
               />
               <SlideCard
                 title="Next Slide"
                 text={state.nextText}
                 footer={state.nextFooter}
+                label={state.nextLabel}
+                repeat={state.nextRepeat}
                 tone="amber"
-                visible={stageLooks.layers.slide || stageLooks.layers.presentation}
               />
             </div>
 
@@ -155,14 +169,16 @@ function SlideCard({
   title,
   text,
   footer,
+  label,
+  repeat,
   tone,
-  visible,
 }: {
   title: string;
   text: string | null;
   footer: string | null;
+  label: string | null;
+  repeat: string | null;
   tone: "white" | "amber";
-  visible: boolean;
 }) {
   return (
     <div
@@ -170,24 +186,28 @@ function SlideCard({
         tone === "amber" ? "border-amber-300/70" : "border-zinc-400/70"
       } bg-black/80 p-5`}
     >
-      {visible ? (
-        <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-full min-h-0 flex-col">
+        {(label || repeat) ? (
           <div
-            className={`min-h-0 flex-1 overflow-hidden text-6xl leading-[1.1] ${
-              tone === "amber" ? "text-amber-300" : "text-zinc-100"
+            className={`mb-4 flex flex-wrap items-center gap-3 text-3xl font-bold uppercase tracking-[0.08em] ${
+              tone === "amber" ? "text-amber-200" : "text-sky-200"
             }`}
           >
-            {text ?? "No slide selected"}
+            {label ? <span>[{label}]</span> : null}
+            {repeat ? <span>[{repeat}]</span> : null}
           </div>
-          {footer ? (
-            <p className="mt-3 truncate text-2xl text-zinc-300/90">{footer}</p>
-          ) : null}
+        ) : null}
+        <div
+          className={`min-h-0 flex-1 overflow-hidden text-6xl leading-[1.1] ${
+            tone === "amber" ? "text-amber-300" : "text-zinc-100"
+          }`}
+        >
+          {text ?? "No slide selected"}
         </div>
-      ) : (
-        <div className="flex h-full items-center justify-center text-xl text-zinc-600">
-          Hidden by look
-        </div>
-      )}
+        {footer ? (
+          <p className="mt-3 truncate text-2xl text-zinc-300/90">{footer}</p>
+        ) : null}
+      </div>
 
       <div className="absolute inset-x-5 bottom-2 flex items-center gap-3 text-[12px] uppercase tracking-[0.12em] text-zinc-400">
         <span className="h-px flex-1 bg-current/40" />

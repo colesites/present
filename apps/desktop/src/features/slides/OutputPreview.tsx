@@ -56,6 +56,8 @@ interface SlideGroup {
   count: number;
 }
 
+export type OutputPreviewTarget = "audience" | "media" | "worship";
+
 const OUTPUT_BASE_WIDTH = 1280;
 const OUTPUT_BASE_HEIGHT = 720;
 const YOUTUBE_EMBED_REFERRER = "https://present.app/";
@@ -123,6 +125,14 @@ interface OutputPreviewProps {
     nameBannerColor: string;
     titlePosition: "top" | "bottom";
   };
+  previewTarget?: OutputPreviewTarget;
+  onPreviewTargetChange?: (target: OutputPreviewTarget) => void;
+  worshipNextText?: string | null;
+  worshipNextFooter?: string | null;
+  worshipCurrentLabel?: string | null;
+  worshipCurrentRepeat?: string | null;
+  worshipNextLabel?: string | null;
+  worshipNextRepeat?: string | null;
 }
 
 const FilterSlider = memo(function FilterSlider({
@@ -295,6 +305,14 @@ export const OutputPreview = memo(function OutputPreview({
   propsOverlay,
   timers,
   timerLayout,
+  previewTarget = "audience",
+  onPreviewTargetChange,
+  worshipNextText,
+  worshipNextFooter,
+  worshipCurrentLabel,
+  worshipCurrentRepeat,
+  worshipNextLabel,
+  worshipNextRepeat,
 }: OutputPreviewProps) {
   // Pull the bits of the timers hook the preview's header controls need.
   const {
@@ -316,6 +334,15 @@ export const OutputPreview = memo(function OutputPreview({
     isScriptureSlide && (slideElements?.length ?? 0) === 0;
   const hasLibrarySlideLayer = Boolean(text || (slideElements?.length ?? 0) > 0);
   const hasHiddenTextLayerContent = Boolean(text) && !showText;
+  const isMediaPreview = previewTarget === "media";
+  const isWorshipPreview = previewTarget === "worship";
+  const isAudienceLikePreview = previewTarget === "audience" || isWorshipPreview;
+  const previewTitle =
+    previewTarget === "media"
+      ? "Media Stage Preview"
+      : previewTarget === "worship"
+        ? "Worship Stage Preview"
+        : "Audience Preview";
   const libraryStyle = useMemo(
     () => ({
       fontFamily: fontFamily ?? "Inter",
@@ -464,7 +491,7 @@ export const OutputPreview = memo(function OutputPreview({
           )}
         />
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Main Output
+          {previewTitle}
         </p>
         {isFrozen && (
           <span className="rounded-full bg-sky-400/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-400">
@@ -495,7 +522,10 @@ export const OutputPreview = memo(function OutputPreview({
                 <img
                   src={activeMediaItem.url}
                   alt={activeMediaItem.name}
-                  className="absolute inset-0 h-full w-full object-cover"
+                  className={cn(
+                    "absolute inset-0 h-full w-full object-cover",
+                    isMediaPreview && "opacity-0",
+                  )}
                   style={{ filter: filterStyle }}
                 />
               ) : (
@@ -503,13 +533,40 @@ export const OutputPreview = memo(function OutputPreview({
                   aria-label={`${activeMediaItem.name} preview`}
                   ref={videoRef}
                   src={activeMediaItem.url}
-                  className="absolute inset-0 h-full w-full object-cover"
+                  className={cn(
+                    "absolute inset-0 h-full w-full object-cover",
+                    isMediaPreview && "opacity-0",
+                  )}
                   style={{ filter: filterStyle }}
                   loop={videoSettings.loop}
                   muted
                   playsInline
                 />
               ))}
+
+            {previewTarget === "media" ? (
+              <MediaStagePreview
+                currentText={text}
+                currentFooter={footer}
+                currentLabel={worshipCurrentLabel}
+                currentRepeat={worshipCurrentRepeat}
+                nextText={worshipNextText}
+                nextFooter={worshipNextFooter}
+                nextLabel={worshipNextLabel}
+                nextRepeat={worshipNextRepeat}
+                timerLabel={timerLabelForOutput}
+                timerText={timerTextForOutput}
+              />
+            ) : null}
+
+            {isAudienceLikePreview ? (
+              <>
+            {isWorshipPreview && (worshipCurrentLabel || worshipCurrentRepeat) ? (
+              <div className="absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] flex-wrap gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-sky-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
+                {worshipCurrentLabel ? <span>[{worshipCurrentLabel}]</span> : null}
+                {worshipCurrentRepeat ? <span>[{worshipCurrentRepeat}]</span> : null}
+              </div>
+            ) : null}
 
             {!hideBackground && backgroundColor ? (
               <div
@@ -657,6 +714,9 @@ export const OutputPreview = memo(function OutputPreview({
                 <p className="text-xs text-zinc-600">No content</p>
               </div>
               )}
+              </>
+            ) : null}
+
             </div>
           </div>
 
@@ -772,6 +832,24 @@ export const OutputPreview = memo(function OutputPreview({
             )}
           </div>
         </div>
+      </div>
+
+      <div className="mt-2 flex shrink-0 items-center px-3">
+        <select
+          value={previewTarget}
+          onChange={(event) =>
+            onPreviewTargetChange?.(
+              event.target.value as OutputPreviewTarget,
+            )
+          }
+          className="h-7 rounded border border-border bg-background px-2 text-[11px] font-medium text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+          title="Change preview screen"
+          aria-label="Preview screen"
+        >
+          <option value="audience">Audience</option>
+          <option value="media">Media</option>
+          <option value="worship">Worship</option>
+        </select>
       </div>
 
       {showFilters && (
@@ -1069,6 +1147,145 @@ export const OutputPreview = memo(function OutputPreview({
     </div>
   );
 });
+
+function MediaStagePreview({
+  currentText,
+  currentFooter,
+  currentLabel,
+  currentRepeat,
+  nextText,
+  nextFooter,
+  nextLabel,
+  nextRepeat,
+  timerLabel,
+  timerText,
+}: {
+  currentText: string | null;
+  currentFooter?: string | null;
+  currentLabel?: string | null;
+  currentRepeat?: string | null;
+  nextText?: string | null;
+  nextFooter?: string | null;
+  nextLabel?: string | null;
+  nextRepeat?: string | null;
+  timerLabel: string;
+  timerText: string;
+}) {
+  const [clockText, setClockText] = useState(() =>
+    new Date().toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+    }),
+  );
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setClockText(
+        new Date().toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+          second: "2-digit",
+        }),
+      );
+    }, 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  return (
+    <div className="absolute inset-0 grid grid-rows-[minmax(0,1fr)_22%] gap-2 bg-black p-3 text-white">
+      <div className="grid min-h-0 grid-cols-2 gap-2">
+        <MediaStageCard
+          title="Current"
+          text={currentText}
+          footer={currentFooter}
+          sectionLabel={currentLabel}
+          repeat={currentRepeat}
+          tone="current"
+        />
+        <MediaStageCard
+          title="Next"
+          text={nextText}
+          footer={nextFooter}
+          sectionLabel={nextLabel}
+          repeat={nextRepeat}
+          tone="next"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex min-w-0 flex-col justify-center rounded border border-zinc-600/70 bg-zinc-950 px-3">
+          <p className="truncate text-[9px] uppercase tracking-[0.14em] text-zinc-500">
+            {timerLabel}
+          </p>
+          <p className="truncate text-2xl font-semibold tabular-nums text-red-400">
+            {timerText}
+          </p>
+        </div>
+        <div className="flex min-w-0 flex-col justify-center rounded border border-zinc-600/70 bg-zinc-950 px-3">
+          <p className="text-[9px] uppercase tracking-[0.14em] text-zinc-500">
+            Clock
+          </p>
+          <p className="truncate text-2xl font-semibold tabular-nums text-zinc-100">
+            {clockText}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MediaStageCard({
+  title,
+  text,
+  footer,
+  sectionLabel,
+  repeat,
+  tone,
+}: {
+  title: string;
+  text?: string | null;
+  footer?: string | null;
+  sectionLabel?: string | null;
+  repeat?: string | null;
+  tone: "current" | "next";
+}) {
+  return (
+    <div
+      className={cn(
+        "relative min-h-0 overflow-hidden rounded border bg-zinc-950 p-3",
+        tone === "next" ? "border-amber-300/70" : "border-zinc-500/80",
+      )}
+    >
+      {(sectionLabel || repeat) ? (
+        <div
+          className={cn(
+            "mb-2 flex flex-wrap gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em]",
+            tone === "next" ? "text-amber-200" : "text-sky-200",
+          )}
+        >
+          {sectionLabel ? <span>[{sectionLabel}]</span> : null}
+          {repeat ? <span>[{repeat}]</span> : null}
+        </div>
+      ) : null}
+      <p
+        className={cn(
+          "line-clamp-5 text-xl font-semibold leading-tight",
+          tone === "next" ? "text-amber-300" : "text-zinc-50",
+        )}
+      >
+        {text?.trim() || "No slide selected"}
+      </p>
+      {footer ? (
+        <p className="mt-2 truncate text-[10px] uppercase tracking-wide text-zinc-400">
+          {footer}
+        </p>
+      ) : null}
+      <p className="absolute bottom-2 right-3 text-[9px] uppercase tracking-[0.16em] text-zinc-500">
+        {title}
+      </p>
+    </div>
+  );
+}
 
 function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {
   if (items.length === 0) return null;

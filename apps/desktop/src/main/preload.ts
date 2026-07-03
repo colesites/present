@@ -1,11 +1,15 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  openOutputWindow: (displayId?: number | null) =>
-    ipcRenderer.invoke('open-output-window', displayId ?? null),
+  openOutputWindow: (displayId?: number | null, resolution?: string | null) =>
+    ipcRenderer.invoke('open-output-window', displayId ?? null, resolution ?? null),
   closeOutputWindow: () => ipcRenderer.invoke('close-output-window'),
-  openMediaStageWindow: () => ipcRenderer.invoke('open-media-stage-window'),
+  openMediaStageWindow: (displayId?: number | null, resolution?: string | null) =>
+    ipcRenderer.invoke('open-media-stage-window', displayId ?? null, resolution ?? null),
   closeMediaStageWindow: () => ipcRenderer.invoke('close-media-stage-window'),
+  openWorshipStageWindow: (displayId?: number | null, resolution?: string | null) =>
+    ipcRenderer.invoke('open-worship-stage-window', displayId ?? null, resolution ?? null),
+  closeWorshipStageWindow: () => ipcRenderer.invoke('close-worship-stage-window'),
   openLooksWindow: () => ipcRenderer.invoke('open-looks-window'),
   closeLooksWindow: () => ipcRenderer.invoke('close-looks-window'),
   openScreenComposerWindow: () => ipcRenderer.invoke("open-screen-composer-window"),
@@ -18,6 +22,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPreferredOutputDisplay: (displayId: number | null) =>
     ipcRenderer.invoke('set-preferred-output-display', displayId),
   getPreferredOutputDisplay: () => ipcRenderer.invoke('get-preferred-output-display'),
+  setPreferredDisplay: (role: 'audience' | 'media' | 'worship', displayId: number | null) =>
+    ipcRenderer.invoke('set-preferred-display', role, displayId),
+  getPreferredDisplay: (role: 'audience' | 'media' | 'worship') =>
+    ipcRenderer.invoke('get-preferred-display', role),
+  setPreferredResolution: (role: 'audience' | 'media' | 'worship', resolution: string | null) =>
+    ipcRenderer.invoke('set-preferred-resolution', role, resolution),
   onOutputWindowClosed: (callback: () => void) => {
     ipcRenderer.on('output-window-closed', () => callback());
   },
@@ -87,6 +97,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('stage-ready', listener);
     return () => {
       ipcRenderer.removeListener('stage-ready', listener);
+    };
+  },
+  sendToWorshipStage: (data: unknown) => ipcRenderer.send('send-to-worship-stage', data),
+  onWorshipStageData: (callback: (data: unknown) => void) => {
+    const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+    ipcRenderer.on('worship-stage-data', listener);
+    return () => {
+      ipcRenderer.removeListener('worship-stage-data', listener);
+    };
+  },
+  notifyWorshipStageReady: () => ipcRenderer.send('worship-stage-ready'),
+  onWorshipStageReady: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('worship-stage-ready', listener);
+    return () => {
+      ipcRenderer.removeListener('worship-stage-ready', listener);
     };
   },
 

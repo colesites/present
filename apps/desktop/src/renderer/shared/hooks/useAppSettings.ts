@@ -28,6 +28,19 @@ const DEFAULT_TIMER_NAME_COLOR = "#ffffff";
 const DEFAULT_TIMER_NAME_BANNER_ENABLED = false;
 const DEFAULT_TIMER_NAME_BANNER_COLOR = "#ffffff";
 const DEFAULT_OUTPUT_DISPLAY_ID: number | null = null;
+type ScreenRole = "audience" | "media" | "worship";
+type ScreenDisplayIds = Record<ScreenRole, number | null>;
+type ScreenResolutions = Record<ScreenRole, string>;
+const DEFAULT_SCREEN_DISPLAY_IDS: ScreenDisplayIds = {
+  audience: DEFAULT_OUTPUT_DISPLAY_ID,
+  media: null,
+  worship: null,
+};
+const DEFAULT_SCREEN_RESOLUTIONS: ScreenResolutions = {
+  audience: "1920x1080",
+  media: "1920x1080",
+  worship: "1920x1080",
+};
 const DEFAULT_NDI_ENABLED = false;
 const DEFAULT_NDI_SOURCE_NAME = "Present Main Output";
 const DEFAULT_NDI_GROUP_NAME = "Public";
@@ -85,6 +98,16 @@ function normalizeNdiGroupName(value: string) {
     return DEFAULT_NDI_GROUP_NAME;
   }
   return trimmed.toLowerCase() === "public" ? "Public" : trimmed;
+}
+
+function normalizeDisplayId(value: unknown): number | null {
+  if (value === null) return null;
+  return isFiniteNumber(value) ? Math.round(value) : null;
+}
+
+function normalizeResolution(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return /^\d{3,5}x\d{3,5}$/.test(value.trim()) ? value.trim() : null;
 }
 
 interface UseAppSettingsProps {
@@ -148,6 +171,10 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   const [settingsOutputDisplayId, setSettingsOutputDisplayId] = useState<
     number | null
   >(DEFAULT_OUTPUT_DISPLAY_ID);
+  const [settingsScreenDisplayIds, setSettingsScreenDisplayIds] =
+    useState<ScreenDisplayIds>(DEFAULT_SCREEN_DISPLAY_IDS);
+  const [settingsScreenResolutions, setSettingsScreenResolutions] =
+    useState<ScreenResolutions>(DEFAULT_SCREEN_RESOLUTIONS);
   const [settingsNdiEnabled, setSettingsNdiEnabled] = useState(
     DEFAULT_NDI_ENABLED
   );
@@ -284,8 +311,39 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     }
     if (parsed.outputDisplayId === null) {
       setSettingsOutputDisplayId(null);
+      setSettingsScreenDisplayIds((previous) => ({
+        ...previous,
+        audience: null,
+      }));
     } else if (isFiniteNumber(parsed.outputDisplayId)) {
-      setSettingsOutputDisplayId(Math.round(parsed.outputDisplayId));
+      const nextAudienceId = Math.round(parsed.outputDisplayId);
+      setSettingsOutputDisplayId(nextAudienceId);
+      setSettingsScreenDisplayIds((previous) => ({
+        ...previous,
+        audience: nextAudienceId,
+      }));
+    }
+    if (parsed.screenDisplayIds && typeof parsed.screenDisplayIds === "object") {
+      const nextScreenDisplayIds: ScreenDisplayIds = {
+        audience: normalizeDisplayId(parsed.screenDisplayIds.audience),
+        media: normalizeDisplayId(parsed.screenDisplayIds.media),
+        worship: normalizeDisplayId(parsed.screenDisplayIds.worship),
+      };
+      setSettingsScreenDisplayIds(nextScreenDisplayIds);
+      setSettingsOutputDisplayId(nextScreenDisplayIds.audience);
+    }
+    if (parsed.screenResolutions && typeof parsed.screenResolutions === "object") {
+      setSettingsScreenResolutions({
+        audience:
+          normalizeResolution(parsed.screenResolutions.audience) ??
+          DEFAULT_SCREEN_RESOLUTIONS.audience,
+        media:
+          normalizeResolution(parsed.screenResolutions.media) ??
+          DEFAULT_SCREEN_RESOLUTIONS.media,
+        worship:
+          normalizeResolution(parsed.screenResolutions.worship) ??
+          DEFAULT_SCREEN_RESOLUTIONS.worship,
+      });
     }
     if (typeof parsed.ndiEnabled === "boolean") {
       setSettingsNdiEnabled(parsed.ndiEnabled);
@@ -384,6 +442,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         timerNameBannerColor: settingsTimerNameBannerColor,
         timerTitlePosition: settingsTimerTitlePosition,
         outputDisplayId: settingsOutputDisplayId,
+        screenDisplayIds: settingsScreenDisplayIds,
+        screenResolutions: settingsScreenResolutions,
         ndiEnabled: settingsNdiEnabled,
         ndiSourceName:
           settingsNdiSourceName.trim() || DEFAULT_NDI_SOURCE_NAME,
@@ -421,6 +481,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsTimerNameBannerColor,
     settingsTimerTitlePosition,
     settingsOutputDisplayId,
+    settingsScreenDisplayIds,
+    settingsScreenResolutions,
     settingsNdiEnabled,
     settingsNdiSourceName,
     settingsNdiGroupName,
@@ -541,6 +603,10 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsTimerTitlePosition,
     settingsOutputDisplayId,
     setSettingsOutputDisplayId,
+    settingsScreenDisplayIds,
+    setSettingsScreenDisplayIds,
+    settingsScreenResolutions,
+    setSettingsScreenResolutions,
     settingsNdiEnabled,
     setSettingsNdiEnabled,
     settingsNdiSourceName,

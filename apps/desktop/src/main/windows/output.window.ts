@@ -1,8 +1,12 @@
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow } from 'electron';
 import { isDev } from '../utils/app.utils';
 import {
+  getCenteredWindowBounds,
   getPreferredOutputDisplay,
+  getPreferredResolution,
   moveOutputWindowToDisplay,
+  parseResolution,
+  setPreferredResolution,
   setPreferredOutputDisplayId,
 } from '../services/display.service';
 import { getDesktopAppIcon } from '../services/icon.service';
@@ -25,10 +29,14 @@ export const createOutputWindow = (
   mainWindow: BrowserWindow | null,
   options?: {
     displayId?: number | null;
+    resolution?: string | null;
   },
 ): boolean => {
   if (options?.displayId !== undefined) {
     setPreferredOutputDisplayId(options.displayId);
+  }
+  if (options?.resolution !== undefined) {
+    setPreferredResolution('audience', parseResolution(options.resolution));
   }
 
   if (outputWindow && !outputWindow.isDestroyed()) {
@@ -38,15 +46,18 @@ export const createOutputWindow = (
   }
 
   const preferredDisplay = getPreferredOutputDisplay();
-  const isPrimary = preferredDisplay.id === screen.getPrimaryDisplay().id;
+  const preferredBounds = getCenteredWindowBounds(
+    preferredDisplay,
+    getPreferredResolution('audience'),
+  );
   const appIcon = getDesktopAppIcon();
 
   outputWindow = new BrowserWindow({
-    x: preferredDisplay.bounds.x,
-    y: preferredDisplay.bounds.y,
-    width: preferredDisplay.bounds.width || 1280,
-    height: preferredDisplay.bounds.height || 720,
-    fullscreen: !isPrimary,
+    x: preferredBounds.x,
+    y: preferredBounds.y,
+    width: preferredBounds.width || 1280,
+    height: preferredBounds.height || 720,
+    fullscreen: false,
     icon: appIcon,
     autoHideMenuBar: true,
     // The output window goes to the audience screen — a white flash here is

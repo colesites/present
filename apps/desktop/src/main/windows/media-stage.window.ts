@@ -1,6 +1,15 @@
 import { BrowserWindow } from 'electron';
 import { isDev } from '../utils/app.utils';
 import { getDesktopAppIcon } from '../services/icon.service';
+import {
+  getCenteredWindowBounds,
+  getPreferredDisplay,
+  getPreferredResolution,
+  moveWindowToDisplay,
+  parseResolution,
+  setPreferredResolution,
+  setPreferredDisplayId,
+} from '../services/display.service';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -9,17 +18,40 @@ let mediaStageWindow: BrowserWindow | null = null;
 
 export const getMediaStageWindow = (): BrowserWindow | null => mediaStageWindow;
 
-export const createMediaStageWindow = (): boolean => {
+export const createMediaStageWindow = (options?: {
+  displayId?: number | null;
+  resolution?: string | null;
+}): boolean => {
+  if (options?.displayId !== undefined) {
+    setPreferredDisplayId('media', options.displayId);
+  }
+  if (options?.resolution !== undefined) {
+    setPreferredResolution('media', parseResolution(options.resolution));
+  }
+
   if (mediaStageWindow && !mediaStageWindow.isDestroyed()) {
     mediaStageWindow.focus();
+    moveWindowToDisplay(
+      mediaStageWindow,
+      getPreferredDisplay('media'),
+      getPreferredResolution('media'),
+    );
     return true;
   }
 
+  const preferredDisplay = getPreferredDisplay('media');
+  const preferredBounds = getCenteredWindowBounds(
+    preferredDisplay,
+    getPreferredResolution('media'),
+  );
   mediaStageWindow = new BrowserWindow({
-    width: 1360,
-    height: 860,
+    x: preferredBounds.x,
+    y: preferredBounds.y,
+    width: preferredBounds.width || 1360,
+    height: preferredBounds.height || 860,
     minWidth: 1080,
     minHeight: 680,
+    fullscreen: false,
     show: false,
     title: 'Media Stage',
     icon: getDesktopAppIcon(),

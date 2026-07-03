@@ -29,6 +29,16 @@ export type Settings = {
   timerNameBannerColor: string;
   timerTitlePosition: "top" | "bottom";
   outputDisplayId?: number | null;
+  screenDisplayIds?: {
+    audience?: number | null;
+    media?: number | null;
+    worship?: number | null;
+  };
+  screenResolutions?: {
+    audience?: string | null;
+    media?: string | null;
+    worship?: string | null;
+  };
   ndiEnabled?: boolean;
   ndiSourceName?: string;
   ndiGroupName?: string;

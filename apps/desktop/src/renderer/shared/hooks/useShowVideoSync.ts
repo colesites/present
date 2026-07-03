@@ -24,6 +24,8 @@ export function useShowVideoSync(params: {
   const showVideoRef = useRef<HTMLVideoElement>(null);
   const isProgrammaticPlayRef = useRef(false);
   const lastTimeUpdateMsRef = useRef(0);
+  const showPlaybackByMediaIdRef = useRef<Record<string, boolean>>({});
+  const showTimeByMediaIdRef = useRef<Record<string, number>>({});
 
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
@@ -37,16 +39,48 @@ export function useShowVideoSync(params: {
   const previousActiveMediaIdRef = useRef(activeMediaItem?.id ?? null);
 
   useEffect(() => {
+    if (forcePlay || activeMediaItem?.type !== "video") {
+      return;
+    }
+    if (activeMediaItem.id !== previousActiveMediaIdRef.current) {
+      return;
+    }
+    showPlaybackByMediaIdRef.current[activeMediaItem.id] = isVideoPlaying;
+  }, [activeMediaItem?.id, activeMediaItem?.type, forcePlay, isVideoPlaying]);
+
+  useEffect(() => {
+    if (forcePlay || activeMediaItem?.type !== "video") {
+      return;
+    }
+    if (activeMediaItem.id !== previousActiveMediaIdRef.current) {
+      return;
+    }
+    showTimeByMediaIdRef.current[activeMediaItem.id] = videoCurrentTime;
+  }, [activeMediaItem?.id, activeMediaItem?.type, forcePlay, videoCurrentTime]);
+
+  useEffect(() => {
     if (activeMediaItem?.id === previousActiveMediaIdRef.current) {
       return;
     }
 
     previousActiveMediaIdRef.current = activeMediaItem?.id ?? null;
-    setVideoCurrentTime(0);
+    const restoredTime =
+      activeMediaItem?.type === "video"
+        ? showTimeByMediaIdRef.current[activeMediaItem.id]
+        : undefined;
+    setVideoCurrentTime(restoredTime ?? 0);
 
     if (activeMediaItem?.type === "video" && shouldAutoPlay) {
       setIsVideoPlaying(true);
       onAutoPlayConsumed();
+      return;
+    }
+
+    if (
+      activeMediaItem?.type === "video" &&
+      showPlaybackByMediaIdRef.current[activeMediaItem.id]
+    ) {
+      setIsVideoPlaying(true);
       return;
     }
 
@@ -72,6 +106,12 @@ export function useShowVideoSync(params: {
   useEffect(() => {
     if (showVideoRef.current && currentVideoItem?.type === "video") {
       isProgrammaticPlayRef.current = true;
+      if (
+        Number.isFinite(videoCurrentTime) &&
+        Math.abs(showVideoRef.current.currentTime - videoCurrentTime) > 0.5
+      ) {
+        showVideoRef.current.currentTime = videoCurrentTime;
+      }
 
       if (effectiveIsVideoPlaying) {
         showVideoRef.current.play().catch(() => {
@@ -86,7 +126,7 @@ export function useShowVideoSync(params: {
         isProgrammaticPlayRef.current = false;
       }, 100);
     }
-  }, [currentVideoItem?.type, effectiveIsVideoPlaying]);
+  }, [currentVideoItem?.id, currentVideoItem?.type, effectiveIsVideoPlaying]);
 
   const handleVideoPlay = useCallback(() => {
     if (!isProgrammaticPlayRef.current) setIsVideoPlaying(true);

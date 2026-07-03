@@ -28,6 +28,41 @@ type AudioInputOption = {
   label: string;
 };
 
+type ScreenRole = "audience" | "media" | "worship";
+
+const SCREEN_ROLE_OPTIONS: Array<{
+  key: ScreenRole;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "audience",
+    label: "Audience",
+    description: "Main output seen by the congregation.",
+  },
+  {
+    key: "media",
+    label: "Media",
+    description: "Media operator or backstage media display.",
+  },
+  {
+    key: "worship",
+    label: "Worship Stage",
+    description: "Confidence display for the worship leader.",
+  },
+];
+
+const SCREEN_RESOLUTION_OPTIONS = [
+  "3840x2160",
+  "2560x1440",
+  "1920x1080",
+  "1600x900",
+  "1366x768",
+  "1280x720",
+  "1024x768",
+  "800x600",
+];
+
 interface SettingsScreenProps {
   settingsLang: string;
   setSettingsLang: (lang: string) => void;
@@ -79,6 +114,18 @@ interface SettingsScreenProps {
   setSettingsTimerTitlePosition: (value: "top" | "bottom") => void;
   settingsOutputDisplayId: number | null;
   setSettingsOutputDisplayId: (value: number | null) => void;
+  settingsScreenDisplayIds: Record<ScreenRole, number | null>;
+  setSettingsScreenDisplayIds: (
+    value:
+      | Record<ScreenRole, number | null>
+      | ((previous: Record<ScreenRole, number | null>) => Record<ScreenRole, number | null>),
+  ) => void;
+  settingsScreenResolutions: Record<ScreenRole, string>;
+  setSettingsScreenResolutions: (
+    value:
+      | Record<ScreenRole, string>
+      | ((previous: Record<ScreenRole, string>) => Record<ScreenRole, string>),
+  ) => void;
   settingsNdiEnabled: boolean;
   setSettingsNdiEnabled: (value: boolean) => void;
   settingsNdiSourceName: string;
@@ -143,6 +190,10 @@ export function SettingsScreen({
   setSettingsTimerTitlePosition,
   settingsOutputDisplayId,
   setSettingsOutputDisplayId,
+  settingsScreenDisplayIds,
+  setSettingsScreenDisplayIds,
+  settingsScreenResolutions,
+  setSettingsScreenResolutions,
   settingsNdiEnabled,
   setSettingsNdiEnabled,
   settingsNdiSourceName,
@@ -158,8 +209,8 @@ export function SettingsScreen({
   selectMediaForOutput,
 }: SettingsScreenProps) {
   const [activeSection, setActiveSection] = useState<
-    "speech" | "scripture" | "libraries" | "timer" | "connections"
-  >("speech");
+    "screens" | "speech" | "scripture" | "libraries" | "timer" | "connections"
+  >("screens");
   const [availableDisplays, setAvailableDisplays] = useState<Display[]>([]);
   const [availableAudioInputs, setAvailableAudioInputs] = useState<AudioInputOption[]>([]);
   const [isLoadingAudioInputs, setIsLoadingAudioInputs] = useState(false);
@@ -306,6 +357,7 @@ export function SettingsScreen({
       if (permissionResult && !permissionResult.granted) {
         setAvailableAudioInputs([]);
         setAudioInputsError("Microphone access was denied.");
+        setIsLoadingAudioInputs(false);
         return;
       }
 
@@ -325,19 +377,21 @@ export function SettingsScreen({
       setAudioInputsError(
         audioInputs.length === 0 ? "No sound input devices were found." : null,
       );
+      setIsLoadingAudioInputs(false);
     } catch {
       setAvailableAudioInputs([]);
       setAudioInputsError("Unable to read available sound input devices.");
-    } finally {
       setIsLoadingAudioInputs(false);
     }
   }, []);
 
   useEffect(() => {
-    void refreshAudioInputs();
+    const refreshTimeoutId = window.setTimeout(() => {
+      void refreshAudioInputs();
+    }, 0);
 
     if (!navigator.mediaDevices?.addEventListener) {
-      return;
+      return () => window.clearTimeout(refreshTimeoutId);
     }
 
     const handleDeviceChange = () => {
@@ -346,6 +400,7 @@ export function SettingsScreen({
 
     navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
     return () => {
+      window.clearTimeout(refreshTimeoutId);
       navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
     };
   }, [refreshAudioInputs]);
@@ -367,17 +422,56 @@ export function SettingsScreen({
     setSettingsSpeechInputDeviceId,
   ]);
 
+  const parseDisplaySelectValue = (value: string) =>
+    value === "auto"
+      ? null
+      : Number.isFinite(Number(value))
+        ? Number(value)
+        : null;
+
+  const handleScreenDisplayChange = (role: ScreenRole, value: string) => {
+    const nextId = parseDisplaySelectValue(value);
+    setSettingsScreenDisplayIds((previous) => ({
+      ...previous,
+      [role]: nextId,
+    }));
+    if (role === "audience") {
+      setSettingsOutputDisplayId(nextId);
+    }
+    if (window.electronAPI?.setPreferredDisplay) {
+      void window.electronAPI.setPreferredDisplay(role, nextId);
+    } else if (role === "audience" && window.electronAPI?.setPreferredOutputDisplay) {
+      void window.electronAPI.setPreferredOutputDisplay(nextId);
+    }
+  };
+
   const handleOutputDisplayChange = (value: string) => {
     const nextId =
-      value === "auto"
-        ? null
-        : Number.isFinite(Number(value))
-          ? Number(value)
-          : null;
+      parseDisplaySelectValue(value);
     setSettingsOutputDisplayId(nextId);
+    setSettingsScreenDisplayIds((previous) => ({
+      ...previous,
+      audience: nextId,
+    }));
     if (window.electronAPI?.setPreferredOutputDisplay) {
       void window.electronAPI.setPreferredOutputDisplay(nextId);
     }
+    if (window.electronAPI?.setPreferredDisplay) {
+      void window.electronAPI.setPreferredDisplay("audience", nextId);
+    }
+  };
+
+  const getDisplayLabel = (display: Display) =>
+    `${display.label || (display.isPrimary ? "Primary Display" : `Screen ${display.id}`)}${display.isPrimary ? " (Primary)" : ""}`;
+
+  const getDisplayResolution = (display: Display) =>
+    `${display.bounds.width} x ${display.bounds.height}`;
+
+  const handleScreenResolutionChange = (role: ScreenRole, value: string) => {
+    setSettingsScreenResolutions((previous) => ({
+      ...previous,
+      [role]: value,
+    }));
   };
 
   useEffect(() => {
@@ -625,6 +719,18 @@ export function SettingsScreen({
         <nav className="space-y-1 text-xs">
           <button
             type="button"
+            onClick={() => setActiveSection("screens")}
+            className={cn(
+              "w-full rounded-md px-2 py-1.5 text-left font-medium transition",
+              activeSection === "screens"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            Screens
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveSection("speech")}
             className={cn(
               "w-full rounded-md px-2 py-1.5 text-left font-medium transition",
@@ -691,6 +797,8 @@ export function SettingsScreen({
           <h2 className="text-sm font-semibold">
             {activeSection === "speech"
               ? "Speech to Search"
+              : activeSection === "screens"
+                ? "Screens"
               : activeSection === "scripture"
                 ? "Scripture"
               : activeSection === "libraries"
@@ -702,6 +810,8 @@ export function SettingsScreen({
           <p className="text-[11px] text-muted-foreground">
             {activeSection === "speech"
               ? "Choose the language and microphone used for voice search across the app."
+              : activeSection === "screens"
+                ? "Route each output to a detected monitor and verify resolution."
               : activeSection === "scripture"
                 ? "Set the default scripture presentation appearance."
               : activeSection === "libraries"
@@ -712,8 +822,133 @@ export function SettingsScreen({
           </p>
         </div>
 
-        <div className="flex flex-1 flex-col space-y-6 overflow-hidden px-6 py-4">
-          {activeSection === "speech" ? (
+        <div className="flex flex-1 flex-col space-y-6 overflow-y-auto px-6 py-4">
+          {activeSection === "screens" ? (
+            <section className="space-y-5">
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Detected screens
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground">
+                      Present reads the monitor names reported by the operating system.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-border bg-muted/35 px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                    {availableDisplays.length} found
+                  </span>
+                </div>
+
+                <div className="grid gap-2 lg:grid-cols-2">
+                  {availableDisplays.length > 0 ? (
+                    availableDisplays.map((display) => (
+                      <div
+                        key={display.id}
+                        className="rounded-md border border-border bg-card/70 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-foreground">
+                              {getDisplayLabel(display)}
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-muted-foreground">
+                              ID {display.id} · {getDisplayResolution(display)} · scale {display.scaleFactor}x
+                            </p>
+                          </div>
+                          <div className="h-8 w-12 shrink-0 rounded-sm border border-border bg-black shadow-inner" />
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground">
+                      No screens are available yet. Connect displays and keep this settings page open.
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Output routing
+                </h3>
+                <div className="grid gap-3 xl:grid-cols-3">
+                  {SCREEN_ROLE_OPTIONS.map((role) => {
+                    const selectedDisplayId = settingsScreenDisplayIds[role.key];
+                    const selectedDisplay = availableDisplays.find(
+                      (display) => display.id === selectedDisplayId,
+                    );
+                    return (
+                      <div
+                        key={role.key}
+                        className="rounded-md border border-border bg-card/70 p-3"
+                      >
+                        <div className="mb-3">
+                          <p className="text-sm font-semibold text-foreground">
+                            {role.label}
+                          </p>
+                          <p className="mt-0.5 min-h-8 text-[11px] leading-4 text-muted-foreground">
+                            {role.description}
+                          </p>
+                        </div>
+                        <Select
+                          value={
+                            selectedDisplayId === null
+                              ? "auto"
+                              : String(selectedDisplayId)
+                          }
+                          onValueChange={(value) =>
+                            handleScreenDisplayChange(role.key, value)
+                          }
+                        >
+                          <SelectTrigger className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40">
+                            <SelectValue placeholder="Select screen" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">
+                              Auto (largest external)
+                            </SelectItem>
+                            {availableDisplays.map((display) => (
+                              <SelectItem key={display.id} value={String(display.id)}>
+                                {getDisplayLabel(display)} · {getDisplayResolution(display)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="mt-2 text-[11px] text-muted-foreground">
+                          {selectedDisplay
+                            ? `${getDisplayResolution(selectedDisplay)} on ${getDisplayLabel(selectedDisplay)}`
+                            : "Auto chooses the largest external screen when available."}
+                        </p>
+                        <div className="mt-3 space-y-1">
+                          <span className="text-[11px] font-medium text-muted-foreground">
+                            Resolution
+                          </span>
+                          <Select
+                            value={settingsScreenResolutions[role.key]}
+                            onValueChange={(value) =>
+                              handleScreenResolutionChange(role.key, value)
+                            }
+                          >
+                            <SelectTrigger className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40">
+                              <SelectValue placeholder="Select resolution" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SCREEN_RESOLUTION_OPTIONS.map((resolution) => (
+                                <SelectItem key={resolution} value={resolution}>
+                                  {resolution.replace("x", " x ")}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </section>
+          ) : activeSection === "speech" ? (
             <>
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -845,6 +1080,7 @@ export function SettingsScreen({
                         Font size
                       </span>
                       <input
+                        aria-label="Scripture font size"
                         type="number"
                         value={scriptureFontSizeDraft}
                         onChange={handleScriptureFontSizeInput}
@@ -863,6 +1099,7 @@ export function SettingsScreen({
                       Footer size
                     </span>
                     <input
+                      aria-label="Scripture footer font size"
                       type="number"
                       value={scriptureFooterFontSizeDraft}
                       onChange={handleScriptureFooterFontSizeInput}
@@ -933,6 +1170,7 @@ export function SettingsScreen({
                         Font size
                       </span>
                       <input
+                        aria-label="Library font size"
                         type="number"
                         value={normalizedLibraryFontSize}
                         onChange={handleLibraryFontSizeInput}
@@ -1417,6 +1655,7 @@ export function SettingsScreen({
                                 />
                               ) : (
                                 <video
+                                  aria-label={`${item.name} preview`}
                                   src={item.url}
                                   className="h-full w-full object-cover"
                                   muted
