@@ -2,7 +2,7 @@ import { BrowserWindow } from 'electron';
 import { isDev } from '../utils/app.utils';
 import { getDesktopAppIcon } from '../services/icon.service';
 import {
-  getCenteredWindowBounds,
+  getFullDisplayBounds,
   getPreferredDisplay,
   getPreferredResolution,
   moveWindowToDisplay,
@@ -40,18 +40,14 @@ export const createWorshipStageWindow = (options?: {
   }
 
   const preferredDisplay = getPreferredDisplay('worship');
-  const preferredBounds = getCenteredWindowBounds(
-    preferredDisplay,
-    getPreferredResolution('worship'),
-  );
+  const preferredBounds = getFullDisplayBounds(preferredDisplay);
   worshipStageWindow = new BrowserWindow({
     x: preferredBounds.x,
     y: preferredBounds.y,
     width: preferredBounds.width || 1360,
     height: preferredBounds.height || 860,
-    minWidth: 1080,
-    minHeight: 680,
-    fullscreen: false,
+    fullscreen: true,
+    frame: false,
     show: false,
     title: 'Worship Stage',
     icon: getDesktopAppIcon(),
@@ -75,6 +71,7 @@ export const createWorshipStageWindow = (options?: {
       return;
     }
     worshipStageWindow.show();
+    worshipStageWindow.setFullScreen(true);
     worshipStageWindow.focus();
   });
 

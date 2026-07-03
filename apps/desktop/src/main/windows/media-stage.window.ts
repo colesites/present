@@ -2,7 +2,7 @@ import { BrowserWindow } from 'electron';
 import { isDev } from '../utils/app.utils';
 import { getDesktopAppIcon } from '../services/icon.service';
 import {
-  getCenteredWindowBounds,
+  getFullDisplayBounds,
   getPreferredDisplay,
   getPreferredResolution,
   moveWindowToDisplay,
@@ -40,18 +40,14 @@ export const createMediaStageWindow = (options?: {
   }
 
   const preferredDisplay = getPreferredDisplay('media');
-  const preferredBounds = getCenteredWindowBounds(
-    preferredDisplay,
-    getPreferredResolution('media'),
-  );
+  const preferredBounds = getFullDisplayBounds(preferredDisplay);
   mediaStageWindow = new BrowserWindow({
     x: preferredBounds.x,
     y: preferredBounds.y,
     width: preferredBounds.width || 1360,
     height: preferredBounds.height || 860,
-    minWidth: 1080,
-    minHeight: 680,
-    fullscreen: false,
+    fullscreen: true,
+    frame: false,
     show: false,
     title: 'Media Stage',
     icon: getDesktopAppIcon(),
@@ -75,6 +71,7 @@ export const createMediaStageWindow = (options?: {
       return;
     }
     mediaStageWindow.show();
+    mediaStageWindow.setFullScreen(true);
     mediaStageWindow.focus();
   });
 

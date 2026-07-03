@@ -130,29 +130,33 @@ export const getCenteredWindowBounds = (
   };
 };
 
+export const getFullDisplayBounds = (
+  target: Electron.Display,
+): Electron.Rectangle => ({
+  x: target.bounds.x,
+  y: target.bounds.y,
+  width: target.bounds.width,
+  height: target.bounds.height,
+});
+
 /**
  * Move output window to a specific display
  */
 export const moveOutputWindowToDisplay = (
   outputWindow: BrowserWindow,
   target: Electron.Display,
-  resolution?: PresentScreenResolution,
+  _resolution?: PresentScreenResolution,
 ): void => {
   if (!outputWindow || outputWindow.isDestroyed()) {
     return;
   }
 
-  const bounds = resolution
-    ? getCenteredWindowBounds(target, resolution)
-    : target.bounds;
+  const bounds = getFullDisplayBounds(target);
   outputWindow.setBounds(
     { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     false,
   );
-
-  if (outputWindow.isFullScreen()) {
-    outputWindow.setFullScreen(false);
-  }
+  outputWindow.setFullScreen(true);
 };
 
 export const moveWindowToDisplay = moveOutputWindowToDisplay;

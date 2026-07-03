@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { isDev } from '../utils/app.utils';
 import {
-  getCenteredWindowBounds,
+  getFullDisplayBounds,
   getPreferredOutputDisplay,
   getPreferredResolution,
   moveOutputWindowToDisplay,
@@ -46,10 +46,7 @@ export const createOutputWindow = (
   }
 
   const preferredDisplay = getPreferredOutputDisplay();
-  const preferredBounds = getCenteredWindowBounds(
-    preferredDisplay,
-    getPreferredResolution('audience'),
-  );
+  const preferredBounds = getFullDisplayBounds(preferredDisplay);
   const appIcon = getDesktopAppIcon();
 
   outputWindow = new BrowserWindow({
@@ -57,9 +54,10 @@ export const createOutputWindow = (
     y: preferredBounds.y,
     width: preferredBounds.width || 1280,
     height: preferredBounds.height || 720,
-    fullscreen: false,
+    fullscreen: true,
     icon: appIcon,
     autoHideMenuBar: true,
+    frame: false,
     // The output window goes to the audience screen — a white flash here is
     // catastrophic. Force a black background and only show after the first
     // paint is ready.
@@ -77,6 +75,7 @@ export const createOutputWindow = (
 
   outputWindow.once('ready-to-show', () => {
     outputWindow?.show();
+    outputWindow?.setFullScreen(true);
   });
 
   outputWindow.webContents.on('render-process-gone', (_event, details) => {
