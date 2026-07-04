@@ -16,6 +16,7 @@ const propKindValidator = v.union(
   v.literal("video"),
   v.literal("youtube"),
   v.literal("ndi"),
+  v.literal("capture"),
 );
 
 export const listByOrg = query({
@@ -37,6 +38,8 @@ export const create = mutation({
     mediaUrl: v.optional(v.string()),
     youtubeUrl: v.optional(v.string()),
     ndiSourceName: v.optional(v.string()),
+    captureDeviceId: v.optional(v.string()),
+    captureDeviceLabel: v.optional(v.string()),
     text: v.optional(v.string()),
     position: v.optional(positionValidator),
     opacity: v.optional(v.number()),
@@ -63,6 +66,8 @@ export const create = mutation({
       mediaUrl: args.mediaUrl,
       youtubeUrl: args.youtubeUrl,
       ndiSourceName: args.ndiSourceName,
+      captureDeviceId: args.captureDeviceId,
+      captureDeviceLabel: args.captureDeviceLabel,
       text: args.text,
       position: args.position ?? "bottom-right",
       opacity: args.opacity ?? 1,
@@ -85,6 +90,8 @@ export const update = mutation({
     mediaUrl: v.optional(v.string()),
     youtubeUrl: v.optional(v.string()),
     ndiSourceName: v.optional(v.string()),
+    captureDeviceId: v.optional(v.string()),
+    captureDeviceLabel: v.optional(v.string()),
     text: v.optional(v.string()),
     position: v.optional(positionValidator),
     opacity: v.optional(v.number()),
@@ -104,6 +111,8 @@ export const update = mutation({
     if (args.mediaUrl !== undefined) patch.mediaUrl = args.mediaUrl;
     if (args.youtubeUrl !== undefined) patch.youtubeUrl = args.youtubeUrl;
     if (args.ndiSourceName !== undefined) patch.ndiSourceName = args.ndiSourceName;
+    if (args.captureDeviceId !== undefined) patch.captureDeviceId = args.captureDeviceId;
+    if (args.captureDeviceLabel !== undefined) patch.captureDeviceLabel = args.captureDeviceLabel;
     if (args.text !== undefined) patch.text = args.text;
     if (args.position !== undefined) patch.position = args.position;
     if (args.opacity !== undefined) patch.opacity = args.opacity;

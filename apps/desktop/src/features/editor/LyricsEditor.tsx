@@ -245,6 +245,27 @@ export const LyricsEditor = memo(function LyricsEditor({
       activeDefaultTextStyle,
     );
     const nextSelection = nextDraft.slides[0]?.id ?? null;
+    const nextEditorView =
+      nextDraft.content?.editorView === "source" ? "source" : "slides";
+    const nextSavedPayload = buildDraftWithNormalizedContent(
+      {
+        ...nextDraft,
+        content: {
+          ...nextDraft.content,
+          editorView: nextEditorView,
+        },
+      },
+      nextDraft.slides,
+      {
+        ...nextDraft.content,
+        editorView: nextEditorView,
+      },
+      activeDefaultTextStyle,
+      {
+        preserveBody: nextEditorView === "source",
+      },
+    );
+    latestSavedRef.current = JSON.stringify(nextSavedPayload);
     setDraft(nextDraft);
 
     setSelectedSlideId((current) => {
@@ -275,9 +296,7 @@ export const LyricsEditor = memo(function LyricsEditor({
 
     lastGeneralInspectorTabRef.current = "presentation";
     setInspectorTabState("presentation");
-    setEditorView(
-      nextDraft.content?.editorView === "source" ? "source" : "slides",
-    );
+    setEditorView(nextEditorView);
 
     lastItemKeyRef.current = itemKey;
   }, [activeDefaultTextStyle, libraryItem, selectedSlideId]);
@@ -372,7 +391,11 @@ export const LyricsEditor = memo(function LyricsEditor({
         },
       );
 
-      latestSavedRef.current = JSON.stringify(payload);
+      const serializedPayload = JSON.stringify(payload);
+      if (serializedPayload === latestSavedRef.current) {
+        return;
+      }
+      latestSavedRef.current = serializedPayload;
       await onSave(payload);
 
       if (showSuccessToast) {
@@ -389,6 +412,12 @@ export const LyricsEditor = memo(function LyricsEditor({
       // Silent auto-save failure.
     }
   }, 900);
+
+  useEffect(() => {
+    return () => {
+      debouncedAutoSave.cancel();
+    };
+  }, [debouncedAutoSave, libraryItem?._id]);
 
   useEffect(() => {
     if (!draft.title.trim()) {

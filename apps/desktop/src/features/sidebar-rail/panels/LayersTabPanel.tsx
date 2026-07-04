@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
+  Camera,
   ChevronDown,
   ChevronUp,
   Eye,
@@ -40,12 +41,14 @@ interface LayersTabPanelProps {
 type Prop = {
   _id: Id<"props">;
   name: string;
-  kind: "image" | "text" | "video" | "youtube" | "ndi";
+  kind: "image" | "text" | "video" | "youtube" | "ndi" | "capture";
   mediaId?: string;
   imageUrl?: string;
   mediaUrl?: string;
   youtubeUrl?: string;
   ndiSourceName?: string;
+  captureDeviceId?: string;
+  captureDeviceLabel?: string;
   text?: string;
   position:
     | "top-left"
@@ -66,10 +69,17 @@ type NdiSource = {
   urlAddress?: string;
 };
 
+type CaptureDevice = {
+  deviceId: string;
+  label: string;
+};
+
 type PropDraft = Partial<
   Pick<
     Prop,
     | "color"
+    | "captureDeviceId"
+    | "captureDeviceLabel"
     | "fontSize"
     | "mediaId"
     | "name"
@@ -135,8 +145,11 @@ export function LayersTabPanel({
   const [drafts, setDrafts] = useState<Record<string, PropDraft>>({});
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [isMediaPickerOpen, setIsMediaPickerOpen] = useState(false);
+  const [isVideoSourceMenuOpen, setIsVideoSourceMenuOpen] = useState(false);
   const [ndiSources, setNdiSources] = useState<NdiSource[]>([]);
   const [isLoadingNdiSources, setIsLoadingNdiSources] = useState(false);
+  const [captureDevices, setCaptureDevices] = useState<CaptureDevice[]>([]);
+  const [isLoadingCaptureDevices, setIsLoadingCaptureDevices] = useState(false);
   const cachedProps = useMemo(() => readCachedProps(orgId), [orgId]);
 
   useEffect(() => {
@@ -224,6 +237,58 @@ export function LayersTabPanel({
     setIsLoadingNdiSources(false);
   };
 
+  const loadCaptureDevices = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setCaptureDevices([]);
+      return;
+    }
+
+    setIsLoadingCaptureDevices(true);
+    let temporaryStream: MediaStream | null = null;
+
+    try {
+      const permission = await window.electronAPI?.requestCameraAccess?.();
+      if (permission && !permission.granted) {
+        toast.error("Camera/capture access is blocked in system settings.");
+        setCaptureDevices([]);
+        setIsLoadingCaptureDevices(false);
+        return;
+      }
+
+      let devices = await navigator.mediaDevices.enumerateDevices();
+      const needsLabels = devices.some(
+        (device) => device.kind === "videoinput" && !device.label,
+      );
+
+      if (needsLabels && navigator.mediaDevices.getUserMedia) {
+        temporaryStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+        devices = await navigator.mediaDevices.enumerateDevices();
+      }
+
+      const videoInputs = devices
+        .filter((device) => device.kind === "videoinput")
+        .map((device, index) => ({
+          deviceId: device.deviceId,
+          label:
+            device.label?.trim() ||
+            `Video input ${index + 1}`,
+        }));
+
+      setCaptureDevices(videoInputs);
+      temporaryStream?.getTracks().forEach((track) => track.stop());
+      setIsLoadingCaptureDevices(false);
+    } catch (error) {
+      temporaryStream?.getTracks().forEach((track) => track.stop());
+      setCaptureDevices([]);
+      setIsLoadingCaptureDevices(false);
+      toast.error("Could not read HDMI/capture devices.");
+      console.error("Failed to list capture devices", error);
+    }
+  };
+
   if (!orgId) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-[11px] text-muted-foreground">
@@ -268,6 +333,7 @@ export function LayersTabPanel({
   };
 
   const handleCreateYoutube = async () => {
+    setIsVideoSourceMenuOpen(false);
     const toastId = toast.loading("Adding YouTube prop...");
     setPendingAction("create-youtube");
     const args = {
@@ -293,6 +359,7 @@ export function LayersTabPanel({
   };
 
   const handleCreateNdi = async () => {
+    setIsVideoSourceMenuOpen(false);
     const toastId = toast.loading("Adding NDI prop...");
     setPendingAction("create-ndi");
     const args = {
@@ -313,6 +380,34 @@ export function LayersTabPanel({
     }).catch((error: unknown) => {
       toast.error("Could not add NDI prop.", { id: toastId });
       console.error("Failed to create NDI prop", error);
+    }).then(() => {
+      setPendingAction(null);
+    });
+  };
+
+  const handleCreateCapture = async () => {
+    setIsVideoSourceMenuOpen(false);
+    const toastId = toast.loading("Adding HDMI capture prop...");
+    setPendingAction("create-capture");
+    const args = {
+      orgId,
+      name: "HDMI capture",
+      kind: "capture",
+      captureDeviceId: "",
+      captureDeviceLabel: "",
+      position: "center",
+      opacity: 1,
+      sizePercent: 55,
+    } as const;
+    void runAuthenticatedConvexMutation(api.props.create, args, () =>
+      createProp(args),
+    ).then((id) => {
+      setSelectedId(id);
+      toast.success("HDMI capture prop added.", { id: toastId });
+      void loadCaptureDevices();
+    }).catch((error: unknown) => {
+      toast.error("Could not add HDMI capture prop.", { id: toastId });
+      console.error("Failed to create HDMI capture prop", error);
     }).then(() => {
       setPendingAction(null);
     });
@@ -391,7 +486,10 @@ export function LayersTabPanel({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => setIsMediaPickerOpen((value) => !value)}
+            onClick={() => {
+              setIsVideoSourceMenuOpen(false);
+              setIsMediaPickerOpen((value) => !value);
+            }}
             disabled={Boolean(pendingAction)}
             className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
             title="Add media file"
@@ -417,34 +515,57 @@ export function LayersTabPanel({
               <TypeIcon className="h-3.5 w-3.5" strokeWidth={1.8} />
             )}
           </button>
-          <button
-            type="button"
-            onClick={handleCreateYoutube}
-            disabled={Boolean(pendingAction)}
-            className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
-            title="Add YouTube link"
-            aria-label="Add YouTube link"
-          >
-            {pendingAction === "create-youtube" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
-            ) : (
-              <LinkIcon className="h-3.5 w-3.5" strokeWidth={1.8} />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={handleCreateNdi}
-            disabled={Boolean(pendingAction)}
-            className="rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
-            title="Add NDI source"
-            aria-label="Add NDI source"
-          >
-            {pendingAction === "create-ndi" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
-            ) : (
-              <Radio className="h-3.5 w-3.5" strokeWidth={1.8} />
-            )}
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                setIsMediaPickerOpen(false);
+                setIsVideoSourceMenuOpen((value) => !value);
+              }}
+              disabled={Boolean(pendingAction)}
+              className="inline-flex items-center gap-0.5 rounded-sm p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
+              title="Add video source"
+              aria-label="Add video source"
+              aria-expanded={isVideoSourceMenuOpen}
+            >
+              {pendingAction === "create-youtube" ||
+              pendingAction === "create-ndi" ||
+              pendingAction === "create-capture" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
+              ) : (
+                <Video className="h-3.5 w-3.5" strokeWidth={1.8} />
+              )}
+              <ChevronDown className="h-3 w-3" strokeWidth={1.8} />
+            </button>
+            {isVideoSourceMenuOpen ? (
+              <div className="absolute right-0 top-7 z-30 w-48 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => void handleCreateYoutube()}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[11px] hover:bg-muted"
+                >
+                  <LinkIcon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
+                  YouTube link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCreateNdi()}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[11px] hover:bg-muted"
+                >
+                  <Radio className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
+                  NDI network source
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCreateCapture()}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[11px] hover:bg-muted"
+                >
+                  <Camera className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
+                  HDMI / capture card
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </header>
 
@@ -541,6 +662,8 @@ export function LayersTabPanel({
                       <LinkIcon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
                     ) : prop.kind === "ndi" ? (
                       <Radio className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
+                    ) : prop.kind === "capture" ? (
+                      <Camera className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
                     ) : (
                       <span
                         className="px-1 text-center font-semibold leading-none"
@@ -562,6 +685,8 @@ export function LayersTabPanel({
                         ? prop.youtubeUrl || "YouTube source"
                         : prop.kind === "ndi"
                           ? prop.ndiSourceName || "NDI source"
+                          : prop.kind === "capture"
+                            ? prop.captureDeviceLabel || "HDMI capture"
                           : propMedia?.name ?? prop.kind}
                     </span>
                   </span>
@@ -775,6 +900,56 @@ export function LayersTabPanel({
                     : "No NDI sources found on this network yet."}
                 </span>
               )}
+            </label>
+          )}
+
+          {selected.kind === "capture" && (
+            <label className="mb-2 block text-[10px] text-muted-foreground">
+              <span className="mb-1 flex items-center justify-between">
+                <span>HDMI / capture card</span>
+                <button
+                  type="button"
+                  onClick={() => void loadCaptureDevices()}
+                  className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] hover:bg-foreground/5 hover:text-foreground"
+                >
+                  <RefreshCw
+                    className={cn(
+                      "h-3 w-3",
+                      isLoadingCaptureDevices && "animate-spin",
+                    )}
+                    strokeWidth={1.7}
+                  />
+                  Refresh
+                </button>
+              </span>
+              <select
+                value={selectedView.captureDeviceId ?? ""}
+                onChange={(event) => {
+                  const device = captureDevices.find(
+                    (item) => item.deviceId === event.target.value,
+                  );
+                  commitPropUpdate(selected._id, {
+                    captureDeviceId: event.target.value,
+                    captureDeviceLabel: device?.label ?? "",
+                    name: device?.label || "HDMI capture",
+                  });
+                }}
+                className="w-full rounded-sm border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-foreground focus:border-primary/60 focus:outline-hidden"
+              >
+                <option value="">Select HDMI/camera input</option>
+                {captureDevices.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-[9px] text-muted-foreground/80">
+                {isLoadingCaptureDevices
+                  ? "Searching..."
+                  : captureDevices.length === 0
+                    ? "Connect a USB/Thunderbolt HDMI capture card, then refresh."
+                    : "HDMI sources appear as camera/capture devices."}
+              </span>
             </label>
           )}
 

@@ -132,11 +132,17 @@ const removeMappedId = (
 
 const toBackendSlides = (slides: LibrarySlide[]) =>
   slides.map((slide) => ({
+    id: slide.id || undefined,
     text: slide.text ?? "",
+    elements: slide.elements,
     label: slide.label || undefined,
+    labelColor: slide.labelColor || undefined,
     modifier: slide.modifier || undefined,
     sectionRepeat: slide.sectionRepeat || undefined,
     backgroundId: slide.backgroundId || undefined,
+    backgroundColor: slide.backgroundColor || undefined,
+    useBackgroundColor:
+      slide.useBackgroundColor === undefined ? undefined : slide.useBackgroundColor,
   }));
 
 const toSyncableServiceItems = (
@@ -362,6 +368,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
             title: localItem.title,
             body: localItem.body,
             slides: toBackendSlides(localItem.slides),
+            content: localItem.content,
           };
 
           if (mappedRemoteId) {
@@ -611,7 +618,11 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
               : Promise.resolve([]),
         ]);
 
-      replaceOrgLibraryItems(orgId, remoteLibraries as never);
+      replaceOrgLibraryItems(
+        orgId,
+        remoteLibraries as never,
+        idMapRef.current.library?.[orgId] ?? {},
+      );
       replaceOrgServices(orgId, remoteServices as never);
       replaceOrgCategories(orgId, remoteCategories as never);
       replaceOrgMessages(orgId, remoteMessages as never);
@@ -635,6 +646,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
         });
         return;
       }
+      const syncedOrgIds = new Set<string>();
       let hasPendingItems = readSyncQueue().length > 0;
       while (hasPendingItems) {
         const queue = readSyncQueue().sort(
@@ -654,6 +666,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
             break;
           }
           successfulIds.push(item.id);
+          syncedOrgIds.add(item.orgId);
         }
 
         if (successfulIds.length > 0) {
@@ -679,7 +692,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
         // Skip pulling workspaces that still have pending sync items to
         // avoid overwriting local edits (e.g. slides) with stale server
         // data before the local changes have been pushed.
-        if (pendingOrgIds.has(workspaceId)) {
+        if (pendingOrgIds.has(workspaceId) || syncedOrgIds.has(workspaceId)) {
           continue;
         }
         await pullRemoteWorkspace(workspaceId);

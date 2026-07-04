@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     source: "bible" | "library",
   ) => ipcRenderer.invoke('request-assemblyai-token', sessionToken, source),
   requestMicrophoneAccess: () => ipcRenderer.invoke('request-microphone-access'),
+  requestCameraAccess: () => ipcRenderer.invoke('request-camera-access'),
   listAiOperatorTools: () => ipcRenderer.invoke('ai-operator:list-tools'),
   onAiOperatorToggleShortcut: (callback: () => void) => {
     const listener = () => callback();
@@ -123,9 +124,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getNdiStatus: () => ipcRenderer.invoke('ndi:status'),
   listNdiSources: (groupName?: string) =>
     ipcRenderer.invoke('ndi:list-sources', { groupName }),
-  startNdiInput: (sourceName: string, groupName?: string) =>
-    ipcRenderer.invoke('ndi:start-input', { sourceName, groupName }),
-  stopNdiInput: () => ipcRenderer.invoke('ndi:stop-input'),
+  startNdiInput: (sourceName: string, groupName?: string, clientId?: string) =>
+    ipcRenderer.invoke('ndi:start-input', { sourceName, groupName, clientId }),
+  stopNdiInput: (clientId?: string) => ipcRenderer.invoke('ndi:stop-input', { clientId }),
 
   // Auth & System URLs
   beginAuthFlow: () => ipcRenderer.invoke('begin-auth-flow'),

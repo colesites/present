@@ -105,6 +105,15 @@ export function useOutputBroadcast({
   /* Track previous video time to only sync when it actually changes */
   const prevVideoTimeRef = useRef<number | undefined>(undefined);
   const wasFrozenRef = useRef(false);
+  const lastSlidePayloadRef = useRef<{
+    type: "active-slide";
+    slideId: string | null;
+    slideText: string | null | undefined;
+    slideFooter: string | null | undefined;
+    slideElements: SlideElement[] | null | undefined;
+    slideCanvasSize: CanvasSizePreset | null | undefined;
+    slideBackgroundColor: string | null | undefined;
+  } | null>(null);
 
   // Force re-send when a new output window connects
   const [syncTrigger, setSyncTrigger] = useState(0);
@@ -169,8 +178,16 @@ export function useOutputBroadcast({
     window.electronAPI.sendToWorshipStage?.(mediaPayload);
 
     // Send active slide text
-    const activeSlidePayload = {
-      type: "active-slide",
+    const hasIncomingSlideContent =
+      Boolean(slideText?.trim()) ||
+      (Array.isArray(slideElements) && slideElements.length > 0) ||
+      Boolean(slideBackgroundColor);
+    const hasTransientEmptySlide =
+      Boolean(activeSlideId) && !hasIncomingSlideContent;
+    const activeSlidePayload = hasTransientEmptySlide
+      ? lastSlidePayloadRef.current
+      : {
+      type: "active-slide" as const,
       slideId: activeSlideId,
       slideText: slideText,
       slideFooter: slideFooter,
@@ -178,8 +195,11 @@ export function useOutputBroadcast({
       slideCanvasSize,
       slideBackgroundColor,
     };
-    window.electronAPI.sendToOutput(activeSlidePayload);
-    window.electronAPI.sendToWorshipStage?.(activeSlidePayload);
+    if (activeSlidePayload) {
+      lastSlidePayloadRef.current = activeSlidePayload;
+      window.electronAPI.sendToOutput(activeSlidePayload);
+      window.electronAPI.sendToWorshipStage?.(activeSlidePayload);
+    }
 
     // Broadcast the current banner-message overlay (or null to clear it).
     window.electronAPI.sendToOutput({
@@ -199,13 +219,18 @@ export function useOutputBroadcast({
     showText,
     showMedia,
     hideBackground,
-    textPosition,
-    videoSettings,
+    textPosition.xPercent,
+    textPosition.yPercent,
+    textPosition.widthPercent,
+    textPosition.heightPercent,
+    textPosition.textAlign,
+    textPosition.verticalAlign,
+    videoSettings.loop,
+    videoSettings.muted,
     mediaFilterCSS,
     isVideoPlaying,
     videoCurrentTime,
     isFrozen,
-    scriptureStyle,
     scriptureStyle.fontSize,
     scriptureStyle.footerFontSize,
     scriptureStyle.fontFamily,
@@ -214,10 +239,11 @@ export function useOutputBroadcast({
     scriptureStyle.verticalAlign,
     scriptureStyle.footerAlign,
     scriptureStyle.footerPosition,
-    libraryStyle,
     libraryStyle.fontFamily,
     libraryStyle.fontSize,
-    timerLayout,
+    libraryStyle.fontBold,
+    libraryStyle.fontItalic,
+    libraryStyle.fontUnderline,
     timerLayout.xPercent,
     timerLayout.yPercent,
     timerLayout.clockFontPx,

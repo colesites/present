@@ -225,6 +225,7 @@ export type LibraryContent = {
 };
 
 export type LibraryItemDraft = {
+  _id?: Id<"libraries"> | string;
   title: string;
   body: string;
   slides: LibrarySlide[];

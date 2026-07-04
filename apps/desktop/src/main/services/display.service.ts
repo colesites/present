@@ -152,11 +152,13 @@ export const moveOutputWindowToDisplay = (
   }
 
   const bounds = getFullDisplayBounds(target);
-  outputWindow.setBounds(
-    { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
-    false,
-  );
-  outputWindow.setFullScreen(true);
+  if (!outputWindow.isFullScreen()) {
+    outputWindow.setBounds(
+      { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      false,
+    );
+    outputWindow.setFullScreen(true);
+  }
 };
 
 export const moveWindowToDisplay = moveOutputWindowToDisplay;

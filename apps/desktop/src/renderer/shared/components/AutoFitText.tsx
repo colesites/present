@@ -38,6 +38,11 @@ const AutoFitTextComponent = ({
 }: AutoFitTextProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLParagraphElement>(null);
+  const styleFontFamily = style?.fontFamily;
+  const styleFontSize = style?.fontSize;
+  const styleFontWeight = style?.fontWeight;
+  const styleLineHeight = style?.lineHeight;
+  const styleLetterSpacing = style?.letterSpacing;
 
   const [fittedFontSizePx, setFittedFontSizePx] = useState<number | null>(null);
 
@@ -88,8 +93,6 @@ const AutoFitTextComponent = ({
     };
 
     if (bypassFit) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setFittedFontSizePx(null);
       return;
     }
 
@@ -106,7 +109,18 @@ const AutoFitTextComponent = ({
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [text, minScale, fitScale, style, maxFontSize, bypassFit]);
+  }, [
+    text,
+    minScale,
+    fitScale,
+    styleFontFamily,
+    styleFontSize,
+    styleFontWeight,
+    styleLineHeight,
+    styleLetterSpacing,
+    maxFontSize,
+    bypassFit,
+  ]);
 
   return (
     <div
@@ -134,7 +148,7 @@ const AutoFitTextComponent = ({
         style={{
           ...(style ?? {}),
           fontSize:
-            fittedFontSizePx !== null
+            !bypassFit && fittedFontSizePx !== null
               ? `${fittedFontSizePx}px`
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               : (style as any)?.fontSize,

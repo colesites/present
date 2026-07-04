@@ -933,6 +933,16 @@ function PropsOverlayLayer({
             />
           );
         }
+        if (item.kind === "capture") {
+          return (
+            <CapturePropLayer
+              key={item.id}
+              deviceId={item.captureDeviceId}
+              deviceLabel={item.captureDeviceLabel}
+              style={baseStyle}
+            />
+          );
+        }
         if (item.kind === "text" && item.text) {
           return (
             <div
@@ -1001,6 +1011,9 @@ function NdiPropLayer({
   style: React.CSSProperties;
 }) {
   const [frameTick, setFrameTick] = useState(0);
+  const [clientId] = useState(
+    () => `output-${Math.random().toString(36).slice(2)}`,
+  );
   const encodedSourceName = encodeURIComponent(sourceName);
 
   useEffect(() => {
@@ -1009,21 +1022,21 @@ function NdiPropLayer({
     }
 
     let cancelled = false;
-    void window.electronAPI.startNdiInput(sourceName).then((result) => {
+    void window.electronAPI.startNdiInput(sourceName, undefined, clientId).then((result) => {
       if (!cancelled && !result.ok && result.error) {
         console.error("[NDI Prop] failed to start input", result.error);
       }
     });
     const interval = window.setInterval(() => {
       setFrameTick(Date.now());
-    }, 100);
+    }, 125);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
-      void window.electronAPI.stopNdiInput();
+      void window.electronAPI.stopNdiInput(clientId);
     };
-  }, [sourceName]);
+  }, [clientId, sourceName]);
 
   return (
     <img
@@ -1032,6 +1045,143 @@ function NdiPropLayer({
       className="pointer-events-none absolute z-40 h-auto object-contain"
       style={style}
     />
+  );
+}
+
+function CapturePropLayer({
+  deviceId,
+  deviceLabel,
+  style,
+}: {
+  deviceId?: string;
+  deviceLabel?: string;
+  style: React.CSSProperties;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let stream: MediaStream | null = null;
+
+    const stopStream = () => {
+      stream?.getTracks().forEach((track) => track.stop());
+      stream = null;
+    };
+
+    const getCaptureStream = async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Video capture is not available.");
+      }
+      if (!deviceId && !deviceLabel) {
+        throw new Error("Select an HDMI/capture input.");
+      }
+
+      const baseConstraints: MediaTrackConstraints = {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30, max: 30 },
+      };
+
+      if (deviceId) {
+        try {
+          return await navigator.mediaDevices.getUserMedia({
+            video: {
+              ...baseConstraints,
+              deviceId: { exact: deviceId },
+            },
+            audio: false,
+          });
+        } catch (initialError) {
+          if (!deviceLabel || !navigator.mediaDevices.enumerateDevices) {
+            throw initialError;
+          }
+        }
+      }
+
+      if (deviceLabel && navigator.mediaDevices.enumerateDevices) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const matchedDevice = devices.find(
+          (device) =>
+            device.kind === "videoinput" &&
+            device.label.trim() === deviceLabel.trim(),
+        );
+        if (matchedDevice?.deviceId) {
+          return await navigator.mediaDevices.getUserMedia({
+            video: {
+              ...baseConstraints,
+              deviceId: { exact: matchedDevice.deviceId },
+            },
+            audio: false,
+          });
+        }
+      }
+
+      return await navigator.mediaDevices.getUserMedia({
+        video: baseConstraints,
+        audio: false,
+      });
+    };
+
+    void getCaptureStream()
+      .then((nextStream) => {
+        if (cancelled) {
+          nextStream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        stream = nextStream;
+        setError(null);
+        if (videoRef.current) {
+          videoRef.current.srcObject = nextStream;
+          void videoRef.current.play().catch(() => {
+            // Browser autoplay can reject while the window is being moved.
+          });
+        }
+      })
+      .catch((captureError: unknown) => {
+        if (cancelled) return;
+        setError(
+          captureError instanceof Error
+            ? captureError.message
+            : "Could not start capture input.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+      stopStream();
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, [deviceId, deviceLabel]);
+
+  if (error) {
+    return (
+      <div
+        className="pointer-events-none absolute z-40 flex items-center justify-center bg-black text-center text-white"
+        style={style}
+      >
+        <div className="flex max-w-[80%] flex-col items-center gap-2 text-[18px] font-semibold">
+          <Camera className="h-9 w-9 text-white/70" strokeWidth={1.6} />
+          <span>Capture input unavailable</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <video
+      ref={videoRef}
+      className="pointer-events-none absolute z-40 h-auto bg-black object-contain"
+      style={style}
+      aria-label="HDMI capture prop"
+      autoPlay
+      muted
+      playsInline
+    >
+      <track kind="captions" />
+    </video>
   );
 }
 

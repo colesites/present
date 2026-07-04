@@ -866,6 +866,14 @@ export function SettingsScreen({
                     </div>
                   )}
                 </div>
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-100">
+                  HDMI splitters and mirrored hubs usually appear as one display
+                  because macOS only receives one EDID/source. Present can route
+                  separate audience, media, and worship outputs only to displays
+                  the operating system exposes independently. Use separate GPU
+                  outputs, a true multi-display adapter, DisplayLink hardware, or
+                  receiver-based outputs when each TV needs different content.
+                </div>
               </section>
 
               <section className="space-y-3">

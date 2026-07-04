@@ -71,7 +71,9 @@ export const createMediaStageWindow = (options?: {
       return;
     }
     mediaStageWindow.show();
-    mediaStageWindow.setFullScreen(true);
+    if (!mediaStageWindow.isFullScreen()) {
+      mediaStageWindow.setFullScreen(true);
+    }
     mediaStageWindow.focus();
   });
 

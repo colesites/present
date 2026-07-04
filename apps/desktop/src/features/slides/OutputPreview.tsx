@@ -14,6 +14,7 @@ import { cn } from "../../renderer/shared/lib/utils";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../../renderer/shared/components/ScriptureTextLayer";
 import {
+  Camera,
   Image,
   ImageOff,
   MessageSquare,
@@ -1426,23 +1427,212 @@ function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {
           );
         }
 
-        if (item.kind === "ndi") {
+        if (item.kind === "ndi" && item.ndiSourceName) {
           return (
-            <div
+            <PreviewNdiLayer
               key={item.id}
-              className="pointer-events-none absolute z-30 flex items-center justify-center rounded-sm border border-white/20 bg-black/70 px-2 py-1 text-center text-[9px] font-medium text-white"
+              sourceName={item.ndiSourceName}
               style={style}
-            >
-              <span className="line-clamp-2 break-all">
-                {item.ndiSourceName || "NDI source"}
-              </span>
-            </div>
+            />
+          );
+        }
+
+        if (item.kind === "capture") {
+          return (
+            <PreviewCaptureLayer
+              key={item.id}
+              deviceId={item.captureDeviceId}
+              deviceLabel={item.captureDeviceLabel}
+              style={style}
+            />
           );
         }
 
         return null;
       })}
     </>
+  );
+}
+
+function PreviewNdiLayer({
+  sourceName,
+  style,
+}: {
+  sourceName: string;
+  style: CSSProperties;
+}) {
+  const [frameTick, setFrameTick] = useState(0);
+  const [clientId] = useState(
+    () => `preview-${Math.random().toString(36).slice(2)}`,
+  );
+  const encodedSourceName = encodeURIComponent(sourceName);
+
+  useEffect(() => {
+    if (!window.electronAPI?.startNdiInput || !window.electronAPI?.stopNdiInput) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    void window.electronAPI
+      .startNdiInput(sourceName, undefined, clientId)
+      .then((result) => {
+        if (!cancelled && !result.ok && result.error) {
+          console.error("[NDI Preview] failed to start input", result.error);
+        }
+      });
+
+    const interval = window.setInterval(() => {
+      setFrameTick(Date.now());
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      void window.electronAPI.stopNdiInput(clientId);
+    };
+  }, [clientId, sourceName]);
+
+  return (
+    <img
+      src={`ndi-frame://frame/${encodedSourceName}?t=${frameTick}`}
+      alt=""
+      className="pointer-events-none absolute z-30 h-auto object-contain"
+      style={style}
+    />
+  );
+}
+
+function PreviewCaptureLayer({
+  deviceId,
+  deviceLabel,
+  style,
+}: {
+  deviceId?: string;
+  deviceLabel?: string;
+  style: CSSProperties;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let stream: MediaStream | null = null;
+
+    const stopStream = () => {
+      stream?.getTracks().forEach((track) => track.stop());
+      stream = null;
+    };
+
+    const getCaptureStream = async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Video capture is not available.");
+      }
+      if (!deviceId && !deviceLabel) {
+        throw new Error("Select an HDMI/capture input.");
+      }
+
+      const baseConstraints: MediaTrackConstraints = {
+        width: { ideal: 640 },
+        height: { ideal: 360 },
+        frameRate: { ideal: 15, max: 15 },
+      };
+
+      if (deviceId) {
+        try {
+          return await navigator.mediaDevices.getUserMedia({
+            video: {
+              ...baseConstraints,
+              deviceId: { exact: deviceId },
+            },
+            audio: false,
+          });
+        } catch (initialError) {
+          if (!deviceLabel || !navigator.mediaDevices.enumerateDevices) {
+            throw initialError;
+          }
+        }
+      }
+
+      if (deviceLabel && navigator.mediaDevices.enumerateDevices) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const matchedDevice = devices.find(
+          (device) =>
+            device.kind === "videoinput" &&
+            device.label.trim() === deviceLabel.trim(),
+        );
+        if (matchedDevice?.deviceId) {
+          return await navigator.mediaDevices.getUserMedia({
+            video: {
+              ...baseConstraints,
+              deviceId: { exact: matchedDevice.deviceId },
+            },
+            audio: false,
+          });
+        }
+      }
+
+      throw new Error("Selected capture input was not found.");
+    };
+
+    void getCaptureStream()
+      .then((nextStream) => {
+        if (cancelled) {
+          nextStream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        stream = nextStream;
+        setError(null);
+        if (videoRef.current) {
+          videoRef.current.srcObject = nextStream;
+          void videoRef.current.play().catch(() => {
+            // Preview playback can reject while the panel is resizing.
+          });
+        }
+      })
+      .catch((captureError: unknown) => {
+        if (cancelled) return;
+        setError(
+          captureError instanceof Error
+            ? captureError.message
+            : "Could not start capture input.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+      stopStream();
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, [deviceId, deviceLabel]);
+
+  if (error) {
+    return (
+      <div
+        className="pointer-events-none absolute z-30 flex items-center justify-center rounded-sm border border-white/20 bg-black/75 px-2 py-1 text-center text-[9px] font-medium text-white"
+        style={style}
+      >
+        <span className="flex items-center gap-1">
+          <Camera className="h-3 w-3 text-white/70" strokeWidth={1.6} />
+          {deviceLabel || "HDMI capture"}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <video
+      ref={videoRef}
+      className="pointer-events-none absolute z-30 h-auto bg-black object-contain"
+      style={style}
+      aria-label="HDMI capture preview"
+      autoPlay
+      muted
+      playsInline
+    >
+      <track kind="captions" />
+    </video>
   );
 }
 

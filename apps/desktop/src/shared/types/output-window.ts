@@ -92,12 +92,14 @@ export type OutputState = {
 // supports media and text kinds positioned via preset slots.
 export type PropsOverlayItem = {
   id: string;
-  kind: "image" | "text" | "video" | "youtube" | "ndi";
+  kind: "image" | "text" | "video" | "youtube" | "ndi" | "capture";
   mediaId?: string;
   imageUrl?: string;
   mediaUrl?: string;
   youtubeUrl?: string;
   ndiSourceName?: string;
+  captureDeviceId?: string;
+  captureDeviceLabel?: string;
   shownAtMs?: number;
   text?: string;
   position:

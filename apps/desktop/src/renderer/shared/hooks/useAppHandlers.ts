@@ -160,8 +160,9 @@ export function useAppHandlers({
 
   const handleSaveLibraryItem = useCallback(
     async (draft: LibraryItemDraft) => {
-      if (!selectedLibraryId) return;
-      await updateExistingLibraryItem(selectedLibraryId, draft);
+      const targetLibraryId = draft._id ? String(draft._id) : selectedLibraryId;
+      if (!targetLibraryId) return;
+      await updateExistingLibraryItem(targetLibraryId, draft);
     },
     [selectedLibraryId, updateExistingLibraryItem]
   );

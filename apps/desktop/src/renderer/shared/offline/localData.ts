@@ -223,6 +223,28 @@ const nextVersion = (currentVersion?: number) => {
   return (currentVersion as number) + 1;
 };
 
+const getItemTimestamp = (item: {
+  updatedAt?: number;
+  createdAt?: number;
+  _creationTime?: number;
+}) => {
+  return item.updatedAt ?? item.createdAt ?? item._creationTime ?? 0;
+};
+
+const normalizeRemoteLibraryItem = (
+  orgId: string,
+  item: LibraryItem,
+): LibraryItem => ({
+  ...item,
+  orgId,
+  deleted: item.deleted ?? false,
+  version: item.version ?? 1,
+  updatedAt: item.updatedAt ?? item.createdAt ?? item._creationTime ?? now(),
+  _creationTime: item._creationTime ?? item.createdAt ?? now(),
+  type: item.type ?? "song",
+  content: item.content ?? {},
+});
+
 export const readOrgLibraryItems = (orgId: string): LibraryItem[] => {
   const state = readLocalState();
   return state.libraryItems.filter(
@@ -478,24 +500,108 @@ export const replaceOrgServices = (orgId: string, services: Service[]) => {
   writeLocalState(state);
 };
 
-export const replaceOrgLibraryItems = (orgId: string, libraryItems: LibraryItem[]) => {
+export const replaceOrgLibraryItems = (
+  orgId: string,
+  libraryItems: LibraryItem[],
+  localToRemoteIds: Record<string, string> = {},
+) => {
   const state = readLocalState();
+  const orgItems = state.libraryItems.filter(
+    (item) => (item.orgId as string | undefined) === orgId,
+  );
   const withoutOrg = state.libraryItems.filter(
     (item) => (item.orgId as string | undefined) !== orgId,
   );
-  state.libraryItems = [
-    ...withoutOrg,
-    ...libraryItems.map((item) => ({
-      ...item,
-      orgId,
-      deleted: item.deleted ?? false,
-      version: item.version ?? 1,
-      updatedAt: item.updatedAt ?? item.createdAt ?? item._creationTime ?? now(),
-      _creationTime: item._creationTime ?? item.createdAt ?? now(),
-      type: item.type ?? "song",
-      content: item.content ?? {},
-    })),
-  ];
+  const localById = new Map(orgItems.map((item) => [String(item._id), item]));
+  const localIdByRemoteId = new Map(
+    Object.entries(localToRemoteIds).map(([localId, remoteId]) => [
+      remoteId,
+      localId,
+    ]),
+  );
+  const pendingLibraryItems = readSyncQueue().filter(
+    (item) => item.orgId === orgId && item.entityType === "library",
+  );
+  const pendingIds = new Set(
+    pendingLibraryItems.map((item) => String(item.entityId)),
+  );
+  const pendingDeleteIds = new Set(
+    pendingLibraryItems
+      .filter((item) => item.operation === "delete")
+      .map((item) => String(item.entityId)),
+  );
+  const coveredLocalIds = new Set<string>();
+  const seenRemoteIds = new Set<string>();
+  const mergedItems: LibraryItem[] = [];
+
+  for (const remoteItem of libraryItems) {
+    const normalizedRemote = normalizeRemoteLibraryItem(orgId, remoteItem);
+    const remoteId = String(normalizedRemote._id);
+    if (seenRemoteIds.has(remoteId)) {
+      continue;
+    }
+    seenRemoteIds.add(remoteId);
+
+    const mappedLocalId = localIdByRemoteId.get(remoteId);
+    const sameIdLocal = localById.get(remoteId) ?? null;
+    const mappedLocal = mappedLocalId
+      ? localById.get(mappedLocalId) ?? null
+      : null;
+    const localItem =
+      sameIdLocal && mappedLocal
+        ? getItemTimestamp(sameIdLocal) >= getItemTimestamp(mappedLocal)
+          ? sameIdLocal
+          : mappedLocal
+        : sameIdLocal ?? mappedLocal;
+
+    if (sameIdLocal) {
+      coveredLocalIds.add(String(sameIdLocal._id));
+    }
+    if (mappedLocal) {
+      coveredLocalIds.add(String(mappedLocal._id));
+    }
+
+    const localId = localItem ? String(localItem._id) : null;
+    if (
+      localItem &&
+      localId &&
+      (pendingDeleteIds.has(localId) || pendingDeleteIds.has(remoteId))
+    ) {
+      mergedItems.push(localItem);
+      continue;
+    }
+
+    if (
+      localItem &&
+      localId &&
+      (pendingIds.has(localId) || pendingIds.has(remoteId))
+    ) {
+      mergedItems.push(localItem);
+      continue;
+    }
+
+    if (
+      localItem &&
+      getItemTimestamp(localItem) > getItemTimestamp(normalizedRemote)
+    ) {
+      mergedItems.push(localItem);
+      continue;
+    }
+
+    mergedItems.push(normalizedRemote);
+  }
+
+  for (const localItem of orgItems) {
+    const localId = String(localItem._id);
+    if (coveredLocalIds.has(localId)) {
+      continue;
+    }
+    if (pendingIds.has(localId) || pendingDeleteIds.has(localId)) {
+      mergedItems.push(localItem);
+    }
+  }
+
+  state.libraryItems = [...withoutOrg, ...mergedItems];
   writeLocalState(state);
 };
 

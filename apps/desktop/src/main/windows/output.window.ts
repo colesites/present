@@ -75,7 +75,9 @@ export const createOutputWindow = (
 
   outputWindow.once('ready-to-show', () => {
     outputWindow?.show();
-    outputWindow?.setFullScreen(true);
+    if (outputWindow && !outputWindow.isDestroyed() && !outputWindow.isFullScreen()) {
+      outputWindow.setFullScreen(true);
+    }
   });
 
   outputWindow.webContents.on('render-process-gone', (_event, details) => {

@@ -71,7 +71,9 @@ export const createWorshipStageWindow = (options?: {
       return;
     }
     worshipStageWindow.show();
-    worshipStageWindow.setFullScreen(true);
+    if (!worshipStageWindow.isFullScreen()) {
+      worshipStageWindow.setFullScreen(true);
+    }
     worshipStageWindow.focus();
   });
 

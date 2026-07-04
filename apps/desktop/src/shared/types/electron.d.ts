@@ -209,6 +209,7 @@ interface ElectronAPI {
     source: "bible" | "library",
   ) => Promise<unknown | null>;
   requestMicrophoneAccess: () => Promise<MediaAccessResult>;
+  requestCameraAccess: () => Promise<MediaAccessResult>;
   listAiOperatorTools: () => Promise<AiModelToolDefinition[]>;
   onAiOperatorToggleShortcut: (callback: () => void) => () => void;
   reportRendererError: (payload: {
@@ -267,8 +268,9 @@ interface ElectronAPI {
   startNdiInput: (
     sourceName: string,
     groupName?: string,
+    clientId?: string,
   ) => Promise<{ ok: boolean; error?: string; sourceName: string | null }>;
-  stopNdiInput: () => Promise<void>;
+  stopNdiInput: (clientId?: string) => Promise<void>;
 
   // Auth & System URLs
   beginAuthFlow: () => Promise<{ ok: boolean; error?: string }>;

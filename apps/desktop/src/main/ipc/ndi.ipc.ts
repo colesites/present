@@ -28,11 +28,14 @@ export const registerNdiIPC = (): void => {
     return listNdiSources({ groupName: payload?.groupName });
   });
 
-  ipcMain.handle('ndi:start-input', async (_event, payload: { sourceName: string; groupName?: string }) => {
-    return startNdiInput(payload.sourceName, { groupName: payload.groupName });
+  ipcMain.handle('ndi:start-input', async (_event, payload: { sourceName: string; groupName?: string; clientId?: string }) => {
+    return startNdiInput(payload.sourceName, {
+      groupName: payload.groupName,
+      clientId: payload.clientId,
+    });
   });
 
-  ipcMain.handle('ndi:stop-input', async () => {
-    await stopNdiInput();
+  ipcMain.handle('ndi:stop-input', async (_event, payload?: { clientId?: string }) => {
+    await stopNdiInput({ clientId: payload?.clientId });
   });
 };

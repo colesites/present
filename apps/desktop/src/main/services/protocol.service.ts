@@ -215,7 +215,7 @@ export const registerProtocolHandlers = (): void => {
     return new Response(new Uint8Array(frame.data), {
       headers: {
         'Cache-Control': 'no-store',
-        'Content-Type': 'image/png',
+        'Content-Type': frame.contentType,
         'X-NDI-Frame-Updated-At': String(frame.updatedAtMs),
       },
     });

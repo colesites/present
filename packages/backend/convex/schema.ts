@@ -1,6 +1,19 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const librarySlideSchema = v.object({
+  id: v.optional(v.string()),
+  text: v.string(),
+  elements: v.optional(v.any()),
+  label: v.optional(v.string()),
+  labelColor: v.optional(v.string()),
+  modifier: v.optional(v.string()),
+  sectionRepeat: v.optional(v.string()),
+  backgroundId: v.optional(v.string()),
+  backgroundColor: v.optional(v.string()),
+  useBackgroundColor: v.optional(v.boolean()),
+});
+
 export default defineSchema({
   // Organization-specific user profile data
   // userId is the Clerk user ID (string)
@@ -91,15 +104,8 @@ export default defineSchema({
     categoryId: v.optional(v.id("categories")),
     title: v.string(),
     body: v.string(),
-    slides: v.array(
-      v.object({
-        text: v.string(),
-        label: v.optional(v.string()),
-        modifier: v.optional(v.string()), // e.g. "x3", "2x"
-        sectionRepeat: v.optional(v.string()), // e.g. "x2" for the full section
-        backgroundId: v.optional(v.string()),
-      })
-    ),
+    slides: v.array(librarySlideSchema),
+    content: v.optional(v.any()),
     createdAt: v.number(),
     updatedAt: v.optional(v.number()),
   })
@@ -224,6 +230,7 @@ export default defineSchema({
       v.literal("video"),
       v.literal("youtube"),
       v.literal("ndi"),
+      v.literal("capture"),
     ),
     // For local media props: reference the operator's local media library by id.
     // The media file/url is resolved locally by the desktop app and is not
@@ -237,6 +244,10 @@ export default defineSchema({
     youtubeUrl: v.optional(v.string()),
     // For NDI props: the discovered NDI source name selected on this machine.
     ndiSourceName: v.optional(v.string()),
+    // For HDMI/camera capture props: browser media-device identity selected
+    // on this machine. HDMI feeds appear through capture cards.
+    captureDeviceId: v.optional(v.string()),
+    captureDeviceLabel: v.optional(v.string()),
     // For text props: the literal text rendered on screen.
     text: v.optional(v.string()),
     // Position preset on the slide canvas.
@@ -315,15 +326,8 @@ export default defineSchema({
     categoryId: v.optional(v.id("personalCategories")),
     title: v.string(),
     body: v.string(),
-    slides: v.array(
-      v.object({
-        text: v.string(),
-        label: v.optional(v.string()),
-        modifier: v.optional(v.string()),
-        sectionRepeat: v.optional(v.string()),
-        backgroundId: v.optional(v.string()),
-      }),
-    ),
+    slides: v.array(librarySlideSchema),
+    content: v.optional(v.any()),
     createdAt: v.number(),
     updatedAt: v.optional(v.number()),
   })

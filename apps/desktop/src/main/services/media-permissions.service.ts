@@ -71,3 +71,24 @@ export const requestMicrophoneAccess = async (): Promise<MediaAccessResult> => {
     status: systemPreferences.getMediaAccessStatus("microphone"),
   };
 };
+
+export const requestCameraAccess = async (): Promise<MediaAccessResult> => {
+  if (process.platform !== "darwin") {
+    return { granted: true, status: "granted" };
+  }
+
+  const currentStatus = systemPreferences.getMediaAccessStatus("camera");
+  if (currentStatus === "granted") {
+    return { granted: true, status: currentStatus };
+  }
+
+  if (currentStatus !== "not-determined") {
+    return { granted: false, status: currentStatus };
+  }
+
+  const granted = await systemPreferences.askForMediaAccess("camera");
+  return {
+    granted,
+    status: systemPreferences.getMediaAccessStatus("camera"),
+  };
+};

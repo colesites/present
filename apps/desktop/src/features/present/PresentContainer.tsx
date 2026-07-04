@@ -586,23 +586,38 @@ export function PresentContainer({
   // partial text, or the layer collapsing entirely. The freeze is released
   // when the user leaves Edit, selects a different slide, or explicitly
   // clicks "Update Output" (which sets its own snapshot).
-  if (viewMode !== "edit" && editLockSnapshot !== null) {
-    setEditLockSnapshot(null);
-  } else if (
-    viewMode === "edit" &&
-    !editedOutputSnapshot &&
-    activeSlideId &&
-    activeSlideContent &&
-    editLockSnapshot?.slideId !== activeSlideId
-  ) {
-    setEditLockSnapshot({
-      slideId: activeSlideId,
-      text: activeSlideContent.text ?? "",
-      elements: normalizeSlideElements(activeSlideContent.elements),
-      canvasSize: activeSlideContent.canvasSize ?? DEFAULT_CANVAS_SIZE,
-      backgroundColor: activeSlideContent.backgroundColor ?? null,
-    });
-  }
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      if (viewMode !== "edit") {
+        setEditLockSnapshot((current) => (current === null ? current : null));
+        return;
+      }
+
+      if (!activeSlideId || !activeSlideContent || editedOutputSnapshot) {
+        return;
+      }
+
+      setEditLockSnapshot((current) => {
+        if (current?.slideId === activeSlideId) {
+          return current;
+        }
+        return {
+          slideId: activeSlideId,
+          text: activeSlideContent.text ?? "",
+          elements: normalizeSlideElements(activeSlideContent.elements),
+          canvasSize: activeSlideContent.canvasSize ?? DEFAULT_CANVAS_SIZE,
+          backgroundColor: activeSlideContent.backgroundColor ?? null,
+        };
+      });
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    activeSlideContent,
+    activeSlideId,
+    editedOutputSnapshot,
+    viewMode,
+  ]);
 
   const broadcastSnapshot =
     editedOutputSnapshot ??
@@ -1298,6 +1313,9 @@ export function PresentContainer({
               : prop.mediaUrl,
           youtubeUrl: draft.youtubeUrl ?? prop.youtubeUrl,
           ndiSourceName: draft.ndiSourceName ?? prop.ndiSourceName,
+          captureDeviceId: draft.captureDeviceId ?? prop.captureDeviceId,
+          captureDeviceLabel:
+            draft.captureDeviceLabel ?? prop.captureDeviceLabel,
           shownAtMs: activePropShownAtMsById[id],
           text: draft.text ?? prop.text,
           position: draft.position ?? prop.position,

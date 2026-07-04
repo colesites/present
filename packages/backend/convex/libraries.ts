@@ -2,6 +2,19 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { validateWorkspace } from "./authUtils";
 
+const librarySlideInput = v.object({
+  id: v.optional(v.string()),
+  text: v.string(),
+  elements: v.optional(v.any()),
+  label: v.optional(v.string()),
+  labelColor: v.optional(v.string()),
+  modifier: v.optional(v.string()),
+  sectionRepeat: v.optional(v.string()),
+  backgroundId: v.optional(v.string()),
+  backgroundColor: v.optional(v.string()),
+  useBackgroundColor: v.optional(v.boolean()),
+});
+
 export const list = query({
   args: { workspaceId: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -32,15 +45,8 @@ export const create = mutation({
     categoryId: v.optional(v.string()),
     title: v.string(),
     body: v.string(),
-    slides: v.array(
-      v.object({
-        text: v.string(),
-        label: v.optional(v.string()),
-        modifier: v.optional(v.string()),
-        sectionRepeat: v.optional(v.string()),
-        backgroundId: v.optional(v.string()),
-      })
-    ),
+    slides: v.array(librarySlideInput),
+    content: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const workspace = await validateWorkspace(ctx, args.workspaceId);
@@ -53,6 +59,7 @@ export const create = mutation({
         title: args.title,
         body: args.body,
         slides: args.slides,
+        content: args.content,
         createdAt: now,
       });
     } else {
@@ -62,6 +69,7 @@ export const create = mutation({
         title: args.title,
         body: args.body,
         slides: args.slides,
+        content: args.content,
         createdAt: now,
       });
     }
@@ -75,17 +83,8 @@ export const update = mutation({
     categoryId: v.optional(v.string()),
     title: v.optional(v.string()),
     body: v.optional(v.string()),
-    slides: v.optional(
-      v.array(
-        v.object({
-          text: v.string(),
-          label: v.optional(v.string()),
-          modifier: v.optional(v.string()),
-          sectionRepeat: v.optional(v.string()),
-          backgroundId: v.optional(v.string()),
-        })
-      )
-    ),
+    slides: v.optional(v.array(librarySlideInput)),
+    content: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const workspace = await validateWorkspace(ctx, args.workspaceId);
@@ -94,6 +93,7 @@ export const update = mutation({
     if (args.title !== undefined) updates.title = args.title;
     if (args.body !== undefined) updates.body = args.body;
     if (args.slides !== undefined) updates.slides = args.slides;
+    if (args.content !== undefined) updates.content = args.content;
 
     if (workspace.type === "personal") {
       const libraryId = args.libraryId as any;

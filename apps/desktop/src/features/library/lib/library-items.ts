@@ -374,6 +374,7 @@ export function createDraftFromLibraryItem(
 ): LibraryItemDraft {
   const normalized = normalizeLibraryItem(item, textDefaults);
   return {
+    _id: normalized._id,
     title: normalized.title,
     body: normalized.body,
     slides: normalized.slides,

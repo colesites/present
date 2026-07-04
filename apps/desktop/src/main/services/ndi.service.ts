@@ -76,10 +76,17 @@ let ndiInputReceiver: GrandiReceiver | null = null;
 let ndiInputSourceName: string | null = null;
 let ndiInputLoopActive = false;
 let ndiInputLastError: string | null = null;
-let ndiInputLatestPng: Buffer | null = null;
+let ndiInputLatestImage: Buffer | null = null;
+let ndiInputLatestContentType = 'image/jpeg';
 let ndiInputLatestFrameAtMs = 0;
+let ndiInputStopTimer: NodeJS.Timeout | null = null;
+let ndiInputClientIds = new Set<string>();
 
 const INTERVAL_MS = Math.floor(1000 / 30);
+const NDI_INPUT_FRAME_INTERVAL_MS = 125;
+const NDI_INPUT_MAX_WIDTH = 1280;
+const NDI_INPUT_JPEG_QUALITY = 72;
+const NDI_INPUT_STOP_DELAY_MS = 1200;
 const FALLBACK_WIDTH = 1280;
 const FALLBACK_HEIGHT = 720;
 const fallbackFrameBuffer = Buffer.alloc(FALLBACK_WIDTH * FALLBACK_HEIGHT * 4);
@@ -218,6 +225,18 @@ const normalizeGroupName = (value: string): string => {
     return 'Public';
   }
   return normalized.toLowerCase() === 'public' ? 'Public' : normalized;
+};
+
+const clearScheduledNdiInputStop = (): void => {
+  if (ndiInputStopTimer) {
+    clearTimeout(ndiInputStopTimer);
+    ndiInputStopTimer = null;
+  }
+};
+
+const normalizeNdiInputClientId = (value?: string | null): string | null => {
+  const normalized = value?.trim() ?? '';
+  return normalized.length > 0 ? normalized : null;
 };
 
 const createVideoFrame = (
@@ -461,15 +480,24 @@ const captureNdiInputLoop = async (
       if (!frame || frame.xres <= 0 || frame.yres <= 0 || !frame.data) {
         continue;
       }
+      const nowMs = Date.now();
+      if (nowMs - ndiInputLatestFrameAtMs < NDI_INPUT_FRAME_INTERVAL_MS) {
+        continue;
+      }
 
       const bitmap = copyFrameRows(frame);
-      const image = nativeImage.createFromBitmap(bitmap, {
+      const sourceImage = nativeImage.createFromBitmap(bitmap, {
         width: frame.xres,
         height: frame.yres,
         scaleFactor: 1,
       });
-      ndiInputLatestPng = image.toPNG();
-      ndiInputLatestFrameAtMs = Date.now();
+      const outputImage =
+        frame.xres > NDI_INPUT_MAX_WIDTH
+          ? sourceImage.resize({ width: NDI_INPUT_MAX_WIDTH })
+          : sourceImage;
+      ndiInputLatestImage = outputImage.toJPEG(NDI_INPUT_JPEG_QUALITY);
+      ndiInputLatestContentType = 'image/jpeg';
+      ndiInputLatestFrameAtMs = nowMs;
       ndiInputLastError = null;
     } catch (error) {
       ndiInputLastError = error instanceof Error ? error.message : String(error);
@@ -483,19 +511,29 @@ const captureNdiInputLoop = async (
 
 export const startNdiInput = async (
   nextSourceName: string,
-  options: { groupName?: string } = {},
+  options: { groupName?: string; clientId?: string } = {},
 ): Promise<{ ok: boolean; error?: string; sourceName: string | null }> => {
+  clearScheduledNdiInputStop();
   const normalizedSourceName = nextSourceName.trim();
+  const clientId = normalizeNdiInputClientId(options.clientId);
   if (!normalizedSourceName) {
-    await stopNdiInput();
+    if (clientId) {
+      ndiInputClientIds.delete(clientId);
+    }
+    if (ndiInputClientIds.size === 0) {
+      await stopNdiInputNow();
+    }
     return { ok: false, error: 'Select an NDI source first.', sourceName: null };
   }
 
   if (ndiInputReceiver && ndiInputSourceName === normalizedSourceName) {
+    if (clientId) {
+      ndiInputClientIds.add(clientId);
+    }
     return { ok: true, sourceName: ndiInputSourceName };
   }
 
-  await stopNdiInput();
+  await stopNdiInputNow();
 
   const library = await loadNdiLibrary();
   if (!library) {
@@ -529,33 +567,67 @@ export const startNdiInput = async (
     const colorFormatEnum = library.lib['ColorFormat'] as
       | { BGRX_BGRA?: number; UYVY_BGRA?: number; Fastest?: number }
       | undefined;
-    const bandwidthEnum = library.lib['Bandwidth'] as { Highest?: number } | undefined;
+    const bandwidthEnum = library.lib['Bandwidth'] as
+      | { Lowest?: number; Highest?: number }
+      | undefined;
     ndiInputReceiver = await (receiveFn as (opts: Record<string, unknown>) => Promise<GrandiReceiver>)({
       source,
       colorFormat: colorFormatEnum?.BGRX_BGRA ?? colorFormatEnum?.UYVY_BGRA ?? colorFormatEnum?.Fastest,
-      bandwidth: bandwidthEnum?.Highest,
+      bandwidth: bandwidthEnum?.Lowest ?? bandwidthEnum?.Highest,
       name: 'Present NDI Prop Receiver',
     });
     ndiInputSourceName = normalizedSourceName;
-    ndiInputLatestPng = null;
+    ndiInputLatestImage = null;
     ndiInputLatestFrameAtMs = 0;
     ndiInputLastError = null;
     ndiInputLoopActive = true;
+    if (clientId) {
+      ndiInputClientIds.add(clientId);
+    }
     void captureNdiInputLoop(ndiInputReceiver, normalizedSourceName);
     return { ok: true, sourceName: normalizedSourceName };
   } catch (error) {
     ndiInputLastError = error instanceof Error ? error.message : String(error);
-    await stopNdiInput();
+    await stopNdiInputNow();
     return { ok: false, error: ndiInputLastError, sourceName: null };
   }
 };
 
-export const stopNdiInput = async (): Promise<void> => {
+export const stopNdiInput = async (
+  options: { clientId?: string } = {},
+): Promise<void> => {
+  clearScheduledNdiInputStop();
+  const clientId = normalizeNdiInputClientId(options.clientId);
+  if (clientId) {
+    ndiInputClientIds.delete(clientId);
+    if (ndiInputClientIds.size > 0) {
+      return;
+    }
+  } else {
+    ndiInputClientIds.clear();
+  }
+
+  if (!ndiInputReceiver) {
+    ndiInputLoopActive = false;
+    ndiInputSourceName = null;
+    ndiInputLatestImage = null;
+    ndiInputLatestFrameAtMs = 0;
+    return;
+  }
+
+  ndiInputStopTimer = setTimeout(() => {
+    void stopNdiInputNow();
+  }, NDI_INPUT_STOP_DELAY_MS);
+};
+
+const stopNdiInputNow = async (): Promise<void> => {
+  clearScheduledNdiInputStop();
+  ndiInputClientIds.clear();
   ndiInputLoopActive = false;
   const receiver = ndiInputReceiver;
   ndiInputReceiver = null;
   ndiInputSourceName = null;
-  ndiInputLatestPng = null;
+  ndiInputLatestImage = null;
   ndiInputLatestFrameAtMs = 0;
   if (receiver) {
     try {
@@ -568,16 +640,23 @@ export const stopNdiInput = async (): Promise<void> => {
 
 export const getLatestNdiInputFrame = (
   sourceName?: string | null,
-): { data: Buffer | null; updatedAtMs: number; error: string | null } => {
+): {
+  data: Buffer | null;
+  contentType: string;
+  updatedAtMs: number;
+  error: string | null;
+} => {
   if (sourceName && ndiInputSourceName && sourceName !== ndiInputSourceName) {
     return {
       data: null,
+      contentType: ndiInputLatestContentType,
       updatedAtMs: 0,
       error: `NDI source "${sourceName}" is not active.`,
     };
   }
   return {
-    data: ndiInputLatestPng,
+    data: ndiInputLatestImage,
+    contentType: ndiInputLatestContentType,
     updatedAtMs: ndiInputLatestFrameAtMs,
     error: ndiInputLastError,
   };
