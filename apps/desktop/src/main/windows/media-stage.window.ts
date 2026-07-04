@@ -10,6 +10,7 @@ import {
   setPreferredResolution,
   setPreferredDisplayId,
 } from '../services/display.service';
+import { getMainWindow } from './main.window';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -79,6 +80,10 @@ export const createMediaStageWindow = (options?: {
 
   mediaStageWindow.on('closed', () => {
     mediaStageWindow = null;
+    const mainWindow = getMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('media-stage-window-closed');
+    }
   });
 
   return true;

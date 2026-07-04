@@ -595,6 +595,8 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   const showsPanelRef = useRef<LibrariesPanelRef>(null);
   const mediaPanelRef = useRef<MediaPanelRef>(null);
   const scripturePanelRef = useRef<ScripturePanelRef>(null);
+  const [isMediaStageLive, setIsMediaStageLive] = useState(false);
+  const [isWorshipStageLive, setIsWorshipStageLive] = useState(false);
 
   const refreshDisplays = useCallback(async () => {
     if (!window.electronAPI?.getDisplays) {
@@ -710,28 +712,74 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       return;
     }
     try {
-      await window.electronAPI.openMediaStageWindow(
+      const didOpen = await window.electronAPI.openMediaStageWindow(
         settingsScreenDisplayIds.media,
         settingsScreenResolutions.media,
       );
+      if (didOpen) {
+        setIsMediaStageLive(true);
+      }
     } catch (error) {
       console.error("Failed to open media stage window:", error);
     }
   }, [settingsScreenDisplayIds.media, settingsScreenResolutions.media]);
+
+  const closeMediaStageWindow = useCallback(async () => {
+    if (!window.electronAPI?.closeMediaStageWindow) {
+      return;
+    }
+    try {
+      await window.electronAPI.closeMediaStageWindow();
+    } catch (error) {
+      console.error("Failed to close media stage window:", error);
+    }
+    setIsMediaStageLive(false);
+  }, []);
 
   const openWorshipStageWindow = useCallback(async () => {
     if (!window.electronAPI?.openWorshipStageWindow) {
       return;
     }
     try {
-      await window.electronAPI.openWorshipStageWindow(
+      const didOpen = await window.electronAPI.openWorshipStageWindow(
         settingsScreenDisplayIds.worship,
         settingsScreenResolutions.worship,
       );
+      if (didOpen) {
+        setIsWorshipStageLive(true);
+      }
     } catch (error) {
       console.error("Failed to open worship stage window:", error);
     }
   }, [settingsScreenDisplayIds.worship, settingsScreenResolutions.worship]);
+
+  const closeWorshipStageWindow = useCallback(async () => {
+    if (!window.electronAPI?.closeWorshipStageWindow) {
+      return;
+    }
+    try {
+      await window.electronAPI.closeWorshipStageWindow();
+    } catch (error) {
+      console.error("Failed to close worship stage window:", error);
+    }
+    setIsWorshipStageLive(false);
+  }, []);
+
+  useEffect(() => {
+    const mediaCleanup = window.electronAPI?.onMediaStageWindowClosed?.(() => {
+      setIsMediaStageLive(false);
+    });
+    const worshipCleanup = window.electronAPI?.onWorshipStageWindowClosed?.(
+      () => {
+        setIsWorshipStageLive(false);
+      },
+    );
+
+    return () => {
+      mediaCleanup?.();
+      worshipCleanup?.();
+    };
+  }, []);
 
   const openLooksWindow = useCallback(async () => {
     if (!window.electronAPI?.openLooksWindow) {
@@ -857,9 +905,17 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
         onOpenStage={() => {
           void openMediaStageWindow();
         }}
+        onCloseStage={() => {
+          void closeMediaStageWindow();
+        }}
+        isMediaStageLive={isMediaStageLive}
         onOpenWorshipStage={() => {
           void openWorshipStageWindow();
         }}
+        onCloseWorshipStage={() => {
+          void closeWorshipStageWindow();
+        }}
+        isWorshipStageLive={isWorshipStageLive}
         onOpenLooks={() => {
           void openLooksWindow();
         }}

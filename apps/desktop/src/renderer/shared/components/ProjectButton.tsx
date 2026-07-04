@@ -21,20 +21,22 @@ export function ProjectButton({ className }: ProjectButtonProps) {
   // Setup the listener for when the window is closed externally (e.g. by hitting 'X')
   useEffect(() => {
     if (window.electronAPI) {
-      window.electronAPI.onOutputWindowClosed(() => {
+      return window.electronAPI.onOutputWindowClosed(() => {
         setIsLive(false);
       });
     }
+    return undefined;
   }, []);
 
   // Check for secondary screen availability on mount
   useEffect(() => {
     async function checkScreens() {
-      if (!window.electronAPI) {
+      const api = window.electronAPI;
+      if (!api) {
         return;
       }
       try {
-        await window.electronAPI.getDisplays();
+        await api.getDisplays();
       } catch (err) {
         console.error("Failed to check screens:", err);
       }
@@ -44,18 +46,20 @@ export function ProjectButton({ className }: ProjectButtonProps) {
   }, []);
 
   const openOnSecondaryScreen = useCallback(async () => {
+    const api = window.electronAPI;
+    if (!api) {
+      alert("Failed to open output window: Electron API not available");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      if (!window.electronAPI) {
-        throw new Error("Electron API not available");
-      }
-
       const preferredDisplayId =
-        window.electronAPI.getPreferredOutputDisplay
-          ? await window.electronAPI.getPreferredOutputDisplay()
+        api.getPreferredOutputDisplay
+          ? await api.getPreferredOutputDisplay()
           : null;
-      const success = await window.electronAPI.openOutputWindow(
+      const success = await api.openOutputWindow(
         preferredDisplayId
       );
       
@@ -64,15 +68,14 @@ export function ProjectButton({ className }: ProjectButtonProps) {
       }
       
       // Recheck screens just in case
-      await window.electronAPI.getDisplays();
+      await api.getDisplays();
       
     } catch (error) {
       const err = error as Error;
       console.error("Failed to open output window:", err);
       alert(`Failed to open output window: ${err.message}`);
-    } finally {
-      setIsLoading(false);
     }
+    setIsLoading(false);
   }, []);
 
   const closeOutput = useCallback(async () => {

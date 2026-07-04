@@ -29,7 +29,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPreferredResolution: (role: 'audience' | 'media' | 'worship', resolution: string | null) =>
     ipcRenderer.invoke('set-preferred-resolution', role, resolution),
   onOutputWindowClosed: (callback: () => void) => {
-    ipcRenderer.on('output-window-closed', () => callback());
+    const listener = () => callback();
+    ipcRenderer.on('output-window-closed', listener);
+    return () => ipcRenderer.removeListener('output-window-closed', listener);
+  },
+  onMediaStageWindowClosed: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('media-stage-window-closed', listener);
+    return () =>
+      ipcRenderer.removeListener('media-stage-window-closed', listener);
+  },
+  onWorshipStageWindowClosed: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('worship-stage-window-closed', listener);
+    return () =>
+      ipcRenderer.removeListener('worship-stage-window-closed', listener);
   },
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   selectLibraryExportDestination: (suggestedName?: string) =>

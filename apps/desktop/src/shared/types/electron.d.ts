@@ -165,7 +165,9 @@ interface ElectronAPI {
     role: "audience" | "media" | "worship",
     resolution: string | null,
   ) => Promise<boolean>;
-  onOutputWindowClosed: (callback: () => void) => void;
+  onOutputWindowClosed: (callback: () => void) => () => void;
+  onMediaStageWindowClosed: (callback: () => void) => () => void;
+  onWorshipStageWindowClosed: (callback: () => void) => () => void;
   selectFolder: () => Promise<{ id: string; name: string; path: string } | null>;
   selectLibraryExportDestination: (suggestedName?: string) => Promise<string | null>;
   readFolder: (folderPath: string) => Promise<{ name: string; lastModified: number }[]>;

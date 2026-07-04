@@ -23,6 +23,7 @@ import {
   LayoutList,
   Palette,
   Mic2,
+  X,
 } from "lucide-react";
 import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
 import { AuthControls } from "../../renderer/shared/components/AuthControls";
@@ -56,7 +57,11 @@ interface AppHeaderProps {
   onOpenBible: () => void;
   onOpenBrowser: () => void;
   onOpenStage: () => void;
+  onCloseStage: () => void;
+  isMediaStageLive: boolean;
   onOpenWorshipStage: () => void;
+  onCloseWorshipStage: () => void;
+  isWorshipStageLive: boolean;
   onOpenLooks: () => void;
   /** Navigation callbacks from global search */
   onSelectService?: (serviceId: string) => void;
@@ -96,7 +101,11 @@ export const AppHeader = memo(function AppHeader({
   onOpenBible,
   onOpenBrowser,
   onOpenStage,
+  onCloseStage,
+  isMediaStageLive,
   onOpenWorshipStage,
+  onCloseWorshipStage,
+  isWorshipStageLive,
   onOpenLooks,
 }: AppHeaderProps) {
   // Read search data from the global store (populated by PresentContainer)
@@ -367,20 +376,23 @@ export const AppHeader = memo(function AppHeader({
     label: string;
     Icon: typeof Monitor;
     isActive?: boolean;
+    isLive?: boolean;
     onClick: () => void;
   }[] = [
     {
       key: "stage",
-      label: "Media Stage",
-      Icon: Layers3,
+      label: isMediaStageLive ? "Close Media Stage" : "Media Stage",
+      Icon: isMediaStageLive ? X : Layers3,
       isActive: viewMode === "stage",
-      onClick: onOpenStage,
+      isLive: isMediaStageLive,
+      onClick: isMediaStageLive ? onCloseStage : onOpenStage,
     },
     {
       key: "worship-stage",
-      label: "Worship Stage",
-      Icon: Mic2,
-      onClick: onOpenWorshipStage,
+      label: isWorshipStageLive ? "Close Worship Stage" : "Worship Stage",
+      Icon: isWorshipStageLive ? X : Mic2,
+      isLive: isWorshipStageLive,
+      onClick: isWorshipStageLive ? onCloseWorshipStage : onOpenWorshipStage,
     },
     { key: "looks", label: "Looks", Icon: Check, onClick: onOpenLooks },
     {
@@ -451,7 +463,7 @@ export const AppHeader = memo(function AppHeader({
 
         <div className="flex items-center gap-1.5">
           <div className="flex items-center gap-0.5">
-            {toolItems.map(({ key, label, Icon, isActive, onClick }) => (
+            {toolItems.map(({ key, label, Icon, isActive, isLive, onClick }) => (
               <button
                 key={key}
                 type="button"
@@ -461,7 +473,9 @@ export const AppHeader = memo(function AppHeader({
                 aria-label={label}
                 className={cn(
                   "inline-flex h-8 w-8 items-center justify-center rounded-lg transition",
-                  isActive
+                  isLive
+                    ? "bg-destructive/15 text-destructive ring-1 ring-destructive/35 hover:bg-destructive/25"
+                    : isActive
                     ? "bg-primary/15 text-primary ring-1 ring-primary/40"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}

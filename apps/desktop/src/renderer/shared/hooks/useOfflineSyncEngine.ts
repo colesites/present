@@ -623,7 +623,11 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
         remoteLibraries as never,
         idMapRef.current.library?.[orgId] ?? {},
       );
-      replaceOrgServices(orgId, remoteServices as never);
+      replaceOrgServices(
+        orgId,
+        remoteServices as never,
+        idMapRef.current.service?.[orgId] ?? {},
+      );
       replaceOrgCategories(orgId, remoteCategories as never);
       replaceOrgMessages(orgId, remoteMessages as never);
     },

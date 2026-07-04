@@ -245,6 +245,19 @@ const normalizeRemoteLibraryItem = (
   content: item.content ?? {},
 });
 
+const normalizeRemoteService = (orgId: string, service: Service): Service => ({
+  ...service,
+  orgId: orgId as Service["orgId"],
+  groups: Array.isArray(service.groups) ? service.groups : [],
+  layout: Array.isArray(service.layout) ? service.layout : [],
+  items: Array.isArray(service.items) ? service.items : [],
+  deleted: service.deleted ?? false,
+  version: service.version ?? 1,
+  updatedAt: service.updatedAt ?? service.createdAt ?? service._creationTime ?? now(),
+  createdAt: service.createdAt ?? service._creationTime ?? now(),
+  _creationTime: service._creationTime ?? service.createdAt ?? now(),
+});
+
 export const readOrgLibraryItems = (orgId: string): LibraryItem[] => {
   const state = readLocalState();
   return state.libraryItems.filter(
@@ -464,39 +477,116 @@ export const removeMessageLocal = (orgId: string, messageId: string) => {
   writeLocalState(state);
 };
 
-export const replaceOrgServices = (orgId: string, services: Service[]) => {
+export const replaceOrgServices = (
+  orgId: string,
+  services: Service[],
+  localToRemoteIds: Record<string, string> = {},
+) => {
   const state = readLocalState();
-  const deletedOrgServices = state.services.filter(
-    (service) =>
-      (service.orgId as string | undefined) === orgId &&
-      (service.deleted ?? false),
-  );
-  const deletedIds = new Set(
-    deletedOrgServices.map((service) => String(service._id)),
+  const orgServices = state.services.filter(
+    (service) => (service.orgId as string | undefined) === orgId,
   );
   const withoutOrg = state.services.filter(
     (service) => (service.orgId as string | undefined) !== orgId,
   );
-  const seenIds = new Set<string>();
-  const incomingServices = services.filter((service) => {
-    const id = String(service._id);
-    if (deletedIds.has(id) || seenIds.has(id)) {
-      return false;
+  const localById = new Map(
+    orgServices.map((service) => [String(service._id), service]),
+  );
+  const localIdByRemoteId = new Map(
+    Object.entries(localToRemoteIds).map(([localId, remoteId]) => [
+      remoteId,
+      localId,
+    ]),
+  );
+  const pendingServices = readSyncQueue().filter(
+    (item) => item.orgId === orgId && item.entityType === "service",
+  );
+  const pendingIds = new Set(
+    pendingServices.map((item) => String(item.entityId)),
+  );
+  const pendingDeleteIds = new Set(
+    pendingServices
+      .filter((item) => item.operation === "delete")
+      .map((item) => String(item.entityId)),
+  );
+  const coveredLocalIds = new Set<string>();
+  const seenRemoteIds = new Set<string>();
+  const mergedServices: Service[] = [];
+
+  for (const remoteService of services) {
+    const normalizedRemote = normalizeRemoteService(orgId, remoteService);
+    const remoteId = String(normalizedRemote._id);
+    if (seenRemoteIds.has(remoteId)) {
+      continue;
     }
-    seenIds.add(id);
-    return true;
-  });
-  state.services = [
-    ...withoutOrg,
-    ...deletedOrgServices,
-    ...incomingServices.map((service) => ({
-      ...service,
-      orgId: orgId as Service["orgId"],
-      deleted: service.deleted ?? false,
-      version: service.version ?? 1,
-      updatedAt: service.updatedAt ?? now(),
-    })),
-  ];
+    seenRemoteIds.add(remoteId);
+
+    const mappedLocalId = localIdByRemoteId.get(remoteId);
+    const sameIdLocal = localById.get(remoteId) ?? null;
+    const mappedLocal = mappedLocalId
+      ? localById.get(mappedLocalId) ?? null
+      : null;
+    const localService =
+      sameIdLocal && mappedLocal
+        ? getItemTimestamp(sameIdLocal) >= getItemTimestamp(mappedLocal)
+          ? sameIdLocal
+          : mappedLocal
+        : sameIdLocal ?? mappedLocal;
+    const remoteForLocal = mappedLocal
+      ? ({
+          ...normalizedRemote,
+          _id: mappedLocal._id,
+        } as Service)
+      : normalizedRemote;
+
+    if (sameIdLocal) {
+      coveredLocalIds.add(String(sameIdLocal._id));
+    }
+    if (mappedLocal) {
+      coveredLocalIds.add(String(mappedLocal._id));
+    }
+
+    const localId = localService ? String(localService._id) : null;
+    if (
+      localService &&
+      localId &&
+      (pendingDeleteIds.has(localId) || pendingDeleteIds.has(remoteId))
+    ) {
+      mergedServices.push(localService);
+      continue;
+    }
+
+    if (
+      localService &&
+      localId &&
+      (pendingIds.has(localId) || pendingIds.has(remoteId))
+    ) {
+      mergedServices.push(localService);
+      continue;
+    }
+
+    if (
+      localService &&
+      getItemTimestamp(localService) > getItemTimestamp(normalizedRemote)
+    ) {
+      mergedServices.push(localService);
+      continue;
+    }
+
+    mergedServices.push(remoteForLocal);
+  }
+
+  for (const localService of orgServices) {
+    const localId = String(localService._id);
+    if (coveredLocalIds.has(localId)) {
+      continue;
+    }
+    if (pendingIds.has(localId) || pendingDeleteIds.has(localId)) {
+      mergedServices.push(localService);
+    }
+  }
+
+  state.services = [...withoutOrg, ...mergedServices];
   writeLocalState(state);
 };
 
