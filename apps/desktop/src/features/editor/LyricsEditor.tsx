@@ -215,6 +215,7 @@ export const LyricsEditor = memo(function LyricsEditor({
   const latestSavedRef = useRef<string | null>(null);
   const lastItemKeyRef = useRef<string | null>(null);
   const lastGeneralInspectorTabRef = useRef<GeneralInspectorTab>("presentation");
+  const autosaveRetryTimerRef = useRef<number | null>(null);
 
   const setInspectorTab = useCallback((tab: InspectorTab) => {
     if (isGeneralInspectorTab(tab)) {
@@ -395,8 +396,8 @@ export const LyricsEditor = memo(function LyricsEditor({
       if (serializedPayload === latestSavedRef.current) {
         return;
       }
-      latestSavedRef.current = serializedPayload;
       await onSave(payload);
+      latestSavedRef.current = serializedPayload;
 
       if (showSuccessToast) {
         toast.success("Library updated");
@@ -408,14 +409,31 @@ export const LyricsEditor = memo(function LyricsEditor({
   const debouncedAutoSave = useDebouncedCallback(async (nextDraft: LibraryItemDraft) => {
     try {
       await persistDraft(nextDraft);
-    } catch {
-      // Silent auto-save failure.
+      if (autosaveRetryTimerRef.current !== null) {
+        window.clearTimeout(autosaveRetryTimerRef.current);
+        autosaveRetryTimerRef.current = null;
+      }
+    } catch (error) {
+      console.warn("[LyricsEditor] auto-save failed; retrying once.", error);
+      if (autosaveRetryTimerRef.current !== null) {
+        window.clearTimeout(autosaveRetryTimerRef.current);
+      }
+      autosaveRetryTimerRef.current = window.setTimeout(() => {
+        autosaveRetryTimerRef.current = null;
+        void persistDraft(nextDraft).catch((retryError) => {
+          console.warn("[LyricsEditor] auto-save retry failed.", retryError);
+        });
+      }, 2_500);
     }
   }, 900);
 
   useEffect(() => {
     return () => {
       debouncedAutoSave.cancel();
+      if (autosaveRetryTimerRef.current !== null) {
+        window.clearTimeout(autosaveRetryTimerRef.current);
+        autosaveRetryTimerRef.current = null;
+      }
     };
   }, [debouncedAutoSave, libraryItem?._id]);
 

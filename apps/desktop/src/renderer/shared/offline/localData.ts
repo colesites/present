@@ -24,10 +24,14 @@ interface PersistedLocalState {
 }
 
 const LOCAL_DATA_KEY = "present-local-data-v1";
+const LOCAL_DATA_META_KEY = "present-local-data-meta-v1";
+const LOCAL_DATA_DB_NAME = "present-offline-data";
+const LOCAL_DATA_STORE_NAME = "keyval";
 const SYNC_QUEUE_KEY = "present-sync-queue-v1";
 const MAX_SYNC_QUEUE_ITEMS = 150;
 export const LOCAL_DATA_CHANGED_EVENT = "present-local-data-changed";
 let inMemoryLocalState: PersistedLocalState | null = null;
+let hasScheduledIndexedDbHydration = false;
 
 const now = () => Date.now();
 
@@ -51,6 +55,123 @@ const readJson = <T,>(key: string, fallback: T): T => {
   } catch {
     return fallback;
   }
+};
+
+const normalizePersistedLocalState = (
+  stored: Partial<PersistedLocalState>,
+): PersistedLocalState => ({
+  categories: Array.isArray(stored.categories) ? stored.categories : [],
+  libraryItems: Array.isArray(stored.libraryItems) ? stored.libraryItems : [],
+  messages: Array.isArray(stored.messages) ? stored.messages : [],
+  services: Array.isArray(stored.services) ? stored.services : [],
+});
+
+const readLocalDataMetaUpdatedAt = () => {
+  const meta = readJson<{ updatedAt?: number }>(LOCAL_DATA_META_KEY, {});
+  return Number.isFinite(meta.updatedAt) ? Number(meta.updatedAt) : 0;
+};
+
+const writeLocalDataMeta = (updatedAt: number) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      LOCAL_DATA_META_KEY,
+      JSON.stringify({ updatedAt }),
+    );
+  } catch {
+    // Metadata is only a fast comparison hint; IndexedDB remains authoritative.
+  }
+};
+
+const openLocalDataDb = () =>
+  new Promise<IDBDatabase>((resolve, reject) => {
+    if (typeof window === "undefined" || !("indexedDB" in window)) {
+      reject(new Error("IndexedDB is not available"));
+      return;
+    }
+
+    const request = window.indexedDB.open(LOCAL_DATA_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(LOCAL_DATA_STORE_NAME);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () =>
+      reject(request.error ?? new Error("Failed to open offline data store"));
+  });
+
+const readIndexedDbLocalState = async (): Promise<{
+  value: PersistedLocalState;
+  updatedAt: number;
+} | null> => {
+  const db = await openLocalDataDb();
+  return new Promise<{
+    value: PersistedLocalState;
+    updatedAt: number;
+  } | null>((resolve, reject) => {
+    const tx = db.transaction(LOCAL_DATA_STORE_NAME, "readonly");
+    const store = tx.objectStore(LOCAL_DATA_STORE_NAME);
+    const request = store.get(LOCAL_DATA_KEY);
+    request.onsuccess = () => {
+      const record = request.result as
+        | { value?: Partial<PersistedLocalState>; updatedAt?: number }
+        | undefined;
+      if (!record?.value) {
+        resolve(null);
+        return;
+      }
+      resolve({
+        value: normalizePersistedLocalState(record.value),
+        updatedAt: Number.isFinite(record.updatedAt)
+          ? Number(record.updatedAt)
+          : 0,
+      });
+    };
+    request.onerror = () =>
+      reject(request.error ?? new Error("Failed to read offline data store"));
+  }).finally(() => db.close());
+};
+
+const writeIndexedDbLocalState = async (
+  state: PersistedLocalState,
+  updatedAt: number,
+) => {
+  const db = await openLocalDataDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(LOCAL_DATA_STORE_NAME, "readwrite");
+    const store = tx.objectStore(LOCAL_DATA_STORE_NAME);
+    store.put({ value: state, updatedAt }, LOCAL_DATA_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () =>
+      reject(tx.error ?? new Error("Failed to write offline data store"));
+    tx.onabort = () =>
+      reject(tx.error ?? new Error("Offline data store write aborted"));
+  }).finally(() => db.close());
+};
+
+const scheduleIndexedDbHydration = () => {
+  if (hasScheduledIndexedDbHydration || typeof window === "undefined") {
+    return;
+  }
+  hasScheduledIndexedDbHydration = true;
+
+  window.setTimeout(() => {
+    void readIndexedDbLocalState()
+      .then((record) => {
+        if (!record || record.updatedAt <= readLocalDataMetaUpdatedAt()) {
+          return;
+        }
+        inMemoryLocalState = record.value;
+        if (writeJson(LOCAL_DATA_KEY, record.value)) {
+          writeLocalDataMeta(record.updatedAt);
+        }
+        window.dispatchEvent(new Event(LOCAL_DATA_CHANGED_EVENT));
+      })
+      .catch((error) => {
+        console.warn("[OfflineData] failed to hydrate IndexedDB backup", error);
+      });
+  }, 0);
 };
 
 const isQuotaExceededError = (error: unknown): boolean => {
@@ -146,9 +267,9 @@ const compactSyncPayload = (
   return payload;
 };
 
-const writeJson = (key: string, value: unknown) => {
+const writeJson = (key: string, value: unknown): boolean => {
   if (typeof window === "undefined") {
-    return;
+    return false;
   }
 
   const serialize = (candidate: unknown) => JSON.stringify(candidate);
@@ -156,15 +277,16 @@ const writeJson = (key: string, value: unknown) => {
 
   try {
     persist(value);
+    return true;
   } catch (error) {
     if (!isQuotaExceededError(error)) {
       console.error(`Failed to persist local data for key "${key}"`, error);
-      return;
+      return false;
     }
 
     if (key !== SYNC_QUEUE_KEY || !Array.isArray(value)) {
       console.warn(`Storage quota exceeded while writing "${key}". Skipping persist.`);
-      return;
+      return false;
     }
 
     // For sync queue, keep the newest small subset so writes never crash the UI.
@@ -177,12 +299,15 @@ const writeJson = (key: string, value: unknown) => {
           payload: compactSyncPayload(item.entityType, item.operation, item.payload),
         }));
       persist(compactQueue);
+      return true;
     } catch (retryError) {
       console.warn("Storage quota still exceeded after compacting sync queue.", retryError);
       try {
         persist([]);
+        return true;
       } catch {
         // Ignore final failure to avoid runtime crashes.
+        return false;
       }
     }
   }
@@ -193,24 +318,26 @@ const readLocalState = (): PersistedLocalState => {
     return inMemoryLocalState;
   }
 
+  scheduleIndexedDbHydration();
   const stored = readJson<Partial<PersistedLocalState>>(LOCAL_DATA_KEY, {
     categories: [],
     libraryItems: [],
     messages: [],
     services: [],
   });
-  inMemoryLocalState = {
-    categories: Array.isArray(stored.categories) ? stored.categories : [],
-    libraryItems: Array.isArray(stored.libraryItems) ? stored.libraryItems : [],
-    messages: Array.isArray(stored.messages) ? stored.messages : [],
-    services: Array.isArray(stored.services) ? stored.services : [],
-  };
+  inMemoryLocalState = normalizePersistedLocalState(stored);
   return inMemoryLocalState;
 };
 
 const writeLocalState = (state: PersistedLocalState) => {
   inMemoryLocalState = state;
-  writeJson(LOCAL_DATA_KEY, state);
+  const updatedAt = now();
+  if (writeJson(LOCAL_DATA_KEY, state)) {
+    writeLocalDataMeta(updatedAt);
+  }
+  void writeIndexedDbLocalState(state, updatedAt).catch((error) => {
+    console.warn("[OfflineData] failed to persist IndexedDB backup", error);
+  });
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(LOCAL_DATA_CHANGED_EVENT));
   }
@@ -643,6 +770,12 @@ export const replaceOrgLibraryItems = (
           ? sameIdLocal
           : mappedLocal
         : sameIdLocal ?? mappedLocal;
+    const remoteForLocal = mappedLocal
+      ? ({
+          ...normalizedRemote,
+          _id: mappedLocal._id,
+        } as LibraryItem)
+      : normalizedRemote;
 
     if (sameIdLocal) {
       coveredLocalIds.add(String(sameIdLocal._id));
@@ -678,7 +811,7 @@ export const replaceOrgLibraryItems = (
       continue;
     }
 
-    mergedItems.push(normalizedRemote);
+    mergedItems.push(remoteForLocal);
   }
 
   for (const localItem of orgItems) {

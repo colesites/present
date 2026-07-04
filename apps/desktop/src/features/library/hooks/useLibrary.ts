@@ -299,9 +299,13 @@ export function useLibrary(
     input: LibraryItemDraft,
     categoryId?: string,
   ) => {
-    const existing = libraryItems.find((item) => item._id === itemId);
+    const existing =
+      libraryItems.find((item) => item._id === itemId) ??
+      readOrgLibraryItems(workspaceId).find(
+        (item) => String(item._id) === itemId,
+      );
     if (!existing) {
-      return;
+      throw new Error(`Library item ${itemId} was not found locally.`);
     }
     const slides =
       Array.isArray(input.slides) && input.slides.length > 0
@@ -345,7 +349,11 @@ export function useLibrary(
     title: string,
     body: string,
   ) => {
-    const existing = libraryItems.find((item) => item._id === itemId);
+    const existing =
+      libraryItems.find((item) => item._id === itemId) ??
+      readOrgLibraryItems(workspaceId).find(
+        (item) => String(item._id) === itemId,
+      );
     await saveExistingItem(itemId, {
       title,
       body,
