@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isUnlimitedSpeechQuota } from "@present/shared";
 import type { DesktopBillingSnapshot } from "../store/desktopSession";
 import { cn } from "../lib/utils";
 
@@ -41,8 +42,11 @@ const resolveEffectiveUsage = (
     0,
     Math.ceil((nowMs - activeSessionStartedAtMs) / 1000),
   );
+  const nextUsedSeconds = billing.usedSeconds + liveSeconds;
 
-  return Math.min(billing.quotaSeconds, billing.usedSeconds + liveSeconds);
+  return isUnlimitedSpeechQuota(billing.quotaSeconds)
+    ? nextUsedSeconds
+    : Math.min(billing.quotaSeconds, nextUsedSeconds);
 };
 
 export function SpeechUsageIndicator({
@@ -68,7 +72,11 @@ export function SpeechUsageIndicator({
     };
   }, [activeSessionStartedAtMs, isListening]);
 
-  if (!billing || billing.quotaSeconds <= 0) {
+  const isUnlimited = billing
+    ? isUnlimitedSpeechQuota(billing.quotaSeconds)
+    : false;
+
+  if (!billing || (!isUnlimited && billing.quotaSeconds <= 0)) {
     return null;
   }
 
@@ -79,8 +87,10 @@ export function SpeechUsageIndicator({
     nowMs,
   );
   const remainingSeconds = Math.max(0, billing.quotaSeconds - usedSeconds);
-  const usagePercent = Math.min(100, (usedSeconds / billing.quotaSeconds) * 100);
-  const isExhausted = remainingSeconds <= 0;
+  const usagePercent = isUnlimited
+    ? 0
+    : Math.min(100, (usedSeconds / billing.quotaSeconds) * 100);
+  const isExhausted = !isUnlimited && remainingSeconds <= 0;
 
   return (
     <div
@@ -111,28 +121,42 @@ export function SpeechUsageIndicator({
             ) : null}
           </div>
           <p className="mt-1 text-xs font-semibold text-foreground">
-            {formatUsageDuration(usedSeconds)} / {formatUsageDuration(billing.quotaSeconds)} used
+            {isUnlimited
+              ? `${formatUsageDuration(usedSeconds)} used this month`
+              : `${formatUsageDuration(usedSeconds)} / ${formatUsageDuration(billing.quotaSeconds)} used`}
           </p>
           <p className="text-[10px] text-muted-foreground">
-            {isExhausted
-              ? "Speech search limit reached for this billing period."
-              : `${formatUsageDuration(remainingSeconds)} left this month`}
+            {isUnlimited
+              ? "Unlimited speech search enabled"
+              : isExhausted
+                ? "Speech search limit reached for this billing period."
+                : `${formatUsageDuration(remainingSeconds)} left this month`}
           </p>
         </div>
 
         <div className="w-20 shrink-0">
-          <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
-            <div
-              className={cn(
-                "h-full rounded-full transition-all duration-300",
-                isExhausted ? "bg-destructive" : "bg-primary",
-              )}
-              style={{ width: `${usagePercent > 0 ? Math.max(6, usagePercent) : 0}%` }}
-            />
-          </div>
-          <p className="mt-1 text-right text-[10px] text-muted-foreground">
-            {Math.round(usagePercent)}%
-          </p>
+          {isUnlimited ? (
+            <p className="text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+              Unlimited
+            </p>
+          ) : (
+            <>
+              <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all duration-300",
+                    isExhausted ? "bg-destructive" : "bg-primary",
+                  )}
+                  style={{
+                    width: `${usagePercent > 0 ? Math.max(6, usagePercent) : 0}%`,
+                  }}
+                />
+              </div>
+              <p className="mt-1 text-right text-[10px] text-muted-foreground">
+                {Math.round(usagePercent)}%
+              </p>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Check, ChevronsUpDown, Plus, User } from "lucide-react";
+import { Check, Plus, User } from "lucide-react";
 import { useMutation } from "convex/react";
+import { isUnlimitedSpeechQuota } from "@present/shared";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { useDesktopSessionStore } from "../store/desktopSession";
@@ -172,25 +173,37 @@ export function AuthControls() {
     organizations.find((organization) => organization.type === "personal") ??
     organizations[0];
   const webBaseUrl = resolveWebBaseUrl();
+  const isUnlimitedSpeechSearch = billing
+    ? isUnlimitedSpeechQuota(billing.quotaSeconds)
+    : false;
+  const rawUsedSeconds = billing
+    ? billing.usedSeconds +
+      pendingCommittedUsageSeconds +
+      (activeSpeechSessionStartedAtMs
+        ? Math.max(0, Math.ceil((nowMs - activeSpeechSessionStartedAtMs) / 1000))
+        : 0)
+    : 0;
 
   const effectiveUsedSeconds = billing
-    ? Math.min(
+    ? isUnlimitedSpeechSearch
+      ? rawUsedSeconds
+      : Math.min(
         billing.quotaSeconds,
-        billing.usedSeconds +
-          pendingCommittedUsageSeconds +
-          (activeSpeechSessionStartedAtMs
-            ? Math.max(0, Math.ceil((nowMs - activeSpeechSessionStartedAtMs) / 1000))
-            : 0),
+        rawUsedSeconds,
       )
     : 0;
   const effectiveRemainingSeconds = billing
     ? Math.max(0, billing.quotaSeconds - effectiveUsedSeconds)
     : 0;
   const usageSummary = billing
-    ? `${formatUsageDuration(effectiveUsedSeconds, { roundUpMinutes: true })} / ${formatUsageDuration(billing.quotaSeconds)} used`
+    ? isUnlimitedSpeechSearch
+      ? "Unlimited speech search"
+      : `${formatUsageDuration(effectiveUsedSeconds, { roundUpMinutes: true })} / ${formatUsageDuration(billing.quotaSeconds)} used`
     : null;
   const usageRemainder = billing
-    ? `${formatUsageDuration(effectiveRemainingSeconds)} left this month`
+    ? isUnlimitedSpeechSearch
+      ? `${formatUsageDuration(effectiveUsedSeconds, { roundUpMinutes: true })} used this month`
+      : `${formatUsageDuration(effectiveRemainingSeconds)} left this month`
     : null;
 
   const realOrganizations = organizations.filter(org => org.type !== "personal");

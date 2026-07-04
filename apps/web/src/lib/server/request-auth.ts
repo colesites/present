@@ -12,9 +12,35 @@ const readBearerToken = (authorizationHeader: string | null): string | null => {
   return match?.[1] ?? null;
 };
 
+const getClerkUserEmail = (user: {
+  primaryEmailAddress?: { emailAddress?: string | null } | null;
+  emailAddresses?: Array<{ emailAddress?: string | null }>;
+}): string | null =>
+  user.primaryEmailAddress?.emailAddress ??
+  user.emailAddresses?.find((email) => email.emailAddress)?.emailAddress ??
+  null;
+
+const getTokenEmail = (payload: unknown): string | null => {
+  const record = payload as
+    | {
+        email?: unknown;
+        emailAddress?: unknown;
+        email_address?: unknown;
+      }
+    | null
+    | undefined;
+
+  const candidate =
+    record?.email ?? record?.emailAddress ?? record?.email_address;
+  return typeof candidate === "string" && candidate.trim()
+    ? candidate.trim()
+    : null;
+};
+
 export const resolveRequestAuthContext = async (request: Request): Promise<{
   userId: string;
   convexToken: string;
+  email: string | null;
 }> => {
   const bearerToken = readBearerToken(request.headers.get("authorization"));
   if (!bearerToken) {
@@ -25,6 +51,7 @@ export const resolveRequestAuthContext = async (request: Request): Promise<{
   if (desktopSession) {
     const client = await clerkClient();
     const session = await client.sessions.getSession(desktopSession.sessionId);
+    const user = await client.users.getUser(desktopSession.userId);
 
     if (
       session.userId !== desktopSession.userId ||
@@ -41,6 +68,7 @@ export const resolveRequestAuthContext = async (request: Request): Promise<{
     return {
       userId: desktopSession.userId,
       convexToken: token.jwt,
+      email: getClerkUserEmail(user),
     };
   }
 
@@ -57,9 +85,12 @@ export const resolveRequestAuthContext = async (request: Request): Promise<{
   if (!userId) {
     throw new Error("Token has no subject");
   }
+  const client = await clerkClient();
+  const user = await client.users.getUser(userId).catch(() => null);
 
   return {
     userId,
     convexToken: bearerToken,
+    email: getTokenEmail(payload) ?? (user ? getClerkUserEmail(user) : null),
   };
 };

@@ -223,11 +223,11 @@ interface ElectronAPI {
 
   // Output window IPC
   sendToOutput: (data: unknown) => void;
-  onOutputData: (callback: (data: unknown) => void) => void;
+  onOutputData: (callback: (data: unknown) => void) => () => void;
   notifyOutputReady: () => void;
-  onOutputReady: (callback: () => void) => void;
+  onOutputReady: (callback: () => void) => () => void;
   sendToStage: (data: unknown) => void;
-  onStageData: (callback: (data: unknown) => void) => void;
+  onStageData: (callback: (data: unknown) => void) => () => void;
   notifyStageReady: () => void;
   onStageReady: (callback: () => void) => () => void;
   sendToWorshipStage: (data: unknown) => void;

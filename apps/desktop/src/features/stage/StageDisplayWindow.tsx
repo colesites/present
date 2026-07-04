@@ -58,7 +58,7 @@ export function StageDisplayWindow() {
       return;
     }
 
-    window.electronAPI.onStageData((data: unknown) => {
+    const cleanup = window.electronAPI.onStageData((data: unknown) => {
       const message = data as Record<string, unknown>;
       if (message.type === "stage-content") {
         setState((previous) => ({
@@ -88,6 +88,7 @@ export function StageDisplayWindow() {
     });
 
     window.electronAPI.notifyStageReady?.();
+    return cleanup;
   }, []);
 
   const frameStyle = useMemo(

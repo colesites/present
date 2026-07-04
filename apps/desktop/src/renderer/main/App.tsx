@@ -41,6 +41,9 @@ import { ScreenComposerWindow } from "../../features/screen-composer";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
 import { SpeechScriptureOverlayHost } from "../../features/scripture/components/SpeechScriptureOverlayHost";
 import { MiniLyricsWindow } from "../../features/editor";
+import { areDisplayListsEqual } from "../shared/lib/display-list";
+
+const ROOT_DISPLAY_REFRESH_INTERVAL_MS = 15_000;
 
 const getWindowType = () => {
   if (typeof window === "undefined") {
@@ -53,6 +56,18 @@ export default function Home() {
   const windowType = getWindowType();
   if (windowType === "mini-lyrics") {
     return <MiniLyricsWindow />;
+  }
+  if (windowType === "media-stage") {
+    return <StageDisplayWindow />;
+  }
+  if (windowType === "worship-stage") {
+    return <WorshipStageDisplayWindow />;
+  }
+  if (windowType === "looks") {
+    return <LooksWindow />;
+  }
+  if (windowType === "screen-composer") {
+    return <ScreenComposerWindow />;
   }
   return <AuthenticatedHome windowType={windowType} />;
 }
@@ -418,11 +433,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   const { type: activeWorkspaceType, id: activeWorkspaceId } =
     useWorkspaceStore();
   const isSettingsWindow = windowType === "settings";
-  const isMediaStageWindow = windowType === "media-stage";
-  const isWorshipStageWindow = windowType === "worship-stage";
-  const isLooksWindow = windowType === "looks";
-  const isScreenComposerWindow = windowType === "screen-composer";
-  const isMiniLyricsWindow = windowType === "mini-lyrics";
   const hasAuthenticatedDesktopSession =
     authStatus === "authenticated" && Boolean(sessionToken && desktopUser);
 
@@ -604,10 +614,12 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     }
     try {
       const displays = await window.electronAPI.getDisplays();
-      setAvailableDisplays(displays);
+      setAvailableDisplays((previous) =>
+        areDisplayListsEqual(previous, displays) ? previous : displays,
+      );
       setHasLoadedDisplays(true);
     } catch {
-      setAvailableDisplays([]);
+      setAvailableDisplays((previous) => (previous.length === 0 ? previous : []));
       setHasLoadedDisplays(true);
     }
   }, []);
@@ -700,7 +712,7 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     }, 0);
     const intervalId = window.setInterval(() => {
       void refreshDisplays();
-    }, 4000);
+    }, ROOT_DISPLAY_REFRESH_INTERVAL_MS);
     return () => {
       window.clearTimeout(initialTimeoutId);
       window.clearInterval(intervalId);
@@ -854,26 +866,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
         />
       </div>
     );
-  }
-
-  if (isMediaStageWindow) {
-    return <StageDisplayWindow />;
-  }
-
-  if (isWorshipStageWindow) {
-    return <WorshipStageDisplayWindow />;
-  }
-
-  if (isLooksWindow) {
-    return <LooksWindow />;
-  }
-
-  if (isScreenComposerWindow) {
-    return <ScreenComposerWindow />;
-  }
-
-  if (isMiniLyricsWindow) {
-    return <MiniLyricsWindow />;
   }
 
   return (

@@ -251,7 +251,7 @@ export function OutputWindow() {
   useEffect(() => {
     if (!window.electronAPI) return;
 
-    window.electronAPI.onOutputData((data: unknown) => {
+    const cleanup = window.electronAPI.onOutputData((data: unknown) => {
       const msg = data as Record<string, unknown>;
 
       if (msg.type === "media-update") {
@@ -351,6 +351,7 @@ export function OutputWindow() {
     });
 
     window.electronAPI.notifyOutputReady();
+    return cleanup;
   }, []);
 
   useEffect(() => {

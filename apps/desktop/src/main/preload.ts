@@ -95,16 +95,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Output window IPC - send state from main window to output window
   sendToOutput: (data: unknown) => ipcRenderer.send('send-to-output', data),
   onOutputData: (callback: (data: unknown) => void) => {
-    ipcRenderer.on('output-data', (_event, data) => callback(data));
+    const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+    ipcRenderer.on('output-data', listener);
+    return () => {
+      ipcRenderer.removeListener('output-data', listener);
+    };
   },
   // Output window tells main it's ready
   notifyOutputReady: () => ipcRenderer.send('output-ready'),
   onOutputReady: (callback: () => void) => {
-    ipcRenderer.on('output-ready', () => callback());
+    const listener = () => callback();
+    ipcRenderer.on('output-ready', listener);
+    return () => {
+      ipcRenderer.removeListener('output-ready', listener);
+    };
   },
   sendToStage: (data: unknown) => ipcRenderer.send('send-to-stage', data),
   onStageData: (callback: (data: unknown) => void) => {
-    ipcRenderer.on('stage-data', (_event, data) => callback(data));
+    const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+    ipcRenderer.on('stage-data', listener);
+    return () => {
+      ipcRenderer.removeListener('stage-data', listener);
+    };
   },
   notifyStageReady: () => ipcRenderer.send('stage-ready'),
   onStageReady: (callback: () => void) => {

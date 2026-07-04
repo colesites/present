@@ -17,6 +17,7 @@ import {
 export const syncUserBillingToConvex = async (input: {
   userId: string;
   convexToken: string;
+  email?: string | null;
 }) => {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!convexUrl) {
@@ -24,6 +25,9 @@ export const syncUserBillingToConvex = async (input: {
   }
 
   const stripe = getStripe();
+  const billingSyncSecret = process.env.STRIPE_BILLING_SYNC_SECRET;
+  const allowlistEmail =
+    input.email && billingSyncSecret ? input.email : undefined;
 
   // Look up the Stripe customer by the Clerk user ID stored in metadata
   const customers = await stripe.customers.search({
@@ -42,6 +46,8 @@ export const syncUserBillingToConvex = async (input: {
     const convex = new ConvexHttpClient(convexUrl, { auth: input.convexToken });
     await convex.mutation(api.billing.syncUserBillingFromServer, {
       userId: input.userId,
+      secret: allowlistEmail ? billingSyncSecret : undefined,
+      email: allowlistEmail,
       planSlug: freePlan.key,
       planLabel: freePlan.label,
       status: "active",
@@ -68,6 +74,8 @@ export const syncUserBillingToConvex = async (input: {
     const convex = new ConvexHttpClient(convexUrl, { auth: input.convexToken });
     await convex.mutation(api.billing.syncUserBillingFromServer, {
       userId: input.userId,
+      secret: allowlistEmail ? billingSyncSecret : undefined,
+      email: allowlistEmail,
       planSlug: freePlan.key,
       planLabel: freePlan.label,
       status: "active",
@@ -96,6 +104,8 @@ export const syncUserBillingToConvex = async (input: {
   const convex = new ConvexHttpClient(convexUrl, { auth: input.convexToken });
   await convex.mutation(api.billing.syncUserBillingFromServer, {
     userId: input.userId,
+    secret: allowlistEmail ? billingSyncSecret : undefined,
+    email: allowlistEmail,
     planSlug: plan.key,
     planLabel: plan.label,
     status: sub.status,

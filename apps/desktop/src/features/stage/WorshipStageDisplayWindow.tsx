@@ -266,10 +266,18 @@ export function WorshipStageDisplayWindow() {
         />
       ) : null}
 
-      {(state.currentLabel || state.currentRepeat) ? (
-        <div className="absolute left-8 top-8 z-20 flex flex-wrap gap-3 text-3xl font-bold uppercase tracking-[0.08em] text-sky-200 drop-shadow-[0_2px_6px_rgba(0,0,0,0.85)]">
-          {state.currentLabel ? <span>[{state.currentLabel}]</span> : null}
-          {state.currentRepeat ? <span>[{state.currentRepeat}]</span> : null}
+      {state.currentLabel || state.currentRepeat ? (
+        <div className="absolute left-10 top-10 z-20 flex max-w-[calc(100vw-5rem)] flex-wrap gap-5 text-6xl font-black uppercase leading-none tracking-[0.08em] text-sky-100 drop-shadow-[0_3px_10px_rgba(0,0,0,0.9)]">
+          {state.currentLabel ? (
+            <span className="rounded-md bg-black/55 px-4 py-3 ring-2 ring-sky-200/30">
+              [{state.currentLabel}]
+            </span>
+          ) : null}
+          {state.currentRepeat ? (
+            <span className="rounded-md bg-black/55 px-4 py-3 ring-2 ring-sky-200/30">
+              [{state.currentRepeat}]
+            </span>
+          ) : null}
         </div>
       ) : null}
 

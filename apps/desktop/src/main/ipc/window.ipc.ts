@@ -42,13 +42,14 @@ export const registerWindowIPC = (): void => {
 
   // Get all displays
   ipcMain.handle('get-displays', () => {
+    const primaryDisplayId = screen.getPrimaryDisplay().id;
     return screen.getAllDisplays().map(d => ({
       id: d.id,
-      label: d.label?.trim() || (d.id === screen.getPrimaryDisplay().id ? 'Primary Display' : `Screen ${d.id}`),
+      label: d.label?.trim() || (d.id === primaryDisplayId ? 'Primary Display' : `Screen ${d.id}`),
       bounds: d.bounds,
       workArea: d.workArea,
       scaleFactor: d.scaleFactor,
-      isPrimary: d.id === screen.getPrimaryDisplay().id
+      isPrimary: d.id === primaryDisplayId
     }));
   });
 

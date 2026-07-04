@@ -101,8 +101,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { userId, convexToken } = await resolveRequestAuthContext(request);
-    await syncUserBillingToConvex({ userId, convexToken });
+    const { userId, convexToken, email } = await resolveRequestAuthContext(request);
+    await syncUserBillingToConvex({ userId, convexToken, email });
 
     const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
     const assemblyAiApiKey = process.env.ASSEMBLYAI_API_KEY;

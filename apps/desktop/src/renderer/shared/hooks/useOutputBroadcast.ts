@@ -70,6 +70,14 @@ type Params = {
   propsOverlay: PropsOverlayItem[];
 };
 
+function getPayloadSignature(payload: unknown): string {
+  try {
+    return JSON.stringify(payload) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function useOutputBroadcast({
   activeMediaItem,
   showText,
@@ -118,15 +126,68 @@ export function useOutputBroadcast({
   // Force re-send when a new output window connects
   const [syncTrigger, setSyncTrigger] = useState(0);
   const [worshipStageSyncTrigger, setWorshipStageSyncTrigger] = useState(0);
+  const lastOutputSyncTriggerRef = useRef(0);
+  const lastWorshipStageSyncTriggerRef = useRef(0);
+  const lastMediaOutputSignatureRef = useRef<string | null>(null);
+  const lastMediaWorshipSignatureRef = useRef<string | null>(null);
+  const lastSlideOutputSignatureRef = useRef<string | null>(null);
+  const lastSlideWorshipSignatureRef = useRef<string | null>(null);
+  const lastMessageOutputSignatureRef = useRef<string | null>(null);
+  const lastPropsOutputSignatureRef = useRef<string | null>(null);
+  const activeMediaId = activeMediaItem?.id ?? null;
+  const activeMediaType = activeMediaItem?.type ?? null;
+  const activeMediaUrl = activeMediaItem?.url ?? null;
+  const {
+    xPercent: textXPercent,
+    yPercent: textYPercent,
+    widthPercent: textWidthPercent,
+    heightPercent: textHeightPercent,
+    textAlign,
+    verticalAlign,
+  } = textPosition;
+  const { loop: videoLoop, muted: videoMuted } = videoSettings;
+  const {
+    fontSize: scriptureFontSize,
+    footerFontSize: scriptureFooterFontSize,
+    fontFamily: scriptureFontFamily,
+    fontWeight: scriptureFontWeight,
+    textAlign: scriptureTextAlign,
+    verticalAlign: scriptureVerticalAlign,
+    footerAlign: scriptureFooterAlign,
+    footerPosition: scriptureFooterPosition,
+  } = scriptureStyle;
+  const {
+    fontFamily: libraryFontFamily,
+    fontSize: libraryFontSize,
+    fontBold,
+    fontItalic,
+    fontUnderline,
+  } = libraryStyle;
+  const {
+    xPercent: timerXPercent,
+    yPercent: timerYPercent,
+    clockFontPx,
+    nameFontPx,
+    clockColor,
+    nameColor,
+    nameBannerEnabled,
+    nameBannerColor,
+    titlePosition,
+  } = timerLayout;
 
   useEffect(() => {
     if (!window.electronAPI) return;
-    window.electronAPI.onOutputReady(() => {
+    const outputReadyCleanup = window.electronAPI.onOutputReady(() => {
       setSyncTrigger((t: number) => t + 1);
     });
-    window.electronAPI.onWorshipStageReady?.(() => {
+    const worshipStageReadyCleanup = window.electronAPI.onWorshipStageReady?.(() => {
       setWorshipStageSyncTrigger((t: number) => t + 1);
     });
+
+    return () => {
+      outputReadyCleanup();
+      worshipStageReadyCleanup?.();
+    };
   }, []);
 
   // Send full state updates via IPC
@@ -139,15 +200,11 @@ export function useOutputBroadcast({
     if (isFrozen) return;
     if (previouslyFrozen && !isFrozen) return;
 
-    let mediaId: string | null = null;
-    let mediaType: "image" | "video" | null = null;
-    let mediaUrl: string | null = null;
-
-    if (activeMediaItem) {
-      mediaId = activeMediaItem.id;
-      mediaType = activeMediaItem.type;
-      mediaUrl = activeMediaItem.url;
-    }
+    const forceOutputSync = syncTrigger !== lastOutputSyncTriggerRef.current;
+    const forceWorshipStageSync =
+      worshipStageSyncTrigger !== lastWorshipStageSyncTriggerRef.current;
+    lastOutputSyncTriggerRef.current = syncTrigger;
+    lastWorshipStageSyncTriggerRef.current = worshipStageSyncTrigger;
 
     // Check if we should sync time (only if it changed)
     const shouldSyncTime = prevVideoTimeRef.current !== videoCurrentTime;
@@ -156,26 +213,78 @@ export function useOutputBroadcast({
     // Send media update
     const mediaPayload = {
       type: "media-update",
-      mediaUrl,
-      mediaId,
-      mediaType,
+      mediaUrl: activeMediaUrl,
+      mediaId: activeMediaId,
+      mediaType: activeMediaType,
       showText,
       showMedia,
       hideBackground,
-      textPosition,
-      videoSettings,
+      textPosition: {
+        xPercent: textXPercent,
+        yPercent: textYPercent,
+        widthPercent: textWidthPercent,
+        heightPercent: textHeightPercent,
+        textAlign,
+        verticalAlign,
+      },
+      videoSettings: {
+        loop: videoLoop,
+        muted: videoMuted,
+      },
       mediaFilterCSS,
       isVideoPlaying,
       videoCurrentTime,
       shouldSyncTime,
-      scriptureStyle,
-      libraryStyle,
-      timerLayout,
+      scriptureStyle: {
+        fontSize: scriptureFontSize,
+        footerFontSize: scriptureFooterFontSize,
+        fontFamily: scriptureFontFamily,
+        fontWeight: scriptureFontWeight,
+        textAlign: scriptureTextAlign,
+        verticalAlign: scriptureVerticalAlign,
+        footerAlign: scriptureFooterAlign,
+        footerPosition: scriptureFooterPosition,
+      },
+      libraryStyle: {
+        fontFamily: libraryFontFamily,
+        fontSize: libraryFontSize,
+        fontBold,
+        fontItalic,
+        fontUnderline,
+      },
+      timerLayout: {
+        xPercent: timerXPercent,
+        yPercent: timerYPercent,
+        clockFontPx,
+        nameFontPx,
+        clockColor,
+        nameColor,
+        nameBannerEnabled,
+        nameBannerColor,
+        titlePosition,
+      },
       screenComposerEnabled,
       screenComposerLayout,
     };
-    window.electronAPI.sendToOutput(mediaPayload);
-    window.electronAPI.sendToWorshipStage?.(mediaPayload);
+    const mediaSignature = getPayloadSignature({
+      ...mediaPayload,
+      shouldSyncTime: false,
+    });
+    if (
+      forceOutputSync ||
+      mediaSignature !== lastMediaOutputSignatureRef.current
+    ) {
+      window.electronAPI.sendToOutput(mediaPayload);
+      lastMediaOutputSignatureRef.current = mediaSignature;
+    }
+    if (
+      window.electronAPI.sendToWorshipStage &&
+      (forceWorshipStageSync ||
+        mediaSignature !== lastMediaWorshipSignatureRef.current)
+    ) {
+      window.electronAPI.sendToWorshipStage(mediaPayload);
+      lastMediaWorshipSignatureRef.current = mediaSignature;
+    }
 
     // Send active slide text
     const hasIncomingSlideContent =
@@ -187,72 +296,102 @@ export function useOutputBroadcast({
     const activeSlidePayload = hasTransientEmptySlide
       ? lastSlidePayloadRef.current
       : {
-      type: "active-slide" as const,
-      slideId: activeSlideId,
-      slideText: slideText,
-      slideFooter: slideFooter,
-      slideElements,
-      slideCanvasSize,
-      slideBackgroundColor,
-    };
+          type: "active-slide" as const,
+          slideId: activeSlideId,
+          slideText: slideText,
+          slideFooter: slideFooter,
+          slideElements,
+          slideCanvasSize,
+          slideBackgroundColor,
+        };
     if (activeSlidePayload) {
       lastSlidePayloadRef.current = activeSlidePayload;
-      window.electronAPI.sendToOutput(activeSlidePayload);
-      window.electronAPI.sendToWorshipStage?.(activeSlidePayload);
+      const activeSlideSignature = getPayloadSignature(activeSlidePayload);
+      if (
+        forceOutputSync ||
+        activeSlideSignature !== lastSlideOutputSignatureRef.current
+      ) {
+        window.electronAPI.sendToOutput(activeSlidePayload);
+        lastSlideOutputSignatureRef.current = activeSlideSignature;
+      }
+      if (
+        window.electronAPI.sendToWorshipStage &&
+        (forceWorshipStageSync ||
+          activeSlideSignature !== lastSlideWorshipSignatureRef.current)
+      ) {
+        window.electronAPI.sendToWorshipStage(activeSlidePayload);
+        lastSlideWorshipSignatureRef.current = activeSlideSignature;
+      }
     }
 
     // Broadcast the current banner-message overlay (or null to clear it).
-    window.electronAPI.sendToOutput({
+    const messageOverlayPayload = {
       type: "message-overlay",
       overlay: messageOverlay,
-    });
+    };
+    const messageOverlaySignature = getPayloadSignature(messageOverlayPayload);
+    if (
+      forceOutputSync ||
+      messageOverlaySignature !== lastMessageOutputSignatureRef.current
+    ) {
+      window.electronAPI.sendToOutput(messageOverlayPayload);
+      lastMessageOutputSignatureRef.current = messageOverlaySignature;
+    }
 
     // Broadcast the current props (image / text overlays).
-    window.electronAPI.sendToOutput({
+    const propsOverlayPayload = {
       type: "props-overlay",
       props: propsOverlay,
-    });
+    };
+    const propsOverlaySignature = getPayloadSignature(propsOverlayPayload);
+    if (
+      forceOutputSync ||
+      propsOverlaySignature !== lastPropsOutputSignatureRef.current
+    ) {
+      window.electronAPI.sendToOutput(propsOverlayPayload);
+      lastPropsOutputSignatureRef.current = propsOverlaySignature;
+    }
   }, [
-    activeMediaItem,
-    activeMediaItem?.id,
-    activeMediaItem?.type,
+    activeMediaId,
+    activeMediaType,
+    activeMediaUrl,
     showText,
     showMedia,
     hideBackground,
-    textPosition.xPercent,
-    textPosition.yPercent,
-    textPosition.widthPercent,
-    textPosition.heightPercent,
-    textPosition.textAlign,
-    textPosition.verticalAlign,
-    videoSettings.loop,
-    videoSettings.muted,
+    textXPercent,
+    textYPercent,
+    textWidthPercent,
+    textHeightPercent,
+    textAlign,
+    verticalAlign,
+    videoLoop,
+    videoMuted,
     mediaFilterCSS,
     isVideoPlaying,
     videoCurrentTime,
     isFrozen,
-    scriptureStyle.fontSize,
-    scriptureStyle.footerFontSize,
-    scriptureStyle.fontFamily,
-    scriptureStyle.fontWeight,
-    scriptureStyle.textAlign,
-    scriptureStyle.verticalAlign,
-    scriptureStyle.footerAlign,
-    scriptureStyle.footerPosition,
-    libraryStyle.fontFamily,
-    libraryStyle.fontSize,
-    libraryStyle.fontBold,
-    libraryStyle.fontItalic,
-    libraryStyle.fontUnderline,
-    timerLayout.xPercent,
-    timerLayout.yPercent,
-    timerLayout.clockFontPx,
-    timerLayout.nameFontPx,
-    timerLayout.clockColor,
-    timerLayout.nameColor,
-    timerLayout.nameBannerEnabled,
-    timerLayout.nameBannerColor,
-    timerLayout.titlePosition,
+    scriptureFontSize,
+    scriptureFooterFontSize,
+    scriptureFontFamily,
+    scriptureFontWeight,
+    scriptureTextAlign,
+    scriptureVerticalAlign,
+    scriptureFooterAlign,
+    scriptureFooterPosition,
+    libraryFontFamily,
+    libraryFontSize,
+    fontBold,
+    fontItalic,
+    fontUnderline,
+    timerXPercent,
+    timerYPercent,
+    clockFontPx,
+    nameFontPx,
+    clockColor,
+    nameColor,
+    nameBannerEnabled,
+    nameBannerColor,
+    titlePosition,
     screenComposerEnabled,
     screenComposerLayout,
     messageOverlay,

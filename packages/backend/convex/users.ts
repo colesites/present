@@ -1,7 +1,15 @@
 import { mutation, query } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { Id } from "./_generated/dataModel";
-import { getPresentPlanDefinition } from "../../shared/src/billing";
+import {
+  getPresentPlanDefinition,
+  UNLIMITED_SPEECH_QUOTA_SECONDS,
+} from "../../shared/src/billing";
+
+const normalizeEmail = (value: unknown): string | null =>
+  typeof value === "string" && value.trim()
+    ? value.trim().toLowerCase()
+    : null;
 
 const isOrganizationDocument = (
   value: unknown,
@@ -108,6 +116,21 @@ export const getCurrentUser = query({
       periodEndMs: 0,
       updatedAt: 0,
     };
+    const normalizedEmail = normalizeEmail(identity.email);
+    const allowlistEntry = normalizedEmail
+      ? await ctx.db
+          .query("speechQuotaAllowlist")
+          .withIndex("by_normalized_email", (q) =>
+            q.eq("normalizedEmail", normalizedEmail),
+          )
+          .first()
+      : null;
+    const quotaSeconds = Math.max(
+      activeBilling.quotaSeconds,
+      allowlistEntry
+        ? Math.max(allowlistEntry.quotaSeconds, UNLIMITED_SPEECH_QUOTA_SECONDS)
+        : 0,
+    );
     const billingPeriodKey = `${activeBilling.periodStartMs}:${activeBilling.periodEndMs}`;
     const speechSessions = await ctx.db
       .query("speechUsageSessions")
@@ -166,9 +189,9 @@ export const getCurrentUser = query({
           planSlug: activeBilling.planSlug ?? null,
           status: activeBilling.status,
           isPaid: activeBilling.planKey !== "free",
-          quotaSeconds: activeBilling.quotaSeconds,
+          quotaSeconds,
           usedSeconds,
-          remainingSeconds: Math.max(0, activeBilling.quotaSeconds - usedSeconds),
+          remainingSeconds: Math.max(0, quotaSeconds - usedSeconds),
           periodStartMs: activeBilling.periodStartMs,
           periodEndMs: activeBilling.periodEndMs,
         },

@@ -7,11 +7,12 @@ import { ConvexError, v } from "convex/values";
 import {
   getPresentPlanDefinition,
   resolvePresentPlanKey,
+  UNLIMITED_SPEECH_QUOTA_SECONDS,
   type PresentBillingStatus,
 } from "../../shared/src/billing";
 
 const DEFAULT_SPEECH_SESSION_MAX_SECONDS = 15 * 60;
-const DEFAULT_ALLOWLISTED_SPEECH_QUOTA_SECONDS = 100 * 365 * 24 * 60 * 60;
+const DEFAULT_ALLOWLISTED_SPEECH_QUOTA_SECONDS = UNLIMITED_SPEECH_QUOTA_SECONDS;
 
 function normalizeEmail(value: unknown): string | null {
   return typeof value === "string" && value.trim()
@@ -49,7 +50,12 @@ async function resolveAllowlistedSpeechQuotaSeconds(
     .withIndex("by_normalized_email", (q: any) => q.eq("normalizedEmail", email))
     .first();
 
-  return allowlistEntry?.quotaSeconds ?? null;
+  return allowlistEntry
+    ? Math.max(
+        allowlistEntry.quotaSeconds,
+        DEFAULT_ALLOWLISTED_SPEECH_QUOTA_SECONDS,
+      )
+    : null;
 }
 
 function withSpeechQuotaOverride<T extends { quotaSeconds: number }>(
@@ -260,6 +266,8 @@ export const upsertSpeechQuotaAllowlistEntry = mutation({
 export const syncUserBillingFromServer = mutation({
   args: {
     userId: v.string(),
+    secret: v.optional(v.string()),
+    email: v.optional(v.string()),
     planSlug: v.optional(v.string()),
     planLabel: v.optional(v.string()),
     status: v.string(),
@@ -276,6 +284,14 @@ export const syncUserBillingFromServer = mutation({
 
     const planKey = resolvePresentPlanKey(args.planSlug ?? args.planLabel);
     const plan = getPresentPlanDefinition(planKey);
+    let allowlistedQuotaSeconds: number | null = null;
+    if (args.email !== undefined) {
+      assertBillingSyncSecret(args.secret);
+      allowlistedQuotaSeconds = await resolveAllowlistedSpeechQuotaSeconds(
+        ctx,
+        normalizeEmail(args.email),
+      );
+    }
     const existing = await ctx.db
       .query("userBilling")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -287,7 +303,10 @@ export const syncUserBillingFromServer = mutation({
       planLabel: args.planLabel?.trim() || plan.label,
       planSlug: args.planSlug?.trim() || plan.key,
       status: args.status,
-      quotaSeconds: plan.monthlySpeechLimitSeconds,
+      quotaSeconds: Math.max(
+        plan.monthlySpeechLimitSeconds,
+        allowlistedQuotaSeconds ?? 0,
+      ),
       periodStartMs: args.periodStartMs,
       periodEndMs: args.periodEndMs,
       stripeSubscriptionId: args.stripeSubscriptionId,

@@ -14,6 +14,11 @@ export interface PresentPlanDefinition {
   isPaid: boolean;
 }
 
+export const UNLIMITED_SPEECH_QUOTA_SECONDS = 100 * 365 * 24 * 60 * 60;
+
+export const isUnlimitedSpeechQuota = (seconds: number): boolean =>
+  seconds >= UNLIMITED_SPEECH_QUOTA_SECONDS;
+
 export const PRESENT_PLAN_DEFINITIONS: Record<
   PresentPlanKey,
   PresentPlanDefinition
@@ -82,6 +87,10 @@ export const getPresentPlanDefinition = (
 };
 
 export const formatSpeechHoursLabel = (seconds: number): string => {
+  if (isUnlimitedSpeechQuota(seconds)) {
+    return "Unlimited";
+  }
+
   const hours = seconds / 3600;
   return Number.isInteger(hours) ? `${hours} hr` : `${hours.toFixed(1)} hr`;
 };

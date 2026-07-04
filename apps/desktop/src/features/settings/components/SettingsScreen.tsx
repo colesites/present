@@ -22,6 +22,7 @@ import type {
   ScriptureTextAlign,
   ScriptureVerticalAlign,
 } from "../../../shared/types/output-window";
+import { areDisplayListsEqual } from "../../../renderer/shared/lib/display-list";
 
 type AudioInputOption = {
   deviceId: string;
@@ -319,10 +320,14 @@ export function SettingsScreen({
         if (!mounted) {
           return;
         }
-        setAvailableDisplays(displays);
+        setAvailableDisplays((previous) =>
+          areDisplayListsEqual(previous, displays) ? previous : displays,
+        );
       } catch {
         if (mounted) {
-          setAvailableDisplays([]);
+          setAvailableDisplays((previous) =>
+            previous.length === 0 ? previous : [],
+          );
         }
       }
     };
