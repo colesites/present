@@ -522,9 +522,15 @@ export function useServices(
 
   useEffect(() => {
     if (!selectedServiceGroupId) return;
-    if (!selectedService?.groups?.some((group) => group.id === selectedServiceGroupId)) {
-      setSelectedServiceGroupId(null);
+    if (selectedService?.groups?.some((group) => group.id === selectedServiceGroupId)) {
+      return;
     }
+    const timeoutId = window.setTimeout(() => {
+      setSelectedServiceGroupId(null);
+    }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [selectedService, selectedServiceGroupId]);
 
   const getSelectedGroupIdForService = (service: Service, serviceId: Id<"services">) => {
@@ -578,6 +584,49 @@ export function useServices(
       },
     );
   }, [selectedService, libraryItems]);
+
+  useEffect(() => {
+    if (!selectedService || libraryItems.length === 0) return;
+
+    const libraryTitles = new Map(
+      libraryItems
+        .map((item) => [String(item._id), item.title.trim()] as const)
+        .filter(([, title]) => title.length > 0),
+    );
+    let didRepairLabel = false;
+    const repairedItems = selectedService.items.map((item) => {
+      if (item.type !== "library") {
+        return item;
+      }
+      const title = libraryTitles.get(String(item.refId));
+      if (!title) {
+        return item;
+      }
+      const currentLabel = item.label?.trim() ?? "";
+      if (currentLabel === title) {
+        return item;
+      }
+      if (currentLabel && currentLabel !== String(item.refId)) {
+        return item;
+      }
+      didRepairLabel = true;
+      return { ...item, label: title };
+    });
+
+    if (!didRepairLabel) return;
+
+    const repairedService = upsertService(workspaceId, {
+      ...selectedService,
+      items: repairedItems,
+    });
+    enqueueSyncOperation(
+      workspaceId,
+      "service",
+      String(selectedService._id),
+      "update",
+      repairedService,
+    );
+  }, [libraryItems, selectedService, workspaceId]);
 
   const createNewService = async (name: string, templateId?: string | null) => {
     if (!name.trim()) return null;
@@ -1028,11 +1077,16 @@ export function useServices(
     }
     const service = normalizeServiceGroups(existingService);
     const groupId = getSelectedGroupIdForService(service, serviceId);
+    const libraryItem = libraryItems.find(
+      (item) => String(item._id) === String(libraryItemId),
+    );
+    const label = libraryItem?.title.trim();
     const nextService = upsertService(
       workspaceId,
       appendServiceItem(service, {
         type: "library",
         refId: libraryItemId,
+        ...(label ? { label } : {}),
         groupId,
         addedAt: Date.now(),
       }),
