@@ -48,9 +48,9 @@ export function usePresentMediaFlow<
       setServiceItemIndex(index);
 
       if (item.type === "library") {
-        const libraryId = item.libraryItem?._id;
+        const libraryId = item.refId || item.libraryItem?._id;
         if (libraryId) {
-          setSelectedLibraryId(libraryId);
+          setSelectedLibraryId(String(libraryId));
           setPreviewMediaItem(null);
           onClearScripture?.();
           onClearPresentation?.();
@@ -98,8 +98,6 @@ export function usePresentMediaFlow<
       onSelectScripture,
       onClearScripture,
       onClearPresentation,
-      selectMediaForOutput,
-      setShouldAutoPlay,
     ],
   );
 

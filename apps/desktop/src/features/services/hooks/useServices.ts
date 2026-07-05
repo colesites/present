@@ -577,7 +577,9 @@ export function useServices(
       .map(
       (item: Service["items"][number], index: number): ServiceItem => {
         if (item.type === "library") {
-          const libraryItem = libraryItems.find((s: LibraryItem) => s._id === item.refId);
+          const libraryItem = libraryItems.find(
+            (s: LibraryItem) => String(s._id) === String(item.refId),
+          );
           return { ...item, libraryItem, presentation: null, index };
         }
         return { ...item, libraryItem: null, presentation: item.presentation ?? null, index };
