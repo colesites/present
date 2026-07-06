@@ -28,6 +28,16 @@ type VideoSettings = {
   muted: boolean;
 };
 
+type ActiveSlidePayload = {
+  type: "active-slide";
+  slideId: string | null;
+  slideText: string | null | undefined;
+  slideFooter: string | null | undefined;
+  slideElements: SlideElement[] | null | undefined;
+  slideCanvasSize: CanvasSizePreset | null | undefined;
+  slideBackgroundColor: string | null | undefined;
+};
+
 type Params = {
   activeMediaItem: MediaItem;
   showText: boolean;
@@ -113,15 +123,7 @@ export function useOutputBroadcast({
   /* Track previous video time to only sync when it actually changes */
   const prevVideoTimeRef = useRef<number | undefined>(undefined);
   const wasFrozenRef = useRef(false);
-  const lastSlidePayloadRef = useRef<{
-    type: "active-slide";
-    slideId: string | null;
-    slideText: string | null | undefined;
-    slideFooter: string | null | undefined;
-    slideElements: SlideElement[] | null | undefined;
-    slideCanvasSize: CanvasSizePreset | null | undefined;
-    slideBackgroundColor: string | null | undefined;
-  } | null>(null);
+  const lastSlidePayloadRef = useRef<ActiveSlidePayload | null>(null);
 
   // Force re-send when a new output window connects
   const [syncTrigger, setSyncTrigger] = useState(0);
@@ -286,24 +288,29 @@ export function useOutputBroadcast({
       lastMediaWorshipSignatureRef.current = mediaSignature;
     }
 
-    // Send active slide text
+    // Send active slide text. Autosave/sync can briefly make the selected
+    // slide resolve to empty/null; while the text layer is enabled, keep the
+    // last good slide payload instead of clearing the audience output.
     const hasIncomingSlideContent =
       Boolean(slideText?.trim()) ||
       (Array.isArray(slideElements) && slideElements.length > 0) ||
       Boolean(slideBackgroundColor);
-    const hasTransientEmptySlide =
-      Boolean(activeSlideId) && !hasIncomingSlideContent;
-    const activeSlidePayload = hasTransientEmptySlide
+    const incomingSlidePayload: ActiveSlidePayload = {
+      type: "active-slide" as const,
+      slideId: activeSlideId,
+      slideText: slideText,
+      slideFooter: slideFooter,
+      slideElements,
+      slideCanvasSize,
+      slideBackgroundColor,
+    };
+    const shouldKeepPreviousSlide =
+      !hasIncomingSlideContent &&
+      lastSlidePayloadRef.current != null &&
+      (showText || Boolean(activeSlideId));
+    const activeSlidePayload = shouldKeepPreviousSlide
       ? lastSlidePayloadRef.current
-      : {
-          type: "active-slide" as const,
-          slideId: activeSlideId,
-          slideText: slideText,
-          slideFooter: slideFooter,
-          slideElements,
-          slideCanvasSize,
-          slideBackgroundColor,
-        };
+      : incomingSlidePayload;
     if (activeSlidePayload) {
       lastSlidePayloadRef.current = activeSlidePayload;
       const activeSlideSignature = getPayloadSignature(activeSlidePayload);

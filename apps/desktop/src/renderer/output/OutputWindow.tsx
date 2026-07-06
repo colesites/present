@@ -185,6 +185,15 @@ function parseScreenComposerLayout(
   };
 }
 
+const hasSlideContent = (input: {
+  slideText?: string | null;
+  slideElements?: OutputState["slideElements"] | null;
+  slideBackgroundColor?: string | null;
+}) =>
+  Boolean(input.slideText?.trim()) ||
+  Boolean(input.slideElements?.length) ||
+  Boolean(input.slideBackgroundColor);
+
 export function OutputWindow() {
   const [state, setState] = useState<OutputState>({
     mediaUrl: null,
@@ -302,15 +311,35 @@ export function OutputWindow() {
       } else if (msg.type === "active-slide") {
         setState((prev) => ({
           ...prev,
-          activeSlideId: msg.slideId as string | null,
-          slideText: (msg.slideText as string) || null,
-          slideFooter: (msg.slideFooter as string) || null,
-          slideElements:
-            (msg.slideElements as OutputState["slideElements"]) ?? null,
-          slideCanvasSize:
-            (msg.slideCanvasSize as OutputState["slideCanvasSize"]) ?? null,
-          slideBackgroundColor:
-            (msg.slideBackgroundColor as string | null) || null,
+          ...(() => {
+            const nextSlide = {
+              activeSlideId:
+                typeof msg.slideId === "string" ? msg.slideId : null,
+              slideText:
+                typeof msg.slideText === "string" ? msg.slideText : null,
+              slideFooter:
+                typeof msg.slideFooter === "string" ? msg.slideFooter : null,
+              slideElements: Array.isArray(msg.slideElements)
+                ? (msg.slideElements as OutputState["slideElements"])
+                : null,
+              slideCanvasSize:
+                typeof msg.slideCanvasSize === "string"
+                  ? (msg.slideCanvasSize as OutputState["slideCanvasSize"])
+                  : null,
+              slideBackgroundColor:
+                typeof msg.slideBackgroundColor === "string"
+                  ? msg.slideBackgroundColor
+                  : null,
+            };
+            if (
+              prev.showText &&
+              !hasSlideContent(nextSlide) &&
+              hasSlideContent(prev)
+            ) {
+              return {};
+            }
+            return nextSlide;
+          })(),
         }));
       } else if (msg.type === "timer-update") {
         setState((prev) => ({
@@ -1064,6 +1093,7 @@ function CapturePropLayer({
   useEffect(() => {
     let cancelled = false;
     let stream: MediaStream | null = null;
+    const videoElement = videoRef.current;
 
     const stopStream = () => {
       stream?.getTracks().forEach((track) => track.stop());
@@ -1132,9 +1162,9 @@ function CapturePropLayer({
         }
         stream = nextStream;
         setError(null);
-        if (videoRef.current) {
-          videoRef.current.srcObject = nextStream;
-          void videoRef.current.play().catch(() => {
+        if (videoElement) {
+          videoElement.srcObject = nextStream;
+          void videoElement.play().catch(() => {
             // Browser autoplay can reject while the window is being moved.
           });
         }
@@ -1151,8 +1181,8 @@ function CapturePropLayer({
     return () => {
       cancelled = true;
       stopStream();
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
+      if (videoElement) {
+        videoElement.srcObject = null;
       }
     };
   }, [deviceId, deviceLabel]);

@@ -503,7 +503,9 @@ export function useServices(
   // Validate restored service still exists
   useEffect(() => {
     if (selectedServiceId) {
-      const exists = services.some((s) => s._id === selectedServiceId);
+      const exists = services.some(
+        (s) => String(s._id) === String(selectedServiceId),
+      );
       if (!exists) {
         setTimeout(() => {
           setSelectedServiceId(null);
@@ -516,7 +518,9 @@ export function useServices(
 
   const selectedService = useMemo(() => {
     if (!selectedServiceId) return null;
-    const service = services.find((s) => s._id === selectedServiceId) ?? null;
+    const service =
+      services.find((s) => String(s._id) === String(selectedServiceId)) ??
+      null;
     return service ? normalizeServiceGroups(service) : null;
   }, [selectedServiceId, services]);
 
@@ -1038,7 +1042,9 @@ export function useServices(
     serviceId: Id<"services">,
     name: string
   ) => {
-    const service = services.find((item) => item._id === serviceId);
+    const service = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!service) {
       return;
     }
@@ -1073,7 +1079,9 @@ export function useServices(
     serviceId: Id<"services">,
     libraryItemId: string
   ) => {
-    const existingService = services.find((item) => item._id === serviceId);
+    const existingService = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!existingService) {
       return;
     }
@@ -1102,7 +1110,9 @@ export function useServices(
     mediaId: string,
     mediaName: string
   ) => {
-    const existingService = services.find((item) => item._id === serviceId);
+    const existingService = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!existingService) {
       return;
     }
@@ -1127,7 +1137,9 @@ export function useServices(
     ref: string,
     text: string,
   ) => {
-    const existingService = services.find((item) => item._id === serviceId);
+    const existingService = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!existingService) {
       return;
     }
@@ -1152,7 +1164,9 @@ export function useServices(
     serviceId: Id<"services">,
     presentation: ServicePresentation,
   ) => {
-    const existingService = services.find((item) => item._id === serviceId);
+    const existingService = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!existingService) {
       return null;
     }
@@ -1186,7 +1200,9 @@ export function useServices(
     serviceId: Id<"services">,
     label: string,
   ) => {
-    const service = services.find((item) => item._id === serviceId);
+    const service = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     const normalizedLabel = label.trim();
     if (!service || !normalizedLabel) {
       return;
@@ -1227,7 +1243,9 @@ export function useServices(
     groupId: string,
     label: string,
   ) => {
-    const service = services.find((item) => item._id === serviceId);
+    const service = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     const normalizedLabel = label.trim();
     if (!service || !normalizedLabel) {
       return;
@@ -1252,7 +1270,9 @@ export function useServices(
     serviceId: Id<"services">,
     groupId: string,
   ) => {
-    const service = services.find((item) => item._id === serviceId);
+    const service = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!service) {
       return;
     }
@@ -1312,7 +1332,9 @@ export function useServices(
     groupId: string | null,
     toIndex?: number,
   ) => {
-    const service = services.find((item) => item._id === serviceId);
+    const service = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!service) {
       return;
     }
@@ -1372,7 +1394,9 @@ export function useServices(
     label: string,
   ) => {
     const normalizedLabel = label.trim();
-    const existingService = services.find((item) => item._id === serviceId);
+    const existingService = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!existingService || !normalizedLabel) {
       return;
     }
@@ -1459,7 +1483,9 @@ export function useServices(
     presentationRefId: string,
     presentation: ServicePresentation,
   ) => {
-    const existingService = services.find((item) => item._id === serviceId);
+    const existingService = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!existingService) {
       return;
     }
@@ -1494,7 +1520,9 @@ export function useServices(
     serviceId: Id<"services">,
     index: number
   ) => {
-    const existingService = services.find((item) => item._id === serviceId);
+    const existingService = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!existingService) {
       return;
     }
@@ -1524,7 +1552,9 @@ export function useServices(
     toIndex: number
   ) => {
     if (fromIndex === toIndex) return;
-    const existingService = services.find((item) => item._id === serviceId);
+    const existingService = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
     if (!existingService) {
       return;
     }

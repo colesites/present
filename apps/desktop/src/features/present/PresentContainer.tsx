@@ -21,6 +21,8 @@ import type {
   CanvasSizePreset,
   MessageOverlay,
   SlideElement,
+  LibraryContent,
+  LibrarySlide,
   ServicePresentation,
 } from "../../shared/types";
 import {
@@ -82,9 +84,130 @@ import { usePresentAiToolProvider } from "../../renderer/ai-operator/usePresentA
 type EditedOutputSnapshot = {
   slideId: string;
   text: string;
-  elements: SlideElement[];
+  elements: SlideElement[] | null;
   canvasSize: CanvasSizePreset;
   backgroundColor: string | null;
+};
+
+const areEditedOutputSnapshotsEqual = (
+  left: EditedOutputSnapshot | null,
+  right: EditedOutputSnapshot,
+) =>
+  left?.slideId === right.slideId &&
+  left.text === right.text &&
+  left.canvasSize === right.canvasSize &&
+  left.backgroundColor === right.backgroundColor &&
+  JSON.stringify(left.elements ?? null) === JSON.stringify(right.elements ?? null);
+
+const hasEditedOutputSnapshotContent = (snapshot: EditedOutputSnapshot) =>
+  Boolean(snapshot.text.trim()) ||
+  Boolean(snapshot.elements?.length) ||
+  Boolean(snapshot.backgroundColor);
+
+const editedOutputSnapshotToContent = (
+  snapshot: EditedOutputSnapshot,
+): OutputSlideContent => ({
+  text: snapshot.text,
+  footer: undefined,
+  elements: normalizeSlideElements(snapshot.elements),
+  canvasSize: snapshot.canvasSize,
+  backgroundColor: snapshot.backgroundColor,
+});
+
+const resolveSavedSlideIndex = ({
+  activeSlideId,
+  libraryId,
+  previousSlides,
+  nextSlides,
+  fallbackIndex,
+}: {
+  activeSlideId: string | null | undefined;
+  libraryId: string;
+  previousSlides?: LibrarySlide[];
+  nextSlides: LibrarySlide[];
+  fallbackIndex?: number | null;
+}) => {
+  if (!activeSlideId || nextSlides.length === 0) {
+    return -1;
+  }
+
+  const separatorIndex = activeSlideId.indexOf(":");
+  const idPart =
+    separatorIndex >= 0 ? activeSlideId.slice(0, separatorIndex) : activeSlideId;
+  const slideToken =
+    separatorIndex >= 0 ? activeSlideId.slice(separatorIndex + 1) : "";
+
+  if (
+    !activeSlideId.startsWith("scripture:") &&
+    String(idPart) !== String(libraryId)
+  ) {
+    return -1;
+  }
+
+  const nextIdIndex = nextSlides.findIndex((slide) => slide.id === slideToken);
+  if (nextIdIndex >= 0) {
+    return nextIdIndex;
+  }
+
+  const previousIdIndex =
+    previousSlides?.findIndex((slide) => slide.id === slideToken) ?? -1;
+  if (previousIdIndex >= 0 && previousIdIndex < nextSlides.length) {
+    return previousIdIndex;
+  }
+
+  const parsedIndex = Number(slideToken);
+  if (
+    Number.isFinite(parsedIndex) &&
+    parsedIndex >= 0 &&
+    parsedIndex < nextSlides.length
+  ) {
+    return parsedIndex;
+  }
+
+  return fallbackIndex != null &&
+    fallbackIndex >= 0 &&
+    fallbackIndex < nextSlides.length
+    ? fallbackIndex
+    : -1;
+};
+
+const buildSavedSlideSnapshot = ({
+  activeSlideId,
+  libraryId,
+  previousSlides,
+  nextSlides,
+  content,
+  fallbackIndex,
+}: {
+  activeSlideId: string | null | undefined;
+  libraryId: string;
+  previousSlides?: LibrarySlide[];
+  nextSlides: LibrarySlide[];
+  content?: LibraryContent;
+  fallbackIndex?: number | null;
+}): EditedOutputSnapshot | null => {
+  const slideIndex = resolveSavedSlideIndex({
+    activeSlideId,
+    libraryId,
+    previousSlides,
+    nextSlides,
+    fallbackIndex,
+  });
+  const slide = slideIndex >= 0 ? nextSlides[slideIndex] : null;
+  if (!slide) {
+    return null;
+  }
+
+  const slideId = activeSlideId?.startsWith("scripture:")
+    ? slide.id ?? `scripture:${slideIndex}`
+    : `${libraryId}:${slide.id ?? slideIndex}`;
+  return {
+    slideId,
+    text: slide.text,
+    elements: slide.elements ?? [],
+    canvasSize: content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
+    backgroundColor: getSlideBackgroundColor(slide, content),
+  };
 };
 
 type OutputSlideContent = {
@@ -364,8 +487,9 @@ export function PresentContainer({
   const [isOutputFrozen, setIsOutputFrozen] = useState(false);
   const [editedOutputSnapshot, setEditedOutputSnapshot] =
     useState<EditedOutputSnapshot | null>(null);
-  const [editLockSnapshot, setEditLockSnapshot] =
+  const [liveOutputSnapshot, setLiveOutputSnapshot] =
     useState<EditedOutputSnapshot | null>(null);
+  const pendingSavedOutputSnapshotRef = useRef<EditedOutputSnapshot | null>(null);
   // Banner overlay currently being broadcast to the audience output, or null
   // when nothing is shown. Lifted here so the Messages tab can publish it and
   // useOutputBroadcast can forward it to the output window.
@@ -579,35 +703,43 @@ export function PresentContainer({
     scriptureSlides,
   ]);
 
-  // Freeze the broadcast as soon as the user enters Edit mode on a slide
-  // that's currently live. Without this, every keystroke triggers the
-  // debounced auto-save which mutates the library item the live output is
-  // reading from — and during those round-trips the audience sees flicker,
-  // partial text, or the layer collapsing entirely. The freeze is released
-  // when the user leaves Edit, selects a different slide, or explicitly
-  // clicks "Update Output" (which sets its own snapshot).
+  // Keep one stable live slide payload for every display surface. Autosave can
+  // briefly make the active library item unavailable during local/remote
+  // refresh; during that gap, keep the last good content instead of letting
+  // preview/output/stage collapse. When autosave returns the updated slide,
+  // replace the snapshot so every screen updates without another click.
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      if (viewMode !== "edit") {
-        setEditLockSnapshot((current) => (current === null ? current : null));
-        return;
-      }
-
       if (!activeSlideId || !activeSlideContent || editedOutputSnapshot) {
         return;
       }
 
-      setEditLockSnapshot((current) => {
-        if (current?.slideId === activeSlideId) {
+      const nextSnapshot: EditedOutputSnapshot = {
+        slideId: activeSlideId,
+        text: activeSlideContent.text ?? "",
+        elements: normalizeSlideElements(activeSlideContent.elements),
+        canvasSize: activeSlideContent.canvasSize ?? DEFAULT_CANVAS_SIZE,
+        backgroundColor: activeSlideContent.backgroundColor ?? null,
+      };
+
+      setLiveOutputSnapshot((current) => {
+        const pendingSavedSnapshot = pendingSavedOutputSnapshotRef.current;
+        if (pendingSavedSnapshot?.slideId === nextSnapshot.slideId) {
+          if (!areEditedOutputSnapshotsEqual(pendingSavedSnapshot, nextSnapshot)) {
+            return current;
+          }
+          pendingSavedOutputSnapshotRef.current = null;
+        }
+        if (
+          current?.slideId === nextSnapshot.slideId &&
+          !hasEditedOutputSnapshotContent(nextSnapshot)
+        ) {
           return current;
         }
-        return {
-          slideId: activeSlideId,
-          text: activeSlideContent.text ?? "",
-          elements: normalizeSlideElements(activeSlideContent.elements),
-          canvasSize: activeSlideContent.canvasSize ?? DEFAULT_CANVAS_SIZE,
-          backgroundColor: activeSlideContent.backgroundColor ?? null,
-        };
+        if (areEditedOutputSnapshotsEqual(current, nextSnapshot)) {
+          return current;
+        }
+        return nextSnapshot;
       });
     }, 0);
 
@@ -616,29 +748,55 @@ export function PresentContainer({
     activeSlideContent,
     activeSlideId,
     editedOutputSnapshot,
-    viewMode,
   ]);
 
   const broadcastSnapshot =
     editedOutputSnapshot ??
-    (viewMode === "edit" ? editLockSnapshot : null);
+    liveOutputSnapshot;
 
   const outputSlideContent = useMemo<OutputSlideContent | null>(
     () =>
       broadcastSnapshot
-        ? {
-            text: broadcastSnapshot.text,
-            footer: undefined,
-            elements: normalizeSlideElements(broadcastSnapshot.elements),
-            canvasSize: broadcastSnapshot.canvasSize,
-            backgroundColor: broadcastSnapshot.backgroundColor,
-          }
+        ? editedOutputSnapshotToContent(broadcastSnapshot)
         : activeSlideContent,
     [activeSlideContent, broadcastSnapshot],
   );
 
   const outputActiveSlideId =
     broadcastSnapshot?.slideId ?? activeSlideId ?? null;
+
+  const publishSavedSlidesToLiveOutput = useCallback(
+    ({
+      libraryId,
+      nextSlides,
+      content,
+      previousSlides,
+      fallbackIndex,
+    }: {
+      libraryId: string;
+      nextSlides: LibrarySlide[];
+      content?: LibraryContent;
+      previousSlides?: LibrarySlide[];
+      fallbackIndex?: number | null;
+    }) => {
+      const snapshot = buildSavedSlideSnapshot({
+        activeSlideId: outputActiveSlideId ?? activeSlideId,
+        libraryId,
+        previousSlides,
+        nextSlides,
+        content,
+        fallbackIndex,
+      });
+      if (!snapshot) {
+        return;
+      }
+      setEditedOutputSnapshot(null);
+      pendingSavedOutputSnapshotRef.current = snapshot;
+      setLiveOutputSnapshot(snapshot);
+    },
+    [activeSlideId, outputActiveSlideId],
+  );
+
   const lastAutoEnabledSlideRef = useRef<string | null>(null);
   const previousOutputActiveSlideRef = useRef<string | null>(null);
 
@@ -791,6 +949,13 @@ export function PresentContainer({
         null;
 
       setScriptureSlides(draftSlides);
+      publishSavedSlidesToLiveOutput({
+        libraryId: "scripture",
+        nextSlides: draft.slides,
+        content: draft.content,
+        previousSlides: scriptureEditorItem?.slides,
+        fallbackIndex: selected?.index ?? null,
+      });
       setScriptureLayoutTemplate(
         createScriptureLayoutTemplate({
           slide: templateSlide,
@@ -798,7 +963,13 @@ export function PresentContainer({
         }),
       );
     },
-    [scriptureSlides, selected, setScriptureLayoutTemplate],
+    [
+      publishSavedSlidesToLiveOutput,
+      scriptureEditorItem?.slides,
+      scriptureSlides,
+      selected,
+      setScriptureLayoutTemplate,
+    ],
   );
 
   const handleUpdateScriptureEditedSlideOutput = useCallback(
@@ -879,8 +1050,17 @@ export function PresentContainer({
   const handleSaveSelectedDeckItem = useCallback(
     async (draft: LibraryItemDraft) => {
       setEditedOutputSnapshot(null);
+      const targetLibraryId =
+        (draft._id ? String(draft._id) : selectedDeckLibraryId) ?? null;
+      const previousSlides = selectedDeckItem?.slides;
+      const fallbackIndex =
+        targetLibraryId && selected?.libraryId === targetLibraryId
+          ? selected.index
+          : null;
 
       if (selectedServiceId && selectedServicePresentationItem?.presentation) {
+        const presentationLibraryId =
+          selectedDeckLibraryId ?? `presentation_${selectedServicePresentationItem.refId}`;
         await updatePresentationInService(
           selectedServiceId,
           selectedServicePresentationItem.refId,
@@ -892,13 +1072,33 @@ export function PresentContainer({
             content: draft.content,
           },
         );
+        publishSavedSlidesToLiveOutput({
+          libraryId: presentationLibraryId,
+          nextSlides: draft.slides,
+          content: draft.content,
+          previousSlides,
+          fallbackIndex,
+        });
         return;
       }
 
       await handleSaveLibraryItem(draft);
+      if (targetLibraryId) {
+        publishSavedSlidesToLiveOutput({
+          libraryId: targetLibraryId,
+          nextSlides: draft.slides,
+          content: draft.content,
+          previousSlides,
+          fallbackIndex,
+        });
+      }
     },
     [
       handleSaveLibraryItem,
+      publishSavedSlidesToLiveOutput,
+      selected,
+      selectedDeckItem?.slides,
+      selectedDeckLibraryId,
       selectedServiceId,
       selectedServicePresentationItem,
       updatePresentationInService,
@@ -914,22 +1114,37 @@ export function PresentContainer({
         throw new Error("Library item not found.");
       }
 
+      const slides = buildSlidesFromBody(
+        body,
+        item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
+        libraryTextDefaults,
+      );
       await updateExistingLibraryItem(
         libraryId,
         {
           title: item.title,
           body,
-          slides: buildSlidesFromBody(
-            body,
-            item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
-            libraryTextDefaults,
-          ),
+          slides,
           content: item.content,
         },
         item.categoryId ? String(item.categoryId) : undefined,
       );
+      publishSavedSlidesToLiveOutput({
+        libraryId,
+        nextSlides: slides,
+        content: item.content,
+        previousSlides: item.slides,
+        fallbackIndex:
+          selected?.libraryId === libraryId ? selected.index : null,
+      });
     },
-    [libraryItems, libraryTextDefaults, updateExistingLibraryItem],
+    [
+      libraryItems,
+      libraryTextDefaults,
+      publishSavedSlidesToLiveOutput,
+      selected,
+      updateExistingLibraryItem,
+    ],
   );
 
   const handleOpenMiniEditor = useCallback(

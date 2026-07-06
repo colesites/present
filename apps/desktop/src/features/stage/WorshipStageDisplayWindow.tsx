@@ -86,6 +86,15 @@ const initialState: WorshipStageState = {
   currentInlineInstruction: null,
 };
 
+const hasSlideContent = (input: {
+  slideText: string | null;
+  slideElements: SlideElement[] | null;
+  slideBackgroundColor: string | null;
+}) =>
+  Boolean(input.slideText?.trim()) ||
+  Boolean(input.slideElements?.length) ||
+  Boolean(input.slideBackgroundColor);
+
 export function WorshipStageDisplayWindow() {
   const [state, setState] = useState<WorshipStageState>(initialState);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -150,25 +159,37 @@ export function WorshipStageDisplayWindow() {
       } else if (message.type === "active-slide") {
         setState((previous) => ({
           ...previous,
-          activeSlideId:
-            typeof message.slideId === "string" ? message.slideId : null,
-          slideText:
-            typeof message.slideText === "string" ? message.slideText : null,
-          slideFooter:
-            typeof message.slideFooter === "string"
-              ? message.slideFooter
-              : null,
-          slideElements: Array.isArray(message.slideElements)
-            ? (message.slideElements as SlideElement[])
-            : null,
-          slideCanvasSize:
-            typeof message.slideCanvasSize === "string"
-              ? (message.slideCanvasSize as CanvasSizePreset)
-              : null,
-          slideBackgroundColor:
-            typeof message.slideBackgroundColor === "string"
-              ? message.slideBackgroundColor
-              : null,
+          ...(() => {
+            const nextSlide = {
+              activeSlideId:
+                typeof message.slideId === "string" ? message.slideId : null,
+              slideText:
+                typeof message.slideText === "string" ? message.slideText : null,
+              slideFooter:
+                typeof message.slideFooter === "string"
+                  ? message.slideFooter
+                  : null,
+              slideElements: Array.isArray(message.slideElements)
+                ? (message.slideElements as SlideElement[])
+                : null,
+              slideCanvasSize:
+                typeof message.slideCanvasSize === "string"
+                  ? (message.slideCanvasSize as CanvasSizePreset)
+                  : null,
+              slideBackgroundColor:
+                typeof message.slideBackgroundColor === "string"
+                  ? message.slideBackgroundColor
+                  : null,
+            };
+            if (
+              previous.showText &&
+              !hasSlideContent(nextSlide) &&
+              hasSlideContent(previous)
+            ) {
+              return {};
+            }
+            return nextSlide;
+          })(),
         }));
       } else if (message.type === "stage-content") {
         setState((previous) => ({

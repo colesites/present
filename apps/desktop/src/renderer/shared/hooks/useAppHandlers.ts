@@ -75,7 +75,9 @@ export function useAppHandlers({
 }: UseAppHandlersProps) {
   const resolveLibrarySlideIndex = useCallback(
     (libraryId: string, slideToken: string): number | null => {
-      const item = libraryItems.find((libraryItem) => String(libraryItem._id) === libraryId);
+      const item = libraryItems.find(
+        (libraryItem) => String(libraryItem._id) === String(libraryId),
+      );
       if (!item) {
         return null;
       }
@@ -169,7 +171,9 @@ export function useAppHandlers({
 
   const handleRenameLibraryItem = useCallback(
     async (libraryId: string, newTitle: string, categoryId?: string) => {
-      const item = libraryItems.find((s) => s._id === libraryId);
+      const item = libraryItems.find(
+        (s) => String(s._id) === String(libraryId),
+      );
       if (!item) return;
       await updateExistingLibraryItem(libraryId, {
         title: newTitle,

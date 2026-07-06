@@ -455,7 +455,9 @@ export const upsertCategory = (orgId: string, input: Category): Category => {
 
 export const upsertLibraryItem = (orgId: string, input: LibraryItem): LibraryItem => {
   const state = readLocalState();
-  const existingIndex = state.libraryItems.findIndex((item) => item._id === input._id);
+  const existingIndex = state.libraryItems.findIndex(
+    (item) => String(item._id) === String(input._id),
+  );
   const stamp = now();
   const existing = existingIndex >= 0 ? state.libraryItems[existingIndex] : null;
   const nextItem: LibraryItem = {
@@ -499,7 +501,8 @@ export const removeLibraryItemLocal = (orgId: string, itemId: string) => {
   const state = readLocalState();
   const index = state.libraryItems.findIndex(
     (item) =>
-      (item.orgId as string | undefined) === orgId && item._id === itemId,
+      (item.orgId as string | undefined) === orgId &&
+      String(item._id) === String(itemId),
   );
   if (index >= 0) {
     const existing = state.libraryItems[index];
@@ -541,7 +544,7 @@ export const removeServiceLocal = (orgId: string, serviceId: string) => {
   const index = state.services.findIndex(
     (service) =>
       (service.orgId as string | undefined) === orgId &&
-      service._id === (serviceId as Service["_id"]),
+      String(service._id) === String(serviceId),
   );
   if (index >= 0) {
     const existing = state.services[index];

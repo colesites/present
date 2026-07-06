@@ -180,7 +180,9 @@ export function useLibrary(
 
   useEffect(() => {
     if (selectedItemId) {
-      const exists = libraryItems.some((s) => s._id === selectedItemId);
+      const exists = libraryItems.some(
+        (s) => String(s._id) === String(selectedItemId),
+      );
       if (!exists) {
         const timerId = window.setTimeout(() => {
           setSelectedItemId(null);
@@ -194,7 +196,10 @@ export function useLibrary(
 
   const selectedItem = useMemo(() => {
     if (!selectedItemId) return null;
-    return libraryItems.find((s) => s._id === selectedItemId) ?? null;
+    return (
+      libraryItems.find((s) => String(s._id) === String(selectedItemId)) ??
+      null
+    );
   }, [selectedItemId, libraryItems]);
 
   const filteredItems = useMemo(() => {
@@ -300,9 +305,9 @@ export function useLibrary(
     categoryId?: string,
   ) => {
     const existing =
-      libraryItems.find((item) => item._id === itemId) ??
+      libraryItems.find((item) => String(item._id) === String(itemId)) ??
       readOrgLibraryItems(workspaceId).find(
-        (item) => String(item._id) === itemId,
+        (item) => String(item._id) === String(itemId),
       );
     if (!existing) {
       throw new Error(`Library item ${itemId} was not found locally.`);
@@ -350,9 +355,9 @@ export function useLibrary(
     body: string,
   ) => {
     const existing =
-      libraryItems.find((item) => item._id === itemId) ??
+      libraryItems.find((item) => String(item._id) === String(itemId)) ??
       readOrgLibraryItems(workspaceId).find(
-        (item) => String(item._id) === itemId,
+        (item) => String(item._id) === String(itemId),
       );
     await saveExistingItem(itemId, {
       title,
@@ -408,7 +413,9 @@ export function useLibrary(
     fromIndex: number,
     toIndex: number,
   ) => {
-    const existing = libraryItems.find((item) => item._id === itemId);
+    const existing = libraryItems.find(
+      (item) => String(item._id) === String(itemId),
+    );
     if (!existing) {
       return;
     }
@@ -429,7 +436,7 @@ export function useLibrary(
       ),
     );
     enqueueSyncOperation(workspaceId, "library", itemId, "delete", { id: itemId });
-    if (selectedItemId === itemId) {
+    if (String(selectedItemId) === String(itemId)) {
       setSelectedItemId(null);
     }
   };
