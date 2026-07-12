@@ -63,6 +63,10 @@ const groupsFromNames = (names: string[]): ServiceGroup[] =>
     }));
 
 export const getServiceTemplateItemLayoutKey = (
+  item: Pick<ServiceItem, "type" | "refId" | "addedAt" | "groupId">,
+) => [item.type, item.refId, item.addedAt, item.groupId ?? "standalone"].join(":");
+
+const getLabelledServiceItemLayoutKey = (
   item: Pick<ServiceItem, "type" | "refId" | "addedAt" | "label" | "groupId">,
 ) =>
   [
@@ -77,12 +81,18 @@ const getLegacyServiceItemLayoutKey = (
   item: Pick<ServiceItem, "type" | "refId" | "addedAt" | "label">,
 ) => [item.type, item.refId, item.addedAt, item.label ?? ""].join(":");
 
+const getServiceItemLayoutKeyAliases = (
+  item: Pick<ServiceItem, "type" | "refId" | "addedAt" | "label" | "groupId">,
+) => [
+  getServiceTemplateItemLayoutKey(item),
+  getLabelledServiceItemLayoutKey(item),
+  getLegacyServiceItemLayoutKey(item),
+];
+
 const isServiceItemLayoutKeyMatch = (
   key: string,
   item: Pick<ServiceItem, "type" | "refId" | "addedAt" | "label" | "groupId">,
-) =>
-  key === getServiceTemplateItemLayoutKey(item) ||
-  key === getLegacyServiceItemLayoutKey(item);
+) => getServiceItemLayoutKeyAliases(item).includes(key);
 
 const normalizeServiceLayout = (
   rawLayout: unknown,
@@ -265,10 +275,10 @@ const cloneTemplateForService = (template: ServiceTemplate) => {
         groupId,
         addedAt: Date.now(),
       };
-      itemKeyMap.set(
-        getServiceTemplateItemLayoutKey(item),
-        getServiceTemplateItemLayoutKey(nextItem),
-      );
+      const nextKey = getServiceTemplateItemLayoutKey(nextItem);
+      for (const key of getServiceItemLayoutKeyAliases(item)) {
+        itemKeyMap.set(key, nextKey);
+      }
       return nextItem;
     });
 
@@ -537,6 +547,20 @@ export function useServices(
     };
   }, [selectedService, selectedServiceGroupId]);
 
+  useEffect(() => {
+    if (serviceItemIndex === null || !selectedService) {
+      return;
+    }
+    if (selectedService.items[serviceItemIndex]) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setServiceItemIndex(null);
+    }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [selectedService, serviceItemIndex]);
+
   const getSelectedGroupIdForService = (service: Service, serviceId: Id<"services">) => {
     if (serviceId !== selectedServiceId || !selectedServiceGroupId) {
       return null;
@@ -590,49 +614,6 @@ export function useServices(
       },
     );
   }, [selectedService, libraryItems]);
-
-  useEffect(() => {
-    if (!selectedService || libraryItems.length === 0) return;
-
-    const libraryTitles = new Map(
-      libraryItems
-        .map((item) => [String(item._id), item.title.trim()] as const)
-        .filter(([, title]) => title.length > 0),
-    );
-    let didRepairLabel = false;
-    const repairedItems = selectedService.items.map((item) => {
-      if (item.type !== "library") {
-        return item;
-      }
-      const title = libraryTitles.get(String(item.refId));
-      if (!title) {
-        return item;
-      }
-      const currentLabel = item.label?.trim() ?? "";
-      if (currentLabel === title) {
-        return item;
-      }
-      if (currentLabel && currentLabel !== String(item.refId)) {
-        return item;
-      }
-      didRepairLabel = true;
-      return { ...item, label: title };
-    });
-
-    if (!didRepairLabel) return;
-
-    const repairedService = upsertService(workspaceId, {
-      ...selectedService,
-      items: repairedItems,
-    });
-    enqueueSyncOperation(
-      workspaceId,
-      "service",
-      String(selectedService._id),
-      "update",
-      repairedService,
-    );
-  }, [libraryItems, selectedService, workspaceId]);
 
   const createNewService = async (name: string, templateId?: string | null) => {
     if (!name.trim()) return null;
@@ -1087,16 +1068,11 @@ export function useServices(
     }
     const service = normalizeServiceGroups(existingService);
     const groupId = getSelectedGroupIdForService(service, serviceId);
-    const libraryItem = libraryItems.find(
-      (item) => String(item._id) === String(libraryItemId),
-    );
-    const label = libraryItem?.title.trim();
     const nextService = upsertService(
       workspaceId,
       appendServiceItem(service, {
         type: "library",
         refId: libraryItemId,
-        ...(label ? { label } : {}),
         groupId,
         addedAt: Date.now(),
       }),
@@ -1416,6 +1392,7 @@ export function useServices(
       return {
         ...item,
         label: normalizedLabel,
+        labelIsCustom: true,
         presentation,
       };
     });
@@ -1534,15 +1511,18 @@ export function useServices(
   };
 
   const enterService = (serviceId: Id<"services">) => {
+    const isReturningToCurrentService =
+      String(selectedServiceId) === String(serviceId);
     setSelectedServiceId(serviceId);
     setIsInsideService(true);
-    setServiceItemIndex(null);
+    if (!isReturningToCurrentService) {
+      setServiceItemIndex(null);
+    }
     setSelectedServiceGroupId(null);
   };
 
   const exitService = () => {
     setIsInsideService(false);
-    setServiceItemIndex(null);
     setSelectedServiceGroupId(null);
   };
 

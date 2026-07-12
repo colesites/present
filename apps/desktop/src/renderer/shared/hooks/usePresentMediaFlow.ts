@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { startTransition, useCallback, useMemo, useState } from "react";
 import { ServiceItem } from "../../../shared/types";
 
 export function usePresentMediaFlow<
@@ -50,7 +50,11 @@ export function usePresentMediaFlow<
       if (item.type === "library") {
         const libraryId = item.refId || item.libraryItem?._id;
         if (libraryId) {
-          setSelectedLibraryId(String(libraryId));
+          // Keep the current slide deck painted while React prepares the next
+          // song's preview canvases. The service-row highlight remains urgent.
+          startTransition(() => {
+            setSelectedLibraryId(String(libraryId));
+          });
           setPreviewMediaItem(null);
           onClearScripture?.();
           onClearPresentation?.();

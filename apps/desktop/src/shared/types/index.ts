@@ -278,6 +278,8 @@ export interface ServiceItem {
   type: ServiceItemType;
   refId: string;
   label?: string;
+  /** Whether label is an operator-defined service-only name rather than a library title. */
+  labelIsCustom?: boolean;
   groupId?: string | null;
   addedAt: number;
   presentation?: ServicePresentation | null;
@@ -297,6 +299,7 @@ export type Service = {
     type: ServiceItemType;
     refId: string;
     label?: string;
+    labelIsCustom?: boolean;
     groupId?: string | null;
     addedAt: number;
     presentation?: ServicePresentation;

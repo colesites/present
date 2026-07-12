@@ -1,6 +1,7 @@
 "use client";
 
 import type { Category, LibraryItem, SavedMessage, Service } from "../../../shared/types";
+import { remapServiceLibraryItemIds } from "./service-library-id-map.mjs";
 
 export type OfflineEntityType = "library" | "service" | "message";
 export type OfflineOperation = "create" | "update" | "delete" | "reorder";
@@ -218,6 +219,7 @@ const compactSyncPayload = (
           type: entry.type,
           refId: entry.refId,
           label: entry.label,
+          labelIsCustom: entry.labelIsCustom,
           groupId: entry.groupId ?? null,
           addedAt: entry.addedAt,
           presentation:
@@ -610,12 +612,25 @@ export const removeMessageLocal = (orgId: string, messageId: string) => {
 export const replaceOrgServices = (
   orgId: string,
   services: Service[],
-  localToRemoteIds: Record<string, string> = {},
+  localToRemoteServiceIds: Record<string, string> = {},
+  localToRemoteLibraryIds: Record<string, string> = {},
 ) => {
   const state = readLocalState();
-  const orgServices = state.services.filter(
-    (service) => (service.orgId as string | undefined) === orgId,
+  const orgLibraryIds = new Set(
+    state.libraryItems
+      .filter((item) => (item.orgId as string | undefined) === orgId)
+      .map((item) => String(item._id)),
   );
+  const localLibraryIdByRemoteId = Object.fromEntries(
+    Object.entries(localToRemoteLibraryIds)
+      .filter(([localId]) => orgLibraryIds.has(localId))
+      .map(([localId, remoteId]) => [remoteId, localId]),
+  );
+  const normalizeLibraryReferences = (service: Service) =>
+    remapServiceLibraryItemIds(service, localLibraryIdByRemoteId) as Service;
+  const orgServices = state.services
+    .filter((service) => (service.orgId as string | undefined) === orgId)
+    .map(normalizeLibraryReferences);
   const withoutOrg = state.services.filter(
     (service) => (service.orgId as string | undefined) !== orgId,
   );
@@ -623,7 +638,7 @@ export const replaceOrgServices = (
     orgServices.map((service) => [String(service._id), service]),
   );
   const localIdByRemoteId = new Map(
-    Object.entries(localToRemoteIds).map(([localId, remoteId]) => [
+    Object.entries(localToRemoteServiceIds).map(([localId, remoteId]) => [
       remoteId,
       localId,
     ]),
@@ -644,7 +659,9 @@ export const replaceOrgServices = (
   const mergedServices: Service[] = [];
 
   for (const remoteService of services) {
-    const normalizedRemote = normalizeRemoteService(orgId, remoteService);
+    const normalizedRemote = normalizeLibraryReferences(
+      normalizeRemoteService(orgId, remoteService),
+    );
     const remoteId = String(normalizedRemote._id);
     if (seenRemoteIds.has(remoteId)) {
       continue;
@@ -718,6 +735,40 @@ export const replaceOrgServices = (
 
   state.services = [...withoutOrg, ...mergedServices];
   writeLocalState(state);
+};
+
+export const repairOrgServiceLibraryReferences = (
+  orgId: string,
+  localToRemoteLibraryIds: Record<string, string> = {},
+) => {
+  const state = readLocalState();
+  const orgLibraryIds = new Set(
+    state.libraryItems
+      .filter((item) => (item.orgId as string | undefined) === orgId)
+      .map((item) => String(item._id)),
+  );
+  const localLibraryIdByRemoteId = Object.fromEntries(
+    Object.entries(localToRemoteLibraryIds)
+      .filter(([localId]) => orgLibraryIds.has(localId))
+      .map(([localId, remoteId]) => [remoteId, localId]),
+  );
+  let didRepair = false;
+
+  state.services = state.services.map((service) => {
+    if ((service.orgId as string | undefined) !== orgId) {
+      return service;
+    }
+    const repaired = remapServiceLibraryItemIds(
+      service,
+      localLibraryIdByRemoteId,
+    ) as Service;
+    didRepair ||= repaired !== service;
+    return repaired;
+  });
+
+  if (didRepair) {
+    writeLocalState(state);
+  }
 };
 
 export const replaceOrgLibraryItems = (

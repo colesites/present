@@ -438,12 +438,16 @@ export const LyricsEditor = memo(function LyricsEditor({
   }, [debouncedAutoSave, libraryItem?._id]);
 
   useEffect(() => {
-    if (!draft.title.trim()) {
+    if (
+      !libraryItem ||
+      String(draft._id) !== String(libraryItem._id) ||
+      !draft.title.trim()
+    ) {
       return;
     }
 
     debouncedAutoSave(draft);
-  }, [draft, debouncedAutoSave]);
+  }, [draft, debouncedAutoSave, libraryItem]);
 
   useEffect(() => {
     if (scrollToSlideIndex == null) {
@@ -1123,11 +1127,15 @@ export const LyricsEditor = memo(function LyricsEditor({
               don&apos;t count toward the line total.
             </p>
             <div className="space-y-2">
-              <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              <label
+                htmlFor="lyrics-break-lines"
+                className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+              >
                 Lines per slide:{" "}
                 <span className="text-foreground">{breakLines}</span>
               </label>
               <input
+                id="lyrics-break-lines"
                 type="range"
                 aria-label="Lines per slide"
                 min={1}

@@ -3,7 +3,6 @@
 import {
   memo,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -528,32 +527,36 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
   const [imageTick, setImageTick] = useState(0);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
+  const updateContainerSize = useCallback((width: number, height: number) => {
+    const nextWidth = Math.max(0, Math.round(width));
+    const nextHeight = Math.max(0, Math.round(height));
+    setContainerSize((current) =>
+      current.width === nextWidth && current.height === nextHeight
+        ? current
+        : { width: nextWidth, height: nextHeight },
+    );
+  }, []);
+
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const updateContainerSize = () => {
+    const measureContainer = () => {
       const { width, height } = container.getBoundingClientRect();
-      setContainerSize({
-        width: Math.max(0, width),
-        height: Math.max(0, height),
-      });
+      updateContainerSize(width, height);
     };
 
-    updateContainerSize();
+    measureContainer();
 
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
       const { width, height } = entry.contentRect;
-      setContainerSize({
-        width: Math.max(0, width),
-        height: Math.max(0, height),
-      });
+      updateContainerSize(width, height);
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, []);
+  }, [updateContainerSize]);
 
   const slideDimensions = useMemo(
     () => CANVAS_DIMENSIONS[resolveCanvasSize(canvasSize)],
@@ -832,12 +835,10 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
     visibleElements,
   ]);
 
-  useEffect(() => {
-    draw();
-  }, [draw]);
-
-  useEffect(() => {
-    if (imageTick <= 0) return;
+  // Canvas pixels must be ready in the same pre-paint phase that makes the
+  // layer visible. Drawing in a normal effect produces a blank frame whenever
+  // React replaces every slide canvas during a song switch.
+  useLayoutEffect(() => {
     draw();
   }, [draw, imageTick]);
 

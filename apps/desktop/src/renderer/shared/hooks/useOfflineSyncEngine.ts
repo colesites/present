@@ -10,12 +10,14 @@ import {
   readOrgLibraryItems,
   readOrgServices,
   readSyncQueue,
+  repairOrgServiceLibraryReferences,
   replaceOrgCategories,
   replaceOrgLibraryItems,
   replaceOrgMessages,
   replaceOrgServices,
   removeSyncQueueItems,
 } from "../offline/localData";
+import { remapServiceLibraryItemIds } from "../offline/service-library-id-map.mjs";
 import {
   ensureFreshDesktopAccessToken,
   useDesktopSessionStore,
@@ -177,6 +179,16 @@ const toSyncableServiceItems = (
     }));
 };
 
+const toSyncableServiceLayout = (
+  service: Service,
+  idMap: SyncIdMap,
+  orgId: string,
+) =>
+  remapServiceLibraryItemIds(
+    service,
+    idMap.library?.[orgId] ?? {},
+  ).layout ?? [];
+
 const getLocalLibrary = (orgId: string, entityId: string) =>
   readOrgLibraryItems(orgId).find((item) => String(item._id) === entityId) ?? null;
 
@@ -286,6 +298,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
           type: item.type,
           refId: item.refId,
           label: item.label,
+          labelIsCustom: item.labelIsCustom,
           groupId: item.groupId ?? null,
           addedAt: item.addedAt,
           presentation:
@@ -444,7 +457,11 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
                 name: localService.name,
                 date: localService.date,
                 groups: localService.groups ?? [],
-                layout: localService.layout ?? [],
+                layout: toSyncableServiceLayout(
+                  localService,
+                  idMapRef.current,
+                  item.orgId,
+                ),
               });
               remoteServiceId = String(createdId);
               setMappedId(
@@ -463,7 +480,11 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
                 name: localService.name,
                 date: localService.date,
                 groups: localService.groups ?? [],
-                layout: localService.layout ?? [],
+                layout: toSyncableServiceLayout(
+                  localService,
+                  idMapRef.current,
+                  item.orgId,
+                ),
               });
             }
           } else {
@@ -473,7 +494,11 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
               name: localService.name,
               date: localService.date,
               groups: localService.groups ?? [],
-              layout: localService.layout ?? [],
+              layout: toSyncableServiceLayout(
+                localService,
+                idMapRef.current,
+                item.orgId,
+              ),
             });
           }
 
@@ -627,6 +652,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
         orgId,
         remoteServices as never,
         idMapRef.current.service?.[orgId] ?? {},
+        idMapRef.current.library?.[orgId] ?? {},
       );
       replaceOrgCategories(orgId, remoteCategories as never);
       replaceOrgMessages(orgId, remoteMessages as never);
@@ -641,6 +667,13 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
 
     runningRef.current = true;
     clearRetryTimer();
+
+    for (const workspaceId of getWorkspaceIdsToPull()) {
+      repairOrgServiceLibraryReferences(
+        workspaceId,
+        idMapRef.current.library?.[workspaceId] ?? {},
+      );
+    }
 
     try {
       const token = await ensureFreshDesktopAccessToken();

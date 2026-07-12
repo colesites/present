@@ -6,16 +6,8 @@ const getServiceLayoutItemKey = (item: {
   type: string;
   refId: string;
   addedAt: number;
-  label?: string;
   groupId?: string | null;
-}) =>
-  [
-    item.type,
-    item.refId,
-    item.addedAt,
-    item.groupId ?? "standalone",
-    item.label ?? "",
-  ].join(":");
+}) => [item.type, item.refId, item.addedAt, item.groupId ?? "standalone"].join(":");
 
 export const list = query({
   args: { workspaceId: v.optional(v.string()) },
@@ -152,6 +144,7 @@ export const addItem = mutation({
     ),
     refId: v.string(),
     label: v.optional(v.string()),
+    labelIsCustom: v.optional(v.boolean()),
     groupId: v.optional(v.union(v.string(), v.null())),
     addedAt: v.optional(v.number()),
     presentation: v.optional(v.any()),
@@ -186,6 +179,7 @@ export const addItem = mutation({
       type: args.type,
       refId: args.refId,
       label: args.type === "group" ? (args.label ?? "Group") : args.label,
+      labelIsCustom: args.labelIsCustom,
       groupId: args.groupId ?? undefined,
       presentation: args.type === "presentation" ? normalizedPresentation : undefined,
       addedAt: args.addedAt ?? Date.now(),

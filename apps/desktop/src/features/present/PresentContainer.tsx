@@ -505,6 +505,33 @@ export function PresentContainer({
   const [livePropDrafts, setLivePropDrafts] = useState<
     Record<string, Partial<PropsOverlayItem> & { name?: string }>
   >({});
+
+  const handleEnterService = useCallback(
+    (serviceId: Id<"services">) => {
+      const isReturningToCurrentService =
+        String(selectedServiceId) === String(serviceId);
+      const selectedServiceItem = isReturningToCurrentService
+        ? serviceItems[serviceItemIndex ?? -1]
+        : null;
+
+      // Restore the service's last opened library deck when returning from a
+      // panel that cleared it, so the slide grid is immediately usable.
+      if (selectedServiceItem?.type === "library" && selectedServiceItem.refId) {
+        setSelectedPresentationLibraryId(null);
+        setSelectedLibraryId(selectedServiceItem.refId);
+      }
+
+      enterService(serviceId);
+    },
+    [
+      enterService,
+      selectedServiceId,
+      serviceItemIndex,
+      serviceItems,
+      setSelectedLibraryId,
+    ],
+  );
+
   // Timer state lives here so both the rail Timer tab and the output
   // broadcast effect read from the same source. (Used to be inside
   // OutputPreview, which forced the embedded duplicate UI.)
@@ -550,8 +577,34 @@ export function PresentContainer({
       ) ?? null,
     [selectedPresentationLibraryId, serviceItems],
   );
-  const selectedDeckItem = selectedLibraryItem ?? selectedPresentationItem;
-  const selectedDeckLibraryId = selectedLibraryId ?? selectedPresentationLibraryId;
+  const selectedServiceLibraryItem = useMemo(() => {
+    if (!isInsideService || serviceItemIndex === null) {
+      return null;
+    }
+
+    const item = serviceItems[serviceItemIndex];
+    if (item?.type !== "library") {
+      return null;
+    }
+
+    return (
+      item.libraryItem ??
+      libraryItems.find((libraryItem) => String(libraryItem._id) === item.refId) ??
+      null
+    );
+  }, [isInsideService, libraryItems, serviceItemIndex, serviceItems]);
+  const shouldUseServiceLibraryFallback =
+    viewMode === "show" && bottomTab === "media";
+  const selectedDeckItem =
+    selectedLibraryItem ??
+    selectedPresentationItem ??
+    (shouldUseServiceLibraryFallback ? selectedServiceLibraryItem : null);
+  const selectedDeckLibraryId =
+    selectedLibraryId ??
+    selectedPresentationLibraryId ??
+    (shouldUseServiceLibraryFallback
+      ? String(selectedServiceLibraryItem?._id ?? "") || null
+      : null);
   const selectedPresentationSourceType =
     selectedServicePresentationItem?.presentation?.sourceType ?? null;
   const handleSetSelectedDeckLibraryId = useCallback(
@@ -581,16 +634,8 @@ export function PresentContainer({
 
   // Memos
   const slidesForGrid = useMemo(() => {
-    if (selectedLibraryItem) {
-      return getSlidesForGrid(selectedLibraryItem);
-    }
-    if (selectedPresentationItem) {
-      return selectedPresentationItem.slides.map((slide, index) => ({
-        libraryItem: null as LibraryItem | null,
-        slide,
-        index,
-        id: `${selectedPresentationItem._id}:${slide.id ?? index}`,
-      }));
+    if (selectedDeckItem) {
+      return getSlidesForGrid(selectedDeckItem);
     }
     if (
       scriptureSlides.length > 0 &&
@@ -607,8 +652,7 @@ export function PresentContainer({
   }, [
     activeSlideId,
     bottomTab,
-    selectedLibraryItem,
-    selectedPresentationItem,
+    selectedDeckItem,
     scriptureSlides,
   ]);
 
@@ -710,6 +754,13 @@ export function PresentContainer({
   // replace the snapshot so every screen updates without another click.
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
+      if (
+        pendingSavedOutputSnapshotRef.current &&
+        pendingSavedOutputSnapshotRef.current.slideId !== activeSlideId
+      ) {
+        pendingSavedOutputSnapshotRef.current = null;
+      }
+
       if (!activeSlideId || !activeSlideContent || editedOutputSnapshot) {
         return;
       }
@@ -722,14 +773,15 @@ export function PresentContainer({
         backgroundColor: activeSlideContent.backgroundColor ?? null,
       };
 
-      setLiveOutputSnapshot((current) => {
-        const pendingSavedSnapshot = pendingSavedOutputSnapshotRef.current;
-        if (pendingSavedSnapshot?.slideId === nextSnapshot.slideId) {
-          if (!areEditedOutputSnapshotsEqual(pendingSavedSnapshot, nextSnapshot)) {
-            return current;
-          }
-          pendingSavedOutputSnapshotRef.current = null;
+      const pendingSavedSnapshot = pendingSavedOutputSnapshotRef.current;
+      if (pendingSavedSnapshot?.slideId === nextSnapshot.slideId) {
+        if (!areEditedOutputSnapshotsEqual(pendingSavedSnapshot, nextSnapshot)) {
+          return;
         }
+        pendingSavedOutputSnapshotRef.current = null;
+      }
+
+      setLiveOutputSnapshot((current) => {
         if (
           current?.slideId === nextSnapshot.slideId &&
           !hasEditedOutputSnapshotContent(nextSnapshot)
@@ -751,8 +803,11 @@ export function PresentContainer({
   ]);
 
   const broadcastSnapshot =
-    editedOutputSnapshot ??
-    liveOutputSnapshot;
+    editedOutputSnapshot?.slideId === activeSlideId
+      ? editedOutputSnapshot
+      : liveOutputSnapshot?.slideId === activeSlideId
+        ? liveOutputSnapshot
+        : null;
 
   const outputSlideContent = useMemo<OutputSlideContent | null>(
     () =>
@@ -780,7 +835,7 @@ export function PresentContainer({
       fallbackIndex?: number | null;
     }) => {
       const snapshot = buildSavedSlideSnapshot({
-        activeSlideId: outputActiveSlideId ?? activeSlideId,
+        activeSlideId,
         libraryId,
         previousSlides,
         nextSlides,
@@ -794,7 +849,7 @@ export function PresentContainer({
       pendingSavedOutputSnapshotRef.current = snapshot;
       setLiveOutputSnapshot(snapshot);
     },
-    [activeSlideId, outputActiveSlideId],
+    [activeSlideId],
   );
 
   const lastAutoEnabledSlideRef = useRef<string | null>(null);
@@ -920,12 +975,12 @@ export function PresentContainer({
 
   useEffect(() => {
     setGlobalActions({
-      onSelectService: enterService,
+      onSelectService: handleEnterService,
       onSelectLibraryItem: handleSetSelectedDeckLibraryId,
       onSelectScripture: handleSelectScripture,
     });
   }, [
-    enterService,
+    handleEnterService,
     handleSetSelectedDeckLibraryId,
     handleSelectScripture,
     setGlobalActions,
@@ -1861,7 +1916,7 @@ export function PresentContainer({
           templateMediaItems: allMediaItems,
           serviceItemIndex,
           selectedServiceGroupId,
-          onEnterService: enterService,
+          onEnterService: handleEnterService,
           onExitService: exitService,
           onSelectServiceItem: handleSelectServiceItem,
           onSelectServiceGroup: (groupId) => {

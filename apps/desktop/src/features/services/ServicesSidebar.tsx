@@ -35,6 +35,7 @@ interface ServiceItem {
   type: "library" | "media" | "scripture" | "presentation" | "group";
   refId: string;
   label?: string;
+  labelIsCustom?: boolean;
   groupId?: string | null;
   addedAt: number;
   presentation?: {
@@ -2221,8 +2222,13 @@ const ServiceItemsList = memo(function ServiceItemsList({
 
 function getServiceItemDisplay(item: ServiceItem) {
   if (item.type === "library") {
+    const serviceLabel = item.label?.trim();
+    const libraryTitle = item.libraryItem?.title?.trim();
     return {
-      displayName: item.label ?? item.libraryItem?.title ?? item.refId,
+      displayName:
+        item.labelIsCustom && serviceLabel
+          ? serviceLabel
+          : libraryTitle || serviceLabel || item.refId,
       icon: <MusicIcon />,
     };
   }

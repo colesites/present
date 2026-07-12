@@ -272,25 +272,10 @@ export function useOutputBroadcast({
       ...mediaPayload,
       shouldSyncTime: false,
     });
-    if (
-      forceOutputSync ||
-      mediaSignature !== lastMediaOutputSignatureRef.current
-    ) {
-      window.electronAPI.sendToOutput(mediaPayload);
-      lastMediaOutputSignatureRef.current = mediaSignature;
-    }
-    if (
-      window.electronAPI.sendToWorshipStage &&
-      (forceWorshipStageSync ||
-        mediaSignature !== lastMediaWorshipSignatureRef.current)
-    ) {
-      window.electronAPI.sendToWorshipStage(mediaPayload);
-      lastMediaWorshipSignatureRef.current = mediaSignature;
-    }
 
-    // Send active slide text. Autosave/sync can briefly make the selected
-    // slide resolve to empty/null; while the text layer is enabled, keep the
-    // last good slide payload instead of clearing the audience output.
+    // Send the slide payload before media/showText changes. When a user turns
+    // text back on by selecting a slide, the output window must already know
+    // the new slide or it can briefly reveal the previous one.
     const hasIncomingSlideContent =
       Boolean(slideText?.trim()) ||
       (Array.isArray(slideElements) && slideElements.length > 0) ||
@@ -304,12 +289,14 @@ export function useOutputBroadcast({
       slideCanvasSize,
       slideBackgroundColor,
     };
+    const previousSlidePayload = lastSlidePayloadRef.current;
     const shouldKeepPreviousSlide =
       !hasIncomingSlideContent &&
-      lastSlidePayloadRef.current != null &&
+      previousSlidePayload != null &&
+      previousSlidePayload.slideId === activeSlideId &&
       (showText || Boolean(activeSlideId));
     const activeSlidePayload = shouldKeepPreviousSlide
-      ? lastSlidePayloadRef.current
+      ? previousSlidePayload
       : incomingSlidePayload;
     if (activeSlidePayload) {
       lastSlidePayloadRef.current = activeSlidePayload;
@@ -329,6 +316,22 @@ export function useOutputBroadcast({
         window.electronAPI.sendToWorshipStage(activeSlidePayload);
         lastSlideWorshipSignatureRef.current = activeSlideSignature;
       }
+    }
+
+    if (
+      forceOutputSync ||
+      mediaSignature !== lastMediaOutputSignatureRef.current
+    ) {
+      window.electronAPI.sendToOutput(mediaPayload);
+      lastMediaOutputSignatureRef.current = mediaSignature;
+    }
+    if (
+      window.electronAPI.sendToWorshipStage &&
+      (forceWorshipStageSync ||
+        mediaSignature !== lastMediaWorshipSignatureRef.current)
+    ) {
+      window.electronAPI.sendToWorshipStage(mediaPayload);
+      lastMediaWorshipSignatureRef.current = mediaSignature;
     }
 
     // Broadcast the current banner-message overlay (or null to clear it).
