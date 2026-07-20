@@ -59,7 +59,8 @@
     "style-loader": "^3.3.4",
     "tailwindcss": "^4.2.1",
     "ts-loader": "^9.5.4",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "webpack": "^5.105.4"
   },
   "dependencies": {
     "@ai-sdk/openai": "^1.1.0",

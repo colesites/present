@@ -197,13 +197,13 @@ const shouldEmitTranscriptForLanguage = (transcript: string, lang: string): bool
   return latinLetters.length / letters.length >= 0.7;
 };
 
-const float32ToPcm16 = (input: Float32Array): Int16Array => {
+const float32ToPcm16 = (input: Float32Array): ArrayBuffer => {
   const output = new Int16Array(input.length);
   for (let index = 0; index < input.length; index += 1) {
     const sample = Math.max(-1, Math.min(1, input[index] ?? 0));
     output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
   }
-  return output;
+  return output.buffer;
 };
 
 const formatSpeechError = (error: unknown): string => {
@@ -733,7 +733,7 @@ export function useSpeechRecognition(
         }
 
         const pcmChunk = float32ToPcm16(inputData);
-        socket.send(pcmChunk.buffer);
+        socket.send(pcmChunk);
       };
 
       socket.onmessage = (event) => {

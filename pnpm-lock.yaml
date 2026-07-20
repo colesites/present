@@ -252,6 +252,9 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
+      webpack:
+        specifier: ^5.105.4
+        version: 5.105.4
 
   apps/web:
     dependencies:

@@ -20,5 +20,5 @@
       "@present/backend/*": ["../../packages/backend/*"]
     }
   },
-  "include": ["src/**/*", "convex/**/*"]
+  "include": ["*.ts", "src/**/*", "convex/**/*"]
 }
