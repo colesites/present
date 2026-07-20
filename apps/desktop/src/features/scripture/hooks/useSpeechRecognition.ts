@@ -130,7 +130,7 @@ interface StreamingSession {
   maxDurationSeconds: number;
 }
 
-const DEFAULT_WEB_APP_URL = "https://present.c-technology-inc.com";
+const DEFAULT_WEB_APP_URL = "https://present.multivrs.space";
 const ASSEMBLYAI_STREAM_URL = "wss://streaming.assemblyai.com/v3/ws";
 const ASSEMBLYAI_TOKEN_PATH = "/api/assemblyai/token";
 const SPEECH_QUOTA_EXHAUSTED_MESSAGE =

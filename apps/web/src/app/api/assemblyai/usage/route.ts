@@ -5,7 +5,7 @@ import { resolveRequestAuthContext } from "@/lib/server/request-auth";
 const DEFAULT_ALLOWED_ORIGINS = new Set([
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  "https://present.c-technology-inc.com",
+  "https://present.multivrs.space",
   "https://present.app",
   "app://app",
   "null",

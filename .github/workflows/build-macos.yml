@@ -56,7 +56,7 @@ jobs:
       - name: Build Present for macOS (${{ matrix.display_name }})
         env:
           CONVEX_URL: https://wary-iguana-735.convex.cloud
-          WEB_APP_URL: https://present.c-technology-inc.com
+          WEB_APP_URL: https://present.multivrs.space
         run: pnpm --filter @present/desktop exec electron-forge make --platform=darwin --arch=${{ matrix.arch }}
 
       - name: Upload macOS release files to Cloudflare R2

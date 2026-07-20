@@ -37,7 +37,7 @@ const resolveWebBaseUrl = (): string => {
   }
   return process.env.NODE_ENV === "development"
     ? "http://localhost:3001"
-    : "https://present.c-technology-inc.com";
+    : "https://present.multivrs.space";
 };
 
 const formatUsageDuration = (

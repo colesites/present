@@ -101,7 +101,7 @@ const resolveDesktopWebBaseUrl = (): string => {
   }
   return process.env.NODE_ENV === "development"
     ? "http://localhost:3001"
-    : "https://present.c-technology-inc.com";
+    : "https://present.multivrs.space";
 };
 
 const decodeBase64UrlSegment = (value: string): string | null => {

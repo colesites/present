@@ -8,7 +8,7 @@ const DEFAULT_ALLOWED_ORIGINS = new Set([
   "http://localhost:3001",
   "http://127.0.0.1:3000",
   "http://127.0.0.1:3001",
-  "https://present.c-technology-inc.com",
+  "https://present.multivrs.space",
   "https://present.app",
   "app://app",
   "null",
@@ -30,7 +30,7 @@ const isAllowedOrigin = (origin: string): boolean => {
   }
 
   // Allow subdomains of the production domain
-  if (origin.endsWith(".present.c-technology-inc.com")) {
+  if (origin.endsWith(".present.multivrs.space")) {
     return true;
   }
 

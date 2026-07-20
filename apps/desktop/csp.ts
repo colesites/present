@@ -1,6 +1,6 @@
-const DEFAULT_WEB_PROD_URL = "https://present.c-technology-inc.com";
+const DEFAULT_WEB_PROD_URL = "https://present.multivrs.space";
 const DEFAULT_WEB_PUBLIC_URL = "https://present.app";
-const DEFAULT_CLERK_PROD_URL = "https://clerk.present.c-technology-inc.com";
+const DEFAULT_CLERK_PROD_URL = "https://clerk.present.multivrs.space";
 const DEFAULT_CONVEX_DEV_URL = "https://wary-badger-863.convex.cloud";
 const DEFAULT_CONVEX_PROD_URL = "https://wary-iguana-735.convex.cloud";
 

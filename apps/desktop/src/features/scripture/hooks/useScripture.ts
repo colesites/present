@@ -38,7 +38,7 @@ const getCatalogUrlFromRuntime = (): string => {
     return `${runtimeEnv.WEB_APP_URL}/bibles/catalog.json`;
   }
 
-  return "https://present.c-technology-inc.com/bibles/catalog.json";
+  return "https://present.multivrs.space/bibles/catalog.json";
 };
 
 const DEFAULT_CATALOG_URL = getCatalogUrlFromRuntime();

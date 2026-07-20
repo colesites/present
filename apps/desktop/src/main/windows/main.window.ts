@@ -162,7 +162,7 @@ export const createMainWindow = (settingsWindow?: BrowserWindow | null): void =>
     if (
       url.includes('clerk.accounts.dev') ||
       url.includes('clerk.com') ||
-      url.includes('clerk.present.c-technology-inc.com')
+      url.includes('clerk.present.multivrs.space')
     ) {
       return {
         action: 'allow',
