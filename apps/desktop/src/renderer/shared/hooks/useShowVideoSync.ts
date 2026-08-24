@@ -7,6 +7,7 @@ export function useShowVideoSync(params: {
   showViewMedia: MediaItem;
   activeMediaItem: MediaItem;
   videoSettings: VideoSettings;
+  audioOutputDeviceId?: string | null;
 
   // ✅ controlled from Home
   shouldAutoPlay: boolean;
@@ -16,6 +17,8 @@ export function useShowVideoSync(params: {
   const {
     showViewMedia,
     activeMediaItem,
+    videoSettings,
+    audioOutputDeviceId,
     shouldAutoPlay,
     onAutoPlayConsumed,
     forcePlay = false,
@@ -102,6 +105,30 @@ export function useShowVideoSync(params: {
 
   const effectiveIsVideoPlaying = forcePlay || isVideoPlaying;
 
+  // The presenter Show View is the application's only audible video player.
+  // All external display windows are muted mirrors, so video audio works even
+  // before a projector is opened.
+  useEffect(() => {
+    const video = showVideoRef.current;
+    if (!video || currentVideoItem?.type !== "video") return;
+
+    video.muted = videoSettings.muted;
+    video.volume = Math.max(0, Math.min(1, videoSettings.volume));
+
+    const sinkVideo = video as HTMLVideoElement & {
+      setSinkId?: (deviceId: string) => Promise<void>;
+    };
+    if (typeof sinkVideo.setSinkId === "function") {
+      void sinkVideo.setSinkId(audioOutputDeviceId ?? "").catch((): void => undefined);
+    }
+  }, [
+    currentVideoItem?.id,
+    currentVideoItem?.type,
+    videoSettings.muted,
+    videoSettings.volume,
+    audioOutputDeviceId,
+  ]);
+
   // Sync Show view video element with isVideoPlaying
   useEffect(() => {
     if (showVideoRef.current && currentVideoItem?.type === "video") {
@@ -157,7 +184,7 @@ export function useShowVideoSync(params: {
   const handleVideoTimeUpdate = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
       const now = performance.now();
-      if (now - lastTimeUpdateMsRef.current < 250) {
+      if (now - lastTimeUpdateMsRef.current < 100) {
         return;
       }
       lastTimeUpdateMsRef.current = now;

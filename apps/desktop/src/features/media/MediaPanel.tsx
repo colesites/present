@@ -134,14 +134,14 @@ const MediaItemCard = memo(function MediaItemCard({
               <img
                 src={item.url}
                 alt={item.name}
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain"
                 loading="lazy"
               />
             ) : (
               <video
                 src={item.url}
                 aria-label={`${item.name} preview`}
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain"
                 muted
                 preload={isInView ? "metadata" : "none"}
                 playsInline

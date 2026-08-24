@@ -7,6 +7,8 @@ import type {
 export type Settings = {
   scriptureSpeechLang: string;
   speechInputDeviceId?: string | null;
+  audioOutputDeviceId?: string | null;
+  audioOutputDeviceLabel?: string | null;
   scriptureBackgroundMediaId?: string | null;
   scriptureFontSize: number;
   scriptureFooterFontSize: number;

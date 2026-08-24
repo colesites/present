@@ -29,6 +29,8 @@ type AudioInputOption = {
   label: string;
 };
 
+type AudioOutputOption = AudioInputOption;
+
 type ScreenRole = "audience" | "media" | "worship";
 
 const SCREEN_ROLE_OPTIONS: Array<{
@@ -69,6 +71,10 @@ interface SettingsScreenProps {
   setSettingsLang: (lang: string) => void;
   settingsSpeechInputDeviceId: string | null;
   setSettingsSpeechInputDeviceId: (deviceId: string | null) => void;
+  settingsAudioOutputDeviceId: string | null;
+  setSettingsAudioOutputDeviceId: (deviceId: string | null) => void;
+  settingsAudioOutputDeviceLabel: string;
+  setSettingsAudioOutputDeviceLabel: (label: string) => void;
   settingsScriptureFontFamily: string;
   setSettingsScriptureFontFamily: (font: string) => void;
   settingsScriptureFontWeight: string;
@@ -155,6 +161,10 @@ export function SettingsScreen({
   setSettingsLang,
   settingsSpeechInputDeviceId,
   setSettingsSpeechInputDeviceId,
+  settingsAudioOutputDeviceId,
+  setSettingsAudioOutputDeviceId,
+  settingsAudioOutputDeviceLabel,
+  setSettingsAudioOutputDeviceLabel,
   settingsScriptureFontFamily,
   setSettingsScriptureFontFamily,
   settingsScriptureFontWeight,
@@ -210,10 +220,11 @@ export function SettingsScreen({
   selectMediaForOutput,
 }: SettingsScreenProps) {
   const [activeSection, setActiveSection] = useState<
-    "screens" | "speech" | "scripture" | "libraries" | "timer" | "connections"
+    "screens" | "speech" | "scripture" | "libraries" | "timer" | "audio" | "connections"
   >("screens");
   const [availableDisplays, setAvailableDisplays] = useState<Display[]>([]);
   const [availableAudioInputs, setAvailableAudioInputs] = useState<AudioInputOption[]>([]);
+  const [availableAudioOutputs, setAvailableAudioOutputs] = useState<AudioOutputOption[]>([]);
   const [isLoadingAudioInputs, setIsLoadingAudioInputs] = useState(false);
   const [audioInputsError, setAudioInputsError] = useState<string | null>(null);
   const { faces: fontFaces } = useFontCatalog();
@@ -378,7 +389,19 @@ export function SettingsScreen({
           deviceId: device.deviceId,
           label: device.label.trim() || `Microphone ${index + 1}`,
         }));
+      const audioOutputs = devices
+        .filter(
+          (device) =>
+            device.kind === "audiooutput" &&
+            device.deviceId !== "default" &&
+            device.deviceId !== "communications",
+        )
+        .map((device, index) => ({
+          deviceId: device.deviceId,
+          label: device.label.trim() || `Audio output ${index + 1}`,
+        }));
       setAvailableAudioInputs(audioInputs);
+      setAvailableAudioOutputs(audioOutputs);
       setAudioInputsError(
         audioInputs.length === 0 ? "No sound input devices were found." : null,
       );
@@ -433,6 +456,41 @@ export function SettingsScreen({
       : Number.isFinite(Number(value))
         ? Number(value)
         : null;
+
+  const handleAudioOutputChange = useCallback(
+    async (value: string) => {
+      if (value === "__system_default__") {
+        setSettingsAudioOutputDeviceId(null);
+        setSettingsAudioOutputDeviceLabel("System Default");
+        return;
+      }
+
+      const requestedDevice = availableAudioOutputs.find(
+        (device) => device.deviceId === value,
+      );
+      const outputSelector = navigator.mediaDevices as MediaDevices & {
+        selectAudioOutput?: (options?: { deviceId?: string }) => Promise<MediaDeviceInfo>;
+      };
+
+      try {
+        const selectedDevice = outputSelector.selectAudioOutput
+          ? await outputSelector.selectAudioOutput({ deviceId: value })
+          : requestedDevice;
+        if (!selectedDevice) return;
+        setSettingsAudioOutputDeviceId(selectedDevice.deviceId);
+        setSettingsAudioOutputDeviceLabel(
+          selectedDevice.label.trim() || requestedDevice?.label || "Audio output",
+        );
+      } catch {
+        // The system device picker was cancelled; retain the active route.
+      }
+    },
+    [
+      availableAudioOutputs,
+      setSettingsAudioOutputDeviceId,
+      setSettingsAudioOutputDeviceLabel,
+    ],
+  );
 
   const handleScreenDisplayChange = (role: ScreenRole, value: string) => {
     const nextId = parseDisplaySelectValue(value);
@@ -784,6 +842,18 @@ export function SettingsScreen({
           </button>
           <button
             type="button"
+            onClick={() => setActiveSection("audio")}
+            className={cn(
+              "w-full rounded-md px-2 py-1.5 text-left font-medium transition",
+              activeSection === "audio"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            Video &amp; Audio
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveSection("connections")}
             className={cn(
               "w-full rounded-md px-2 py-1.5 text-left font-medium transition",
@@ -810,7 +880,9 @@ export function SettingsScreen({
                 ? "Libraries"
                 : activeSection === "timer"
                   ? "Timer Layout"
-                  : "Connections"}
+                  : activeSection === "audio"
+                    ? "Video & Audio"
+                    : "Connections"}
           </h2>
           <p className="text-[11px] text-muted-foreground">
             {activeSection === "speech"
@@ -823,7 +895,9 @@ export function SettingsScreen({
                 ? "Set default typography used when creating new library slides."
                 : activeSection === "timer"
                   ? "Drag timer position and customize timer/name style for output screens."
-                  : "Manage projection routing and NDI streaming preferences."}
+                  : activeSection === "audio"
+                    ? "Choose where video sound plays and manage video playback behavior."
+                    : "Manage projection routing and NDI streaming preferences."}
           </p>
         </div>
 
@@ -1469,6 +1543,38 @@ export function SettingsScreen({
               >
                 Update timer layout
               </button>
+            </section>
+          ) : activeSection === "audio" ? (
+            <section className="space-y-4">
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Audio output
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Video sound plays once through the presenter audio engine, even when no projector is open.
+                </p>
+                <div className="max-w-sm">
+                  <Select
+                    value={settingsAudioOutputDeviceId ?? "__system_default__"}
+                    onValueChange={(value) => void handleAudioOutputChange(value)}
+                  >
+                    <SelectTrigger className="h-9 rounded-md border border-border bg-muted/45 px-3 text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40">
+                      <SelectValue placeholder="Select audio output" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__system_default__">System Default</SelectItem>
+                      {availableAudioOutputs.map((device) => (
+                        <SelectItem key={device.deviceId} value={device.deviceId}>
+                          {device.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Current selection: {settingsAudioOutputDeviceLabel}
+                </p>
+              </section>
             </section>
           ) : (
             <section className="space-y-4">

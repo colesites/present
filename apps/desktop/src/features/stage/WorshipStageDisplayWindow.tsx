@@ -216,7 +216,7 @@ export function WorshipStageDisplayWindow() {
 
     if (
       state.shouldSyncTime &&
-      Math.abs(video.currentTime - state.videoCurrentTime) > 0.5
+      Math.abs(video.currentTime - state.videoCurrentTime) > 0.12
     ) {
       video.currentTime = state.videoCurrentTime;
     }
@@ -262,9 +262,9 @@ export function WorshipStageDisplayWindow() {
             ref={videoRef}
             aria-label="Worship stage media"
             src={state.mediaUrl}
-            className="absolute inset-0 h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-contain"
             loop={state.videoSettings.loop}
-            muted={state.videoSettings.muted}
+            muted
             playsInline
             style={{ filter: state.mediaFilterCSS }}
           >
@@ -274,7 +274,7 @@ export function WorshipStageDisplayWindow() {
           <img
             src={state.mediaUrl}
             alt=""
-            className="absolute inset-0 h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-contain"
             style={{ filter: state.mediaFilterCSS }}
           />
         )

@@ -395,7 +395,11 @@ export function OutputWindow() {
       return;
     }
 
-    if (state.shouldSyncTime && Number.isFinite(state.videoCurrentTime)) {
+    if (
+      state.shouldSyncTime &&
+      Number.isFinite(state.videoCurrentTime) &&
+      Math.abs(video.currentTime - state.videoCurrentTime) > 0.12
+    ) {
       try {
         video.currentTime = state.videoCurrentTime;
       } catch {
@@ -620,9 +624,9 @@ export function OutputWindow() {
               ref={legacyVideoRef}
               aria-label="Output media video"
               src={state.mediaUrl}
-              className="absolute inset-0 h-full w-full object-cover"
+              className="absolute inset-0 h-full w-full object-contain"
               loop={state.videoSettings.loop}
-              muted={state.videoSettings.muted}
+              muted
               playsInline
               style={{ filter: state.mediaFilterCSS }}
             >
@@ -631,7 +635,7 @@ export function OutputWindow() {
           ) : (
             <OutputImageLayer
               url={state.mediaUrl}
-              fitMode="cover"
+              fitMode="contain"
               className="absolute inset-0"
               filter={state.mediaFilterCSS}
             />

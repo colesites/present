@@ -56,6 +56,7 @@ import { useSpeechAutopilot } from "../../renderer/shared/hooks/useSpeechAutopil
 import { useAppNavigation } from "../../renderer/shared/hooks/useAppNavigation";
 import { useAppHandlers } from "../../renderer/shared/hooks/useAppHandlers";
 import { MainView } from "./MainView";
+import { Dialog } from "../../renderer/shared/components/Dialog";
 import {
   buildSlidesFromBody,
   createComposedLibraryDraft,
@@ -349,6 +350,9 @@ export function PresentContainer({
     settingsLibraryFontWeight,
     settingsLang,
     settingsSpeechInputDeviceId,
+    settingsAudioOutputDeviceId,
+    setSettingsAudioOutputDeviceId,
+    setSettingsAudioOutputDeviceLabel,
   } = settings;
 
   const libraryTextDefaults = useMemo(
@@ -1447,10 +1451,54 @@ export function PresentContainer({
     showViewMedia,
     activeMediaItem: effectiveActiveMediaItem,
     videoSettings,
+    audioOutputDeviceId: settingsAudioOutputDeviceId,
     shouldAutoPlay,
     onAutoPlayConsumed: () => setShouldAutoPlay(false),
     forcePlay: isScriptureActive && effectiveActiveMediaItem?.type === "video",
   });
+
+  // Offer, but never automatically force, a newly connected audio output.
+  // This runs in the presenter window only, so the settings window cannot
+  // create duplicate prompts.
+  const knownAudioOutputIdsRef = useRef<Set<string> | null>(null);
+  const [pendingAudioOutput, setPendingAudioOutput] = useState<{
+    deviceId: string;
+    label: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+
+    let disposed = false;
+    const refreshAudioOutputs = async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      if (disposed) return;
+      const outputs = devices.filter(
+        (device) =>
+          device.kind === "audiooutput" &&
+          device.deviceId !== "default" &&
+          device.deviceId !== "communications",
+      );
+      const previous = knownAudioOutputIdsRef.current;
+      knownAudioOutputIdsRef.current = new Set(outputs.map((device) => device.deviceId));
+      if (!previous) return;
+      const connected = outputs.find((device) => !previous.has(device.deviceId));
+      if (!connected) return;
+      setPendingAudioOutput({
+        deviceId: connected.deviceId,
+        label: connected.label.trim() || "New audio output",
+      });
+    };
+
+    void refreshAudioOutputs();
+    const handleDeviceChange = (): void => {
+      void refreshAudioOutputs();
+    };
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => {
+      disposed = true;
+      navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+    };
+  }, [setSettingsAudioOutputDeviceId, setSettingsAudioOutputDeviceLabel]);
 
   usePresentAiToolProvider({
     libraryItems,
@@ -2150,6 +2198,39 @@ export function PresentContainer({
           timers,
         }}
       />
+      {pendingAudioOutput ? (
+        <Dialog
+          title="Use new audio output?"
+          onClose={() => setPendingAudioOutput(null)}
+        >
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {pendingAudioOutput.label}
+            </span>{" "}
+            was connected. Would you like Present to use it for video audio?
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPendingAudioOutput(null)}
+              className="rounded-md border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted"
+            >
+              Not now
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsAudioOutputDeviceId(pendingAudioOutput.deviceId);
+                setSettingsAudioOutputDeviceLabel(pendingAudioOutput.label);
+                setPendingAudioOutput(null);
+              }}
+              className="rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"
+            >
+              Use this output
+            </button>
+          </div>
+        </Dialog>
+      ) : null}
     </>
   );
 }

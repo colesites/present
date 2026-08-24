@@ -459,7 +459,7 @@ export const OutputPreview = memo(function OutputPreview({
 
   useEffect(() => {
     if (videoRef.current && activeMediaItem?.type === "video") {
-      if (Math.abs(videoRef.current.currentTime - videoCurrentTime) > 0.5) {
+      if (Math.abs(videoRef.current.currentTime - videoCurrentTime) > 0.12) {
         videoRef.current.currentTime = videoCurrentTime;
       }
     }
@@ -540,7 +540,7 @@ export const OutputPreview = memo(function OutputPreview({
                   src={activeMediaItem.url}
                   alt={activeMediaItem.name}
                   className={cn(
-                    "absolute inset-0 h-full w-full object-cover",
+                    "absolute inset-0 h-full w-full object-contain",
                     isMediaPreview && "opacity-0",
                   )}
                   style={{ filter: filterStyle }}
@@ -551,7 +551,7 @@ export const OutputPreview = memo(function OutputPreview({
                   ref={videoRef}
                   src={activeMediaItem.url}
                   className={cn(
-                    "absolute inset-0 h-full w-full object-cover",
+                    "absolute inset-0 h-full w-full object-contain",
                     isMediaPreview && "opacity-0",
                   )}
                   style={{ filter: filterStyle }}

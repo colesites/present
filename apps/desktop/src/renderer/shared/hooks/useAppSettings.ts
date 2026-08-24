@@ -121,6 +121,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   const [settingsSpeechInputDeviceId, setSettingsSpeechInputDeviceId] = useState<
     string | null
   >(null);
+  const [settingsAudioOutputDeviceId, setSettingsAudioOutputDeviceId] = useState<string | null>(null);
+  const [settingsAudioOutputDeviceLabel, setSettingsAudioOutputDeviceLabel] = useState("System Default");
   const [settingsScriptureBackgroundId, setSettingsScriptureBackgroundId] =
     useState<string | null>(null);
   const [settingsScriptureFontSize, setSettingsScriptureFontSize] =
@@ -215,6 +217,14 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     }
     if (parsed.speechInputDeviceId === null) {
       setSettingsSpeechInputDeviceId(null);
+    }
+    if (typeof parsed.audioOutputDeviceId === "string") {
+      const normalized = parsed.audioOutputDeviceId.trim();
+      setSettingsAudioOutputDeviceId(normalized.length > 0 ? normalized : null);
+    }
+    if (parsed.audioOutputDeviceId === null) setSettingsAudioOutputDeviceId(null);
+    if (typeof parsed.audioOutputDeviceLabel === "string") {
+      setSettingsAudioOutputDeviceLabel(parsed.audioOutputDeviceLabel || "System Default");
     }
     if (typeof parsed.scriptureBackgroundMediaId === "string") {
       setSettingsScriptureBackgroundId(parsed.scriptureBackgroundMediaId);
@@ -418,6 +428,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
       const next: Settings = {
         scriptureSpeechLang: settingsLang,
         speechInputDeviceId: settingsSpeechInputDeviceId,
+        audioOutputDeviceId: settingsAudioOutputDeviceId,
+        audioOutputDeviceLabel: settingsAudioOutputDeviceLabel,
         scriptureBackgroundMediaId: settingsScriptureBackgroundId ?? null,
         scriptureFontSize: settingsScriptureFontSize,
         scriptureFooterFontSize: normalizeScriptureFooterFontSize(
@@ -459,6 +471,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsHydrated,
     settingsLang,
     settingsSpeechInputDeviceId,
+    settingsAudioOutputDeviceId,
+    settingsAudioOutputDeviceLabel,
     settingsScriptureBackgroundId,
     settingsScriptureFontSize,
     settingsScriptureFooterFontSize,
@@ -559,6 +573,10 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsLang,
     settingsSpeechInputDeviceId,
     setSettingsSpeechInputDeviceId,
+    settingsAudioOutputDeviceId,
+    setSettingsAudioOutputDeviceId,
+    settingsAudioOutputDeviceLabel,
+    setSettingsAudioOutputDeviceLabel,
     settingsScriptureBackgroundId,
     setSettingsScriptureBackgroundId,
     settingsScriptureFontSize,

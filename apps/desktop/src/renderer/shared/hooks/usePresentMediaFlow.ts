@@ -150,7 +150,10 @@ export function usePresentMediaFlow<
 
   const onMediaPanelSelect = useCallback(
     (item: TMedia | null) => {
-      setPreviewMediaItem(null);
+      // Keep one presenter-side video instance available for every live video.
+      // It is the sole audio player; the projector and other displays are
+      // visual-only mirrors.
+      setPreviewMediaItem(item);
       onClearScripture?.();
       onClearPresentation?.();
 
