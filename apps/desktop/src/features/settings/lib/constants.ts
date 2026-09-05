@@ -25,6 +25,7 @@ export type Settings = {
   timerYPercent: number;
   timerClockFontPx: number;
   timerNameFontPx: number;
+  timerNameBannerHeightPx: number;
   timerClockColor: string;
   timerNameColor: string;
   timerNameBannerEnabled: boolean;

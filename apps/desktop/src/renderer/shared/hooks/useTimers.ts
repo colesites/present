@@ -235,9 +235,19 @@ function loadTimerState(): StoredTimerState {
           .filter((timer): timer is TimerItem => timer !== null)
       : [];
     if (timers.length === 0) return fallback;
-    const timerIds = new Set(timers.map((timer) => timer.id));
+    // Older saved sessions could contain more than one running timer. Keep
+    // the first one and pause the rest before the operator sees the panel.
+    let hasRunningTimer = false;
+    const normalizedTimers = timers.map((timer) => {
+      if (!timer.isRunning || !hasRunningTimer) {
+        hasRunningTimer ||= timer.isRunning;
+        return timer;
+      }
+      return { ...timer, isRunning: false };
+    });
+    const timerIds = new Set(normalizedTimers.map((timer) => timer.id));
     return {
-      timers,
+      timers: normalizedTimers,
       expandedTimerId:
         typeof parsed.expandedTimerId === "string" &&
         timerIds.has(parsed.expandedTimerId)
@@ -302,12 +312,8 @@ export function useTimers(): UseTimersResult {
     [timers, activeTimerId],
   );
 
-  const setExpandedTimerId = useCallback((id: string | null) => {
-    setExpandedTimerIdState(id);
-    if (id !== null) {
-      setSelectedTimerId(id);
-    }
-  }, []);
+  const setExpandedTimerId: UseTimersResult["setExpandedTimerId"] =
+    setExpandedTimerIdState;
 
   useEffect(() => {
     saveTimerState({
@@ -340,11 +346,11 @@ export function useTimers(): UseTimersResult {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       let nextExpandedTimerId: string | null = null;
-      setTimers((previous) =>
-        previous.map((timer, index) => {
+      const nextTimers = timers
+        .map((timer, index) => {
           if (!timer.isRunning) return timer;
 
-          const nextTimer = getNextTimerToStart(previous, index);
+          const nextTimer = getNextTimerToStart(timers, index);
           const completeTimer = (secondsValue: number) => {
             if (!nextTimer) {
               return { ...timer, isRunning: false, secondsValue };
@@ -383,7 +389,8 @@ export function useTimers(): UseTimersResult {
             isRunning: true,
             secondsValue: nextRemaining,
           };
-        }).map((timer) => {
+        })
+        .map((timer) => {
           if (!nextExpandedTimerId || timer.id !== nextExpandedTimerId) {
             return timer;
           }
@@ -392,37 +399,38 @@ export function useTimers(): UseTimersResult {
             isRunning: true,
             secondsValue: startTimerValue(timer),
           };
-        }),
-      );
+        });
+      setTimers(nextTimers);
       if (nextExpandedTimerId) {
         setExpandedTimerId(nextExpandedTimerId);
+        // Advancing is an intentional change to the live timer. Merely
+        // expanding a timer in the operator panel must never change output.
+        setSelectedTimerId(nextExpandedTimerId);
       }
     }, 1000);
     return () => window.clearInterval(intervalId);
-  }, [getNextTimerToStart, startTimerValue]);
+  }, [getNextTimerToStart, startTimerValue, timers]);
 
   const createTimer = useCallback(() => {
-    setTimers((previous) => {
-      const config: TimerConfig = {
-        id: crypto.randomUUID(),
-        name: `Timer ${previous.length + 1}`,
-        type: "countdown",
-        duration: "00:05:00",
-        hour: 5,
-        minute: 0,
-        meridiem: "PM",
-        elapsedStart: "00:00",
-        elapsedEnd: "00:15",
-      };
-      const timer: TimerItem = {
-        ...config,
-        isRunning: false,
-        secondsValue: getInitialTimerValue(config),
-      };
-      setExpandedTimerId(timer.id);
-      return [...previous, timer];
-    });
-  }, []);
+    const config: TimerConfig = {
+      id: crypto.randomUUID(),
+      name: `Timer ${timers.length + 1}`,
+      type: "countdown",
+      duration: "00:05:00",
+      hour: 5,
+      minute: 0,
+      meridiem: "PM",
+      elapsedStart: "00:00",
+      elapsedEnd: "00:15",
+    };
+    const timer: TimerItem = {
+      ...config,
+      isRunning: false,
+      secondsValue: getInitialTimerValue(config),
+    };
+    setTimers((previous) => [...previous, timer]);
+    setExpandedTimerId(timer.id);
+  }, [timers.length]);
 
   const updateTimer = useCallback(
     (id: string, patch: Partial<TimerConfig>) => {
@@ -466,9 +474,14 @@ export function useTimers(): UseTimersResult {
 
   const toggleTimerPlayback = useCallback((id: string) => {
     setExpandedTimerId(id);
+    setSelectedTimerId(id);
     setTimers((previous) =>
       previous.map((timer) => {
-        if (timer.id !== id) return timer;
+        // A new live timer replaces any current one, so two timers can never
+        // run at once (and compete for the audience output).
+        if (timer.id !== id) {
+          return timer.isRunning ? { ...timer, isRunning: false } : timer;
+        }
         if (timer.isRunning) return { ...timer, isRunning: false };
 
         if (timer.type === "countdownToTime") {
@@ -503,7 +516,6 @@ export function useTimers(): UseTimersResult {
   }, []);
 
   const resetTimer = useCallback((id: string) => {
-    setSelectedTimerId(id);
     setTimers((previous) =>
       previous.map((timer) =>
         timer.id === id

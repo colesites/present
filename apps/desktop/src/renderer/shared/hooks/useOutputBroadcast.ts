@@ -64,6 +64,7 @@ type Params = {
     yPercent: number;
     clockFontPx: number;
     nameFontPx: number;
+    nameBannerHeightPx: number;
     clockColor: string;
     nameColor: string;
     nameBannerEnabled: boolean;
@@ -170,6 +171,7 @@ export function useOutputBroadcast({
     yPercent: timerYPercent,
     clockFontPx,
     nameFontPx,
+    nameBannerHeightPx,
     clockColor,
     nameColor,
     nameBannerEnabled,
@@ -259,6 +261,7 @@ export function useOutputBroadcast({
         yPercent: timerYPercent,
         clockFontPx,
         nameFontPx,
+        nameBannerHeightPx,
         clockColor,
         nameColor,
         nameBannerEnabled,
@@ -397,6 +400,7 @@ export function useOutputBroadcast({
     timerYPercent,
     clockFontPx,
     nameFontPx,
+    nameBannerHeightPx,
     clockColor,
     nameColor,
     nameBannerEnabled,

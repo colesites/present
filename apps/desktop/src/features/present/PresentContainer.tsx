@@ -340,6 +340,7 @@ export function PresentContainer({
     settingsTimerYPercent,
     settingsTimerClockFontPx,
     settingsTimerNameFontPx,
+    settingsTimerNameBannerHeightPx,
     settingsTimerClockColor,
     settingsTimerNameColor,
     settingsTimerNameBannerEnabled,
@@ -440,6 +441,7 @@ export function PresentContainer({
     renameServiceGroup,
     deleteServiceGroup,
     moveServiceItemToGroup,
+    reorderServiceGroup,
     renameServiceItem,
     updateMediaInServices,
     removeMediaFromServices,
@@ -1740,6 +1742,7 @@ export function PresentContainer({
       yPercent: settingsTimerYPercent,
       clockFontPx: settingsTimerClockFontPx,
       nameFontPx: settingsTimerNameFontPx,
+      nameBannerHeightPx: settingsTimerNameBannerHeightPx,
       clockColor: settingsTimerClockColor,
       nameColor: settingsTimerNameColor,
       nameBannerEnabled: settingsTimerNameBannerEnabled,
@@ -1988,6 +1991,10 @@ export function PresentContainer({
             ? (index: number, groupId: string | null, toIndex?: number) =>
                 moveServiceItemToGroup(selectedServiceId, index, groupId, toIndex)
             : () => Promise.resolve(),
+          onReorderServiceGroup: selectedServiceId
+            ? (groupId: string, toLayoutIndex: number) =>
+                reorderServiceGroup(selectedServiceId, groupId, toLayoutIndex)
+            : () => Promise.resolve(),
           onRenameServiceItem: selectedServiceId
             ? (index: number, label: string) =>
                 renameServiceItem(selectedServiceId, index, label)
@@ -2157,6 +2164,7 @@ export function PresentContainer({
             yPercent: settingsTimerYPercent,
             clockFontPx: settingsTimerClockFontPx,
             nameFontPx: settingsTimerNameFontPx,
+            nameBannerHeightPx: settingsTimerNameBannerHeightPx,
             clockColor: settingsTimerClockColor,
             nameColor: settingsTimerNameColor,
             nameBannerEnabled: settingsTimerNameBannerEnabled,

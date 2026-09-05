@@ -76,6 +76,7 @@ export type OutputState = {
     yPercent: number;
     clockFontPx: number;
     nameFontPx: number;
+    nameBannerHeightPx: number;
     clockColor: string;
     nameColor: string;
     nameBannerEnabled: boolean;

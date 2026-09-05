@@ -209,6 +209,7 @@ export interface MainViewStyleState {
     yPercent: number;
     clockFontPx: number;
     nameFontPx: number;
+    nameBannerHeightPx: number;
     clockColor: string;
     nameColor: string;
     nameBannerEnabled: boolean;
@@ -289,6 +290,10 @@ interface MainViewProps {
       index: number,
       groupId: string | null,
       toIndex?: number,
+    ) => Promise<void>;
+    onReorderServiceGroup: (
+      groupId: string,
+      toLayoutIndex: number,
     ) => Promise<void>;
     onRenameServiceItem: (index: number, label: string) => Promise<void>;
     onSelectServiceTemplate: (templateId: string | null) => void;
@@ -511,6 +516,7 @@ export function MainView({
     onRenameServiceGroup,
     onDeleteServiceGroup,
     onMoveServiceItemToGroup,
+    onReorderServiceGroup,
     onRenameServiceItem,
     onSelectServiceTemplate,
     onCreateServiceTemplate,
@@ -869,6 +875,7 @@ export function MainView({
       onRenameServiceGroup,
       onDeleteServiceGroup,
       onMoveServiceItemToGroup,
+      onReorderServiceGroup,
       onRenameServiceItem,
       onSelectServiceTemplate,
       onCreateServiceTemplate,
@@ -899,6 +906,7 @@ export function MainView({
       onRenameServiceGroup,
       onDeleteServiceGroup,
       onMoveServiceItemToGroup,
+      onReorderServiceGroup,
       onRenameServiceItem,
       onSelectServiceTemplate,
       onCreateServiceTemplate,

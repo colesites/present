@@ -109,6 +109,8 @@ interface SettingsScreenProps {
   setSettingsTimerClockFontPx: (value: number) => void;
   settingsTimerNameFontPx: number;
   setSettingsTimerNameFontPx: (value: number) => void;
+  settingsTimerNameBannerHeightPx: number;
+  setSettingsTimerNameBannerHeightPx: (value: number) => void;
   settingsTimerClockColor: string;
   setSettingsTimerClockColor: (value: string) => void;
   settingsTimerNameColor: string;
@@ -189,6 +191,8 @@ export function SettingsScreen({
   setSettingsTimerClockFontPx,
   settingsTimerNameFontPx,
   setSettingsTimerNameFontPx,
+  settingsTimerNameBannerHeightPx,
+  setSettingsTimerNameBannerHeightPx,
   settingsTimerClockColor,
   setSettingsTimerClockColor,
   settingsTimerNameColor,
@@ -411,7 +415,7 @@ export function SettingsScreen({
       setAudioInputsError("Unable to read available sound input devices.");
       setIsLoadingAudioInputs(false);
     }
-  }, []);
+  }, [activeSection]);
 
   useEffect(() => {
     const refreshTimeoutId = window.setTimeout(() => {
@@ -560,11 +564,13 @@ export function SettingsScreen({
   const previewRef = useRef<HTMLDivElement>(null);
   const timerBoxRef = useRef<HTMLDivElement>(null);
   const [dragMode, setDragMode] = useState<null | "move">(null);
+  const [timerPreviewScale, setTimerPreviewScale] = useState(1);
   const [timerDraft, setTimerDraft] = useState<{
     xPercent: number;
     yPercent: number;
     clockFontPx: number;
     nameFontPx: number;
+    nameBannerHeightPx: number;
     clockColor: string;
     nameColor: string;
     nameBannerEnabled: boolean;
@@ -593,6 +599,7 @@ export function SettingsScreen({
       yPercent: number;
       clockFontPx: number;
       nameFontPx: number;
+      nameBannerHeightPx: number;
       clockColor: string;
       nameColor: string;
       nameBannerEnabled: boolean;
@@ -606,6 +613,7 @@ export function SettingsScreen({
         yPercent: settingsTimerYPercent,
         clockFontPx: settingsTimerClockFontPx,
         nameFontPx: settingsTimerNameFontPx,
+        nameBannerHeightPx: settingsTimerNameBannerHeightPx,
         clockColor: settingsTimerClockColor,
         nameColor: settingsTimerNameColor,
         nameBannerEnabled: settingsTimerNameBannerEnabled,
@@ -621,6 +629,8 @@ export function SettingsScreen({
     timerDraft?.clockFontPx ?? settingsTimerClockFontPx;
   const draftTimerNameFontPx =
     timerDraft?.nameFontPx ?? settingsTimerNameFontPx;
+  const draftTimerNameBannerHeightPx =
+    timerDraft?.nameBannerHeightPx ?? settingsTimerNameBannerHeightPx;
   const draftTimerClockColor =
     timerDraft?.clockColor ?? settingsTimerClockColor;
   const draftTimerNameColor = timerDraft?.nameColor ?? settingsTimerNameColor;
@@ -658,11 +668,36 @@ export function SettingsScreen({
     () => Math.min(Math.max(draftTimerNameFontPx, minNameFont), maxNameFont),
     [draftTimerNameFontPx]
   );
+  const previewTimerClockFontPx = timerClockFontPx * timerPreviewScale;
+  const previewTimerTitleFontPx = timerTitleFontPx * timerPreviewScale;
+  const previewTimerBannerHeightPx =
+    draftTimerNameBannerHeightPx * timerPreviewScale;
+
+  // The audience timer is specified for a 1920 × 1080 output. Scale every
+  // pixel-based part of this small editor preview by the same ratio, so its
+  // text dimensions and the drag boundaries match the projected output.
+  useEffect(() => {
+    const preview = previewRef.current;
+    if (!preview) return;
+
+    const updatePreviewScale = () => {
+      const rect = preview.getBoundingClientRect();
+      setTimerPreviewScale(
+        Math.min(rect.width / 1920, rect.height / 1080) || 1,
+      );
+    };
+
+    updatePreviewScale();
+    const observer = new ResizeObserver(updatePreviewScale);
+    observer.observe(preview);
+    return () => observer.disconnect();
+  }, [activeSection]);
   const hasPendingTimerChanges =
     normalizePercent(clampedDraftTimerX) !== normalizePercent(clampedTimerX) ||
     normalizePercent(clampedDraftTimerY) !== normalizePercent(clampedTimerY) ||
     timerClockFontPx !== settingsTimerClockFontPx ||
     timerTitleFontPx !== settingsTimerNameFontPx ||
+    draftTimerNameBannerHeightPx !== settingsTimerNameBannerHeightPx ||
     draftTimerClockColor !== settingsTimerClockColor ||
     draftTimerNameColor !== settingsTimerNameColor ||
     draftTimerNameBannerEnabled !== settingsTimerNameBannerEnabled ||
@@ -761,6 +796,7 @@ export function SettingsScreen({
     setSettingsTimerYPercent(nextY);
     setSettingsTimerClockFontPx(timerClockFontPx);
     setSettingsTimerNameFontPx(timerTitleFontPx);
+    setSettingsTimerNameBannerHeightPx(draftTimerNameBannerHeightPx);
     setSettingsTimerClockColor(draftTimerClockColor);
     setSettingsTimerNameColor(draftTimerNameColor);
     setSettingsTimerNameBannerEnabled(draftTimerNameBannerEnabled);
@@ -1289,24 +1325,28 @@ export function SettingsScreen({
                     style={{
                       backgroundColor: draftTimerNameBannerColor,
                       color: draftTimerNameColor,
-                      fontSize: `${timerTitleFontPx}px`,
+                      fontSize: `${previewTimerTitleFontPx}px`,
+                      height: `${previewTimerBannerHeightPx}px`,
                     }}
-                    className="absolute inset-x-0 top-0 z-20 px-2 py-1 text-center font-medium uppercase tracking-wider"
+                    className="absolute inset-x-0 top-0 z-20 flex items-center justify-center text-center font-medium uppercase tracking-wider"
                   >
                     Timer Name
                   </div>
                 ) : null}
                 <div
                   ref={timerBoxRef}
-                  style={timerStyle}
                   onPointerDown={(event) => startPointerDrag(event, "move")}
-                  className="absolute z-20 box-border rounded-md border border-primary/60 bg-black/65 px-2 py-0 text-[9px] font-semibold tracking-wide shadow-lg select-none cursor-move"
+                  className="absolute z-20 box-border rounded-md bg-black/65 text-center font-semibold tracking-wide text-white outline outline-1 outline-primary/60 shadow-lg select-none cursor-move"
+                  style={{
+                    ...timerStyle,
+                    padding: `${8 * timerPreviewScale}px ${16 * timerPreviewScale}px`,
+                  }}
                 >
                   {!draftTimerNameBannerEnabled &&
                   draftTimerTitlePosition === "top" ? (
                     <div
                       style={{
-                        fontSize: `${timerTitleFontPx}px`,
+                        fontSize: `${previewTimerTitleFontPx}px`,
                         color: draftTimerNameColor,
                       }}
                       className="whitespace-nowrap overflow-hidden text-ellipsis font-medium uppercase tracking-wider"
@@ -1316,10 +1356,10 @@ export function SettingsScreen({
                   ) : null}
                   <div
                     style={{
-                      fontSize: `${timerClockFontPx}px`,
+                      fontSize: `${previewTimerClockFontPx}px`,
                       color: draftTimerClockColor,
                     }}
-                    className="font-semibold leading-tight"
+                    className="whitespace-nowrap leading-none"
                   >
                     00:00:00
                   </div>
@@ -1327,7 +1367,7 @@ export function SettingsScreen({
                   draftTimerTitlePosition === "bottom" ? (
                     <div
                       style={{
-                        fontSize: `${timerTitleFontPx}px`,
+                        fontSize: `${previewTimerTitleFontPx}px`,
                         color: draftTimerNameColor,
                       }}
                       className="whitespace-nowrap overflow-hidden text-ellipsis font-medium uppercase tracking-wider"
@@ -1380,19 +1420,32 @@ export function SettingsScreen({
                   />
                 </label>
                 <label className="space-y-1 text-[11px] text-muted-foreground">
-                  <span>Name font size</span>
-                  <input
-                    type="range"
-                    min={minNameFont}
-                    max={maxNameFont}
+                  <span>Banner text size</span>
+                  <select
                     value={timerTitleFontPx}
                     onChange={(event) =>
-                      updateTimerDraft({
-                        nameFontPx: Number(event.target.value),
-                      })
+                      updateTimerDraft({ nameFontPx: Number(event.target.value) })
                     }
-                    className="w-full accent-primary"
-                  />
+                    className="h-8 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
+                  >
+                    {[12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 56, 64].map((size) => (
+                      <option key={size} value={size}>{size} px</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1 text-[11px] text-muted-foreground">
+                  <span>Banner height</span>
+                  <select
+                    value={draftTimerNameBannerHeightPx}
+                    onChange={(event) =>
+                      updateTimerDraft({ nameBannerHeightPx: Number(event.target.value) })
+                    }
+                    className="h-8 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
+                  >
+                    {[36, 48, 64, 80, 96, 120, 160].map((height) => (
+                      <option key={height} value={height}>{height} px</option>
+                    ))}
+                  </select>
                 </label>
               </div>
               <div className="flex flex-wrap items-center gap-2">

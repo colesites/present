@@ -23,6 +23,7 @@ const DEFAULT_TIMER_X = 82;
 const DEFAULT_TIMER_Y = 8;
 const DEFAULT_TIMER_CLOCK_FONT_PX = 24;
 const DEFAULT_TIMER_NAME_FONT_PX = 14;
+const DEFAULT_TIMER_NAME_BANNER_HEIGHT_PX = 48;
 const DEFAULT_TIMER_CLOCK_COLOR = "#ffffff";
 const DEFAULT_TIMER_NAME_COLOR = "#ffffff";
 const DEFAULT_TIMER_NAME_BANNER_ENABLED = false;
@@ -157,6 +158,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   const [settingsTimerNameFontPx, setSettingsTimerNameFontPx] = useState(
     DEFAULT_TIMER_NAME_FONT_PX
   );
+  const [settingsTimerNameBannerHeightPx, setSettingsTimerNameBannerHeightPx] =
+    useState(DEFAULT_TIMER_NAME_BANNER_HEIGHT_PX);
   const [settingsTimerClockColor, setSettingsTimerClockColor] = useState(
     DEFAULT_TIMER_CLOCK_COLOR
   );
@@ -304,6 +307,11 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     if (isFiniteNumber(parsed.timerNameFontPx)) {
       setSettingsTimerNameFontPx(Math.min(Math.max(parsed.timerNameFontPx, 8), 220));
     }
+    if (isFiniteNumber(parsed.timerNameBannerHeightPx)) {
+      setSettingsTimerNameBannerHeightPx(
+        Math.min(Math.max(parsed.timerNameBannerHeightPx, 32), 160),
+      );
+    }
     if (typeof parsed.timerClockColor === "string") {
       setSettingsTimerClockColor(parsed.timerClockColor);
     }
@@ -448,6 +456,10 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         timerYPercent: timerLayout.yPercent,
         timerClockFontPx: Math.min(Math.max(settingsTimerClockFontPx, 12), 400),
         timerNameFontPx: Math.min(Math.max(settingsTimerNameFontPx, 8), 220),
+        timerNameBannerHeightPx: Math.min(
+          Math.max(settingsTimerNameBannerHeightPx, 32),
+          160,
+        ),
         timerClockColor: settingsTimerClockColor,
         timerNameColor: settingsTimerNameColor,
         timerNameBannerEnabled: settingsTimerNameBannerEnabled,
@@ -489,6 +501,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsTimerYPercent,
     settingsTimerClockFontPx,
     settingsTimerNameFontPx,
+    settingsTimerNameBannerHeightPx,
     settingsTimerClockColor,
     settingsTimerNameColor,
     settingsTimerNameBannerEnabled,
@@ -609,6 +622,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsTimerClockFontPx,
     settingsTimerNameFontPx,
     setSettingsTimerNameFontPx,
+    settingsTimerNameBannerHeightPx,
+    setSettingsTimerNameBannerHeightPx,
     settingsTimerClockColor,
     setSettingsTimerClockColor,
     settingsTimerNameColor,

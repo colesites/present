@@ -120,6 +120,7 @@ interface OutputPreviewProps {
     yPercent: number;
     clockFontPx: number;
     nameFontPx: number;
+    nameBannerHeightPx: number;
     clockColor: string;
     nameColor: string;
     nameBannerEnabled: boolean;
@@ -377,15 +378,18 @@ export const OutputPreview = memo(function OutputPreview({
   const timerTextForOutput = activeTimer
     ? getTimerDisplay(activeTimer)
     : "00:00:00";
+  // The operator preview is intentionally more compact than the audience
+  // output, so a large projected timer does not dominate the control screen.
+  const operatorTimerScale = previewScale * 0.65;
   const timerClockFontPx = useMemo(
     () =>
       Math.max(
         6,
         Math.round(
-          Math.min(Math.max(timerLayout.clockFontPx, 12), 400) * previewScale
+          Math.min(Math.max(timerLayout.clockFontPx, 12), 400) * operatorTimerScale
         )
       ),
-    [timerLayout.clockFontPx, previewScale]
+    [operatorTimerScale, timerLayout.clockFontPx]
   );
   const timerTitleFontPx = useMemo(
     () =>
@@ -655,8 +659,11 @@ export const OutputPreview = memo(function OutputPreview({
                   fontSize: `${timerTitleFontPx}px`,
                   color: timerLayout.nameColor,
                   backgroundColor: timerLayout.nameBannerColor,
+                  height: `${Math.round(
+                    (timerLayout.nameBannerHeightPx ?? 48) * previewScale,
+                  )}px`,
                 }}
-                className="absolute inset-x-0 top-0 z-20 px-2 py-1 text-center font-medium uppercase tracking-wider"
+                className="absolute inset-x-0 top-0 z-20 flex items-center justify-center px-2 text-center font-medium uppercase tracking-wider"
               >
                 {timerLabelForOutput}
               </div>

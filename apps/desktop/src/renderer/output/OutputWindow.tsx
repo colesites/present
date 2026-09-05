@@ -230,6 +230,7 @@ export function OutputWindow() {
       yPercent: 8,
       clockFontPx: 24,
       nameFontPx: 14,
+      nameBannerHeightPx: 48,
       clockColor: "#ffffff",
       nameColor: "#ffffff",
       nameBannerEnabled: false,
@@ -774,6 +775,11 @@ function TimerOverlayLayer({ state }: { state: OutputState }) {
   const yPercent = clampNumber(layout?.yPercent, 0, 100);
   const clockFontPx = clampNumber(layout?.clockFontPx, 12, 400);
   const nameFontPx = clampNumber(layout?.nameFontPx, 10, 180);
+  const nameBannerHeightPx = clampNumber(
+    layout?.nameBannerHeightPx ?? 48,
+    32,
+    160,
+  );
   const clockColor = layout?.clockColor || "#ffffff";
   const nameColor = layout?.nameColor || "#ffffff";
   const nameBannerEnabled = Boolean(layout?.nameBannerEnabled);
@@ -784,11 +790,12 @@ function TimerOverlayLayer({ state }: { state: OutputState }) {
     <>
       {label && nameBannerEnabled ? (
         <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-50 px-6 py-3 text-center font-medium uppercase tracking-wider"
+          className="pointer-events-none absolute inset-x-0 top-0 z-50 flex items-center justify-center px-6 text-center font-medium uppercase tracking-wider"
           style={{
             backgroundColor: layout?.nameBannerColor || "rgba(0,0,0,0.65)",
             color: nameColor,
             fontSize: `${nameFontPx}px`,
+            height: `${nameBannerHeightPx}px`,
           }}
         >
           {label}

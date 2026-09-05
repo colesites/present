@@ -4,6 +4,16 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-09-05
+
+### Added
+
+- Drag a group to a new position inside a service. The rearrangement applies to that service alone and never changes the template it was created from.
+
+### Fixed
+
+- Dropping a service item on a row boundary placed it one slot too far when dragged downwards.
+
 ## [0.3.0] - 2026-06-22
 
 ### Added

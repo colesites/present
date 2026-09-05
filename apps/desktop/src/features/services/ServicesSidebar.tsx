@@ -75,6 +75,7 @@ interface ServicesSidebarProps {
     groupId: string | null,
     toIndex?: number,
   ) => Promise<void>;
+  onReorderServiceGroup: (groupId: string, toLayoutIndex: number) => Promise<void>;
   onRenameServiceItem: (index: number, label: string) => Promise<void>;
   onSelectServiceTemplate: (templateId: string | null) => void;
   onCreateServiceTemplate: (name: string) => string | null;
@@ -136,6 +137,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
   onRenameServiceGroup,
   onDeleteServiceGroup,
   onMoveServiceItemToGroup,
+  onReorderServiceGroup,
   onRenameServiceItem,
   onSelectServiceTemplate,
   onCreateServiceTemplate,
@@ -301,6 +303,7 @@ export const ServicesSidebar = memo(function ServicesSidebar({
             onRenameGroup={onRenameServiceGroup}
             onDeleteGroup={onDeleteServiceGroup}
             onMoveToGroup={onMoveServiceItemToGroup}
+            onReorderGroup={onReorderServiceGroup}
             onRenameItem={onRenameServiceItem}
             onReorder={onReorderServiceItems}
             layout={selectedService.layout ?? []}
@@ -1640,6 +1643,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
   onRenameGroup,
   onDeleteGroup,
   onMoveToGroup,
+  onReorderGroup,
   onRenameItem,
   onReorder,
   layout,
@@ -1660,13 +1664,16 @@ const ServiceItemsList = memo(function ServiceItemsList({
     groupId: string | null,
     toIndex?: number,
   ) => Promise<void>;
+  onReorderGroup: (groupId: string, toLayoutIndex: number) => Promise<void>;
   onRenameItem: (index: number, label: string) => Promise<void>;
   onReorder?: (fromIndex: number, toIndex: number) => Promise<void>;
   layout: NonNullable<Service["layout"]>;
 }) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [draggedGroupId, setDraggedGroupId] = useState<string | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
+  const [dropTargetRowKey, setDropTargetRowKey] = useState<string | null>(null);
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1679,6 +1686,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
     label: string;
   } | null>(null);
   const dragDataKey = "application/x-present-service-item-index";
+  const groupDragDataKey = "application/x-present-service-group-id";
   const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
   const groupedItems = orderedGroups.map((group) => ({
     group,
@@ -1765,6 +1773,8 @@ const ServiceItemsList = memo(function ServiceItemsList({
     return numbers;
   })();
 
+  const canDropOnRowBoundary = draggedIndex !== null || draggedGroupId !== null;
+
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
@@ -1773,6 +1783,8 @@ const ServiceItemsList = memo(function ServiceItemsList({
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
+    // A dragged group only ever lands on a row boundary, never on an item.
+    if (draggedGroupId !== null) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     if (draggedIndex !== null && index !== draggedIndex) {
@@ -1809,10 +1821,22 @@ const ServiceItemsList = memo(function ServiceItemsList({
     }
   };
 
-  const handleDragEnd = () => {
+  const clearDragState = () => {
     setDraggedIndex(null);
+    setDraggedGroupId(null);
     setDropTargetIndex(null);
     setDropTargetGroupId(null);
+    setDropTargetRowKey(null);
+  };
+
+  const handleDragEnd = clearDragState;
+
+  const handleGroupDragStart = (event: React.DragEvent, groupId: string) => {
+    event.stopPropagation();
+    setDraggedGroupId(groupId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(groupDragDataKey, groupId);
+    event.dataTransfer.setData("text/plain", groupId);
   };
 
   const toggleGroupCollapsed = (groupId: string) => {
@@ -1852,31 +1876,27 @@ const ServiceItemsList = memo(function ServiceItemsList({
     }
   };
 
-  const handleGroupBoundaryDrop = async (
+  const handleRowBoundaryDrop = async (
     event: React.DragEvent,
-    groupId: string,
-    position: "before" | "after",
+    toLayoutIndex: number,
   ) => {
     event.preventDefault();
     event.stopPropagation();
+    const groupId =
+      draggedGroupId || event.dataTransfer.getData(groupDragDataKey) || null;
     const droppedIndex = Number.parseInt(
       event.dataTransfer.getData(dragDataKey) || event.dataTransfer.getData("text/plain"),
       10,
     );
     const fromIndex =
       draggedIndex ?? (Number.isFinite(droppedIndex) ? droppedIndex : null);
-    setDraggedIndex(null);
-    setDropTargetIndex(null);
-    setDropTargetGroupId(null);
+    clearDragState();
+    if (groupId) {
+      await onReorderGroup(groupId, toLayoutIndex);
+      return;
+    }
     if (fromIndex !== null) {
-      const groupRow = orderedServiceRows.find(
-        (row) => row.type === "group" && row.group.id === groupId,
-      );
-      const targetLayoutIndex =
-        groupRow && position === "after"
-          ? groupRow.layoutIndex + 1
-          : groupRow?.layoutIndex ?? orderedServiceRows.length;
-      await onMoveToGroup(fromIndex, null, targetLayoutIndex);
+      await onMoveToGroup(fromIndex, null, toLayoutIndex);
       onSelectGroup(null);
     }
   };
@@ -2109,26 +2129,34 @@ const ServiceItemsList = memo(function ServiceItemsList({
       ) : null}
 
       {orderedServiceRows.map((row) => {
+        const boundaryBefore = (
+          <RowBoundaryDropZone
+            layoutIndex={row.layoutIndex}
+            canDrop={canDropOnRowBoundary}
+            isActive={dropTargetRowKey === `row:${row.layoutIndex}`}
+            onActivate={setDropTargetRowKey}
+            onClear={() => setDropTargetRowKey(null)}
+            onDrop={handleRowBoundaryDrop}
+          />
+        );
+
         if (row.type === "item") {
-          return renderItem(
-            row.item,
-            itemDisplayNumbers.get(row.item.index),
-            row.layoutIndex,
+          return (
+            <div key={`item:${row.item.refId}-${row.item.index}`}>
+              {boundaryBefore}
+              {renderItem(
+                row.item,
+                itemDisplayNumbers.get(row.item.index),
+                row.layoutIndex,
+              )}
+            </div>
           );
         }
 
         const { group, items: groupItems } = row;
         return (
           <div key={group.id}>
-            <GroupBoundaryDropZone
-              groupId={group.id}
-              position="before"
-              canDrop={draggedIndex !== null}
-              isActive={dropTargetGroupId === `${group.id}:before`}
-              onActivate={setDropTargetGroupId}
-              onClear={() => setDropTargetGroupId(null)}
-              onDrop={handleGroupBoundaryDrop}
-            />
+            {boundaryBefore}
             <section
               onDragOver={(event) => handleGroupDragOver(event, group.id)}
               onDragLeave={() => setDropTargetGroupId(null)}
@@ -2139,9 +2167,18 @@ const ServiceItemsList = memo(function ServiceItemsList({
                   ? "bg-primary/10"
                   : "hover:bg-secondary/40",
                 dropTargetGroupId === group.id && "ring-2 ring-primary/70 ring-inset",
+                draggedGroupId === group.id && "opacity-50",
               )}
             >
-              <div className="group flex items-center gap-1 px-1.5 py-1">
+              <div
+                draggable
+                onDragStart={(event) => handleGroupDragStart(event, group.id)}
+                onDragEnd={handleDragEnd}
+                className="group flex cursor-grab items-center gap-1 px-1.5 py-1 active:cursor-grabbing"
+              >
+                <span className="shrink-0 text-muted-foreground/50">
+                  <GripIcon />
+                </span>
                 <button
                   type="button"
                   aria-label={
@@ -2204,18 +2241,20 @@ const ServiceItemsList = memo(function ServiceItemsList({
                 </div>
               ) : null}
             </section>
-            <GroupBoundaryDropZone
-              groupId={group.id}
-              position="after"
-              canDrop={draggedIndex !== null}
-              isActive={dropTargetGroupId === `${group.id}:after`}
-              onActivate={setDropTargetGroupId}
-              onClear={() => setDropTargetGroupId(null)}
-              onDrop={handleGroupBoundaryDrop}
-            />
           </div>
         );
       })}
+
+      {orderedServiceRows.length > 0 ? (
+        <RowBoundaryDropZone
+          layoutIndex={orderedServiceRows.length}
+          canDrop={canDropOnRowBoundary}
+          isActive={dropTargetRowKey === `row:${orderedServiceRows.length}`}
+          onActivate={setDropTargetRowKey}
+          onClear={() => setDropTargetRowKey(null)}
+          onDrop={handleRowBoundaryDrop}
+        />
+      ) : null}
     </div>
   );
 });
@@ -2252,25 +2291,27 @@ function getServiceItemDisplay(item: ServiceItem) {
   return { displayName: item.label ?? "Group", icon: <Folder className="h-3.5 w-3.5" /> };
 }
 
-function GroupBoundaryDropZone({
-  groupId,
-  position,
+/**
+ * Thin drop line between two top-level rows. Accepts both dragged items
+ * (which become standalone at that position) and dragged groups (which move
+ * the whole group there).
+ */
+function RowBoundaryDropZone({
+  layoutIndex,
   canDrop,
   isActive,
   onActivate,
   onClear,
   onDrop,
 }: {
-  groupId: string;
-  position: "before" | "after";
+  layoutIndex: number;
   canDrop: boolean;
   isActive: boolean;
-  onActivate: (targetId: string) => void;
+  onActivate: (targetKey: string) => void;
   onClear: () => void;
   onDrop: (
     event: DragEvent<HTMLDivElement>,
-    groupId: string,
-    position: "before" | "after",
+    layoutIndex: number,
   ) => void | Promise<void>;
 }) {
   return (
@@ -2279,14 +2320,17 @@ function GroupBoundaryDropZone({
         if (!canDrop) return;
         event.preventDefault();
         event.stopPropagation();
-        onActivate(`${groupId}:${position}`);
+        event.dataTransfer.dropEffect = "move";
+        onActivate(`row:${layoutIndex}`);
       }}
       onDragLeave={onClear}
       onDrop={(event) => {
-        void onDrop(event, groupId, position);
+        void onDrop(event, layoutIndex);
       }}
       className={cn(
         "h-px rounded-full border border-transparent transition hover:border-border/40",
+        // Grow into a hittable target only while something is being dragged.
+        canDrop && "h-2",
         isActive && "h-2 border-primary/70 bg-primary/20",
       )}
       aria-hidden="true"

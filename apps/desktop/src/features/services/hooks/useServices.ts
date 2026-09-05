@@ -11,6 +11,11 @@ import type {
   ServicePresentation,
 } from "../../../shared/types";
 import {
+  applyLayoutGroupOrder,
+  moveLayoutGroup,
+  resolveLayoutInsertIndex,
+} from "../lib/service-layout.mjs";
+import {
   createLocalService,
   enqueueSyncOperation,
   LOCAL_DATA_CHANGED_EVENT,
@@ -1336,6 +1341,9 @@ export function useServices(
     const nextItems = normalizedService.items.map((item, itemIndex) =>
       itemIndex === index ? movedItem : item,
     );
+    const sourceLayoutIndex = currentLayout.findIndex(
+      (entry) => entry.type === "item" && entry.key === sourceLayoutKey,
+    );
     const layoutWithoutSourceItem = currentLayout.filter(
       (entry) => !(entry.type === "item" && entry.key === sourceLayoutKey),
     );
@@ -1344,7 +1352,11 @@ export function useServices(
         ? (() => {
             const insertIndex =
               typeof toIndex === "number" && Number.isFinite(toIndex)
-                ? Math.max(0, Math.min(layoutWithoutSourceItem.length, toIndex))
+                ? resolveLayoutInsertIndex(
+                    currentLayout.length,
+                    sourceLayoutIndex,
+                    toIndex,
+                  )
                 : layoutWithoutSourceItem.length;
             const layout = [...layoutWithoutSourceItem];
             layout.splice(insertIndex, 0, {
@@ -1359,6 +1371,56 @@ export function useServices(
       ...normalizedService,
       items: orderServiceItemsByLayout(nextLayout, groups, nextItems),
       layout: normalizeServiceLayout(nextLayout, groups, nextItems),
+    });
+    setServices(readOrgServices(workspaceId));
+    enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
+  };
+
+  /**
+   * Moves a group (and everything inside it) to a new position within the
+   * service's own layout. `toLayoutIndex` uses drop-line semantics: the group
+   * is inserted before the row currently at that index. Only this service is
+   * touched — the template it was created from stays as-is.
+   */
+  const reorderServiceGroup = async (
+    serviceId: Id<"services">,
+    groupId: string,
+    toLayoutIndex: number,
+  ) => {
+    const service = services.find(
+      (item) => String(item._id) === String(serviceId),
+    );
+    if (!service) {
+      return;
+    }
+
+    const normalizedService = normalizeServiceGroups(service);
+    const groups = normalizedService.groups ?? [];
+    const currentLayout = normalizeServiceLayout(
+      normalizedService.layout,
+      groups,
+      normalizedService.items,
+    );
+    const nextLayout = moveLayoutGroup(currentLayout, groupId, toLayoutIndex);
+    if (!nextLayout) {
+      return;
+    }
+
+    const nextGroups = applyLayoutGroupOrder(nextLayout, groups);
+    const layout = normalizeServiceLayout(
+      nextLayout,
+      nextGroups,
+      normalizedService.items,
+    );
+    const nextService = upsertService(workspaceId, {
+      ...normalizedService,
+      groups: nextGroups,
+      items: orderServiceItemsByLayout(
+        layout,
+        nextGroups,
+        normalizedService.items,
+      ),
+      layout,
     });
     setServices(readOrgServices(workspaceId));
     enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", nextService);
@@ -1605,6 +1667,7 @@ export function useServices(
     renameServiceGroup,
     deleteServiceGroup,
     moveServiceItemToGroup,
+    reorderServiceGroup,
     renameServiceItem,
     updateMediaInServices,
     removeMediaFromServices,
