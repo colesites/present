@@ -1348,9 +1348,26 @@ export function useServices(
       groups,
       normalizedService.items,
     );
-    const nextItems = normalizedService.items.map((item, itemIndex) =>
-      itemIndex === index ? movedItem : item,
-    );
+    // A group's internal order comes from the item array, not the layout, so an
+    // item dropped onto a row inside a group has to move to that row's place in
+    // the array. Relabelling it where it stands leaves it wherever it already
+    // sat in that group, which reads as the drop having been ignored.
+    const nextItems =
+      groupId !== null && typeof toIndex === "number" && Number.isFinite(toIndex)
+        ? (() => {
+            const remaining = normalizedService.items.filter(
+              (_, itemIndex) => itemIndex !== index,
+            );
+            remaining.splice(
+              Math.max(0, Math.min(remaining.length, toIndex)),
+              0,
+              movedItem,
+            );
+            return remaining;
+          })()
+        : normalizedService.items.map((item, itemIndex) =>
+            itemIndex === index ? movedItem : item,
+          );
     const sourceLayoutIndex = currentLayout.findIndex(
       (entry) => entry.type === "item" && entry.key === sourceLayoutKey,
     );

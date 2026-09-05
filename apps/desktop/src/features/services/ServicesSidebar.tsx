@@ -2337,27 +2337,35 @@ function RowBoundaryDropZone({
     layoutIndex: number,
   ) => void | Promise<void>;
 }) {
+  // The zone keeps a constant 1px footprint and does all of its growing in
+  // absolutely positioned children. Anything that changes height here changes
+  // it at every boundary at once — the list would reflow the moment a drag
+  // begins, sliding rows out from under the cursor by an amount that grows the
+  // further down the list you are, so the lower rows become unaimable.
   return (
-    <div
-      onDragOver={(event) => {
-        if (!canDrop) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.dataTransfer.dropEffect = "move";
-        onActivate(`row:${layoutIndex}`);
-      }}
-      onDragLeave={onClear}
-      onDrop={(event) => {
-        void onDrop(event, layoutIndex);
-      }}
-      className={cn(
-        "h-px rounded-full border border-transparent transition hover:border-border/40",
-        // Grow into a hittable target only while something is being dragged.
-        canDrop && "h-2",
-        isActive && "h-2 border-primary/70 bg-primary/20",
-      )}
-      aria-hidden="true"
-    />
+    <div className="relative h-px" aria-hidden="true">
+      <div
+        className={cn(
+          "absolute inset-x-0 top-0 rounded-full transition",
+          isActive ? "h-0.5 -translate-y-px bg-primary/70" : "h-px",
+        )}
+      />
+      {canDrop ? (
+        <div
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = "move";
+            onActivate(`row:${layoutIndex}`);
+          }}
+          onDragLeave={onClear}
+          onDrop={(event) => {
+            void onDrop(event, layoutIndex);
+          }}
+          className="absolute inset-x-0 -top-1 z-10 h-2"
+        />
+      ) : null}
+    </div>
   );
 }
 
