@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "../lib/utils";
+import { PortalContainerContext } from "./portal-container";
 
 interface DialogProps {
   title: string;
@@ -16,7 +17,9 @@ export function Dialog({
   onClose,
   contentClassName,
 }: DialogProps) {
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  // Held as state, not a ref, so that the menus below re-render and portal into
+  // the dialog as soon as it is attached.
+  const [dialogNode, setDialogNode] = useState<HTMLDialogElement | null>(null);
   const onCloseRef = useRef(onClose);
 
   useEffect(() => {
@@ -24,11 +27,10 @@ export function Dialog({
   }, [onClose]);
 
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
+    if (!dialogNode) return;
 
-    if (!dialog.open) {
-      dialog.showModal();
+    if (!dialogNode.open) {
+      dialogNode.showModal();
     }
 
     const handleCancel = (event: Event) => {
@@ -36,18 +38,18 @@ export function Dialog({
       onCloseRef.current();
     };
 
-    dialog.addEventListener("cancel", handleCancel);
+    dialogNode.addEventListener("cancel", handleCancel);
     return () => {
-      dialog.removeEventListener("cancel", handleCancel);
-      if (dialog.open) {
-        dialog.close();
+      dialogNode.removeEventListener("cancel", handleCancel);
+      if (dialogNode.open) {
+        dialogNode.close();
       }
     };
-  }, []);
+  }, [dialogNode]);
 
   return (
     <dialog
-      ref={dialogRef}
+      ref={setDialogNode}
       aria-labelledby="dialog-title"
       className={cn(
         "fixed inset-0 z-50 m-auto w-full max-w-sm rounded-lg border border-border bg-card p-4 text-foreground shadow-xl backdrop:bg-black/70",
@@ -80,7 +82,9 @@ export function Dialog({
           </svg>
         </button>
       </div>
-      {children}
+      <PortalContainerContext.Provider value={dialogNode}>
+        {children}
+      </PortalContainerContext.Provider>
     </dialog>
   );
 }

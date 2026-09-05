@@ -4,6 +4,15 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-09-05
+
+### Fixed
+
+- Reordering groups and standalone items did nothing in a service created from a template. The sidebar numbered its rows from the service's stored layout while the move resolved that number against a rebuilt one, so a drop landed on the wrong row or was rejected outright.
+- Dropping an item onto the row directly below it left the order unchanged; only dropping past that row moved anything.
+- Select menus, dropdowns, context menus, and tooltips opened behind a modal dialog instead of above it, which made the category picker in the Edit library item and Create flow dialogs unusable.
+- Idle CPU stayed high with the timer panel open: the tick rewrote timer state once a second even with no timer running, re-rendering every consumer and re-persisting to local storage each time.
+
 ## [0.3.7] - 2026-09-05
 
 ### Added

@@ -5,6 +5,7 @@ import {
   applyLayoutGroupOrder,
   moveLayoutGroup,
   resolveLayoutInsertIndex,
+  resolveRowDropLineIndex,
 } from "../src/features/services/lib/service-layout.mjs";
 
 const layout = [
@@ -91,4 +92,53 @@ test("shifts the insert index only when a row moves down past its own slot", () 
   assert.equal(resolveLayoutInsertIndex(4, -1, 3), 3);
   assert.equal(resolveLayoutInsertIndex(4, 1, 99), 3);
   assert.equal(resolveLayoutInsertIndex(4, 1, -5), 0);
+});
+
+// Dropping one row directly onto another means "take that row's place". The
+// insert index is a drop line, so the two numbers differ when moving down.
+test("dropping a row onto the one below it lands after that row", () => {
+  assert.equal(resolveRowDropLineIndex(1, 2), 3);
+});
+
+test("dropping a row onto the one above it takes that row's index", () => {
+  assert.equal(resolveRowDropLineIndex(2, 0), 0);
+});
+
+test("a row without a layout entry of its own drops at the target index", () => {
+  assert.equal(resolveRowDropLineIndex(-1, 2), 2);
+});
+
+test("dragging item 2 onto item 3 swaps them", () => {
+  // Rows: item1(0), item2(1), item3(2) — drag item2 onto item3.
+  const rows = ["item1", "item2", "item3"];
+  const sourceIndex = 1;
+  const targetIndex = 2;
+
+  const dropLine = resolveRowDropLineIndex(sourceIndex, targetIndex);
+  const insertIndex = resolveLayoutInsertIndex(
+    rows.length,
+    sourceIndex,
+    dropLine,
+  );
+  const next = rows.filter((_, index) => index !== sourceIndex);
+  next.splice(insertIndex, 0, rows[sourceIndex]);
+
+  assert.deepEqual(next, ["item1", "item3", "item2"]);
+});
+
+test("dragging item 3 onto item 1 puts it first", () => {
+  const rows = ["item1", "item2", "item3"];
+  const sourceIndex = 2;
+  const targetIndex = 0;
+
+  const dropLine = resolveRowDropLineIndex(sourceIndex, targetIndex);
+  const insertIndex = resolveLayoutInsertIndex(
+    rows.length,
+    sourceIndex,
+    dropLine,
+  );
+  const next = rows.filter((_, index) => index !== sourceIndex);
+  next.splice(insertIndex, 0, rows[sourceIndex]);
+
+  assert.deepEqual(next, ["item3", "item1", "item2"]);
 });

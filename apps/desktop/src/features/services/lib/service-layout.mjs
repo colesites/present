@@ -56,6 +56,25 @@ export function applyLayoutGroupOrder(layout, groups) {
 }
 
 /**
+ * Converts a drop *onto* a row into the drop-line index that lands the dragged
+ * row in that row's place.
+ *
+ * The two are not the same number. A drop line means "go before the row at this
+ * index", so taking the place of a row that sits *below* the dragged one means
+ * landing after it — the line at `targetLayoutIndex + 1`. Passing the target's
+ * own index instead resolves straight back to where the row already was, and
+ * the drop looks like it did nothing.
+ *
+ * `sourceLayoutIndex` is -1 when the dragged row has no layout entry of its own
+ * (a grouped item), in which case the target's index is already correct.
+ */
+export function resolveRowDropLineIndex(sourceLayoutIndex, targetLayoutIndex) {
+  return sourceLayoutIndex >= 0 && sourceLayoutIndex < targetLayoutIndex
+    ? targetLayoutIndex + 1
+    : targetLayoutIndex;
+}
+
+/**
  * Translates a drop-line index measured against the layout *before* the dragged
  * row was lifted out into an insert index for the layout with that row removed.
  * `fromIndex` is -1 when the dragged row had no layout entry of its own (a

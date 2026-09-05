@@ -99,10 +99,20 @@ const isServiceItemLayoutKeyMatch = (
   item: Pick<ServiceItem, "type" | "refId" | "addedAt" | "label" | "groupId">,
 ) => getServiceItemLayoutKeyAliases(item).includes(key);
 
-const normalizeServiceLayout = (
+/**
+ * Resolves a service's stored layout into the canonical, complete row order:
+ * exactly one entry per group and per ungrouped item. Renderers must derive
+ * their rows from this too, so that a row's position and its layout index stay
+ * the same number — a stored layout is routinely partial (a service created
+ * from a template has none at all until its first edit).
+ */
+export const normalizeServiceLayout = (
   rawLayout: unknown,
   groups: ServiceGroup[],
-  items: Service["items"],
+  items: readonly Pick<
+    ServiceItem,
+    "type" | "refId" | "addedAt" | "label" | "groupId"
+  >[],
 ): ServiceLayoutEntry[] => {
   const orderedGroups = [...groups].sort((left, right) => left.order - right.order);
   const groupIds = new Set(orderedGroups.map((group) => group.id));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // Timer state + helpers, lifted out of OutputPreview so the new sidebar-rail
 // Timer panel and the audience-output broadcast effect can share a single
@@ -342,15 +342,29 @@ export function useTimers(): UseTimersResult {
     return getInitialTimerValue(timer);
   }, []);
 
+  // The tick reads timers through a ref so the interval is created once for the
+  // lifetime of the hook. Depending on `timers` directly would tear down and
+  // re-arm the interval on every tick.
+  const timersRef = useRef(timers);
+  useEffect(() => {
+    timersRef.current = timers;
+  }, [timers]);
+
   // 1Hz tick for any running timer.
   useEffect(() => {
     const intervalId = window.setInterval(() => {
+      const currentTimers = timersRef.current;
+      // Idle is the common case. Writing an equivalent-but-new array here would
+      // re-render every timer consumer and re-persist state once a second for
+      // as long as the app stays open.
+      if (!currentTimers.some((timer) => timer.isRunning)) return;
+
       let nextExpandedTimerId: string | null = null;
-      const nextTimers = timers
+      const nextTimers = currentTimers
         .map((timer, index) => {
           if (!timer.isRunning) return timer;
 
-          const nextTimer = getNextTimerToStart(timers, index);
+          const nextTimer = getNextTimerToStart(currentTimers, index);
           const completeTimer = (secondsValue: number) => {
             if (!nextTimer) {
               return { ...timer, isRunning: false, secondsValue };
@@ -409,7 +423,7 @@ export function useTimers(): UseTimersResult {
       }
     }, 1000);
     return () => window.clearInterval(intervalId);
-  }, [getNextTimerToStart, startTimerValue, timers]);
+  }, [getNextTimerToStart, startTimerValue]);
 
   const createTimer = useCallback(() => {
     const config: TimerConfig = {

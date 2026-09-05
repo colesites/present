@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { PortalContainerContext } from "../../renderer/shared/components/portal-container";
 import {
   Search,
   Layers3,
@@ -120,7 +121,11 @@ export const AppHeader = memo(function AppHeader({
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const searchDialogRef = useRef<HTMLDialogElement>(null);
+  // Held as state, not a ref, so the palette can publish itself as the portal
+  // container once attached — `showModal()` puts it in the browser's top layer,
+  // where menus portalled to document.body would be painted underneath it.
+  const [searchDialogNode, setSearchDialogNode] =
+    useState<HTMLDialogElement | null>(null);
 
   // ── Keyboard shortcut: Cmd/Ctrl + K ──
   useEffect(() => {
@@ -148,7 +153,7 @@ export const AppHeader = memo(function AppHeader({
   }, [isSearchOpen]);
 
   useEffect(() => {
-    const dialog = searchDialogRef.current;
+    const dialog = searchDialogNode;
     if (!dialog) {
       return;
     }
@@ -163,7 +168,7 @@ export const AppHeader = memo(function AppHeader({
     if (dialog.open) {
       dialog.close();
     }
-  }, [isSearchOpen]);
+  }, [isSearchOpen, searchDialogNode]);
 
   useEffect(() => {
     if (searchRequestId <= 0) {
@@ -494,127 +499,129 @@ export const AppHeader = memo(function AppHeader({
 
       {/* ── Global Search Command Palette ── */}
       <dialog
-        ref={searchDialogRef}
+        ref={setSearchDialogNode}
         aria-label="Global search"
         onClose={() => setIsSearchOpen(false)}
         className="m-0 h-screen max-h-none w-screen max-w-none border-0 bg-transparent p-0 text-foreground backdrop:bg-black/60"
       >
-        <div className="relative flex h-full items-start justify-center pt-[15vh]">
-          <button
-            type="button"
-            aria-label="Close global search"
-            className="absolute inset-0 cursor-default"
-            onClick={() => setIsSearchOpen(false)}
-          />
-          <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
-            {/* Search input */}
-            <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
-              <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <input
-                ref={inputRef}
-                aria-label="Search services, libraries, or scripture"
-                type="text"
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setActiveIndex(0);
-                }}
-                onKeyDown={handleInputKeyDown}
-                placeholder="Search services, libraries, or scripture…"
-                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <kbd className="hidden sm:inline-flex items-center rounded border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                ESC
-              </kbd>
-            </div>
+        <PortalContainerContext.Provider value={searchDialogNode}>
+          <div className="relative flex h-full items-start justify-center pt-[15vh]">
+            <button
+              type="button"
+              aria-label="Close global search"
+              className="absolute inset-0 cursor-default"
+              onClick={() => setIsSearchOpen(false)}
+            />
+            <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+              {/* Search input */}
+              <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+                <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <input
+                  ref={inputRef}
+                  aria-label="Search services, libraries, or scripture"
+                  type="text"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setActiveIndex(0);
+                  }}
+                  onKeyDown={handleInputKeyDown}
+                  placeholder="Search services, libraries, or scripture…"
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <kbd className="hidden sm:inline-flex items-center rounded border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  ESC
+                </kbd>
+              </div>
 
-            {/* Results */}
-            <div
-              ref={listRef}
-              className="max-h-[360px] overflow-y-auto overscroll-contain p-1.5"
-            >
-              {query.trim() && flatResults.length === 0 && (
-                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
-                  No results for &ldquo;{query}&rdquo;
-                </div>
-              )}
-
-              {!query.trim() && (
-                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
-                  Type to search across services, libraries, and scripture
-                </div>
-              )}
-
-              {groupedResults.map((group) => {
-                const Icon = CATEGORY_ICONS[group.category];
-                return (
-                  <div key={group.category} className="mb-1 last:mb-0">
-                    <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      <Icon className="h-3 w-3" />
-                      {CATEGORY_LABELS[group.category]}
-                    </div>
-                    {group.items.map((result) => {
-                      const flatIdx = flatResults.indexOf(result);
-                      const isActive = flatIdx === activeIndex;
-                      return (
-                        <button
-                          key={result.id}
-                          type="button"
-                          data-index={flatIdx}
-                          className={cn(
-                            "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
-                            isActive
-                              ? "bg-primary/10 text-foreground"
-                              : "text-foreground/80 hover:bg-secondary/60",
-                          )}
-                          onMouseEnter={() => setActiveIndex(flatIdx)}
-                          onClick={() => handleSelect(result)}
-                        >
-                          <ResultIcon category={result.category} />
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate font-medium text-[13px]">
-                              {result.label}
-                            </div>
-                            {result.sublabel && (
-                              <div className="truncate text-[11px] text-muted-foreground">
-                                {result.sublabel}
-                              </div>
-                            )}
-                          </div>
-                          {isActive && (
-                            <span className="shrink-0 text-[10px] text-muted-foreground">
-                              ↵
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+              {/* Results */}
+              <div
+                ref={listRef}
+                className="max-h-[360px] overflow-y-auto overscroll-contain p-1.5"
+              >
+                {query.trim() && flatResults.length === 0 && (
+                  <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                    No results for &ldquo;{query}&rdquo;
                   </div>
-                );
-              })}
-            </div>
+                )}
 
-            {/* Footer */}
-            <div className="flex items-center justify-between border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
-              <div className="flex items-center gap-3">
-                <span className="inline-flex items-center gap-1">
-                  <kbd className="rounded border border-border bg-secondary/60 px-1 py-0.5 font-mono text-[10px]">↑↓</kbd>
-                  navigate
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <kbd className="rounded border border-border bg-secondary/60 px-1 py-0.5 font-mono text-[10px]">↵</kbd>
-                  open
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <kbd className="rounded border border-border bg-secondary/60 px-1 py-0.5 font-mono text-[10px]">esc</kbd>
-                  close
-                </span>
+                {!query.trim() && (
+                  <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                    Type to search across services, libraries, and scripture
+                  </div>
+                )}
+
+                {groupedResults.map((group) => {
+                  const Icon = CATEGORY_ICONS[group.category];
+                  return (
+                    <div key={group.category} className="mb-1 last:mb-0">
+                      <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        <Icon className="h-3 w-3" />
+                        {CATEGORY_LABELS[group.category]}
+                      </div>
+                      {group.items.map((result) => {
+                        const flatIdx = flatResults.indexOf(result);
+                        const isActive = flatIdx === activeIndex;
+                        return (
+                          <button
+                            key={result.id}
+                            type="button"
+                            data-index={flatIdx}
+                            className={cn(
+                              "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                              isActive
+                                ? "bg-primary/10 text-foreground"
+                                : "text-foreground/80 hover:bg-secondary/60",
+                            )}
+                            onMouseEnter={() => setActiveIndex(flatIdx)}
+                            onClick={() => handleSelect(result)}
+                          >
+                            <ResultIcon category={result.category} />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium text-[13px]">
+                                {result.label}
+                              </div>
+                              {result.sublabel && (
+                                <div className="truncate text-[11px] text-muted-foreground">
+                                  {result.sublabel}
+                                </div>
+                              )}
+                            </div>
+                            {isActive && (
+                              <span className="shrink-0 text-[10px] text-muted-foreground">
+                                ↵
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center gap-1">
+                    <kbd className="rounded border border-border bg-secondary/60 px-1 py-0.5 font-mono text-[10px]">↑↓</kbd>
+                    navigate
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <kbd className="rounded border border-border bg-secondary/60 px-1 py-0.5 font-mono text-[10px]">↵</kbd>
+                    open
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <kbd className="rounded border border-border bg-secondary/60 px-1 py-0.5 font-mono text-[10px]">esc</kbd>
+                    close
+                  </span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </PortalContainerContext.Provider>
       </dialog>
     </>
   );

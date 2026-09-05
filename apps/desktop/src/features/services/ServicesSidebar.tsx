@@ -16,7 +16,11 @@ import {
 import type { Service, LibraryItem, ServiceGroup } from "../../shared/types";
 import type { MediaItem } from "../media/hooks";
 import type { ServiceTemplate } from "./hooks/useServices";
-import { getServiceTemplateItemLayoutKey } from "./hooks/useServices";
+import {
+  getServiceTemplateItemLayoutKey,
+  normalizeServiceLayout,
+} from "./hooks/useServices";
+import { resolveRowDropLineIndex } from "./lib/service-layout.mjs";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import { Skeleton } from "../../renderer/shared/components/ui/skeleton";
 import { cn } from "../../renderer/shared/lib/utils";
@@ -1687,15 +1691,35 @@ const ServiceItemsList = memo(function ServiceItemsList({
   } | null>(null);
   const dragDataKey = "application/x-present-service-item-index";
   const groupDragDataKey = "application/x-present-service-group-id";
-  const orderedGroups = [...groups].sort((a, b) => a.order - b.order);
-  const groupedItems = orderedGroups.map((group) => ({
-    group,
-    items: items.filter((item) => item.groupId === group.id),
-  }));
-  const ungroupedItems = items.filter(
-    (item) => !item.groupId || !groups.some((group) => group.id === item.groupId),
+  // Rows come from the canonical layout rather than the stored one so that a
+  // row's position is also its layout index. Deriving them from the stored
+  // layout lets the two number spaces drift apart whenever it is partial, and
+  // a drop then resolves against a different row than the one aimed at.
+  const normalizedLayout = useMemo(
+    () => normalizeServiceLayout(layout, groups, items),
+    [groups, items, layout],
   );
-  const orderedServiceRows = (() => {
+  const orderedGroups = useMemo(
+    () => [...groups].sort((a, b) => a.order - b.order),
+    [groups],
+  );
+  const groupedItems = useMemo(
+    () =>
+      orderedGroups.map((group) => ({
+        group,
+        items: items.filter((item) => item.groupId === group.id),
+      })),
+    [items, orderedGroups],
+  );
+  const ungroupedItems = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          !item.groupId || !groups.some((group) => group.id === item.groupId),
+      ),
+    [groups, items],
+  );
+  const orderedServiceRows = useMemo(() => {
     const rows: Array<
       | { type: "item"; item: ServiceItem; layoutIndex: number }
       | {
@@ -1712,14 +1736,13 @@ const ServiceItemsList = memo(function ServiceItemsList({
     const ungroupedItemsByKey = new Map(
       ungroupedItems.map((item) => [getServiceTemplateItemLayoutKey(item), item]),
     );
-    const seenGroups = new Set<string>();
-    const seenItems = new Set<string>();
 
-    for (const entry of layout) {
+    // The normalized layout already covers every group and ungrouped item
+    // exactly once, so every entry becomes one row in order.
+    for (const entry of normalizedLayout) {
       if (entry.type === "group") {
         const group = groupsById.get(entry.id);
-        if (!group || seenGroups.has(group.id)) continue;
-        seenGroups.add(group.id);
+        if (!group) continue;
         rows.push({
           type: "group",
           group,
@@ -1730,33 +1753,14 @@ const ServiceItemsList = memo(function ServiceItemsList({
       }
 
       const item = ungroupedItemsByKey.get(entry.key);
-      if (!item || seenItems.has(entry.key)) continue;
-      seenItems.add(entry.key);
-      rows.push({ type: "item", item, layoutIndex: rows.length });
-    }
-
-    for (const group of orderedGroups) {
-      if (seenGroups.has(group.id)) continue;
-      seenGroups.add(group.id);
-      rows.push({
-        type: "group",
-        group,
-        items: groupedItemsByGroupId.get(group.id) ?? [],
-        layoutIndex: rows.length,
-      });
-    }
-
-    for (const item of ungroupedItems) {
-      const key = getServiceTemplateItemLayoutKey(item);
-      if (seenItems.has(key)) continue;
-      seenItems.add(key);
+      if (!item) continue;
       rows.push({ type: "item", item, layoutIndex: rows.length });
     }
 
     return rows;
-  })();
+  }, [groupedItems, normalizedLayout, orderedGroups, ungroupedItems]);
 
-  const itemDisplayNumbers = (() => {
+  const itemDisplayNumbers = useMemo(() => {
     const numbers = new Map<number, number>();
     let nextNumber = 1;
     for (const row of orderedServiceRows) {
@@ -1771,7 +1775,7 @@ const ServiceItemsList = memo(function ServiceItemsList({
       }
     }
     return numbers;
-  })();
+  }, [orderedServiceRows]);
 
   const canDropOnRowBoundary = draggedIndex !== null || draggedGroupId !== null;
 
@@ -1792,6 +1796,19 @@ const ServiceItemsList = memo(function ServiceItemsList({
     }
   };
 
+  // A drop lands on a row, but the layout insert wants a drop line. Resolve the
+  // dragged row's own position so "take this row's place" survives the trip.
+  const toRowDropLineIndex = (
+    draggedItemIndex: number,
+    targetLayoutIndex: number,
+  ) =>
+    resolveRowDropLineIndex(
+      orderedServiceRows.findIndex(
+        (row) => row.type === "item" && row.item.index === draggedItemIndex,
+      ),
+      targetLayoutIndex,
+    );
+
   const handleDrop = async (
     e: React.DragEvent,
     toIndex: number,
@@ -1811,7 +1828,13 @@ const ServiceItemsList = memo(function ServiceItemsList({
       const fromItem = items.find((item) => item.index === fromIndex);
       const fromGroupId = fromItem?.groupId ?? null;
       if (fromGroupId !== targetGroupId || targetGroupId === null) {
-        await onMoveToGroup(fromIndex, targetGroupId, targetLayoutIndex ?? toIndex);
+        await onMoveToGroup(
+          fromIndex,
+          targetGroupId,
+          targetLayoutIndex === undefined
+            ? toIndex
+            : toRowDropLineIndex(fromIndex, targetLayoutIndex),
+        );
         onSelectGroup(targetGroupId);
         return;
       }
