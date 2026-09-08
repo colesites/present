@@ -34,7 +34,14 @@ pub struct DisplayKey {
 /// can be tested without a running app.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonitorSnapshot {
+    /// What the OS reports. On macOS this is tao's `"Monitor #<model>"`
+    /// placeholder. **This is what identity keys on** — it is hardware-derived
+    /// and locale-independent, unlike the display label.
     pub name: Option<String>,
+    /// The name a person recognises, when the platform can supply one. Label
+    /// only: deliberately excluded from `DisplayKey`, because it is localised
+    /// and would change with the system language.
+    pub localized_name: Option<String>,
     pub position: (i32, i32),
     pub size: (u32, u32),
     pub work_area: Rect,
@@ -113,7 +120,12 @@ pub fn identify(monitors: &[MonitorSnapshot]) -> Vec<(DisplayKey, Display)> {
 
             let display = Display {
                 id,
-                label: monitor_label(monitor, id),
+                label: crate::services::display_names::resolve_label(
+                    monitor.localized_name.as_deref(),
+                    monitor.name.as_deref(),
+                    monitor.is_primary,
+                    id,
+                ),
                 bounds: Rect {
                     x: monitor.position.0,
                     y: monitor.position.1,
@@ -127,16 +139,6 @@ pub fn identify(monitors: &[MonitorSnapshot]) -> Vec<(DisplayKey, Display)> {
             (key, display)
         })
         .collect()
-}
-
-/// Mirrors the label fallback the Electron handler already applies
-/// (`window.ipc.ts:47`), so the picker reads the same either side.
-fn monitor_label(monitor: &MonitorSnapshot, id: i64) -> String {
-    match monitor.name.as_deref().map(str::trim) {
-        Some(name) if !name.is_empty() => name.to_owned(),
-        _ if monitor.is_primary => "Primary Display".to_owned(),
-        _ => format!("Screen {id}"),
-    }
 }
 
 #[cfg(test)]
@@ -160,6 +162,7 @@ mod tests {
     ) -> MonitorSnapshot {
         MonitorSnapshot {
             name: name.map(str::to_owned),
+            localized_name: None,
             position,
             size,
             work_area: rect(position.0, position.1, size.0, size.1),

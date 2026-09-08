@@ -1,6 +1,6 @@
 # Stage 2 (part 1) — Displays
 
-**Status:** display layer complete; windows still to do · **Date:** 2026-09-08
+**Status:** display layer complete; windows still to do · **Date:** 2026-09-09
 
 Covers monitor enumeration, role→display selection and persistence. Window
 creation is the second half of Stage 2 and is not done yet.
@@ -78,7 +78,7 @@ implying the operator chose a screen they never picked.
 The Rust core was run against the actual machine, not only unit tests:
 
 ```
-displays=[{"id":2103039239563972,"label":"Monitor #41024",
+displays=[{"id":2103039239563972,"label":"Built-in Retina Display",
   "bounds":{"x":0,"y":0,"width":3840,"height":2400},
   "workArea":{"x":0,"y":50,"width":3840,"height":2350},
   "isPrimary":true}]
@@ -86,45 +86,71 @@ audience={"display":{...},"isExplicit":false}
 ```
 
 Enumeration, primary detection, work-area inset (`y:50` — the menu bar) and the
-automatic fallback all behave. Across four separate app launches the id and
-label were byte-identical.
+automatic fallback all behave. The id was byte-identical across four separate
+app launches, and stayed identical again after the label changed from
+`Monitor #41024` to `Built-in Retina Display` — which is the check that proves
+the label really is cosmetic.
 
-40 Rust unit tests cover the rest, including the 12 display-selection
+47 Rust unit tests cover the rest, including the 12 display-selection
 characterisation cases mirrored from `tests/display-selection.test.mjs`.
 
 ## Two things this exposed
 
-### 1. macOS reports a synthetic monitor name
+### 1. macOS reports a synthetic monitor name — RESOLVED
 
-The name comes back as `Monitor #41024`, not `Built-in Retina Display`.
-`#41024` looks like a `CGDirectDisplayID`.
+The name came back as `Monitor #41024`. Reading tao's source settled what that
+actually is (`platform_impl/macos/monitor.rs:205-209`):
 
-**Stability: verified across app restarts, not across an OS reboot or a
-replug.** On macOS a `CGDirectDisplayID` is generally stable for a given display
-and GPU port but is not guaranteed across reboots or a GPU switch.
+```rust
+let screen_num = CGDisplay::new(display_id).model_number();
+Some(format!("Monitor #{}", screen_num))
+```
 
-The failure mode if it does change is the mild one, by design: the persisted key
-no longer matches any connected monitor, so `get_preferred_display` falls
-through to the automatic largest-external rule rather than erroring or picking
-the wrong screen. That path is covered by
-`unplugged_explicit_choice_falls_back_to_largest_external`.
+It is the panel's **model number**, not a display id — which changes the
+stability picture for the better. A model number is a hardware property, so it
+survives reboots, GPU switches and replugs. My earlier worry that this was a
+`CGDirectDisplayID` (which can change across reboots) was wrong.
 
-Still worth confirming across a reboot before Stage 2 is called done.
+It also confirms the ordinal was necessary rather than defensive: two identical
+monitors report the *same* model number, so the name alone could never have
+told them apart.
 
-### 2. The label is a UX regression
+### 2. The label is a UX regression — FIXED
 
-A display picker showing `Monitor #41024` is worse than Electron's
-`Built-in Retina Display`. The label needs a real name from a platform API
-(`NSScreen.localizedName` on macOS) rather than tao's synthetic string. Tracked
-as Stage 2 follow-up; it does not affect correctness, only what the operator
-reads.
+`services/display_names.rs` asks AppKit for `NSScreen.localizedName` and uses it
+as the display label. Verified on real hardware: the picker now reads
+**"Built-in Retina Display"** instead of "Monitor #41024", and the id is
+unchanged at `2103039239563972`.
+
+Three things worth recording about how it is wired:
+
+**The label is not the identity.** `DisplayKey` still keys on the model-number
+name. `localizedName` is *localised* — switching the system language would
+rename every monitor and orphan every saved preference. Model numbers are
+locale-independent. So the readable name is cosmetic by construction, and the id
+staying identical across this change is the proof.
+
+**Matching is exact, not geometric.** `NSScreen.deviceDescription` yields
+`NSScreenNumber` (the `CGDirectDisplayID`), which feeds `CGDisplayBounds`, and
+the origin is scaled by `backingScaleFactor` — the same computation tao performs
+in `position()`. Joining on that rather than converting Cocoa's bottom-left
+coordinates by hand avoids a whole class of off-by-one rounding bugs.
+
+**AppKit is main-thread-only and Tauri commands are not.** The lookup hops via
+`run_on_main_thread` with a 500 ms bound, and short-circuits when already on the
+main thread (calling `run_on_main_thread` from the main thread would deadlock).
+Every failure path — wrong thread, timeout, missing key — degrades to "no
+localized name", never to a failed enumeration. A label is cosmetic; display
+enumeration is not.
+
+tao's placeholder is also explicitly filtered, so `Monitor #41024` can never
+reach the UI even if AppKit declines to answer. Names that merely resemble it
+(`Monitor #A1`, `Studio Monitor #2`) are kept — there are tests for both.
 
 ## Next
 
-1. Get real monitor names for the picker label.
-2. Confirm id stability across a reboot.
-3. Window creation: all eight windows, preserving the output window's hardening
+1. Window creation: all eight windows, preserving the output window's hardening
    — `#000000` background, no background throttling, show only after first
    paint, single reload on renderer crash (audit §3).
-4. Monitor hot-plug → reconcile, matching the three `screen` events in
+2. Monitor hot-plug → reconcile, matching the three `screen` events in
    `src/main/index.ts:69-79`.

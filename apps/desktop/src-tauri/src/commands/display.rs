@@ -6,17 +6,54 @@
 //! React display pickers keep working untouched; what changes is that the
 //! preference now survives a restart.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::errors::{AppError, AppResult};
 use crate::services::display::{select_preferred_display, Display, Rect, ScreenRole};
 use crate::services::display_identity::{identify, DisplayKey, MonitorSnapshot};
+use crate::services::display_names;
 use crate::state::display_state::Resolution;
 use crate::state::DisplayState;
 
+/// Fetch human-readable monitor names, hopping to the main thread if needed.
+///
+/// AppKit will only hand out `NSScreen` from the main thread, and Tauri runs
+/// commands off it. A label is cosmetic, so every failure here degrades to "no
+/// localized name" rather than failing enumeration.
+fn localized_names(app: &AppHandle) -> HashMap<(i32, i32), String> {
+    // Already on the main thread (e.g. called from `setup`): just read it.
+    // Going through `run_on_main_thread` from the main thread would deadlock.
+    #[cfg(target_os = "macos")]
+    if objc2_foundation::MainThreadMarker::new().is_some() {
+        return display_names::localized_names_by_position();
+    }
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if app
+        .run_on_main_thread(move || {
+            let _ = sender.send(display_names::localized_names_by_position());
+        })
+        .is_err()
+    {
+        return HashMap::new();
+    }
+
+    // Bounded wait: a missing label must never hang a display query.
+    receiver
+        .recv_timeout(std::time::Duration::from_millis(500))
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "timed out reading localized monitor names");
+            HashMap::new()
+        })
+}
+
 /// Read the monitors the OS currently reports.
 fn snapshot_monitors(app: &AppHandle) -> AppResult<Vec<MonitorSnapshot>> {
+    let localized = localized_names(app);
+
     let primary = app.primary_monitor()?;
     let primary_position = primary.as_ref().map(|monitor| {
         let position = monitor.position();
@@ -33,6 +70,7 @@ fn snapshot_monitors(app: &AppHandle) -> AppResult<Vec<MonitorSnapshot>> {
 
             MonitorSnapshot {
                 name: monitor.name().cloned(),
+                localized_name: localized.get(&(position.x, position.y)).cloned(),
                 position: (position.x, position.y),
                 size: (size.width, size.height),
                 work_area: Rect {
