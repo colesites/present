@@ -7,7 +7,7 @@
  */
 
 import { reportWebviewCapabilities } from "./capability-probe";
-import { getAppInfo, isTauri } from "./runtime";
+import { getAppInfo, getDisplays, getPreferredDisplay, isTauri } from "./runtime";
 
 if (isTauri()) {
   // Feature detection only — no permission prompt. Call
@@ -35,4 +35,23 @@ if (isTauri()) {
     });
 } else {
   console.warn("[Tauri] boot probe loaded outside the Tauri shell; skipping.");
+}
+
+if (isTauri()) {
+  // Stage 2 check: report what the Rust core sees, so display enumeration can
+  // be verified against real hardware rather than only against unit tests.
+  void Promise.all([getDisplays(), getPreferredDisplay("audience")])
+    .then(async ([displays, audience]) => {
+      const summary =
+        `displays=${JSON.stringify(displays)} ` +
+        `audience=${JSON.stringify(audience)}`;
+      console.info("[Tauri]", summary);
+      // A Tauri webview's console is not visible from a terminal, so mirror it
+      // into the Rust log where it can actually be read during development.
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("report_diagnostic", { message: summary });
+    })
+    .catch((error: unknown) => {
+      console.error("[Tauri] display enumeration failed", error);
+    });
 }

@@ -9,6 +9,8 @@ pub mod errors;
 pub mod services;
 pub mod state;
 
+use tauri::Manager;
+
 use state::AppState;
 
 /// Installs tracing. Verbosity comes from `RUST_LOG`, defaulting to `info` for
@@ -42,11 +44,26 @@ pub fn run() {
             commands::diagnostics::report_webview_capabilities,
             commands::diagnostics::report_diagnostic,
             commands::speech::request_speech_token,
-            commands::speech::report_speech_usage
+            commands::speech::report_speech_usage,
+            commands::display::get_displays,
+            commands::display::get_preferred_display,
+            commands::display::set_preferred_display,
+            commands::display::set_preferred_resolution,
+            commands::display::get_preferred_resolution
         ])
-        .setup(|_app| {
+        .setup(|app| {
+            // Display preferences need the resolved app config directory, which
+            // only exists once the app handle does — hence managing this here
+            // rather than before the builder.
+            let config_dir = app
+                .path()
+                .app_config_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            app.manage(state::DisplayState::load(&config_dir));
+
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),
+                config_dir = %config_dir.display(),
                 "Present Rust core started"
             );
             Ok(())

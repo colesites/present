@@ -6,5 +6,7 @@
 //! so nothing in the tree is a placeholder.
 
 pub mod app_state;
+pub mod display_state;
 
 pub use app_state::AppState;
+pub use display_state::DisplayState;

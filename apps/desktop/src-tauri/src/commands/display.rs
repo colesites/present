@@ -1,0 +1,163 @@
+//! Display commands.
+//!
+//! Replaces the `get-displays` / `get-preferred-display` /
+//! `set-preferred-display` / `set-preferred-resolution` IPC handlers
+//! (`window.ipc.ts:43-83`). The payload shape is deliberately unchanged so the
+//! React display pickers keep working untouched; what changes is that the
+//! preference now survives a restart.
+
+use serde::Serialize;
+use tauri::{AppHandle, State};
+
+use crate::errors::{AppError, AppResult};
+use crate::services::display::{select_preferred_display, Display, Rect, ScreenRole};
+use crate::services::display_identity::{identify, DisplayKey, MonitorSnapshot};
+use crate::state::display_state::Resolution;
+use crate::state::DisplayState;
+
+/// Read the monitors the OS currently reports.
+fn snapshot_monitors(app: &AppHandle) -> AppResult<Vec<MonitorSnapshot>> {
+    let primary = app.primary_monitor()?;
+    let primary_position = primary.as_ref().map(|monitor| {
+        let position = monitor.position();
+        (position.x, position.y)
+    });
+
+    let monitors = app
+        .available_monitors()?
+        .into_iter()
+        .map(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            let work_area = monitor.work_area();
+
+            MonitorSnapshot {
+                name: monitor.name().cloned(),
+                position: (position.x, position.y),
+                size: (size.width, size.height),
+                work_area: Rect {
+                    x: work_area.position.x,
+                    y: work_area.position.y,
+                    width: work_area.size.width,
+                    height: work_area.size.height,
+                },
+                scale_factor: monitor.scale_factor(),
+                // Tauri does not flag the primary monitor, so match on position:
+                // the primary is the one the OS places at the origin of the
+                // virtual desktop.
+                is_primary: primary_position == Some((position.x, position.y)),
+            }
+        })
+        .collect();
+
+    Ok(monitors)
+}
+
+fn current_displays(app: &AppHandle) -> AppResult<Vec<(DisplayKey, Display)>> {
+    Ok(identify(&snapshot_monitors(app)?))
+}
+
+/// Every connected monitor, in a stable order.
+#[tauri::command]
+pub fn get_displays(app: AppHandle) -> AppResult<Vec<Display>> {
+    Ok(current_displays(&app)?
+        .into_iter()
+        .map(|(_, display)| display)
+        .collect())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedDisplay {
+    /// The monitor this role will actually use right now.
+    pub display: Display,
+    /// Whether that is an explicit choice or the automatic fallback. The UI can
+    /// use this to show "Auto" rather than pretending the operator picked it.
+    pub is_explicit: bool,
+}
+
+/// Which monitor a role resolves to, applying the same rule as Electron.
+#[tauri::command]
+pub fn get_preferred_display(
+    app: AppHandle,
+    state: State<'_, DisplayState>,
+    role: ScreenRole,
+) -> AppResult<Option<ResolvedDisplay>> {
+    let identified = current_displays(&app)?;
+    if identified.is_empty() {
+        return Ok(None);
+    }
+
+    let preferences = state.snapshot();
+    let wanted = preferences.display_for(role);
+
+    // Translate the persisted key into the id the selection rule works with.
+    let preferred_id = wanted.and_then(|key| {
+        identified
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, display)| display.id)
+    });
+
+    let displays: Vec<Display> = identified
+        .iter()
+        .map(|(_, display)| display.clone())
+        .collect();
+    let primary_id = displays
+        .iter()
+        .find(|display| display.is_primary)
+        .map_or(displays[0].id, |display| display.id);
+
+    let selected = select_preferred_display(&displays, primary_id, preferred_id)
+        .ok_or_else(|| AppError::NotFound("display".to_owned()))?;
+
+    Ok(Some(ResolvedDisplay {
+        display: selected.clone(),
+        is_explicit: preferred_id.is_some_and(|id| id == selected.id),
+    }))
+}
+
+/// Remember which monitor a role should use. `None` clears the choice and
+/// returns the role to automatic selection.
+#[tauri::command]
+pub fn set_preferred_display(
+    app: AppHandle,
+    state: State<'_, DisplayState>,
+    role: ScreenRole,
+    display_id: Option<i64>,
+) -> AppResult<()> {
+    let key = match display_id {
+        Some(id) => Some(
+            current_displays(&app)?
+                .into_iter()
+                .find(|(_, display)| display.id == id)
+                .map(|(key, _)| key)
+                .ok_or_else(|| AppError::NotFound(format!("display {id}")))?,
+        ),
+        None => None,
+    };
+
+    state.update(|preferences| preferences.set_display(role, key))
+}
+
+/// Remember the output resolution for a role. Accepts the `"1920x1080"` strings
+/// the frontend already sends.
+#[tauri::command]
+pub fn set_preferred_resolution(
+    state: State<'_, DisplayState>,
+    role: ScreenRole,
+    resolution: String,
+) -> AppResult<()> {
+    let parsed = Resolution::parse(&resolution)
+        .ok_or_else(|| AppError::Invalid(format!("Unrecognised resolution '{resolution}'.")))?;
+
+    state.update(|preferences| preferences.set_resolution(role, parsed))
+}
+
+#[tauri::command]
+pub fn get_preferred_resolution(
+    state: State<'_, DisplayState>,
+    role: ScreenRole,
+) -> AppResult<Resolution> {
+    Ok(state.snapshot().resolution_for(role))
+}

@@ -62,3 +62,27 @@ export const reportSpeechUsage = (args: {
   sessionId: string;
   endedAtMs: number;
 }): Promise<unknown> => invoke("report_speech_usage", args);
+
+/** Mirrors `Display` in `src-tauri/src/services/display.rs`. */
+export type DisplayRect = { x: number; y: number; width: number; height: number };
+export type Display = {
+  id: number;
+  label: string;
+  bounds: DisplayRect;
+  workArea: DisplayRect;
+  isPrimary: boolean;
+};
+
+export type ScreenRole = "audience" | "media" | "worship";
+
+export const getDisplays = (): Promise<Display[]> => invoke<Display[]>("get_displays");
+
+export const getPreferredDisplay = (
+  role: ScreenRole,
+): Promise<{ display: Display; isExplicit: boolean } | null> =>
+  invoke("get_preferred_display", { role });
+
+export const setPreferredDisplay = (
+  role: ScreenRole,
+  displayId: number | null,
+): Promise<void> => invoke("set_preferred_display", { role, displayId });
