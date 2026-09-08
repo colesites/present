@@ -6,6 +6,7 @@
 
 pub mod commands;
 pub mod errors;
+pub mod services;
 pub mod state;
 
 use state::AppState;

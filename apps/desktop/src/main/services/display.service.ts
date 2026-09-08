@@ -1,4 +1,5 @@
 import { screen, type BrowserWindow } from 'electron';
+import { selectPreferredDisplay } from '../../shared/lib/display-selection.mjs';
 
 export type PresentScreenRole = 'audience' | 'media' | 'worship';
 export type PresentScreenResolution = {
@@ -19,13 +20,6 @@ const preferredResolutions: Record<PresentScreenRole, PresentScreenResolution> =
 };
 
 /**
- * Get the display area (width * height)
- */
-const getDisplayArea = (display: Electron.Display): number => {
-  return display.bounds.width * display.bounds.height;
-};
-
-/**
  * Get the preferred output display (largest external, or primary if none)
  */
 export const getPreferredOutputDisplay = (): Electron.Display => {
@@ -38,22 +32,18 @@ export const getPreferredDisplay = (role: PresentScreenRole): Electron.Display =
   const preferredDisplayId =
     role === 'audience' ? preferredOutputDisplayId : preferredDisplayIds[role];
 
-  if (preferredDisplayId !== null) {
-    const explicitDisplay = displays.find((display) => display.id === preferredDisplayId);
-    if (explicitDisplay) {
-      return explicitDisplay;
-    }
-  }
+  // The rule itself lives in a runtime-free module so it can be tested without
+  // Electron and checked against the Rust port. See
+  // tests/display-selection.test.mjs.
+  const selected = selectPreferredDisplay({
+    displays,
+    primaryId: primary.id,
+    preferredDisplayId,
+  }) as Electron.Display | null;
 
-  const externals = displays.filter((d) => d.id !== primary.id);
-
-  if (externals.length === 0) {
-    return primary;
-  }
-
-  // Prefer the largest external display (usually the TV/projector).
-  externals.sort((a, b) => getDisplayArea(b) - getDisplayArea(a));
-  return externals[0];
+  // `screen.getAllDisplays()` is never empty while the app has a window, so the
+  // null branch is unreachable in practice; fall back rather than assert.
+  return selected ?? primary;
 };
 
 /**
