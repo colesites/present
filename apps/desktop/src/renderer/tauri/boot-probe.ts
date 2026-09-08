@@ -6,9 +6,20 @@
  * Electron-vs-Tauri performance comparison the migration plan requires.
  */
 
+import { reportWebviewCapabilities } from "./capability-probe";
 import { getAppInfo, isTauri } from "./runtime";
 
 if (isTauri()) {
+  // Feature detection only — no permission prompt. Call
+  // `reportWebviewCapabilities(true)` from the console to also test live
+  // microphone capture.
+  void reportWebviewCapabilities(false).catch((error: unknown) => {
+    console.error("[Tauri] capability probe failed", error);
+  });
+  (
+    window as unknown as { __presentProbeCapabilities?: unknown }
+  ).__presentProbeCapabilities = reportWebviewCapabilities;
+
   void getAppInfo()
     .then((info) => {
       console.info(

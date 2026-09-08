@@ -37,7 +37,13 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(app_state)
-        .invoke_handler(tauri::generate_handler![commands::app::get_app_info])
+        .invoke_handler(tauri::generate_handler![
+            commands::app::get_app_info,
+            commands::diagnostics::report_webview_capabilities,
+            commands::diagnostics::report_diagnostic,
+            commands::speech::request_speech_token,
+            commands::speech::report_speech_usage
+        ])
         .setup(|_app| {
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),

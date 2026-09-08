@@ -31,3 +31,34 @@ export const isTauri = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export const getAppInfo = (): Promise<AppInfo> => invoke<AppInfo>("get_app_info");
+
+/** Matches `SpeechUsageSource` in `src-tauri/src/services/speech.rs`. */
+export type SpeechUsageSource = "bible" | "library";
+
+/**
+ * Mint an AssemblyAI streaming token through the Rust core.
+ *
+ * The web app remains the broker — the desktop must never carry an AssemblyAI
+ * key. What changes is the transport: a request from Rust is not a browser
+ * request, so there is no CORS preflight and no origin allowlist to keep in step
+ * with the app's origin. See `services/speech.rs` for the full reasoning.
+ */
+export const requestSpeechToken = (args: {
+  webAppBaseUrl: string;
+  sessionToken: string;
+  source: SpeechUsageSource;
+}): Promise<unknown> => invoke("request_speech_token", args);
+
+/**
+ * Report a finished streaming session for billing.
+ *
+ * Speech search is metered by the second, so this must not be dropped. Under
+ * Electron it was a fire-and-forget `fetch` from the renderer, which the Tauri
+ * origin's CORS preflight would have failed silently.
+ */
+export const reportSpeechUsage = (args: {
+  webAppBaseUrl: string;
+  authBearer: string;
+  sessionId: string;
+  endedAtMs: number;
+}): Promise<unknown> => invoke("report_speech_usage", args);

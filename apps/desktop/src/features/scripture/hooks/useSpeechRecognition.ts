@@ -499,6 +499,31 @@ export function useSpeechRecognition(
           return;
         }
 
+        // Under Tauri this goes through the Rust core for the same reason the
+        // token request does — a browser preflight from the app's origin would
+        // drop it silently, and this call is what meters the feature.
+        if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+          void import("../../../renderer/tauri/runtime")
+            .then(({ reportSpeechUsage }) =>
+              reportSpeechUsage({
+                webAppBaseUrl: resolveWebBaseUrl(),
+                authBearer,
+                sessionId: session.billingSessionId as string,
+                endedAtMs,
+              }),
+            )
+            .then((payload) => {
+              const usage = payload as AssemblyAiUsageResponse | null;
+              if (usage?.billing) {
+                updateDesktopBillingSnapshot(usage.billing);
+              }
+            })
+            .catch((error: unknown) => {
+              console.error("[Speech] usage report failed", error);
+            });
+          return;
+        }
+
         void fetch(`${resolveWebBaseUrl()}/api/assemblyai/usage`, {
           method: "POST",
           headers: {
@@ -611,7 +636,43 @@ export function useSpeechRecognition(
       );
     };
 
-    const payload = await fetchFromWebRoute();
+    // Under Tauri the same web route is called from the Rust core instead.
+    // The broker does not move — the desktop must never hold an AssemblyAI key
+    // — but a request from Rust is not a browser request, so there is no CORS
+    // preflight and no origin allowlist to keep in step with the app's origin.
+    // That preflight is why this ended up being used through the web app.
+    const fetchFromRustCore = async (): Promise<AssemblyAiTokenResponse> => {
+      // Dynamic so the Tauri API never enters the Electron bundle.
+      const { requestSpeechToken } = await import("../../../renderer/tauri/runtime");
+
+      try {
+        const payload = await requestSpeechToken({
+          webAppBaseUrl: resolveWebBaseUrl(),
+          sessionToken,
+          source: usageSource,
+        });
+        return parseAssemblyAiTokenPayload(
+          payload as AssemblyAiTokenResponse | null,
+          "Live transcription could not start.",
+        );
+      } catch (error) {
+        // Rust rejects with `{ kind, message }`; surface the message the same
+        // way the web-route path does.
+        const appError = error as { message?: string } | null;
+        throw new Error(
+          formatSpeechError(
+            appError?.message ?? "Live transcription could not start.",
+          ),
+        );
+      }
+    };
+
+    const isTauriRuntime =
+      typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+    const payload = isTauriRuntime
+      ? await fetchFromRustCore()
+      : await fetchFromWebRoute();
     if (payload.billing) {
       updateDesktopBillingSnapshot(payload.billing);
     }

@@ -11,6 +11,7 @@ zero-behaviour-change change, per migration rule 4.
 | 3 | `local-media://` can read any file on disk | Medium | Stage 3 |
 | 4 | Media panel hidden behind a dead File System Access check | Medium | **Fixed** |
 | 5 | `vosk` is a dependency that is never imported | Low | Stage 7 |
+| 8 | Speech-to-search blocked by a CORS preflight, not by Electron | Medium | **Fixed** |
 | 6 | Build workflows trigger on a branch that does not exist | Low | Open |
 | 7 | Ten pre-existing ESLint errors | Low | Deferred — see below |
 
@@ -158,3 +159,70 @@ The remaining ten are left alone on purpose:
 
 These should be cleaned up as their own task, not folded into migration commits
 where they would obscure the diff.
+
+---
+
+## 8. Speech-to-search was blocked by a CORS preflight — FIXED
+
+Speech search ended up being used through the web app rather than the desktop.
+The cause was not Electron IPC and not the microphone.
+
+`useSpeechRecognition.ts` fetched its AssemblyAI token by calling the web app's
+`/api/assemblyai/token` **directly from the renderer**, with an `Authorization`
+header. That is a cross-origin request with a non-simple header, so the browser
+issues a CORS preflight from the app's origin (`app://app`) before the real
+request ever leaves.
+
+A main-process broker was written to sidestep exactly this — `network.ipc.ts:251`
+uses `net.fetch` with an explicit `Origin` header, which is not subject to
+renderer CORS. It is registered in `ipc/index.ts`, exposed in `preload.ts:74`
+and typed in `electron.d.ts:209`. **Nothing ever calls it.** The direct fetch is
+what shipped. The fix existed and was never wired up.
+
+### Can it work under Tauri?
+
+Measured rather than assumed, because the Tauri webview is WKWebView on macOS
+rather than Chromium. `src/renderer/tauri/capability-probe.ts` reports what the
+runtime actually supports; results on macOS 15 / WKWebView 605.1.15:
+
+| Capability | Result |
+|---|---|
+| `navigator.mediaDevices` | present |
+| `getUserMedia` | present |
+| `enumerateDevices` | present |
+| `HTMLMediaElement.setSinkId` | **present** |
+| `AudioContext` | present |
+| `AudioWorklet` | present |
+| `WebSocket` | present |
+| `MediaRecorder` | present |
+| `SpeechRecognition` | present |
+| **live microphone capture** | **granted** |
+
+Everything the streaming path needs is there, and `hasStreamingSupport`
+(`useSpeechRecognition.ts:355`) never depended on `electronAPI` in the first
+place — it checks `WebSocket`, `getUserMedia` and `AudioContext`, all present.
+
+`setSinkId` being available matters beyond speech: it is how audio output
+routing works today (`useShowVideoSync.ts:121`), and Safari's historical lack of
+it would have broken the audio-device feature under Tauri.
+
+### Fix
+
+Token minting and usage reporting both moved into the Rust core
+(`src-tauri/src/services/speech.rs`). The web app stays the broker — the desktop
+must never hold an AssemblyAI key — but a request from Rust is not a browser
+request, so there is no preflight and no origin allowlist to keep in step as the
+app's origin changes.
+
+The usage call mattered as much as the token call: speech search is metered by
+the second, and `/api/assemblyai/usage` was a fire-and-forget `fetch` that the
+preflight would have dropped **silently**, leaving sessions unbilled.
+
+Both are behind a `__TAURI_INTERNALS__` check with a dynamic import, so the
+Electron path and bundle are untouched.
+
+### Still open
+
+`src/main/ipc/network.ipc.ts` still registers the orphaned
+`request-assemblyai-token` handler, and `preload.ts` still exposes it. Both are
+dead code and go with the rest of the Electron layer in Stage 7.

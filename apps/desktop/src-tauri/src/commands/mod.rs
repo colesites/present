@@ -4,3 +4,5 @@
 //! Domain logic belongs in `services/`, never here.
 
 pub mod app;
+pub mod diagnostics;
+pub mod speech;
