@@ -11,9 +11,9 @@ zero-behaviour-change change, per migration rule 4.
 | 3 | `local-media://` can read any file on disk | Medium | Stage 3 |
 | 4 | Media panel hidden behind a dead File System Access check | Medium | **Fixed** |
 | 5 | `vosk` is a dependency that is never imported | Low | Stage 7 |
-| 8 | Speech-to-search blocked by a CORS preflight, not by Electron | Medium | **Fixed** |
 | 6 | Build workflows trigger on a branch that does not exist | Low | Open |
 | 7 | Ten pre-existing ESLint errors | Low | Deferred — see below |
+| 8 | Speech-to-search blocked by a CORS preflight, not by Electron | Medium | **Fixed** |
 
 ---
 
