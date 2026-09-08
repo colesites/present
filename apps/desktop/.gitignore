@@ -7,3 +7,6 @@
 
 # Staged self-contained whisper bundle (generated at package time)
 .whisper-stage/
+
+# Vite build output for the Tauri shell
+dist-tauri/

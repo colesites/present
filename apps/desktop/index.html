@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      Tauri main-window entry.
+
+      No CSP <meta> here on purpose: Tauri injects the policy from
+      `src-tauri/tauri.conf.json` (app.security.csp) so it can add the per-load
+      nonces its IPC needs. The Electron entry keeps its own meta tag in
+      src/renderer/main/index.html and is untouched by this file.
+    -->
+    <title>Present</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/renderer/tauri/boot-probe.ts"></script>
+    <script type="module" src="/src/renderer/main/main-renderer.ts"></script>
+  </body>
+</html>
