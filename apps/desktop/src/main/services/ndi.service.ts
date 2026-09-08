@@ -80,7 +80,7 @@ let ndiInputLatestImage: Buffer | null = null;
 let ndiInputLatestContentType = 'image/jpeg';
 let ndiInputLatestFrameAtMs = 0;
 let ndiInputStopTimer: NodeJS.Timeout | null = null;
-let ndiInputClientIds = new Set<string>();
+const ndiInputClientIds = new Set<string>();
 
 const INTERVAL_MS = Math.floor(1000 / 30);
 const NDI_INPUT_FRAME_INTERVAL_MS = 125;

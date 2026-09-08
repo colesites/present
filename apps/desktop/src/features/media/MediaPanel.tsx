@@ -456,24 +456,13 @@ export const MediaPanel = memo(
       }
     };
 
-    // Check if File System Access API is supported
-    const isSupported =
-      typeof window !== "undefined" && "showDirectoryPicker" in window;
-
-    if (!isSupported) {
-      return (
-        <div className="flex h-full items-center justify-center p-4 text-center text-sm text-muted-foreground">
-          <div>
-            <p className="font-medium">Browser not supported</p>
-            <p className="mt-1 text-xs">
-              Your browser doesn&apos;t support the File System Access API.
-              <br />
-              Please use Chrome, Edge, or another Chromium-based browser.
-            </p>
-          </div>
-        </div>
-      );
-    }
+    // NOTE: this panel used to gate itself on `"showDirectoryPicker" in window`.
+    // That check was vestigial — the app has never called the File System
+    // Access API. Folders are chosen through a native dialog
+    // (`useMediaFolders.addFolder` → `selectFolder`) and read from the native
+    // layer, neither of which touches the web API. Under Chromium the check
+    // always passed, so it was invisible; under a non-Chromium webview it hid a
+    // fully working panel behind a "browser not supported" message.
 
     return (
       <>
