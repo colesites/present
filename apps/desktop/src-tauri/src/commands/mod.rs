@@ -7,3 +7,4 @@ pub mod app;
 pub mod diagnostics;
 pub mod display;
 pub mod speech;
+pub mod window;

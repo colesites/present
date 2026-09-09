@@ -14,6 +14,8 @@ zero-behaviour-change change, per migration rule 4.
 | 6 | Build workflows trigger on a branch that does not exist | Low | Open |
 | 7 | Ten pre-existing ESLint errors | Low | Deferred — see below |
 | 8 | Speech-to-search blocked by a CORS preflight, not by Electron | Medium | **Fixed** |
+| 9 | Monitor hot-plug never moves the output window | High | Stage 2 (hot-plug) |
+| 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | Stage 6 |
 
 ---
 
@@ -226,3 +228,60 @@ Electron path and bundle are untouched.
 `src/main/ipc/network.ipc.ts` still registers the orphaned
 `request-assemblyai-token` handler, and `preload.ts` still exposes it. Both are
 dead code and go with the rest of the Electron layer in Stage 7.
+
+---
+
+## 9. Monitor hot-plug never moves the output window
+
+`main/index.ts:74-82` subscribes to `display-added`, `display-removed` and
+`display-metrics-changed`, and each one calls `reconcileOutputWindowDisplay()`.
+That function reaches `moveOutputWindowToDisplay`, whose whole body is guarded:
+
+```js
+if (!outputWindow.isFullScreen()) {
+  outputWindow.setBounds(...);
+  outputWindow.setFullScreen(true);
+}
+```
+
+The output window is created with `fullscreen: true` (`output.window.ts:57`) and
+re-asserts it on `ready-to-show` (`output.window.ts:76-81`). So by the time any
+`screen` event can fire, `isFullScreen()` is already true and reconcile does
+nothing.
+
+The three subscriptions have therefore never moved the audience output. The
+scenario they exist for — a projector unplugged and replugged mid-service, or a
+resolution change — leaves the output window on whichever monitor it started on,
+or on no visible monitor at all.
+
+**Fix (Stage 2, hot-plug):** owned by the remaining half of Stage 2. It is left
+in place for now because the fix is not simply deleting the guard: moving a
+fullscreen window on macOS means leaving fullscreen, repositioning, and
+re-entering, which is visible on the projector. Choosing between that and
+leaving a mispositioned window is the decision that task has to make, and it
+needs a second monitor to make it against.
+
+The Rust port preserves the guard verbatim (`services/window.rs`, `place`), so
+the behaviour is unchanged rather than accidentally half-fixed.
+
+---
+
+## 10. No webview crash recovery on Windows or Linux under Tauri
+
+Electron's `render-process-gone` fires on every platform, and both the main and
+output windows use it to reload after a renderer crash
+(`main.window.ts:196-227`, `output.window.ts:83-92`).
+
+Tauri 2.11 exposes one equivalent, `Builder::on_web_content_process_terminate`,
+and it is `#[cfg(any(target_os = "macos", target_os = "ios"))]`. The underlying
+hook is WKWebView's `webViewWebContentProcessDidTerminate:`; wry has no
+counterpart wired for WebView2 or WebKitGTK.
+
+So on macOS the Tauri build recovers exactly as Electron does, and on Windows and
+Linux a crashed webview stays crashed. The policy itself is platform-independent
+(`services/window_spec.rs`) and covered by tests, so only the trigger is missing.
+
+**Fix (Stage 6):** Stage 6 is the first time Windows and Linux are run at all.
+The options are a wry patch exposing the WebView2 `ProcessFailed` event and the
+WebKitGTK `web-process-terminated` signal, or a liveness check from Rust. Deciding
+this before either platform has ever been run would be guessing.

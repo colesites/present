@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-09, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 7 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 8 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -29,9 +29,10 @@ the audience screen is a serious bug, not a rough edge.
 |---|---|
 | [stage-0-audit.md](stage-0-audit.md) | The full audit. Architecture map, all 79 IPC channels, media/audio/output pipeline, state model, native deps, build system, 31-row migration matrix, risks. **The reference for anything about how Electron does it today.** |
 | [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. |
-| [known-issues.md](known-issues.md) | Eight bugs found so far, each assigned to the stage that owns the fix. Three fixed. |
+| [known-issues.md](known-issues.md) | Ten bugs found so far, each assigned to the stage that owns the fix. Three fixed. |
 | [stage-1-tauri-skeleton.md](stage-1-tauri-skeleton.md) | The Tauri shell beside Electron. |
 | [stage-2-displays.md](stage-2-displays.md) | Display enumeration, identity, persistence, monitor names. |
+| [stage-2-windows.md](stage-2-windows.md) | All eight windows in Rust: specs as data, the output hardening, crash policy, the physical/logical placement trap. |
 
 ## 3. Where things stand
 
@@ -42,39 +43,41 @@ the same `src/` React tree Webpack serves for Electron; the whole existing UI
 mounts under Tauri. Electron is untouched and still works. CI covers Rust
 quality plus macOS/Windows/Linux bundles.
 
-**Stage 2 — windows and display.** Half done.
+**Stage 2 — windows and display.** Nearly done.
 - ✅ Display selection rule extracted, characterised (12 tests), ported to Rust
 - ✅ Monitor enumeration, synthesised stable identity, persisted preferences
 - ✅ Real monitor names in the picker
-- ⬜ **Next: window creation** — all eight windows
-- ⬜ Monitor hot-plug → reconcile
+- ✅ All eight windows created by Rust, including the operator window
+- ⬜ **Next: monitor hot-plug → reconcile** (also owns known-issues §9)
 
 Stages 3–8 are untouched. Order and content are in the audit's §12.
 
 ## 4. The next task, concretely
 
-Recreate the eight windows in Rust. The audit's §3 lists them; only two Webpack
-entry points exist because six windows load the main bundle with a `?window=`
-query parameter, and `App.tsx:52-72` branches on it. The same trick works under
-Tauri.
+Monitor hot-plug → reconcile. Under Electron this is the three `screen` events
+in `src/main/index.ts:74-82`, each calling `reconcileOutputWindowDisplay()`.
 
-**The audience/output window is production-critical.** Its hardening in
-`src/main/windows/output.window.ts:57-90` must be preserved exactly:
+Two things make it more than a port.
 
-- `backgroundColor: '#000000'` and `show: false` until first paint — no white
-  flash on the projector, ever
-- `backgroundThrottling: false` — otherwise it blanks when the main window takes
-  focus
-- `render-process-gone` → one automatic reload
-- Main window has the same, with a loop guard: stop after 2 crashes in 10 s
-  (`main.window.ts:184-222`)
+**Tauri emits no monitor-change event.** tao does not surface one. The trigger
+has to be built — polling `available_monitors()` on an interval, or a platform
+notification (`NSApplicationDidChangeScreenParametersNotification` on macOS,
+`WM_DISPLAYCHANGE` on Windows). `services/monitors.rs` already answers "what is
+connected now"; only the trigger is missing. `services/window.rs::reconcile` is
+already written and waiting for it.
 
-Then hot-plug: the three `screen` events in `src/main/index.ts:69-79` map to
-Tauri monitor events and a reconcile pass.
+**The Electron original does nothing.** `moveOutputWindowToDisplay` is guarded
+on the window *not* being fullscreen, and the output window always is — so the
+three subscriptions have never moved the audience output. That is known-issues
+§9, and this task owns it. The guard is preserved verbatim in the Rust port
+rather than half-fixed, because the fix is a real decision: moving a fullscreen
+window on macOS means leaving fullscreen, repositioning, and re-entering, which
+is visible on the projector. Make that call against a second monitor, not from
+reasoning.
 
 Per ADR-001, **output state must be fully describable as serialisable Rust
-structs from here on** — never as React component state. The Stage 5 compositor
-consumes that scene description.
+structs from here on** — never as React component state. Window specs already
+are (`services/window_spec.rs`); the scene description is Stage 5.
 
 ## 5. Decisions already made — do not relitigate
 
@@ -112,14 +115,24 @@ Verified by running it, not by reasoning:
   and the monitor label reading "Built-in Retina Display"
 - Display id byte-identical across four launches and unchanged when the label
   changed
+- All eight windows opening, showing, reopening without a duplicate-label
+  failure, and closing — in `tauri dev` **and** in the packaged `.app`, where
+  the URL is `tauri://localhost/index.html?window=…` rather than a dev-server
+  URL. The three fullscreen roles reported `fullscreen: true`.
+- macOS lifecycle: closing the last window leaves the process running, and
+  `open -a Present.app` recreates the operator window in that same process.
 
 **Not verified — do not claim otherwise:**
 
 - No live AssemblyAI transcription end-to-end. Needs the owner signed in.
 - Display id across an **OS reboot**. App restarts only. (Lower risk than first
   thought: the name is a hardware model number, not a display id.)
-- Nothing on Windows or Linux. macOS only so far.
-- No Tauri window has been opened on a second monitor yet.
+- Nothing on Windows or Linux. macOS only so far. In particular there is **no
+  webview crash recovery at all** on those two platforms — Tauri's only hook is
+  macOS/iOS-gated. known-issues §10.
+- No Tauri window has been opened on a second monitor yet. This machine has one
+  screen, so window placement is exercised only at the origin — which is exactly
+  the case where a physical-vs-logical pixel mistake is invisible.
 
 ## 7. Working agreements
 
@@ -151,7 +164,7 @@ pnpm --filter @present/desktop run typecheck
 node apps/desktop/scripts/check-tauri-version.mjs [--fix]
 ```
 
-Current: **47 Rust tests, 48 JS tests**, clippy/fmt/typecheck clean.
+Current: **85 Rust tests, 48 JS tests**, clippy/fmt/typecheck clean.
 
 ## 9. Installed skills
 
@@ -179,5 +192,14 @@ if asked.
   asset protocol. known-issues §3.
 - Commands the frontend can reach need registering in `generate_handler!`, or
   they fail silently.
+- **Any command that builds a window must be `async`.** A synchronous one
+  deadlocks on Windows under WebView2 and works fine on macOS, so nothing local
+  catches it.
+- **Tauri monitor geometry is physical pixels; `WebviewWindowBuilder` takes
+  logical ones.** On a 2× display that is a whole screen's width of error, and
+  it is invisible on a 1× test rig.
+- **Six of the eight windows load the same `index.html`.** Anything added to a
+  shared entry runs once per open window. That is what `boot-probe.ts` is gated
+  on the window label for.
 - JavaScript numbers are exact only to 2^53−1. Anything hashed or generated in
   Rust and sent to the UI as a number must respect that.

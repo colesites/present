@@ -3,4 +3,7 @@
 pub mod display;
 pub mod display_identity;
 pub mod display_names;
+pub mod monitors;
 pub mod speech;
+pub mod window;
+pub mod window_spec;

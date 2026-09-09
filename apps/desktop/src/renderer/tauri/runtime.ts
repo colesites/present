@@ -86,3 +86,67 @@ export const setPreferredDisplay = (
   role: ScreenRole,
   displayId: number | null,
 ): Promise<void> => invoke("set_preferred_display", { role, displayId });
+
+export const setPreferredResolution = (
+  role: ScreenRole,
+  resolution: string,
+): Promise<void> => invoke("set_preferred_resolution", { role, resolution });
+
+export const getPreferredResolution = (
+  role: ScreenRole,
+): Promise<{ width: number; height: number }> =>
+  invoke("get_preferred_resolution", { role });
+
+/**
+ * The windows Rust owns. Mirrors `WindowRole` in
+ * `src-tauri/src/services/window_spec.rs`, and the values match the `?window=`
+ * parameter `App.tsx` already branches on.
+ */
+export type WindowRole =
+  | "main"
+  | "output"
+  | "media-stage"
+  | "worship-stage"
+  | "settings"
+  | "looks"
+  | "screen-composer";
+
+export type OpenWindowOptions = {
+  /** Also remembers the choice for this window's screen role. */
+  displayId?: number | null;
+  /** `"1920x1080"`, as the existing pickers already produce. */
+  resolution?: string | null;
+};
+
+/** Open a window, or focus and reposition the one already open. */
+export const openWindow = (
+  role: WindowRole,
+  options?: OpenWindowOptions,
+): Promise<boolean> => invoke("open_window", { role, options: options ?? null });
+
+/** Close a window. `false` when it was not open. */
+export const closeWindow = (role: WindowRole): Promise<boolean> =>
+  invoke("close_window", { role });
+
+export const openMiniLyricsWindow = (payload: {
+  libraryId: string;
+  title?: string;
+}): Promise<boolean> => invoke("open_mini_lyrics_window", { payload });
+
+export const closeMiniLyricsWindow = (libraryId: string): Promise<boolean> =>
+  invoke("close_mini_lyrics_window", { libraryId });
+
+export type OpenWindowInfo = {
+  label: string;
+  visible: boolean;
+  fullscreen: boolean;
+};
+
+/**
+ * Which windows are open right now.
+ *
+ * Electron has no equivalent — the React side tracks this itself and goes stale
+ * whenever a window is closed from the OS rather than from the app.
+ */
+export const listOpenWindows = (): Promise<OpenWindowInfo[]> =>
+  invoke<OpenWindowInfo[]>("list_open_windows");

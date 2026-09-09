@@ -1,9 +1,10 @@
 # Stage 2 (part 1) — Displays
 
-**Status:** display layer complete; windows still to do · **Date:** 2026-09-09
+**Status:** complete · **Date:** 2026-09-09
 
 Covers monitor enumeration, role→display selection and persistence. Window
-creation is the second half of Stage 2 and is not done yet.
+creation is the second half of Stage 2 and is
+[stage-2-windows.md](stage-2-windows.md).
 
 ## The problem Tauri creates
 
@@ -149,8 +150,10 @@ reach the UI even if AppKit declines to answer. Names that merely resemble it
 
 ## Next
 
-1. Window creation: all eight windows, preserving the output window's hardening
-   — `#000000` background, no background throttling, show only after first
-   paint, single reload on renderer crash (audit §3).
+1. ~~Window creation~~ — done, see [stage-2-windows.md](stage-2-windows.md).
+   The monitor-reading code in this document moved from `commands/display.rs`
+   to `services/monitors.rs` there, so window placement and the display
+   commands resolve a role the same way.
 2. Monitor hot-plug → reconcile, matching the three `screen` events in
-   `src/main/index.ts:69-79`.
+   `src/main/index.ts:74-82`. Note that those events do not currently move the
+   output window at all — see known-issues §9.
