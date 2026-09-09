@@ -6,7 +6,7 @@ Scope of this document: repository analysis, confirmed/likely defects, requested
 
 ## 1. Repository assessment
 
-Present is a pnpm monorepo with three main products:
+Present is a bun monorepo with three main products:
 
 | Area | Location | Responsibility |
 | --- | --- | --- |
@@ -296,12 +296,12 @@ The desktop distributable version is currently `apps/desktop/package.json`. Keep
 From the repository root, use one of:
 
 ```bash
-pnpm --dir apps/desktop version patch --no-git-tag-version
-pnpm --dir apps/desktop version minor --no-git-tag-version
-pnpm --dir apps/desktop version 2.3.0 --no-git-tag-version
+cd apps/desktop && bun pm version patch --no-git-tag-version
+cd apps/desktop && bun pm version minor --no-git-tag-version
+cd apps/desktop && bun pm version 2.3.0 --no-git-tag-version
 ```
 
-Review both `apps/desktop/package.json` and `pnpm-lock.yaml` after the command. Do not tag or publish until verification passes.
+Review both `apps/desktop/package.json` and `bun.lock` after the command. Do not tag or publish until verification passes.
 
 ### Required release workflow
 

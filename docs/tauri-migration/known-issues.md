@@ -64,7 +64,8 @@ Everything the renderer persists is therefore duplicated per build: the ~20
 filters, browser history) and the offline IndexedDB blob with its sync queue.
 
 This is the cause of "sometimes when I open the app I am signed out" — it
-depends on whether that launch was `pnpm start` or the installed `.app`.
+depends on whether that launch was `bun run desktop:electron` or the
+installed `.app`.
 
 **Note for the migration:** Tauri serves from `tauri://localhost`, which is a
 *sixth* origin. The Tauri build starts with no session, no settings and no
@@ -139,7 +140,7 @@ so it actually runs.
 
 ## 7. Ten pre-existing ESLint errors
 
-`pnpm --filter @present/desktop run lint` fails on `master` as well as on
+`bun run --filter @present/desktop lint` fails on `master` as well as on
 `rust`. Two were fixed because they were free:
 
 - `prefer-const` on `ndiInputClientIds` (`ndi.service.ts:83`) — the set is

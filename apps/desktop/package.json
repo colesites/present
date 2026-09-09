@@ -25,9 +25,9 @@
     "stage-ndi": "node scripts/stage-ndi.cjs",
     "test": "node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit",
-    "quality": "pnpm run test && pnpm run typecheck && pnpm run lint",
+    "quality": "bun run test && bun run typecheck && bun run lint",
     "lint": "eslint --ext .ts,.tsx .",
-    "convex": "pnpm --filter @present/backend run convex"
+    "convex": "bun run --filter @present/backend convex"
   },
   "keywords": [],
   "author": {

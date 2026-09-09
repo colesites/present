@@ -546,7 +546,7 @@ replaces the hand-maintained `src/shared/types/electron.d.ts` (359 lines).
 |---|---|---|
 | **0** | This audit | ✅ done |
 | **0.5** | **Decide §10.1 (NDI/compositor).** Spike: Rust wgpu output vs. OS capture. | Blocks Stage 2 design |
-| **1** | `src-tauri` skeleton alongside Electron. Both `pnpm start` (Electron) and `pnpm tauri dev` work. Dev + prod builds on all three platforms. | Electron untouched |
+| **1** | `src-tauri` skeleton alongside Electron. Both `bun run desktop:electron` and `bun run desktop:tauri` work. Dev + prod builds on all three platforms. | Electron untouched |
 | **2** | Windows + display. All 8 windows, role→display mapping, persistence, hot-plug, fullscreen, output hardening (black bg, no-throttle, crash reload). | Multi-monitor manual matrix |
 | **3** | Native APIs: filesystem (scoped), dialogs, deep links, global shortcut, menus, permissions. | `local-media` scope closed |
 | **4** | Presentation core into Rust, slice by slice: output layer flags → slides → service. React adapter hooks keep component props stable. | Characterisation tests first |

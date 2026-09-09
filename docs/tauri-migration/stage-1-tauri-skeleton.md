@@ -32,10 +32,10 @@ apps/desktop/
 ## Commands
 
 ```bash
-pnpm --filter @present/desktop run start        # Electron, unchanged
-pnpm --filter @present/desktop run tauri:dev    # Tauri + Vite
-pnpm --filter @present/desktop run tauri:build  # production bundle
-pnpm --filter @present/desktop run tauri:check  # fmt + clippy -D warnings + tests
+bun run desktop:electron                        # Electron, unchanged
+bun run desktop:tauri                           # Tauri + Vite
+bun run desktop:tauri:build                     # production bundle
+bun run --filter @present/desktop tauri:check   # fmt + clippy -D warnings + tests
 node apps/desktop/scripts/check-tauri-version.mjs [--fix]
 ```
 
@@ -68,7 +68,7 @@ modules and no `parse_pptx.py`, and Electron's 389 MB includes Chromium, which
 Tauri gets from the OS webview. Recorded as the starting point for the
 Electron-vs-Tauri comparison the migration plan requires, not as a claim.
 
-`pnpm --filter @present/desktop run lint` reports 56 problems (11 errors). That
+`bun run --filter @present/desktop lint` reports 56 problems (11 errors). That
 is pre-existing — the identical count appears with all Stage 1 changes stashed.
 None of the new files contribute a warning.
 

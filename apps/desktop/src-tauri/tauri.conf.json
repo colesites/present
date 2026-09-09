@@ -4,8 +4,8 @@
   "version": "0.3.8",
   "identifier": "space.multivrs.present",
   "build": {
-    "beforeDevCommand": "pnpm run tauri:vite:dev",
-    "beforeBuildCommand": "pnpm run tauri:vite:build",
+    "beforeDevCommand": "bun run tauri:vite:dev",
+    "beforeBuildCommand": "bun run tauri:vite:build",
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../dist-tauri"
   },

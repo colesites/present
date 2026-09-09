@@ -3,10 +3,11 @@
 // be shipped as an UNPACKED extra resource (Resources/node_modules/...).
 //
 // Why this is needed:
-//   - The monorepo uses pnpm `node-linker=hoisted`, so grandi lives in the
-//     repo-root node_modules, not in apps/desktop/node_modules. Electron Forge
-//     only bundles deps from the app's own node_modules, so grandi was never
-//     packaged.
+//   - The monorepo installs with a flat node_modules — `linker = "hoisted"` in
+//     the root bunfig.toml, which is NOT bun's default for workspaces — so
+//     grandi lives in the repo-root node_modules, not in
+//     apps/desktop/node_modules. Electron Forge only bundles deps from the
+//     app's own node_modules, so grandi was never packaged.
 //   - grandi is ESM-only and ships a native .node addon, which cannot be
 //     loaded from inside app.asar. Shipping it unpacked on the real filesystem
 //     and importing by absolute file:// URL is the reliable path.
@@ -22,9 +23,9 @@ const ROOT_NODE_MODULES = path.resolve(DESKTOP_DIR, "../../node_modules");
 const STAGE_NODE_MODULES = path.resolve(DESKTOP_DIR, ".ndi/node_modules");
 
 // Entry packages to stage if they exist at the repo root. Their transitive
-// runtime dependencies are resolved and staged automatically (below) — with
-// node-linker=hoisted those deps (e.g. node-gyp-build) live flat at the repo
-// root, NOT inside grandi/node_modules, so they must be copied explicitly.
+// runtime dependencies are resolved and staged automatically (below) — under a
+// hoisted layout those deps (e.g. node-gyp-build) live flat at the repo root,
+// NOT inside grandi/node_modules, so they must be copied explicitly.
 const ENTRY_PACKAGES = ["grandi", "grandiose"];
 // Native prebuilt arch packages for grandi (contain the .node binaries).
 const ARCH_PACKAGES = ["@grandi"];

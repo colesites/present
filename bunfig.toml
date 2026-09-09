@@ -1,0 +1,13 @@
+[install]
+# The repository needs a flat node_modules, which is what the removed
+# `.npmrc` asked pnpm for with `node-linker=hoisted`. Two things depend on it:
+#
+#   - `apps/desktop/scripts/stage-ndi.cjs` resolves the native NDI packages
+#     (grandi and its prebuilt @grandi/<arch> addon) from the repo-root
+#     node_modules and copies them into the Electron bundle. Under bun's
+#     default isolated linker those live behind symlinks in `.bun/`, and the
+#     packaged app ships without an NDI backend.
+#   - Electron Forge bundles dependencies from the app's own node_modules.
+#
+# Bun defaults to "isolated" for workspaces, so this has to be explicit.
+linker = "hoisted"

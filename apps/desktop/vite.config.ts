@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => {
         "@": path.resolve(__dirname, "src"),
         "@present/backend": path.resolve(__dirname, "../../packages/backend"),
         // Same single-instance guard Webpack applies; two React copies inside a
-        // pnpm workspace produce "Invalid hook call".
+        // workspace produce "Invalid hook call".
         react: path.dirname(require.resolve("react/package.json")),
         "react-dom": path.dirname(require.resolve("react-dom/package.json")),
       },

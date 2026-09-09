@@ -15,8 +15,7 @@ on:
       - "packages/backend/**"
       - "packages/shared/**"
       - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
+      - "bun.lock"
       - ".github/workflows/build-windows.yml"
 
 jobs:
@@ -27,26 +26,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v5
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: 9
+          bun-version: 1.3.5
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 20
-          cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build Present for Windows
         env:
           DEBUG: electron-forge:*,electron-windows-installer*
           CONVEX_URL: https://wary-iguana-735.convex.cloud
           WEB_APP_URL: https://present.multivrs.space
-        run: pnpm --filter @present/desktop run make:windows
+        run: bun run --filter @present/desktop make:windows
 
       - name: Validate packaged renderer bundle
         shell: bash

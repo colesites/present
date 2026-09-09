@@ -137,11 +137,13 @@ Verified by running it, not by reasoning:
 ## 7. Working agreements
 
 - **Never push.** Local commits on `rust` only.
+- **The monorepo runs on bun**, not pnpm. `bunfig.toml` pins the hoisted linker
+  and must stay that way — see the traps below.
 - **Three files in the working tree are the owner's own in-progress edits** —
   `ServicesSidebar.tsx`, `useOfflineSyncEngine.ts`, `localData.ts`. Stage only
   your own paths; never `git add -A` from the repo root.
 - Commit messages end with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
-- `pnpm --filter @present/desktop run lint` **fails on `master` too** — 10
+- `bun run --filter @present/desktop lint` **fails on `master` too** — 10
   pre-existing errors, deliberately not fixed (see known-issues §7). Do not
   claim credit for them and do not silently "fix" them inside a migration commit.
 - Before moving any subsystem: write characterisation tests against the current
@@ -154,15 +156,31 @@ Verified by running it, not by reasoning:
 
 ## 8. Commands
 
+The monorepo runs on **bun**, not pnpm. Root aliases start each app from
+anywhere in the tree:
+
 ```bash
-pnpm --filter @present/desktop run start        # Electron, unchanged
-pnpm --filter @present/desktop run tauri:dev    # Tauri + Vite
-pnpm --filter @present/desktop run tauri:build  # production bundle
-pnpm --filter @present/desktop run tauri:check  # fmt + clippy -D warnings + tests
-pnpm --filter @present/desktop run test         # 48 JS tests
-pnpm --filter @present/desktop run typecheck
+bun run desktop:tauri          # Tauri + Vite — the app being built
+bun run desktop:electron       # Electron, unchanged, still the shipping app
+bun run web                    # Next.js web app
+bun run convex                 # Convex CLI
+```
+
+Everything else:
+
+```bash
+bun run desktop:tauri:build                     # production bundle
+bun run --filter @present/desktop tauri:check   # fmt + clippy -D warnings + tests
+bun run test                                    # 48 JS tests
+bun run typecheck
+bun run lint
 node apps/desktop/scripts/check-tauri-version.mjs [--fix]
 ```
+
+`bun run desktop:tauri` exists because `bun tauri dev` from the repo root does
+not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
+`beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
+a script. Run it from `apps/desktop` or use the alias.
 
 Current: **85 Rust tests, 48 JS tests**, clippy/fmt/typecheck clean.
 
@@ -190,6 +208,18 @@ if asked.
   Tauri is a sixth origin and starts blank. known-issues §2.
 - **`local-media://` reads any file on disk.** Do not reproduce it; use a scoped
   asset protocol. known-issues §3.
+- **`bunfig.toml` sets `linker = "hoisted"` and that is load-bearing.** Bun
+  defaults to an isolated `node_modules` for workspaces. Under it,
+  `scripts/stage-ndi.cjs` finds no `grandi` at the repo root and the packaged
+  Electron app ships with no NDI backend — silently, because the script reports
+  nothing staged rather than failing. The removed `.npmrc` asked pnpm for the
+  same layout.
+- **`overrides` in the root `package.json` pins `@electron/node-gyp`.**
+  `@electron/rebuild` depends on it by GitHub commit. Bun resolves that as a
+  git dependency and fails to link it (`clonefileat` ENOENT), which aborts the
+  whole install. The override points at the codeload tarball for the same
+  commit, which is what pnpm resolved it to, so it changes the transport and
+  not the code. Remove it when Electron goes.
 - Commands the frontend can reach need registering in `generate_handler!`, or
   they fail silently.
 - **Any command that builds a window must be `async`.** A synchronous one

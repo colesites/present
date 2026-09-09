@@ -1,20 +1,30 @@
 {
   "name": "present-monorepo",
   "private": true,
-  "scripts": {
-    "dev": "pnpm --filter \"*\" run dev",
-    "convex": "pnpm --filter @present/backend run convex",
-    "test": "pnpm --filter @present/desktop run test",
-    "typecheck": "pnpm --filter @present/desktop run typecheck && pnpm --filter @present/web run typecheck",
-    "quality": "pnpm run test && pnpm run typecheck && pnpm --filter @present/desktop run lint",
-    "release:check": "node .github/scripts/verify-desktop-release.mjs"
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "trustedDependencies": [
+    "electron",
+    "electron-winstaller",
+    "esbuild"
+  ],
+  "overrides": {
+    "@electron/node-gyp": "https://codeload.github.com/electron/node-gyp/tar.gz/06b29aafb7708acef8b3669835c8a7857ebc92d2"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "electron-winstaller",
-      "esbuild"
-    ]
+  "scripts": {
+    "dev": "bun run --filter '*' dev",
+    "desktop:tauri": "bun run --filter @present/desktop tauri:dev",
+    "desktop:tauri:build": "bun run --filter @present/desktop tauri:build",
+    "desktop:electron": "bun run --filter @present/desktop start",
+    "web": "bun run --filter @present/web dev",
+    "convex": "bun run --filter @present/backend convex",
+    "test": "bun run --filter @present/desktop test",
+    "typecheck": "bun run --filter @present/desktop typecheck && bun run --filter @present/web typecheck",
+    "lint": "bun run --filter @present/desktop lint",
+    "quality": "bun run test && bun run typecheck && bun run lint",
+    "release:check": "node .github/scripts/verify-desktop-release.mjs"
   },
   "dependencies": {
     "zustand": "^5.0.12"
