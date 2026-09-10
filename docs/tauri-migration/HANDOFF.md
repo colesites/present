@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 38 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 40 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -103,6 +103,7 @@ yet.
 - ✅ The media transport in Rust — resume points, both drift tolerances
 - ⬜ Wiring the React player onto the transport
 - ✅ The compositor draws slides: background, shapes, text, images, scope-checked media
+- ⬜ **Measure the frame time after the glyph fix.** 300 ms before it, 33 ms budget
 - ⬜ Video frames in the compositor — the largest remaining gap
 - ⬜ Overlays, screen-composer layout, and the surface swap
 
@@ -400,6 +401,9 @@ Verified by running it, not by reasoning:
   clean launch.
 - A looks toggle applied in Rust reaching a subscribed window as an event
   rather than on a poll (`changeEvent=delivered`).
+- The compositor's frame time, measured rather than assumed: **300 ms** at
+  1920×1080 before the glyph fix, against NDI's 33 ms budget. The fix is in;
+  the number after it is **not yet measured**.
 - **A real lyric slide drawn by the Rust compositor** and looked at, with the
   `web` element correctly left as a hole for the webview layer above.
 - The compositor's scope check refusing a file outside the granted folders and
@@ -588,6 +592,9 @@ if asked.
 - **Anything that touches the OS keychain must be injectable.** An earlier
   `AuthState` picked its backend per call and its own tests wrote into the
   developer's login keychain.
+- **`profile.release` optimises for size**, not speed — `opt-level = "s"` with
+  LTO and one codegen unit. Right for the bundle, misleading for judging the
+  compositor. Use the `perf` profile to measure, and expect a long first build.
 - **`bunfig.toml` sets `linker = "hoisted"` and that is load-bearing.** Bun
   defaults to an isolated `node_modules` for workspaces. Under it,
   `scripts/stage-ndi.cjs` finds no `grandi` at the repo root and the packaged

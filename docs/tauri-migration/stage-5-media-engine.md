@@ -282,6 +282,41 @@ no HTTP response for anyone to notice the missing 403 on. `ScopedMediaLoader`
 goes through `FileState`, and its tests prove that a file outside the granted
 folders and a traversal out of one are both refused.
 
+### Frame time, and the one number Stage 6 turns on
+
+NDI runs at 30 fps, so a frame has **33 ms**. That budget is the whole reason
+the compositor exists, and it is the first thing worth measuring rather than
+assuming.
+
+The first honest measurement was **300 ms** at 1920×1080 — nine times over,
+before a single video frame had been drawn. The cause was not the rasteriser
+but how glyphs arrived from it: cosmic-text's callback fires **per glyph pixel**
+(`render.rs:139-153` passes `w: 1, h: 1`), and the draw path answered each one
+with a full `fill_rect`. Two lines of a verse meant tens of thousands of
+paint-and-transform round trips.
+
+Glyphs now rasterise into a scratch pixmap that is composited once. All 78
+compositor tests pass unchanged, which is what writing them as assertions about
+ink and colour rather than exact pixels bought.
+
+**The post-fix frame time has not been measured.** Building the dependency tree
+at `opt-level = 3` did not finish in the session that made the change, so the
+improvement is reasoned rather than observed — treat it as unverified until
+somebody runs it.
+
+Two things to know before measuring:
+
+- `profile.release` optimises for **size** — `opt-level = "s"`, LTO, one codegen
+  unit. Right for a Tauri bundle, wrong for judging a rasteriser. Use
+  `cargo run --profile perf --example render_sample`.
+- The first frame of a process pays for the system font scan, which is a startup
+  cost and not a frame cost. `text::preload_fonts` exists to move it off the
+  first slide of a service; it is not called at startup yet.
+
+If the CPU rasteriser cannot reach the budget once video is in the frame, that
+is the point at which the GPU path ADR-001 originally named earns its place —
+and `Frame` is a plain buffer so that swap costs no consumer anything.
+
 ### What it looks like
 
 `cargo run --example render_sample` writes a frame somebody can open. The pixel
@@ -308,8 +343,13 @@ By running it:
   `web` element correctly left as a hole for the layer above
 - the compositor's scope check refusing both a file outside the granted folders
   and a traversal out of one
+- the frame time measured rather than assumed: **300 ms** at 1920×1080 before
+  the glyph fix, against a 33 ms budget
 
-**Not verified.** *Nothing has been heard.* No audio has come out of a speaker
+**Not verified.** The frame time *after* the glyph fix. The change is in and
+its tests pass, but the improvement has not been observed — see §7.
+
+*Nothing has been heard.* No audio has come out of a speaker
 under Tauri, and no device has been switched at runtime by a person. The gate
 proves the graph answers correctly and that both sources agree on the device; it
 does not prove a sound came out of the right box. That needs the manual run
