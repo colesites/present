@@ -115,7 +115,7 @@ rather than audio that goes quiet.
 
 By running it:
 
-- 321 Rust tests, 92 JS tests, clippy `-D warnings` and fmt clean, typecheck
+- 351 Rust tests, 93 JS tests, clippy `-D warnings` and fmt clean, typecheck
   clean, lint unchanged at the 10 pre-existing errors
 - every assertion in the new suite proven to fail: a second `new Audio()`, a
   stray `.play()`, a dropped `mute=1`, a raised silence gain, an added
@@ -129,6 +129,68 @@ under Tauri, and no device has been switched at runtime by a person. The gate
 proves the graph answers correctly and that both sources agree on the device; it
 does not prove a sound came out of the right box. That needs the manual run
 below.
+
+## 6. Slice four — typing the scene, and the media transport
+
+Two pieces the compositor needs whichever shape it takes.
+
+### The slide elements
+
+Stage 4 carried `slide_elements` as an opaque value and said why: nothing in
+Rust interpreted them. The compositor does, so they have structs now.
+
+The whole module is shaped by one constraint: **typing this must not be able to
+blank the audience screen.** The values come from the operator's React tree and
+from imported PowerPoint, both of which produce shapes the file has not seen,
+and a failed deserialisation mid-service is a black screen in front of a
+congregation. So unknown element types degrade to an `Unknown` arm, one
+unreadable element does not cost the other eleven, and anything that is not an
+array reads as no elements.
+
+Unknown *fields* survive through a flattened `extra` map. That is not tidiness:
+after the hybrid amendment React still renders part of the audience surface from
+data that has been through Rust, so a field dropped in transit is a property
+that silently stops applying with nothing to point at.
+
+Geometry is `Option<f64>`, which is the part that would have been easy to get
+wrong. A plain default reads an omitted width as zero and writes `"width": 0`
+back out — data the input never contained. React lays out an undefined width
+differently from a zero one, so inventing the zero would collapse elements that
+render correctly today. The round-trip test caught it.
+
+The scene keeps carrying the raw value. A typed field fails as a whole, and the
+scene is relayed to windows that still render it in React. The typing happens at
+the boundary that needs it.
+
+### The transport
+
+`showPlaybackByMediaIdRef` and `showTimeByMediaIdRef` remember, per media item,
+whether it was playing and where it had got to — so an operator who steps away
+mid-video and comes back resumes rather than restarting. Domain behaviour
+someone relies on live, in a ref that dies with the component and that no other
+window can see. It is Rust-owned now.
+
+Two things the audit did not have quite right:
+
+| | Tolerance | Why |
+|---|---|---|
+| Operator's own player | 0.5 s | do not fight somebody scrubbing |
+| Audience mirror | 0.12 s | nothing is touching it; stay locked to what the operator hears |
+
+The audit's §5.5 records only the first and attributes it to mirrors. Both are
+kept and named, because collapsing them would be wrong for whichever one lost.
+The relationship between them is a `const` assertion, so getting them the wrong
+way round is a compile error rather than a test failure.
+
+`report_position` sits beside `seek` rather than inside it. A report is the
+element saying where it *is*; a seek is the operator saying where it *should
+be*. Only one is authoritative, and collapsing them is how a stale sample drags
+the playhead backwards mid-service.
+
+**Not yet wired to the React player.** That cutover touches live-service video
+sync and wants the manual run done first. What is in is the transport, a startup
+gate proving it is reachable and bounded, and `__presentPlayback` so it can be
+driven by hand during that run.
 
 ## 6. Slice three — routing both sources, and closing §1
 
@@ -183,14 +245,15 @@ console cannot be read from a terminal. Now zero.
 
 ## 6. What is left
 
-**Media playback state in Rust.** The plan's §Stage 5 list: play, pause, stop,
-seek, volume, mute, position, lifecycle, preview/output sync. `OutputScene`
-already carries `is_video_playing` and `video_current_time`; what is missing is
-the transport that owns them rather than mirroring React.
+**Wire the React player to the transport.** `useShowVideoSync` still owns
+playback in refs. Moving it onto the Rust transport is the cutover, and it
+touches live-service video sync, so it wants the manual run done first.
 
 **The compositor.** ADR-001's headline and the expensive part — weeks, not days.
-It needs `slide_elements` and `screen_composer_layout`, carried verbatim since
-Stage 4, to become real structs.
+`slide_elements` is typed now; `screen_composer_layout` still is not. The
+surface is a hybrid per the ADR amendment: Rust composites the slide, media and
+overlays, a transparent webview above it keeps the YouTube and capture props,
+and those two layers do not reach NDI.
 
 **Two prerequisites that are not code**, both still outstanding from the
 handoff, and both needing a person:

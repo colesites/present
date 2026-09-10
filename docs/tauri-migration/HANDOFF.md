@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 29 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 31 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -28,7 +28,7 @@ the audience screen is a serious bug, not a rough edge.
 | Doc | What it holds |
 |---|---|
 | [stage-0-audit.md](stage-0-audit.md) | The full audit. Architecture map, all 79 IPC channels, media/audio/output pipeline, state model, native deps, build system, 31-row migration matrix, risks. **The reference for anything about how Electron does it today.** |
-| [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. |
+| [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. **Amended**: the surface is a hybrid, with a webview layer above it for YouTube and capture props. |
 | [known-issues.md](known-issues.md) | Twelve bugs found so far, each assigned to the stage that owns the fix. Seven fixed. |
 | [stage-1-tauri-skeleton.md](stage-1-tauri-skeleton.md) | The Tauri shell beside Electron. |
 | [stage-2-displays.md](stage-2-displays.md) | Display enumeration, identity, persistence, monitor names. |
@@ -99,8 +99,10 @@ yet.
 - ✅ Only the operator surface can produce sound, structurally rather than by convention
 - ✅ Both audible sources routed through one sink — **known-issues §1 fixed** under Tauri
 - ✅ Proven in the running app: `audioSink=shared audibleMirrors=none`, zero renderer errors
-- ⬜ Media playback state (play/pause/seek/position/lifecycle)
-- ⬜ The wgpu compositor, per ADR-001
+- ✅ Slide elements typed, with round-trip fidelity and degradation proven
+- ✅ The media transport in Rust — resume points, both drift tolerances
+- ⬜ Wiring the React player onto the transport
+- ⬜ The wgpu compositor, per ADR-001 as amended (hybrid surface)
 
 The old guard scanned `<video>` and nothing else, so three other routes to a
 speaker were unguarded: the backing-track `new Audio()`, the audience YouTube
@@ -126,6 +128,9 @@ stays until Stage 8.
 ### Commits on this branch
 
 ```
+5f9076b feat(stage-5): move the media transport into Rust
+375585a feat(stage-5): type the slide elements the compositor has to draw
+9b9db6e docs(stage-5): record §1 fixed, and what the running app proved
 b949248 feat(stage-5): route both audible sources through the one sink
 417d435 fix(tauri): catch the unlisten rejection the guard was written for
 c4cd375 docs(stage-5): record the audio inventory, the graph, and what is left
@@ -220,6 +225,8 @@ commands/      thin: deserialise, delegate, map to AppResult
                  respond_mini_lyrics_save
   output.rs      get_output_scene · send_to_output · set/is_output_frozen
   permissions.rs request/get microphone and camera access
+  playback.rs    get_playback · select_playback_media · play/pause/toggle/stop
+                 seek · report_playback_position · set_playback_duration · ended
   presentation.rs get_presentation_position · set_presentation_service/_item/_group
                  set_presentation_deck · go_to_slide · next/previous_slide
                  reconcile_presentation_services
@@ -253,8 +260,12 @@ services/      domain logic, most of it runtime-free and tested
                      into it. No Tauri types.
   monitors.rs        Tauri-facing enumeration and role resolution
   permissions.rs     AVFoundation microphone/camera authorisation
+  playback.rs        THE media transport: resume points, and the two drift
+                     tolerances the audit recorded as one. No Tauri types.
   presentation.rs    where the operator is: service, item, deck, slide, and the
                      bounds on moving between them. No Tauri types.
+  slide.rs           what a slide is made of, typed for the compositor. Unknown
+                     types and fields survive rather than blanking the screen.
   shortcuts.rs       Control+Alt+Space
   speech.rs          AssemblyAI token broker transport
   window.rs          building, showing, placing and closing windows
@@ -268,13 +279,15 @@ state/
   looks_state.rs        the live layer flags, persisted
   output_state.rs       the live audience scene + the freeze flag. In memory.
   persist.rs            load-or-default and atomic save, shared
+  playback_state.rs     the live transport. In memory.
   presentation_state.rs the position; the service half persists
   window_state.rs       per-window crash history for the loop guard
 errors.rs      the single AppError crossing the boundary: { kind, message }
 ```
 
 **Events emitted to the frontend.** `display:list-changed`, `looks:changed`,
-`output:scene-changed`, `presentation:changed`, `audio:changed`, `output-window-closed`,
+`output:scene-changed`, `presentation:changed`, `audio:changed`,
+`playback:changed`, `output-window-closed`,
 `media-stage-window-closed`, `worship-stage-window-closed`, `open-import`,
 `ai-operator:toggle-shortcut`, `auth-callback`, `mini-lyrics:save-request`.
 The `*-window-closed` names, `open-import`, `auth-callback` and the mini-lyrics
@@ -310,7 +323,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 321 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 351 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -503,7 +516,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **321 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
+Current: **351 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
 
 ## 11. Installed skills
 
