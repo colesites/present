@@ -147,7 +147,14 @@ pub fn run() {
             commands::permissions::request_camera_access,
             commands::permissions::get_microphone_access_status,
             commands::permissions::get_camera_access_status,
-            commands::deep_link::take_pending_deep_link
+            commands::deep_link::take_pending_deep_link,
+            commands::looks::get_looks_config,
+            commands::looks::set_looks_target,
+            commands::looks::set_selected_look,
+            commands::looks::add_look,
+            commands::looks::set_look_name,
+            commands::looks::set_look_layer,
+            commands::looks::set_look_text_position
         ])
         .setup(|app| {
             // Display preferences need the resolved app config directory, which
@@ -162,6 +169,10 @@ pub fn run() {
             // will serve. Registered before any window exists so the operator
             // window's first media request already has a scope to check.
             app.manage(state::FileState::load(&config_dir));
+            // The output layer flags. Stage 4's first slice: what the
+            // congregation sees is now owned here rather than in React, and
+            // reaches the other windows as an event instead of a 400ms poll.
+            app.manage(state::LooksState::load(&config_dir));
 
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),

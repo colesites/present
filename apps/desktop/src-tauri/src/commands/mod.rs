@@ -8,6 +8,7 @@ pub mod deep_link;
 pub mod diagnostics;
 pub mod display;
 pub mod file;
+pub mod looks;
 pub mod permissions;
 pub mod speech;
 pub mod window;

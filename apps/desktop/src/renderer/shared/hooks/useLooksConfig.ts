@@ -21,6 +21,21 @@ import {
 const LOOKS_STORAGE_KEY = "present-looks-config";
 
 /**
+ * True inside the Tauri shell. Read from the global Tauri injects before any
+ * app code runs, so the choice is settled before the first render.
+ */
+const isTauriShell = (): boolean =>
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/**
+ * The Rust client, imported only when there is a Rust core to talk to.
+ *
+ * Dynamic so the Electron bundle never pulls in `@tauri-apps/api` — the same
+ * arrangement the AssemblyAI broker uses.
+ */
+const rustCore = () => import("../../tauri/looks");
+
+/**
  * The output layer flags, as React sees them.
  *
  * Every rule this hook applies now lives in `shared/lib/looks-config.mjs`,
@@ -54,8 +69,48 @@ const readLooksConfig = (): LooksConfig => {
 export function useLooksConfig() {
   const lastLooksRawRef = useRef<string | null>(null);
   const [looksConfig, setLooksConfig] = useState<LooksConfig>(() => readLooksConfig());
+  const onRust = isTauriShell();
+
+  // Under Tauri the flags live in Rust. Read the current state once, then let
+  // the event carry every change — including changes another window made,
+  // which is the case `localStorage` cannot report without polling.
+  useEffect(() => {
+    if (!onRust) {
+      return;
+    }
+
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+
+    void (async () => {
+      const core = await rustCore();
+      const unlisten = await core.onLooksChanged((config) => {
+        if (!cancelled) setLooksConfig(config);
+      });
+      if (cancelled) {
+        unlisten();
+        return;
+      }
+      detach = unlisten;
+
+      // After subscribing, not before: a change landing between the two would
+      // otherwise be missed.
+      const current = await core.getLooksConfig();
+      if (!cancelled) setLooksConfig(current);
+    })().catch((error: unknown) => {
+      console.error("[Looks] could not reach the Rust core", error);
+    });
+
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, [onRust]);
 
   useEffect(() => {
+    if (onRust) {
+      return;
+    }
     const syncFromStorage = () => {
       const raw = window.localStorage.getItem(LOOKS_STORAGE_KEY);
       if (!raw || raw === lastLooksRawRef.current) {
@@ -90,9 +145,12 @@ export function useLooksConfig() {
       window.removeEventListener("focus", syncFromStorage);
       window.clearInterval(intervalId);
     };
-  }, []);
+  }, [onRust]);
 
   useEffect(() => {
+    if (onRust) {
+      return;
+    }
     try {
       const serialized = JSON.stringify(looksConfig);
       window.localStorage.setItem(LOOKS_STORAGE_KEY, serialized);
@@ -100,54 +158,105 @@ export function useLooksConfig() {
     } catch {
       void 0;
     }
-  }, [looksConfig]);
+  }, [looksConfig, onRust]);
 
-  const setSelectedTarget = useCallback((target: LookTargetKey) => {
-    setLooksConfig((current) => withSelectedTarget(current, target));
-  }, []);
+  /**
+   * Apply a change on whichever side owns the state.
+   *
+   * Under Rust the new config arrives back through `looks:changed`, so there
+   * is no local `setState` here — one owner, one source of truth. Under
+   * Electron the reducer runs in React exactly as it always did.
+   */
+  const apply = useCallback(
+    (
+      toRust: (core: Awaited<ReturnType<typeof rustCore>>) => Promise<unknown>,
+      inReact: (current: LooksConfig) => LooksConfig,
+    ) => {
+      if (onRust) {
+        void rustCore()
+          .then(toRust)
+          .catch((error: unknown) => {
+            console.error("[Looks] change rejected by the Rust core", error);
+          });
+        return;
+      }
+      setLooksConfig(inReact);
+    },
+    [onRust],
+  );
 
-  const setSelectedLook = useCallback((lookId: string) => {
-    setLooksConfig((current) => withSelectedLook(current, lookId));
-  }, []);
+  const setSelectedTarget = useCallback(
+    (target: LookTargetKey) => {
+      apply(
+        (core) => core.setLooksTarget(target),
+        (current) => withSelectedTarget(current, target),
+      );
+    },
+    [apply],
+  );
 
-  const addLook = useCallback((name?: string) => {
-    setLooksConfig((current) => withAddedLook(current, name));
-  }, []);
+  const setSelectedLook = useCallback(
+    (lookId: string) => {
+      apply(
+        (core) => core.setSelectedLook(lookId),
+        (current) => withSelectedLook(current, lookId),
+      );
+    },
+    [apply],
+  );
 
-  const setLookName = useCallback((lookId: string, name: string) => {
-    setLooksConfig((current) => withLookName(current, lookId, name));
-  }, []);
+  const addLook = useCallback(
+    (name?: string) => {
+      apply(
+        (core) => core.addLook(name),
+        (current) => withAddedLook(current, name),
+      );
+    },
+    [apply],
+  );
+
+  const setLookName = useCallback(
+    (lookId: string, name: string) => {
+      apply(
+        (core) => core.setLookName(lookId, name),
+        (current) => withLookName(current, lookId, name),
+      );
+    },
+    [apply],
+  );
 
   const setLayerEnabledForLook = useCallback(
     (lookId: string, target: LookTargetKey, layer: LookLayerKey, enabled: boolean) => {
-      setLooksConfig((current) => withLayerEnabled(current, lookId, target, layer, enabled));
+      apply(
+        (core) => core.setLookLayer(lookId, target, layer, enabled),
+        (current) => withLayerEnabled(current, lookId, target, layer, enabled),
+      );
     },
-    [],
+    [apply],
   );
 
   const setLayerEnabled = useCallback(
     (target: LookTargetKey, layer: LookLayerKey, enabled: boolean) => {
-      setLooksConfig((current) =>
-        withLayerEnabled(current, current.selectedLookId, target, layer, enabled),
-      );
+      setLayerEnabledForLook(looksConfig.selectedLookId, target, layer, enabled);
     },
-    [],
+    [looksConfig.selectedLookId, setLayerEnabledForLook],
   );
 
   const setTextPositionForLook = useCallback(
     (lookId: string, target: LookTargetKey, patch: Partial<LookTextPosition>) => {
-      setLooksConfig((current) => withTextPosition(current, lookId, target, patch));
+      apply(
+        (core) => core.setLookTextPosition(lookId, target, patch),
+        (current) => withTextPosition(current, lookId, target, patch),
+      );
     },
-    [],
+    [apply],
   );
 
   const setTextPosition = useCallback(
     (target: LookTargetKey, patch: Partial<LookTextPosition>) => {
-      setLooksConfig((current) =>
-        withTextPosition(current, current.selectedLookId, target, patch),
-      );
+      setTextPositionForLook(looksConfig.selectedLookId, target, patch);
     },
-    [],
+    [looksConfig.selectedLookId, setTextPositionForLook],
   );
 
   const selectedLook = useMemo(

@@ -197,3 +197,65 @@ if (shouldProbe) {
     );
   });
 }
+
+if (shouldProbe) {
+  // Stage 4 (output layer flags): the first slice of the presentation core to
+  // be Rust-owned. What needs proving live is not the reducer — that has twin
+  // test suites in both languages — but the delivery: a change made in one
+  // window has to reach the others in the same tick, which is exactly what the
+  // 400 ms localStorage poll could not do.
+  void (async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const looks = await import("./looks");
+
+    (window as unknown as { __presentLooks?: unknown }).__presentLooks = looks;
+
+    const config = await looks.getLooksConfig();
+    const live = config.looks.find((look) => look.id === config.liveLookId);
+    let roundTrip = "not attempted (release build)";
+
+    // The round trip writes to the config file, so it runs in development
+    // only. A release launch reports what it reads and changes nothing.
+    const { debugBuild } = await getAppInfo();
+    if (debugBuild && live) {
+      const before = live.targets.program.layers.slide;
+
+      const heard = await new Promise<string>((resolve) => {
+        const timeout = window.setTimeout(() => {
+          void detach.then((stop) => stop());
+          resolve("TIMED OUT — the event never arrived");
+        }, 2000);
+
+        const detach = looks.onLooksChanged((next) => {
+          const after = next.looks.find((look) => look.id === next.liveLookId);
+          if (after?.targets.program.layers.slide === !before) {
+            window.clearTimeout(timeout);
+            void detach.then((stop) => stop());
+            resolve("delivered");
+          }
+        });
+
+        void detach.then(() =>
+          looks.setLookLayer(live.id, "program", "slide", !before),
+        );
+      });
+
+      // Put it back, whatever happened.
+      await looks.setLookLayer(live.id, "program", "slide", before);
+      roundTrip = heard;
+    }
+
+    const summary =
+      `looks=${config.looks.length} live=${config.liveLookId} ` +
+      `target=${config.selectedTarget} ` +
+      `programLayers=${JSON.stringify(live?.targets.program.layers)} ` +
+      `changeEvent=${roundTrip}`;
+    console.info("[Tauri]", summary);
+    await invoke("report_diagnostic", { message: summary });
+  })().catch((error: unknown) => {
+    console.error("[Tauri] looks probe failed", error);
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("report_diagnostic", { message: `looks probe failed: ${String(error)}` }),
+    );
+  });
+}

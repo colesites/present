@@ -9,6 +9,7 @@ pub mod display_names;
 pub mod display_watch;
 pub mod file_scope;
 pub mod filesystem;
+pub mod looks;
 pub mod media_protocol;
 pub mod monitors;
 pub mod permissions;
