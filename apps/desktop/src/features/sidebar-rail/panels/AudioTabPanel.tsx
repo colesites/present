@@ -15,6 +15,12 @@ import {
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { cn } from "../../../renderer/shared/lib/utils";
 import { createLocalMediaUrl } from "../../../shared/lib/local-media-url.mjs";
+import {
+  applyAudioRouting,
+  setBackingTrackGain,
+  useAudioRouting,
+} from "../../../renderer/shared/hooks/useAudioRouting";
+import type { SourceRouting } from "../../../renderer/tauri/audio";
 
 interface AudioTabPanelProps {
   orgId: Id<"organizations"> | null;
@@ -140,10 +146,24 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
     [currentTrackId, sortedTracks],
   );
 
+  // The backing track is the application's second audible source, and until
+  // Stage 5 it was the one nothing routed: it set `.volume` and never called
+  // `setSinkId`, so the audio-output-device setting reached the presentation
+  // video and left this playing out of the laptop (known-issues §1).
+  //
+  // Under Tauri it now reads the same Rust sink the video does, so one device
+  // choice moves both. Under Electron the value below is what this effect set
+  // before, `deviceId: null` included — the shipping shell keeps today's
+  // behaviour, which is the standing call recorded in handoff §6.
+  const electronRouting = useMemo<SourceRouting>(
+    () => ({ audible: true, muted: false, volume, deviceId: null }),
+    [volume],
+  );
+  const routing = useAudioRouting("backing-track", "operator", electronRouting);
+
   useEffect(() => {
-    if (!audio) return;
-    audio.volume = volume;
-  }, [audio, volume]);
+    applyAudioRouting(audio, routing);
+  }, [audio, routing]);
 
   useEffect(() => {
     if (!audio || !currentTrack) return;
@@ -452,8 +472,15 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
               min={0}
               max={1}
               step={0.01}
-              value={volume}
-              onChange={(event) => setVolume(Number(event.target.value))}
+              value={routing.volume}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setVolume(next);
+                // Under Tauri the sink owns the level, so the slider writes
+                // there and the change comes back as an event. Under Electron
+                // this is a no-op and `volume` above is the only state.
+                void setBackingTrackGain(next);
+              }}
               className="flex-1 accent-primary"
             />
           </div>

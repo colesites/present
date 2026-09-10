@@ -300,3 +300,56 @@ if (shouldProbe) {
     );
   });
 }
+
+if (shouldProbe) {
+  // Stage 5 (the audio graph): the invariant worth proving on every launch is
+  // the one the audit asked to be made structural — that a mirror surface
+  // cannot be handed audio. It is checked here rather than only in Rust tests
+  // because this is the boundary the real surfaces cross: a serialisation
+  // mistake in the surface names would fail open in exactly the place a test
+  // suite cannot see.
+  void (async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const audio = await import("./audio");
+
+    (window as unknown as { __presentAudio?: unknown }).__presentAudio = audio;
+
+    const graph = await audio.getAudioGraph();
+
+    const mirrors = [
+      "audience-output",
+      "worship-stage",
+      "media-stage",
+      "screen-composer",
+      "preview",
+      "thumbnail",
+    ] as const;
+
+    const audibleMirrors: string[] = [];
+    for (const surface of mirrors) {
+      for (const source of ["presentation-video", "backing-track"] as const) {
+        const routing = await audio.getSourceRouting(source, surface);
+        if (routing.audible || !routing.muted) audibleMirrors.push(`${surface}/${source}`);
+      }
+    }
+
+    // Both audible sources must report the same device, which is the whole of
+    // known-issues §1: one choice, not one per element.
+    const video = await audio.getSourceRouting("presentation-video", "operator");
+    const track = await audio.getSourceRouting("backing-track", "operator");
+    const sharedSink =
+      video.deviceId === track.deviceId ? "shared" : `SPLIT ${video.deviceId}/${track.deviceId}`;
+
+    const summary =
+      `audioDevice=${graph.sink.deviceId ?? "system-default"} ` +
+      `audioSink=${sharedSink} ` +
+      `audibleMirrors=${audibleMirrors.length === 0 ? "none" : audibleMirrors.join(",")}`;
+    console.info("[Tauri]", summary);
+    await invoke("report_diagnostic", { message: summary });
+  })().catch((error: unknown) => {
+    console.error("[Tauri] audio probe failed", error);
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("report_diagnostic", { message: `audio probe failed: ${String(error)}` }),
+    );
+  });
+}

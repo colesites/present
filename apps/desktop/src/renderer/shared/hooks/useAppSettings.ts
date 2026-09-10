@@ -4,6 +4,7 @@ import {
   SETTINGS_STORAGE_KEY
 } from "../../../features/settings/lib/constants";
 import { MediaItem, MediaFolder } from "../../../features/media/hooks/useMediaFolders";
+import { useAudioDeviceSync } from "./useAudioRouting";
 import type {
   ScriptureFooterPosition,
   ScriptureTextAlign,
@@ -376,6 +377,24 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
       setSettingsNdiGroupName(normalizeNdiGroupName(parsed.ndiGroupName));
     }
   }, []);
+
+  // Under Tauri the audio-output device belongs to the Rust sink, because both
+  // audible sources read it from there rather than each applying it to their
+  // own element (known-issues §1). This keeps the picker and the sink in step;
+  // under Electron it does nothing and `localStorage` stays the only owner.
+  const seedAudioDeviceFromRust = useCallback(
+    (deviceId: string | null, deviceLabel: string) => {
+      setSettingsAudioOutputDeviceId(deviceId);
+      setSettingsAudioOutputDeviceLabel(deviceLabel);
+    },
+    [],
+  );
+  useAudioDeviceSync(
+    settingsHydrated,
+    settingsAudioOutputDeviceId,
+    settingsAudioOutputDeviceLabel,
+    seedAudioDeviceFromRust,
+  );
 
   const syncFromStorage = useCallback(() => {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);

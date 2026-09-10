@@ -42,11 +42,13 @@ const readSource = (relative) => readFileSync(path.join(packageRoot, relative), 
 const AUDIBLE_PLAYBACK_PATHS = {
   presentationVideo: {
     file: "src/features/present/PresentCenterArea.tsx",
+    owner: "src/renderer/shared/hooks/useShowVideoSync.ts",
     element: "<video>",
     reason: "the presenter Show View, driven by useShowVideoSync",
   },
   backingTrack: {
     file: "src/features/sidebar-rail/panels/AudioTabPanel.tsx",
+    owner: "src/features/sidebar-rail/panels/AudioTabPanel.tsx",
     element: "new Audio()",
     reason: "the backing-track playlist player — known-issues §1",
   },
@@ -83,41 +85,52 @@ test("no <audio> elements exist, so the inventory above is complete", () => {
   );
 });
 
-test("audio device routing is one path under Tauri and still one element under Electron", () => {
-  // known-issues §1, at the point Stage 5 has reached.
+test("device routing has exactly one application point", () => {
+  // known-issues §1, fixed on the Tauri side.
   //
   // `setSinkId` is the only way a web media element can be pointed at a chosen
-  // output device. Two files call it now, and they are different halves of the
-  // migration rather than a spread:
+  // output device, and the defect was that it is a *per-element* call: the
+  // audio-output-device setting reached whichever elements somebody remembered
+  // to call it on, which across the whole repository was one. The backing
+  // track played through an element nobody had.
   //
-  //   useShowVideoSync.ts   the Electron path, unchanged. Still the only
-  //                         element that gets the device, so under Electron
-  //                         backing tracks still play out of the laptop.
-  //   renderer/tauri/audio  `applyRouting`, the one place under Tauri that
-  //                         touches muted, volume or the sink at all.
-  //
-  // The defect closes when the surfaces call `applyRouting` instead of setting
-  // attributes themselves. Until they do, the backing-track panel calling
-  // `setSinkId` directly would mean somebody patched around the graph, so that
-  // assertion stays.
-  const callSites = findInSources("setSinkId", ".ts").filter(
-    (hit) => !hit.file.includes("renderer/tauri/capability-probe.ts"),
-  );
+  // There is now one call site for both shells and both sources —
+  // `applyAudioRouting` — so a source cannot be left unrouted by omission.
+  // Under Tauri it receives the sink's device, so one choice moves both. Under
+  // Electron it receives what each caller passed, which is what those callers
+  // set inline before, so the shipping shell is unchanged.
+  // The call form, not the identifier: prose and type annotations mention
+  // `setSinkId` and must not read as a second place that routes audio.
+  const callSites = [
+    ...findInSources("setSinkId(", ".ts"),
+    ...findInSources("setSinkId(", ".tsx"),
+  ];
 
   const files = [...new Set(callSites.map((hit) => hit.file))].sort();
   assert.deepEqual(
     files,
-    ["src/renderer/shared/hooks/useShowVideoSync.ts", "src/renderer/tauri/audio.ts"],
-    "setSinkId moved or spread. Device routing must stay in the Show-View hook " +
-      "(Electron) and `applyRouting` (Tauri), not scattered across surfaces.",
+    ["src/renderer/shared/hooks/useAudioRouting.ts"],
+    "Device routing must have exactly one application point. A second call " +
+      "site is how a source gets left behind on the default device again.",
   );
+});
 
-  const backingTrack = readSource(AUDIBLE_PLAYBACK_PATHS.backingTrack.file);
-  assert.ok(
-    !backingTrack.includes("setSinkId"),
-    "The backing-track player calls setSinkId directly. It should route " +
-      "through `applyRouting` so the device stays a property of the sink.",
-  );
+test("both audible sources get their routing from the graph", () => {
+  // The other half of the same fix. One application point is only worth having
+  // if every audible source actually goes through it — a surface that sets
+  // `.volume` or `.muted` itself has quietly opted out of the sink.
+  for (const [name, entry] of Object.entries(AUDIBLE_PLAYBACK_PATHS)) {
+    const source = readSource(entry.owner);
+    assert.ok(
+      source.includes("useAudioRouting("),
+      `${name} (${entry.owner}) does not read its routing from the audio graph.`,
+    );
+    assert.ok(
+      source.includes("applyAudioRouting("),
+      `${name} (${entry.owner}) does not apply its routing through the one ` +
+        "application point.",
+    );
+  }
 });
 
 test("the audience YouTube embed is muted by its URL", () => {

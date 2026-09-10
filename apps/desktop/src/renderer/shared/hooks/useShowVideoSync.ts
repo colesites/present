@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MediaItem, VideoSettings } from "../../../features/media/hooks/useMediaFolders";
+import { applyAudioRouting, useAudioRouting } from "./useAudioRouting";
 
 export function useShowVideoSync(params: {
   showViewMedia: MediaItem;
@@ -108,26 +109,28 @@ export function useShowVideoSync(params: {
   // The presenter Show View is the application's only audible video player.
   // All external display windows are muted mirrors, so video audio works even
   // before a projector is opened.
+  //
+  // Under Tauri that sentence is no longer a convention this hook maintains:
+  // the routing comes from the Rust audio graph, which refuses every surface
+  // but the operator's and owns the one output device. Under Electron the
+  // values below are exactly what this effect set inline before.
+  const electronRouting = useMemo(
+    () => ({
+      audible: true,
+      muted: videoSettings.muted,
+      volume: videoSettings.volume,
+      deviceId: audioOutputDeviceId ?? null,
+    }),
+    [videoSettings.muted, videoSettings.volume, audioOutputDeviceId],
+  );
+  const routing = useAudioRouting("presentation-video", "operator", electronRouting);
+
   useEffect(() => {
     const video = showVideoRef.current;
     if (!video || currentVideoItem?.type !== "video") return;
 
-    video.muted = videoSettings.muted;
-    video.volume = Math.max(0, Math.min(1, videoSettings.volume));
-
-    const sinkVideo = video as HTMLVideoElement & {
-      setSinkId?: (deviceId: string) => Promise<void>;
-    };
-    if (typeof sinkVideo.setSinkId === "function") {
-      void sinkVideo.setSinkId(audioOutputDeviceId ?? "").catch((): void => undefined);
-    }
-  }, [
-    currentVideoItem?.id,
-    currentVideoItem?.type,
-    videoSettings.muted,
-    videoSettings.volume,
-    audioOutputDeviceId,
-  ]);
+    applyAudioRouting(video, routing);
+  }, [currentVideoItem?.id, currentVideoItem?.type, routing]);
 
   // Sync Show view video element with isVideoPlaying
   useEffect(() => {
