@@ -1,6 +1,6 @@
 # ADR-001 — The audience output is composited in Rust with wgpu
 
-**Status:** accepted · **Date:** 2026-09-08 · **Decides:** blocker §10.1 of
+**Status:** accepted, amended 2026-09-10 · **Date:** 2026-09-08 · **Decides:** blocker §10.1 of
 [stage-0-audit.md](stage-0-audit.md)
 
 ## Context
@@ -75,3 +75,49 @@ description), never by React component state.
 
 Until the compositor exists, the output window renders in a webview exactly as
 it does under Electron, so parity is never lost mid-migration.
+
+---
+
+## Amendment — 2026-09-10: the surface is a hybrid
+
+**Resolves the "feature gaps" consequence above**, which this ADR raised and
+left open.
+
+Two things on the audience surface exist only because it is a webview:
+**YouTube prop embeds** (`OutputWindow.tsx:1049`) and **HDMI capture via
+`getUserMedia`** (`OutputWindow.tsx:1128`). Neither can be drawn by a Rust
+compositor — one is a browser and the other is a browser API. The options were
+to drop both, to design a Rust equivalent for each, or to keep a webview for
+exactly those two.
+
+**Decision: keep a transparent webview layer above the composited surface.**
+Rust composites the slide, the media and the overlays. The webview above it
+draws only the YouTube and capture props.
+
+### What this costs
+
+- **Those two layers do not reach NDI.** The Rust frame pipeline is the NDI
+  source, and it does not see what the webview above it draws. A service
+  sending a YouTube prop to an NDI destination gets the composited surface
+  without it. This is a real regression against Electron, which captured the
+  whole window, and it is the price of the choice.
+- **Two rendering paths on one screen**, which have to agree about geometry.
+  The webview layer is positioned from the same scene the compositor draws
+  from, so the alignment is only as good as that shared description.
+
+### What it keeps
+
+- Both features keep working on the screen the congregation looks at.
+- The compositor does not have to grow a YouTube client or a capture backend,
+  which is the work that would have made it months rather than weeks.
+- The single-audio-path invariant is unaffected: neither of those two layers is
+  a mixer input, and the graph in `services/audio.rs` refuses every surface but
+  the operator's regardless of what draws it.
+
+### What follows for the code
+
+`SlideElementType::is_composited` is where this decision lives. `web` elements
+return false, so the compositor leaves a hole rather than drawing over them.
+Anything of an unknown type does the same, on the grounds that not drawing is
+recoverable and drawing the wrong thing over a live audience screen is not.
+

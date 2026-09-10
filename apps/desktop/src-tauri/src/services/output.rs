@@ -254,6 +254,40 @@ impl Default for OutputScene {
 }
 
 impl OutputScene {
+    /// The slide's elements, typed.
+    ///
+    /// The field itself stays a `serde_json::Value` on purpose, now that there
+    /// is a struct it could have been. Two reasons, both about not breaking
+    /// what already works:
+    ///
+    /// * **The scene is relayed to windows that still render it in React.**
+    ///   After ADR-001's hybrid amendment that stays true even once the
+    ///   compositor lands. Carrying the value verbatim is the only way to
+    ///   guarantee the renderer gets back exactly what it sent.
+    /// * **A typed field fails as a whole.** One element serde cannot read
+    ///   would fail the entire scene, and a scene that fails to deserialise
+    ///   mid-service is a black screen. `parse_elements` skips the unreadable
+    ///   element and keeps the other eleven.
+    ///
+    /// So the typing happens here, at the boundary that needs it, rather than
+    /// on the way past.
+    pub fn slide_elements(&self) -> Option<Vec<crate::services::slide::SlideElement>> {
+        crate::services::slide::parse_elements(self.slide_elements.as_ref())
+    }
+
+    /// Just the elements the Rust compositor draws.
+    ///
+    /// Hidden elements and the `web` ones are filtered out: the latter belong
+    /// to the transparent webview layer above the composited surface, and
+    /// drawing anything in their place would cover them.
+    pub fn composited_elements(&self) -> Vec<crate::services::slide::SlideElement> {
+        self.slide_elements()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(crate::services::slide::SlideElement::is_composited)
+            .collect()
+    }
+
     /// Does this scene differ from `other` in a way worth sending?
     ///
     /// `should_sync_time` is excluded, exactly as the Electron signature
@@ -866,5 +900,54 @@ mod tests {
         assert_eq!(json["videoSettings"]["loop"], true);
         assert_eq!(json["propsOverlay"], serde_json::json!([]));
         assert_eq!(json["activeSlideId"], serde_json::Value::Null);
+    }
+}
+
+#[cfg(test)]
+mod slide_element_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_scene_types_its_elements_without_retyping_the_field() {
+        let scene = OutputScene {
+            slide_elements: Some(json!([
+                { "id": "a", "type": "text", "content": "Amazing grace" },
+                { "id": "b", "type": "web", "content": "https://youtu.be/x" },
+                { "id": "c", "type": "shape", "isVisible": false },
+                { "id": "d", "type": "hologram" },
+            ])),
+            ..OutputScene::default()
+        };
+
+        let all = scene.slide_elements().expect("elements");
+        assert_eq!(all.len(), 4, "every element is carried");
+
+        // Only the two the Rust surface owns: the hidden shape, the web prop
+        // and the unknown type are all left alone.
+        let drawn = scene.composited_elements();
+        assert_eq!(
+            drawn.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["a"]
+        );
+    }
+
+    #[test]
+    fn a_scene_with_one_unreadable_element_still_draws_the_rest() {
+        // The blank-screen case. A typed field would have failed the whole
+        // scene here.
+        let scene = OutputScene {
+            slide_elements: Some(json!([{ "id": "a", "type": "text" }, 42])),
+            ..OutputScene::default()
+        };
+
+        assert_eq!(scene.composited_elements().len(), 1);
+    }
+
+    #[test]
+    fn a_scene_with_no_slide_has_no_elements() {
+        let scene = OutputScene::default();
+        assert!(scene.slide_elements().is_none());
+        assert!(scene.composited_elements().is_empty());
     }
 }

@@ -19,6 +19,7 @@ pub mod output;
 pub mod permissions;
 pub mod presentation;
 pub mod shortcuts;
+pub mod slide;
 pub mod speech;
 pub mod window;
 pub mod window_spec;
