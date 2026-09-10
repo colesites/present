@@ -56,8 +56,12 @@ const subscribe = (event: string, handler: (payload: never) => void): (() => voi
 
   return () => {
     cancelled = true;
-    detach?.();
+    // Tauri's unlisten throws if the listener has already gone, and React 19
+    // runs effect cleanup more than once in development, so this must be safe
+    // to call twice.
+    const stop = detach;
     detach = null;
+    stop?.();
   };
 };
 
@@ -88,6 +92,43 @@ export const localMediaUrl = (filePath: string): string => {
 };
 
 type ScreenRole = "audience" | "media" | "worship";
+
+/**
+ * Where the web app lives, resolved exactly as `desktopSession.ts:97-104` does.
+ *
+ * Rust does not resolve this itself: it is a build-time constant of the
+ * renderer, and working it out in two places would give two answers the first
+ * time someone overrode it.
+ */
+const webAppBaseUrl = (): string =>
+  process.env.WEB_APP_URL ||
+  (process.env.NODE_ENV === "development"
+    ? "http://localhost:3001"
+    : "https://present.multivrs.space");
+
+/**
+ * The base URLs a session refresh will try, in order.
+ *
+ * Ports `getWebAppBaseUrlCandidates` (`app.utils.ts:26-46`): a developer's web
+ * app may be on either of two ports, and production is always worth a try.
+ */
+const webAppBaseUrlCandidates = (): string[] => {
+  const candidates = new Set<string>();
+  const configured = process.env.WEB_APP_URL?.trim();
+
+  if (configured) {
+    candidates.add(configured);
+    if (configured === "http://localhost:3000") candidates.add("http://localhost:3001");
+    if (configured === "http://localhost:3001") candidates.add("http://localhost:3000");
+  }
+  if (process.env.NODE_ENV === "development") {
+    candidates.add("http://localhost:3001");
+    candidates.add("http://localhost:3000");
+  }
+  candidates.add("https://present.multivrs.space");
+
+  return [...candidates];
+};
 
 const openRoleWindow = (
   role: "output" | "media-stage" | "worship-stage",
@@ -203,6 +244,28 @@ const bridge = {
 
   requestMicrophoneAccess: () => invoke("request_microphone_access"),
   requestCameraAccess: () => invoke("request_camera_access"),
+
+  // --- Stage 4: the auth session ----------------------------------------
+  // Pulled ahead of Stage 7 because nothing else in the app can be seen
+  // working until the operator window gets past sign-in.
+  getStoredAuthSession: () => invoke("get_stored_auth_session"),
+  setStoredAuthSession: (payload: unknown) =>
+    invoke<boolean>("set_stored_auth_session", { payload }),
+  clearStoredAuthSession: () => invoke<boolean>("clear_stored_auth_session"),
+  consumePendingAuthToken: () => invoke("consume_pending_auth_token"),
+  beginAuthFlow: () => invoke("begin_auth_flow", { webAppBaseUrl: webAppBaseUrl() }),
+  refreshDesktopSession: (sessionToken: string) =>
+    invoke("refresh_desktop_session", {
+      webAppBaseUrls: webAppBaseUrlCandidates(),
+      sessionToken,
+    }),
+  openExternalBrowser: (url: string) => invoke<boolean>("open_external_browser", { url }),
+
+  // Errors the renderer catches. Optional-chained at the call site, so
+  // leaving this out meant every render failure vanished without trace.
+  reportRendererError: (error: unknown) => {
+    void invoke("report_renderer_error", { error }).catch(noop);
+  },
 
   onAiOperatorToggleShortcut: (callback: () => void) =>
     subscribe("ai-operator:toggle-shortcut", callback),

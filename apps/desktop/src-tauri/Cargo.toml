@@ -41,6 +41,8 @@ tauri-plugin-deep-link = "2.4.10"
 # `select-prop-image` returns a data: URL so a prop can be stored in Convex
 # without exposing a local path (`file.ipc.ts:172-205`).
 base64 = "0.23.1"
+# `shell.openExternal` for the sign-in flow (`auth.service.ts:71`).
+tauri-plugin-opener = "2.5.5"
 
 # Desktop-only plugins. The crate keeps a mobile entry point (see `[lib]`), and
 # neither of these builds for iOS or Android.
@@ -57,7 +59,18 @@ tauri-plugin-single-instance = { version = "2.4.4", features = ["deep-link"] }
 # platform_impl/macos/monitor.rs:208). Reading the name a human would recognise
 # needs AppKit. All of these are already in the tree via tao, so depending on
 # them directly costs no extra build time.
+# The OS keychain for the auth session, replacing Electron's `safeStorage`.
+# Split per platform on purpose: the crate's Linux backend needs libdbus at
+# build time, which would add a system dependency to the Linux CI bundle for a
+# platform the Tauri build has never been run on. Linux falls back to a 0600
+# file, which is what Electron does on a host where safeStorage is unavailable.
+# Version 3 rather than 4 because 4 raises the MSRV above this crate's declared
+# 1.82.
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",

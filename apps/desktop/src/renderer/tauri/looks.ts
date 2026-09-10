@@ -59,5 +59,14 @@ export const onLooksChanged = async (
   handler: (config: LooksConfig) => void,
 ): Promise<() => void> => {
   const unlisten = await listen<LooksConfig>(LOOKS_CHANGED, (event) => handler(event.payload));
-  return unlisten;
+
+  // Guarded because Tauri's unlisten throws on a listener that is already gone
+  // ("undefined is not an object (evaluating 'listeners[eventId].handlerId')"),
+  // and React 19 runs effect cleanup more than once in development.
+  let detached = false;
+  return () => {
+    if (detached) return;
+    detached = true;
+    unlisten();
+  };
 };

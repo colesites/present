@@ -56,6 +56,42 @@ pub fn report_diagnostic(message: String) -> AppResult<()> {
     Ok(())
 }
 
+/// One error caught by the renderer's global handlers.
+///
+/// Matches what `main-renderer.ts` sends on `window.error` and
+/// `unhandledrejection`. Under Electron this reaches
+/// `error-reporting.service.ts`, which redacts it and appends to an ndjson log;
+/// that whole service is Stage 7. Until then it goes to the Rust log, which is
+/// the difference between a diagnosable blank window and an undiagnosable one:
+/// the renderer's own console cannot be read from a terminal, and the call site
+/// is optional-chained, so under Tauri these errors were being dropped in
+/// silence.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RendererError {
+    pub message: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub stack: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[tauri::command]
+pub fn report_renderer_error(error: RendererError) -> AppResult<()> {
+    tracing::error!(
+        source = error.source.as_deref().unwrap_or("unknown"),
+        name = error.name.as_deref().unwrap_or("Error"),
+        message = %error.message,
+        "renderer error"
+    );
+    if let Some(stack) = error.stack.as_deref() {
+        tracing::error!(%stack, "renderer error stack");
+    }
+    Ok(())
+}
+
 /// Records what the webview can do. Logged rather than stored: this exists to
 /// answer migration questions, not to drive runtime behaviour.
 #[tauri::command]

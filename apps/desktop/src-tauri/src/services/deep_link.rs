@@ -18,21 +18,15 @@
 
 use std::sync::Mutex;
 
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+// The tokens a link carries are the auth session's, so the type lives with the
+// rest of auth rather than being defined twice.
+pub use crate::services::auth::AuthPayload;
 use crate::services::window_spec::WindowRole;
 
 /// The channel `App.tsx:212` already listens on.
 pub const AUTH_CALLBACK_EVENT: &str = "auth-callback";
-
-/// `DesktopAuthPayload` in `src/shared/types/electron.d.ts:29-32`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthPayload {
-    pub access_token: Option<String>,
-    pub session_token: String,
-}
 
 /// A link that arrived before anything was listening.
 #[derive(Default)]

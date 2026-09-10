@@ -6,6 +6,7 @@
 //! nothing in the tree is a placeholder.
 
 pub mod app_state;
+pub mod auth_state;
 pub mod display_state;
 pub mod file_state;
 pub mod looks_state;
@@ -13,6 +14,7 @@ pub mod persist;
 pub mod window_state;
 
 pub use app_state::AppState;
+pub use auth_state::AuthState;
 pub use display_state::DisplayState;
 pub use file_state::FileState;
 pub use looks_state::LooksState;

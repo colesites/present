@@ -4,6 +4,7 @@
 //! Domain logic belongs in `services/`, never here.
 
 pub mod app;
+pub mod auth;
 pub mod deep_link;
 pub mod diagnostics;
 pub mod display;

@@ -76,6 +76,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         // `local-media://` — the scheme the whole media pipeline fetches
         // through. Registered asynchronously so a range read off a slow disk
@@ -112,6 +113,7 @@ pub fn run() {
             commands::app::get_app_info,
             commands::diagnostics::report_webview_capabilities,
             commands::diagnostics::report_diagnostic,
+            commands::diagnostics::report_renderer_error,
             commands::speech::request_speech_token,
             commands::speech::report_speech_usage,
             commands::display::get_displays,
@@ -154,7 +156,14 @@ pub fn run() {
             commands::looks::add_look,
             commands::looks::set_look_name,
             commands::looks::set_look_layer,
-            commands::looks::set_look_text_position
+            commands::looks::set_look_text_position,
+            commands::auth::get_stored_auth_session,
+            commands::auth::set_stored_auth_session,
+            commands::auth::clear_stored_auth_session,
+            commands::auth::consume_pending_auth_token,
+            commands::auth::begin_auth_flow,
+            commands::auth::open_external_browser,
+            commands::auth::refresh_desktop_session
         ])
         .setup(|app| {
             // Display preferences need the resolved app config directory, which
@@ -173,6 +182,10 @@ pub fn run() {
             // congregation sees is now owned here rather than in React, and
             // reaches the other windows as an event instead of a 400ms poll.
             app.manage(state::LooksState::load(&config_dir));
+            // The auth session, in the OS keychain rather than in one of two
+            // files chosen by whether the app was packaged — half of
+            // known-issues §2.
+            app.manage(state::AuthState::load(&config_dir));
 
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),
