@@ -15,7 +15,7 @@ zero-behaviour-change change, per migration rule 4.
 | 7 | Ten pre-existing ESLint errors | Low | Deferred — see below |
 | 8 | Speech-to-search blocked by a CORS preflight, not by Electron | Medium | **Fixed** |
 | 9 | Monitor hot-plug never moves the output window | High | Stage 2 (hot-plug) |
-| 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | Stage 6 |
+| 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | Stage 7 |
 
 ---
 
@@ -282,7 +282,8 @@ So on macOS the Tauri build recovers exactly as Electron does, and on Windows an
 Linux a crashed webview stays crashed. The policy itself is platform-independent
 (`services/window_spec.rs`) and covered by tests, so only the trigger is missing.
 
-**Fix (Stage 6):** Stage 6 is the first time Windows and Linux are run at all.
-The options are a wry patch exposing the WebView2 `ProcessFailed` event and the
-WebKitGTK `web-process-terminated` signal, or a liveness check from Rust. Deciding
-this before either platform has ever been run would be guessing.
+**Fix (Stage 7):** this is a parity item, and Stage 7's gate is the parity
+checklist. The options are a wry patch exposing the WebView2 `ProcessFailed`
+event and the WebKitGTK `web-process-terminated` signal, or a liveness check
+driven from Rust. Both need the Tauri build actually run on those platforms
+first; CI produces Windows and Linux bundles today but nobody has launched one.
