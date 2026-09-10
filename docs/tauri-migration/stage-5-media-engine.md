@@ -299,16 +299,27 @@ Glyphs now rasterise into a scratch pixmap that is composited once. All 78
 compositor tests pass unchanged, which is what writing them as assertions about
 ink and colour rather than exact pixels bought.
 
-**The post-fix frame time has not been measured.** Building the dependency tree
-at `opt-level = 3` did not finish in the session that made the change, so the
-improvement is reasoned rather than observed — treat it as unverified until
-somebody runs it.
+**Measured after the fix: 29.5 ms**, over four runs on the shipping release
+profile, at 1920×1080. Nine times faster, and inside the budget.
 
-Two things to know before measuring:
+**It is inside the budget with about 10% to spare, and that is the finding.**
+That number is a static slide: three elements, no video, on this machine. Video
+decode and scaling are per-frame work that has not been added yet, and they will
+not fit in 3.8 ms.
+
+So the next optimisation is architectural rather than micro. **The scene only
+changes when the operator does something** — a slide can sit unchanged for four
+minutes of a song. Recomposing an identical frame thirty times a second is pure
+waste. Caching the composited frame and re-rendering only when the scene changes
+leaves video as the only genuine per-frame cost, which is the shape the pipeline
+wants anyway.
+
+Two things to know when measuring:
 
 - `profile.release` optimises for **size** — `opt-level = "s"`, LTO, one codegen
-  unit. Right for a Tauri bundle, wrong for judging a rasteriser. Use
-  `cargo run --profile perf --example render_sample`.
+  unit. The 29.5 ms above is on that profile, so it is the honest shipping
+  number; `--profile perf` builds at `opt-level = 3` if you want to know what
+  the code can do rather than what it does.
 - The first frame of a process pays for the system font scan, which is a startup
   cost and not a frame cost. `text::preload_fonts` exists to move it off the
   first slide of a service; it is not called at startup yet.
@@ -344,12 +355,9 @@ By running it:
 - the compositor's scope check refusing both a file outside the granted folders
   and a traversal out of one
 - the frame time measured rather than assumed: **300 ms** at 1920×1080 before
-  the glyph fix, against a 33 ms budget
+  the glyph fix and **29.5 ms** after it, against NDI's 33 ms budget
 
-**Not verified.** The frame time *after* the glyph fix. The change is in and
-its tests pass, but the improvement has not been observed — see §7.
-
-*Nothing has been heard.* No audio has come out of a speaker
+**Not verified.** *Nothing has been heard.* No audio has come out of a speaker
 under Tauri, and no device has been switched at runtime by a person. The gate
 proves the graph answers correctly and that both sources agree on the device; it
 does not prove a sound came out of the right box. That needs the manual run
