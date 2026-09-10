@@ -56,7 +56,41 @@ manual matrix, and this machine has one screen. No window has been placed on, or
 moved to, a second monitor. Run that matrix before trusting Stage 2 in front of
 a congregation — the list is in stage-2-hotplug.md's "Not verified".
 
-Stages 3–8 are untouched. Order and content are in the audit's §12.
+### Stages 3–8, untouched
+
+Content and gates from the audit's §12, inlined so this file stands alone.
+
+| Stage | Content | Gate |
+|---|---|---|
+| **3** | Native APIs: filesystem (scoped), dialogs, deep links, global shortcut, menus, permissions. | `local-media` scope closed |
+| **4** | Presentation core into Rust, slice by slice: output layer flags → slides → service. React adapter hooks keep component props stable. | Characterisation tests first |
+| **5** | Media engine + single audio path. Fixes the audit's §5.4 as part of the work. | Audio regression suite |
+| **6** | NDI, per ADR-001. | Discovery/connect/output/reconnect |
+| **7** | Bible, fonts, PPTX sidecar, auth, AI Operator on Rust commands, error reporting, settings. | Parity checklist |
+| **8** | Measure against the Electron baseline, then remove Electron. | Definition of done |
+
+Stages 4 and 5 are the bulk of it: Stage 4 touches ~44 000 lines of UI and
+Stage 5 carries the wgpu compositor. **Before either, write characterisation
+tests against the running Electron build** — in particular one asserting that
+exactly one audible media element exists for a given playback. That is the
+regression that must never return, and it is why Electron stays until Stage 8.
+
+### Commits on this branch
+
+```
+49cb401 feat(stage-2): reconcile windows when the monitors change
+b8961fe docs: reassign the webview crash-recovery gap to Stage 7
+308cec1 chore: move the monorepo from pnpm to bun
+f53b7e2 feat(stage-2): create all eight windows in Rust
+df6c9a7 docs: add session handoff for the Tauri migration
+17a232d feat(stage-2): show the real monitor name in the display picker
+838ebd3 feat(stage-2): Rust display enumeration, identity and persisted preferences
+11364f8 docs: restore issue table ordering
+182351e feat(speech): move AssemblyAI token and usage calls into the Rust core
+4160950 test(stage-2): pin display-selection behaviour before porting it to Rust
+62d7b95 fix: remove dead File System Access gate hiding the media panel
+2eb9488 feat(tauri): Stage 0 audit and Stage 1 Tauri/Rust skeleton
+```
 
 ## 4. The next task, concretely
 
@@ -83,7 +117,51 @@ Per ADR-001, **output state must be fully describable as serialisable Rust
 structs from here on** — never as React component state. Window specs and the
 reposition decision already are; the scene description is Stage 5.
 
-## 5. Decisions already made — do not relitigate
+## 5. What the Rust core contains today
+
+4 300 lines across `apps/desktop/src-tauri/src`, mirroring the Electron main
+process's own structure as the audit asked. Nothing here is a stub.
+
+```
+commands/      thin: deserialise, delegate, map to AppResult
+  app.rs         get_app_info
+  diagnostics.rs report_webview_capabilities · report_diagnostic
+  display.rs     get_displays · get/set_preferred_display
+                 get/set_preferred_resolution · reconcile_displays
+  speech.rs      request_speech_token · report_speech_usage
+  window.rs      open_window · close_window · open/close_mini_lyrics_window
+                 list_open_windows
+services/      domain logic, most of it runtime-free and tested
+  display.rs         the role→monitor selection rule, ported from
+                     src/shared/lib/display-selection.mjs. No Tauri types.
+  display_identity.rs (name, ordinal) identity + the FNV-1a 53-bit id
+  display_names.rs   AppKit NSScreen.localizedName, main-thread hop
+  display_watch.rs   the hot-plug poll, diff and reconcile pass
+  monitors.rs        Tauri-facing enumeration and role resolution
+  speech.rs          AssemblyAI token broker transport
+  window.rs          building, showing, placing and closing windows
+  window_spec.rs     all eight windows as serialisable structs. No Tauri.
+state/
+  app_state.rs       uptime only
+  display_state.rs   role→display + resolution, persisted atomically
+  window_state.rs    per-window crash history for the loop guard
+errors.rs      the single AppError crossing the boundary: { kind, message }
+```
+
+**Events emitted to the frontend.** `display:list-changed`,
+`output-window-closed`, `media-stage-window-closed`,
+`worship-stage-window-closed`. The last three match the names Electron sends.
+
+**The TypeScript side** is `src/renderer/tauri/`: `runtime.ts` is the typed
+`invoke` wrapper, `boot-probe.ts` the startup smoke test, `capability-probe.ts`
+the WKWebView feature report. Nothing else in `src/` knows Tauri exists yet —
+the React tree still talks to `window.electronAPI`, which does not exist under
+Tauri. Bridging that is Stage 3 and 4 work.
+
+**Test counts.** 104 Rust, 48 JS. `bun run --filter @present/desktop tauri:check`
+runs fmt, clippy with `-D warnings`, and the Rust tests.
+
+## 6. Decisions already made — do not relitigate
 
 **The audience output will be composited in Rust with wgpu** (ADR-001). NDI
 output today depends on `webContents.capturePage()` at 30 fps, which Tauri
@@ -103,7 +181,7 @@ an AssemblyAI key. Only the transport moved to Rust.
 **Vite for Tauri, Webpack stays for Electron.** Forge's Webpack plugin is bound
 to Forge. Two bundlers coexist; neither touches the other's inputs.
 
-## 6. What is verified vs. assumed
+## 7. What is verified vs. assumed
 
 Verified by running it, not by reasoning:
 
@@ -142,7 +220,7 @@ Verified by running it, not by reasoning:
   physical-vs-logical pixel mistake is invisible, and no window has been moved
   from one monitor to another. This is the outstanding Stage 2 gate.
 
-## 7. Working agreements
+## 8. Working agreements
 
 - **Never push.** Local commits on `rust` only.
 - **The monorepo runs on bun**, not pnpm. `bunfig.toml` pins the hoisted linker
@@ -162,7 +240,7 @@ Verified by running it, not by reasoning:
   from a terminal — mirror findings into the Rust log via
   `commands::diagnostics::report_diagnostic`.
 
-## 8. Commands
+## 9. Commands
 
 The monorepo runs on **bun**, not pnpm. Root aliases start each app from
 anywhere in the tree:
@@ -192,7 +270,7 @@ a script. Run it from `apps/desktop` or use the alias.
 
 Current: **104 Rust tests, 48 JS tests**, clippy/fmt/typecheck clean.
 
-## 9. Installed skills
+## 10. Installed skills
 
 `rust-best-practices`, `rust-async-patterns`, `rust-testing`, `rust-patterns`,
 `rust-engineer`, `tauri-v2`, plus `frontend-design` globally. Project-scoped in
@@ -203,7 +281,7 @@ generic nine-step workflow pack that overlaps and competes with the migration
 plan's own stage gates. Not installed. That was advice, not a veto — install it
 if asked.
 
-## 10. Traps
+## 11. Traps
 
 - **The Electron main process owns almost no state.** It is a relay: `send-to-output`
   forwards opaque `unknown` blobs. Presentation state lives in React
