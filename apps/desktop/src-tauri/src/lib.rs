@@ -156,6 +156,13 @@ pub fn run() {
             commands::permissions::get_microphone_access_status,
             commands::permissions::get_camera_access_status,
             commands::deep_link::take_pending_deep_link,
+            commands::audio::get_audio_graph,
+            commands::audio::get_source_routing,
+            commands::audio::set_audio_device,
+            commands::audio::set_audio_source_gain,
+            commands::audio::set_audio_source_muted,
+            commands::audio::set_audio_master_gain,
+            commands::audio::set_audio_master_muted,
             commands::looks::get_looks_config,
             commands::looks::set_looks_target,
             commands::looks::set_selected_look,
@@ -212,6 +219,10 @@ pub fn run() {
             // The service half persists so reopening mid-service does not lose
             // their place.
             app.manage(state::PresentationState::load(&config_dir));
+            // The single audio path: one sink, one device, both sources.
+            // Persisted because the device choice is wired up once when the
+            // desk is, and because localStorage partitions it per origin.
+            app.manage(state::AudioState::load(&config_dir));
 
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),

@@ -1,6 +1,7 @@
 //! Domain services. Commands stay thin and delegate here.
 
 pub mod app_menu;
+pub mod audio;
 pub mod auth;
 pub mod deep_link;
 pub mod dialog;

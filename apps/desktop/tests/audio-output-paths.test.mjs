@@ -43,13 +43,11 @@ const AUDIBLE_PLAYBACK_PATHS = {
   presentationVideo: {
     file: "src/features/present/PresentCenterArea.tsx",
     element: "<video>",
-    routed: true,
     reason: "the presenter Show View, driven by useShowVideoSync",
   },
   backingTrack: {
     file: "src/features/sidebar-rail/panels/AudioTabPanel.tsx",
     element: "new Audio()",
-    routed: false,
     reason: "the backing-track playlist player — known-issues §1",
   },
 };
@@ -85,31 +83,40 @@ test("no <audio> elements exist, so the inventory above is complete", () => {
   );
 });
 
-test("audio device routing reaches exactly one of the two playback paths", () => {
-  // This is known-issues §1, pinned. `setSinkId` is the only way a web media
-  // element can be pointed at a chosen output device, and it is called on the
-  // Show-View video and nowhere else. So the audio-output-device setting moves
-  // video audio to the desk and leaves backing tracks on the laptop speakers.
+test("audio device routing is one path under Tauri and still one element under Electron", () => {
+  // known-issues §1, at the point Stage 5 has reached.
   //
-  // Stage 5 makes device selection a property of one sink rather than of each
-  // element, at which point this test is expected to fail and be rewritten.
+  // `setSinkId` is the only way a web media element can be pointed at a chosen
+  // output device. Two files call it now, and they are different halves of the
+  // migration rather than a spread:
+  //
+  //   useShowVideoSync.ts   the Electron path, unchanged. Still the only
+  //                         element that gets the device, so under Electron
+  //                         backing tracks still play out of the laptop.
+  //   renderer/tauri/audio  `applyRouting`, the one place under Tauri that
+  //                         touches muted, volume or the sink at all.
+  //
+  // The defect closes when the surfaces call `applyRouting` instead of setting
+  // attributes themselves. Until they do, the backing-track panel calling
+  // `setSinkId` directly would mean somebody patched around the graph, so that
+  // assertion stays.
   const callSites = findInSources("setSinkId", ".ts").filter(
     (hit) => !hit.file.includes("renderer/tauri/capability-probe.ts"),
   );
 
-  const files = [...new Set(callSites.map((hit) => hit.file))];
+  const files = [...new Set(callSites.map((hit) => hit.file))].sort();
   assert.deepEqual(
     files,
-    ["src/renderer/shared/hooks/useShowVideoSync.ts"],
-    "setSinkId moved or spread. The audio-output-device setting covers only " +
-      "the files listed here.",
+    ["src/renderer/shared/hooks/useShowVideoSync.ts", "src/renderer/tauri/audio.ts"],
+    "setSinkId moved or spread. Device routing must stay in the Show-View hook " +
+      "(Electron) and `applyRouting` (Tauri), not scattered across surfaces.",
   );
 
   const backingTrack = readSource(AUDIBLE_PLAYBACK_PATHS.backingTrack.file);
   assert.ok(
     !backingTrack.includes("setSinkId"),
-    "The backing-track player now calls setSinkId. known-issues §1 is fixed — " +
-      "update this suite to assert both paths share one sink.",
+    "The backing-track player calls setSinkId directly. It should route " +
+      "through `applyRouting` so the device stays a property of the sink.",
   );
 });
 
