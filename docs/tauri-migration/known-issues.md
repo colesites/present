@@ -6,7 +6,7 @@ zero-behaviour-change change, per migration rule 4.
 
 | # | Issue | Severity | Status |
 |---|---|---|---|
-| 1 | Backing tracks ignore the audio-output-device setting | High | Stage 5 |
+| 1 | Backing tracks ignore the audio-output-device setting | High | **Partly fixed** — Stage 5 |
 | 2 | Dev and packaged builds keep entirely separate state | High | Stage 3 |
 | 3 | `local-media://` can read any file on disk | Medium | **Fixed** |
 | 4 | Media panel hidden behind a dead File System Access check | Medium | **Fixed** |
@@ -32,10 +32,15 @@ So the audio-output-device setting added in `e81feb0` covers video and nothing
 else. On a laptop whose default output is the built-in speakers, video audio
 goes to the desk while backing tracks come out of the laptop.
 
-**Fix (Stage 5):** one Rust-owned audio path. Both the presentation video and
-the track player feed the same sink, and device selection is a property of the
-sink rather than of each HTML element. See
-[ADR-001](adr-001-output-compositor.md).
+**Fix (Stage 5), half landed.** The Rust audio graph exists: one sink that owns
+the device, two sources that both read it, and `applyRouting` as the only place
+in the renderer that touches `muted`, `volume` or the sink
+(`services/audio.rs`, `src/renderer/tauri/audio.ts`).
+
+**The defect is unchanged on both shells until the surfaces are wired to it.**
+Nothing consumes the graph yet, so `AudioTabPanel` still plays through its own
+`new Audio()` and still never calls `setSinkId`. That wiring is the next slice.
+See [stage-5-media-engine.md](stage-5-media-engine.md).
 
 ---
 

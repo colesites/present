@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 24 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 26 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -36,6 +36,7 @@ the audience screen is a serious bug, not a rough edge.
 | [stage-2-hotplug.md](stage-2-hotplug.md) | Monitors changing under a running app: the poll, what counts as a change, and the work-area feedback loop. |
 | [stage-3-native-apis.md](stage-3-native-apis.md) | The file scope and why it is shaped that way, the media scheme without a stream, dialogs, menu, shortcut, deep links, permissions, and the `electronAPI` bridge. |
 | [stage-4-presentation-core.md](stage-4-presentation-core.md) | The characterisation gate, the output layer flags, the auth session, the audience scene, the presentation position, and what Stage 5 inherits. |
+| [stage-5-media-engine.md](stage-5-media-engine.md) | **In progress.** The full audio inventory, the Rust audio graph, why decode waits for the compositor, and what is left. |
 
 ## 3. Where things stand
 
@@ -90,13 +91,28 @@ rewritten. `PresentContainer.tsx` still holds most of its sixteen `useState`
 hooks on purpose — only a handful describe the presentation; the rest are view
 state, and moving those would be moving UI into the core for nothing.
 
-### Stages 5–8, untouched
+**Stage 5 — the media engine and a single audio path.** In progress. Two
+slices landed; the gate is met on the audio side, and nothing has been heard
+yet.
+- ✅ The audio regression suite covers every route to a speaker, not just `<video>`
+- ✅ The audio graph in Rust: one sink, one device, two sources
+- ✅ Only the operator surface can produce sound, structurally rather than by convention
+- ⬜ Wiring the surfaces to it — the slice that actually closes known-issues §1
+- ⬜ Media playback state (play/pause/seek/position/lifecycle)
+- ⬜ The wgpu compositor, per ADR-001
+
+The old guard scanned `<video>` and nothing else, so three other routes to a
+speaker were unguarded: the backing-track `new Audio()`, the audience YouTube
+embed whose silence is a hand-edited `mute=1`, and the speech capture graph,
+which connects the microphone to the audio destination behind a single gain
+node pinned to zero. None were bugs. All were conventions nothing checked.
+
+### Stages 6–8, untouched
 
 Content and gates from the audit's §12, inlined so this file stands alone.
 
 | Stage | Content | Gate |
 |---|---|---|
-| **5** | Media engine + single audio path. Fixes the audit's §5.4 as part of the work. | Audio regression suite |
 | **6** | NDI, per ADR-001. | Discovery/connect/output/reconnect |
 | **7** | Bible, fonts, PPTX sidecar, auth, AI Operator on Rust commands, error reporting, settings. | Parity checklist |
 | **8** | Measure against the Electron baseline, then remove Electron. | Definition of done |
@@ -109,6 +125,8 @@ stays until Stage 8.
 ### Commits on this branch
 
 ```
+13c1fdb feat(stage-5): make the single audio path a Rust-owned graph
+9303665 test(stage-5): inventory every audio path before the media engine moves any
 bc05ab5 feat(stage-4): replace the mini lyrics save round trip
 f25608c feat(stage-4): move the presentation position into Rust
 82fb3ef docs(stage-4): record the gate, the three slices done, and the two bugs
@@ -138,12 +156,12 @@ df6c9a7 docs: add session handoff for the Tauri migration
 
 ## 4. The next task, concretely
 
-**Stage 5 — the media engine and a single audio path.** The gate is an audio
-regression suite. This is the stage ADR-001 was written for, and the one where
-getting it wrong is audible to a congregation.
+**Stage 5 — the media engine and a single audio path**, continued. Two slices
+are in; see [stage-5-media-engine.md](stage-5-media-engine.md) for what they
+did and why.
 
-Do these two first, in this order. Neither is Stage 5 work and both change what
-Stage 5 can be trusted against.
+Two things still come first, in this order. **Neither is Stage 5 work, both
+need a person, and both change what Stage 5 can be trusted against.**
 
 **1. Run a service through the Tauri build by hand.** Everything below Stage 5
 has code, tests and startup probes; none of it has been *used*. No slide has
@@ -156,16 +174,24 @@ reading will. `__presentFiles`, `__presentWindows`, `__presentLooks` and
 Stage 5 puts real video on that second screen. Needs a second monitor, not a
 code change.
 
-Then Stage 5 itself. What it inherits:
+Then the remaining Stage 5 slices:
 
-- `OutputScene` is the serialisable output state ADR-001 requires. The wgpu
-  compositor draws that. The two fields carried verbatim today — slide elements
-  and the screen-composer layout — are the ones it has to type.
-- The single-audible-video guard is in place and proven to fail correctly.
-- `PresentationPosition` already answers "which deck, which slide".
-- known-issues §1 is Stage 5's to fix: backing tracks bypass the audio-output
-  device setting entirely, because `setSinkId` is called on exactly one element
-  in the whole repository.
+- **Wire the surfaces to `applyRouting`.** Replace the nine hard-coded `muted`
+  attributes and the two level-setting effects with the one call. This is what
+  actually closes known-issues §1 — until it lands the defect is unchanged on
+  both shells. It touches `ServicesSidebar.tsx`, which carries the owner's own
+  uncommitted edits, so coordinate before starting.
+- **Media playback state in Rust** — play, pause, stop, seek, volume, mute,
+  position, lifecycle, preview/output sync. `OutputScene` already carries
+  `is_video_playing` and `video_current_time`; what is missing is the transport
+  that owns them rather than mirroring React.
+- **The compositor**, per ADR-001. The expensive part: weeks, not days. It needs
+  `slide_elements` and `screen_composer_layout`, carried verbatim since Stage 4,
+  to become real structs.
+
+Building the compositor onto an audience surface that has never once displayed
+a slide is the risk worth naming: it would be the first thing to render there,
+and every failure would look like a compositor bug.
 
 Per ADR-001, **output state must be fully describable as serialisable Rust
 structs** — never as React component state. The scene already is; the compositor
@@ -179,6 +205,8 @@ process's own structure as the audit asked. Nothing here is a stub.
 ```
 commands/      thin: deserialise, delegate, map to AppResult
   app.rs         get_app_info
+  audio.rs       get_audio_graph · get_source_routing · set_audio_device
+                 set_audio_source_gain/_muted · set_audio_master_gain/_muted
   deep_link.rs   take_pending_deep_link
   diagnostics.rs report_webview_capabilities · report_diagnostic
   display.rs     get_displays · get/set_preferred_display
@@ -201,6 +229,9 @@ commands/      thin: deserialise, delegate, map to AppResult
                  list_open_windows
 services/      domain logic, most of it runtime-free and tested
   app_menu.rs        the menu, ported from menu/app.menu.ts
+  audio.rs           THE audio graph: one sink, one device, two sources. Only
+                     the operator surface can produce sound, and that is a
+                     match rather than a convention. No Tauri types.
   auth.rs            session read-back rules, the refresh transport, the
                      sign-in URL. No Tauri types.
   deep_link.rs       present:// parsing and the pending-link buffer. Parser
@@ -231,6 +262,7 @@ services/      domain logic, most of it runtime-free and tested
   window_spec.rs     all eight windows as serialisable structs. No Tauri.
 state/
   app_state.rs          uptime only
+  audio_state.rs        the live audio graph, persisted
   auth_state.rs         the session, in the OS keychain
   display_state.rs      role→display + resolution, persisted atomically
   file_state.rs         media folders + the live scope they define
@@ -243,15 +275,15 @@ errors.rs      the single AppError crossing the boundary: { kind, message }
 ```
 
 **Events emitted to the frontend.** `display:list-changed`, `looks:changed`,
-`output:scene-changed`, `presentation:changed`, `output-window-closed`,
+`output:scene-changed`, `presentation:changed`, `audio:changed`, `output-window-closed`,
 `media-stage-window-closed`, `worship-stage-window-closed`, `open-import`,
 `ai-operator:toggle-shortcut`, `auth-callback`, `mini-lyrics:save-request`.
 The `*-window-closed` names, `open-import`, `auth-callback` and the mini-lyrics
 one match what Electron sends; the rest are new because what they carry is new.
 
 **Files the Rust core owns**, in one app-config directory:
-`display-preferences.json`, `media-folders.json`, `looks.json` and
-`service-position.json`. Plus the auth session, which is in the OS keychain and
+`display-preferences.json`, `media-folders.json`, `looks.json`,
+`service-position.json` and `audio.json`. Plus the auth session, which is in the OS keychain and
 not a file at all.
 
 **The TypeScript side** is `src/renderer/tauri/`:
@@ -263,6 +295,8 @@ not a file at all.
   design; each entry goes away when its subsystem moves to Rust. Anything not
   implemented reads as `undefined` and reports itself once into the Rust log.
 - `runtime.ts` — the typed `invoke` wrapper
+- `audio.ts` — the audio graph client, and `applyRouting`: the only function
+  in the renderer that touches `muted`, `volume` or the sink
 - `looks.ts`, `output.ts`, `presentation.ts` — typed clients for the three
   Rust-owned state slices, each imported dynamically so the Electron bundle
   never sees `@tauri-apps/api`
@@ -276,7 +310,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 305 Rust, 85 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 321 Rust, 92 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -453,7 +487,7 @@ Everything else:
 ```bash
 bun run desktop:tauri:build                     # production bundle
 bun run --filter @present/desktop tauri:check   # fmt + clippy -D warnings + tests
-bun run test                                    # 48 JS tests
+bun run test                                    # 92 JS tests
 bun run typecheck
 bun run lint
 node apps/desktop/scripts/check-tauri-version.mjs [--fix]
@@ -464,7 +498,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **305 Rust tests, 85 JS tests**, clippy/fmt/typecheck clean.
+Current: **321 Rust tests, 92 JS tests**, clippy/fmt/typecheck clean.
 
 ## 11. Installed skills
 
