@@ -29,7 +29,7 @@ use std::sync::{Mutex, OnceLock};
 use cosmic_text::{
     Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight, Wrap,
 };
-use tiny_skia::{Paint, PixmapMut, Rect};
+use tiny_skia::PixmapMut;
 
 use crate::services::slide::{SlideElement, SlideElementStyle};
 
@@ -225,37 +225,114 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
             laid_out,
         );
 
-    let transform = viewport.element_transform(element);
-    let mut paint = Paint {
-        anti_alias: true,
-        ..Paint::default()
+    // Glyphs are rasterised into a scratch pixmap and composited once.
+    //
+    // This is the difference between a frame budget and a slideshow.
+    // cosmic-text's callback fires **per glyph pixel** (`render.rs:139-153`
+    // passes `w: 1, h: 1`), so painting each one with `fill_rect` meant tens of
+    // thousands of paint-and-transform round trips for two lines of a verse:
+    // measured at 300 ms a frame, against the 33 ms that 30 fps NDI allows.
+    // Writing pixels straight into a buffer and blitting it once is one
+    // composite instead.
+    //
+    // It is also what makes rotation correct rather than merely fast: the
+    // element's transform is applied to the finished text as an image, not to
+    // each glyph box separately.
+    let Some(mut scratch) =
+        tiny_skia::Pixmap::new((width.ceil() as u32).max(1), (height.ceil() as u32).max(1))
+    else {
+        return;
     };
+    let scratch_width = scratch.width() as i32;
+    let scratch_height = scratch.height() as i32;
+
+    let base = text_color.to_color_u8();
+    let (base_r, base_g, base_b) = (base.red(), base.green(), base.blue());
+    let base_alpha = f32::from(base.alpha()) / 255.0;
 
     buffer.draw(
         system,
         cache,
         cosmic_text::Color::rgba(255, 255, 255, 255),
         |x, y, w, h, coverage| {
-            // cosmic-text hands back coverage per glyph pixel; the element's
-            // own colour is applied here so a glyph is tinted rather than
-            // drawn white and blended.
             let alpha = coverage.a();
-            if alpha == 0 || w == 0 || h == 0 {
+            if alpha == 0 {
+                return;
+            }
+            let alpha = f32::from(alpha) / 255.0 * base_alpha;
+            if alpha <= 0.0 {
                 return;
             }
 
-            let mut pixel = text_color;
-            pixel.set_alpha(text_color.alpha() * (f32::from(alpha) / 255.0));
-            paint.set_color(pixel);
-
-            let Some(rect) =
-                Rect::from_xywh(offset_x + x as f32, offset_y + y as f32, w as f32, h as f32)
-            else {
-                return;
-            };
-            pixmap.fill_rect(rect, &paint, transform, None);
+            for offset_row in 0..h as i32 {
+                for offset_col in 0..w as i32 {
+                    let px = offset_x as i32 + x + offset_col;
+                    let py = offset_y as i32 + y + offset_row;
+                    if px < 0 || py < 0 || px >= scratch_width || py >= scratch_height {
+                        continue;
+                    }
+                    blend(
+                        &mut scratch,
+                        (py * scratch_width + px) as usize,
+                        base_r,
+                        base_g,
+                        base_b,
+                        alpha,
+                    );
+                }
+            }
         },
     );
+
+    let transform = viewport.element_transform(element);
+    // Nearest for a plain translation keeps glyph edges exactly as rasterised;
+    // anything rotated or mirrored needs interpolation or the text crawls.
+    let quality = if transform.is_translate() {
+        tiny_skia::FilterQuality::Nearest
+    } else {
+        tiny_skia::FilterQuality::Bilinear
+    };
+
+    pixmap.draw_pixmap(
+        0,
+        0,
+        scratch.as_ref(),
+        &tiny_skia::PixmapPaint {
+            quality,
+            ..tiny_skia::PixmapPaint::default()
+        },
+        transform,
+        None,
+    );
+}
+
+/// Source-over one glyph pixel into the scratch buffer.
+///
+/// tiny-skia stores premultiplied pixels, so the source is multiplied by its
+/// own coverage before being added to what the destination keeps.
+fn blend(scratch: &mut tiny_skia::Pixmap, index: usize, r: u8, g: u8, b: u8, alpha: f32) {
+    let pixels = scratch.pixels_mut();
+    let Some(slot) = pixels.get_mut(index) else {
+        return;
+    };
+
+    let src_a = alpha.clamp(0.0, 1.0);
+    let inverse = 1.0 - src_a;
+
+    let mix = |src: u8, dst: u8| -> u8 {
+        (f32::from(src) * src_a + f32::from(dst) * inverse)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+
+    let out_a = (src_a + f32::from(slot.alpha()) / 255.0 * inverse).clamp(0.0, 1.0);
+    let out = tiny_skia::ColorU8::from_rgba(
+        mix(r, slot.red()),
+        mix(g, slot.green()),
+        mix(b, slot.blue()),
+        (out_a * 255.0).round() as u8,
+    );
+    *slot = out.premultiply();
 }
 
 /// Warm the font stack.

@@ -113,5 +113,21 @@ opt-level = "s"
 panic = "abort"
 strip = true
 
+# For measuring the compositor, not for shipping.
+#
+# `profile.release` optimises for **size** (`opt-level = "s"`, LTO, one codegen
+# unit), which is right for a Tauri bundle and wrong for judging a rasteriser:
+# it costs build minutes and hides how fast the code can actually run. This
+# profile answers "is the algorithm fast enough" separately from "what does the
+# shipping profile cost", which are different questions with different fixes.
+#
+#     cargo run --profile perf --example render_sample
+[profile.perf]
+inherits = "release"
+opt-level = 3
+lto = false
+codegen-units = 16
+strip = false
+
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt"] }

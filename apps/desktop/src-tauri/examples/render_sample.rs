@@ -110,8 +110,15 @@ fn main() {
     println!(
         "  30 fps budget is {:.1} ms — {}",
         budget,
-        if elapsed.as_secs_f64() * 1000.0 <= budget { "within it" } else { "OVER" }
+        if elapsed.as_secs_f64() * 1000.0 <= budget {
+            "within it"
+        } else {
+            "OVER"
+        }
     );
-    println!("  drawn: {}, deferred to the webview: {}", report.elements_drawn, report.elements_deferred);
+    println!(
+        "  drawn: {}, deferred to the webview: {}",
+        report.elements_drawn, report.elements_deferred
+    );
     println!("  BGRA for NDI: {} bytes", frame.to_bgra().len());
 }
