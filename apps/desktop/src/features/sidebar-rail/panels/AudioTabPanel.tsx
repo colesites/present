@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { cn } from "../../../renderer/shared/lib/utils";
-import { createLocalMediaUrl } from "../../../shared/lib/local-media-url";
+import { createLocalMediaUrl } from "../../../shared/lib/local-media-url.mjs";
 
 interface AudioTabPanelProps {
   orgId: Id<"organizations"> | null;

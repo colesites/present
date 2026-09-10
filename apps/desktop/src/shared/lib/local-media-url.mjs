@@ -14,13 +14,25 @@
  * URL built on either side is served by that handler, so the two must agree.
  */
 
-const isTauriShell = (): boolean =>
+/**
+ * `.mjs` rather than `.ts` for the same reason `display-selection.mjs` is:
+ * it is the shape of thing worth pinning with a `node --test` suite, and those
+ * cannot import TypeScript. `allowJs` lets both bundlers consume it.
+ *
+ * @returns {boolean}
+ */
+const isTauriShell = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-const isWindows = (): boolean =>
+/** @returns {boolean} */
+const isWindows = () =>
   typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
 
-export const createLocalMediaUrl = (filePath: string): string => {
+/**
+ * @param {string} filePath absolute path to a local media file
+ * @returns {string}
+ */
+export const createLocalMediaUrl = (filePath) => {
   if (filePath.startsWith("local-media://") || filePath.startsWith("http://local-media.")) {
     return filePath;
   }

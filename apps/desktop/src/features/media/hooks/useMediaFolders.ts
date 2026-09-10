@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 
-import { createLocalMediaUrl } from "../../../shared/lib/local-media-url";
+import { createLocalMediaUrl } from "../../../shared/lib/local-media-url.mjs";
 
 // Types for media items
 export type MediaItem = {
