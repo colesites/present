@@ -112,6 +112,9 @@ pub fn run() {
         // now, and restoring last Sunday's slide on launch would be worse than
         // starting blank.
         .manage(state::OutputState::new())
+        // The media transport. In memory: where a video had got to describes
+        // the moment, not the operator's setup.
+        .manage(state::PlaybackState::new())
         // Open lyric editors and the saves they are waiting on.
         .manage(services::mini_lyrics::MiniLyricsState::new())
         .on_menu_event(services::app_menu::handle)
@@ -163,6 +166,16 @@ pub fn run() {
             commands::audio::set_audio_source_muted,
             commands::audio::set_audio_master_gain,
             commands::audio::set_audio_master_muted,
+            commands::playback::get_playback,
+            commands::playback::select_playback_media,
+            commands::playback::play_playback,
+            commands::playback::pause_playback,
+            commands::playback::toggle_playback,
+            commands::playback::stop_playback,
+            commands::playback::seek_playback,
+            commands::playback::report_playback_position,
+            commands::playback::set_playback_duration,
+            commands::playback::playback_ended,
             commands::looks::get_looks_config,
             commands::looks::set_looks_target,
             commands::looks::set_selected_look,

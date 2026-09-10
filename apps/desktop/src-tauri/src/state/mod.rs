@@ -13,6 +13,7 @@ pub mod file_state;
 pub mod looks_state;
 pub mod output_state;
 pub mod persist;
+pub mod playback_state;
 pub mod presentation_state;
 pub mod window_state;
 
@@ -23,5 +24,6 @@ pub use display_state::DisplayState;
 pub use file_state::FileState;
 pub use looks_state::LooksState;
 pub use output_state::OutputState;
+pub use playback_state::PlaybackState;
 pub use presentation_state::PresentationState;
 pub use window_state::WindowState;

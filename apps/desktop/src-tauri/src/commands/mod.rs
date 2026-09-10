@@ -14,6 +14,7 @@ pub mod looks;
 pub mod mini_lyrics;
 pub mod output;
 pub mod permissions;
+pub mod playback;
 pub mod presentation;
 pub mod speech;
 pub mod window;

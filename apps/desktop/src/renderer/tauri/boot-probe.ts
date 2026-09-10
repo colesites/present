@@ -353,3 +353,37 @@ if (shouldProbe) {
     );
   });
 }
+
+if (shouldProbe) {
+  // Stage 5 (the media transport): not yet wired to the React player, so what
+  // is proved here is that it is reachable and that it refuses rather than
+  // guesses — the same bound `navigateWithoutDeck` proves for slides. An
+  // operator pressing play with no video loaded must not start something.
+  //
+  // `__presentPlayback` is here so the transport can be driven by hand during
+  // the manual run, which is what it is waiting on before the player moves onto
+  // it.
+  void (async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const playback = await import("./playback");
+
+    (window as unknown as { __presentPlayback?: unknown }).__presentPlayback = playback;
+
+    const before = await playback.getPlayback();
+    const afterPlay = await playback.play();
+    const refused =
+      !afterPlay.playing && afterPlay.mediaId === null ? "refused" : "NOT REFUSED";
+
+    const summary =
+      `playbackMedia=${before.mediaId ?? "none"} ` +
+      `playbackPosition=${before.positionSeconds} ` +
+      `playWithoutMedia=${refused}`;
+    console.info("[Tauri]", summary);
+    await invoke("report_diagnostic", { message: summary });
+  })().catch((error: unknown) => {
+    console.error("[Tauri] playback probe failed", error);
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("report_diagnostic", { message: `playback probe failed: ${String(error)}` }),
+    );
+  });
+}

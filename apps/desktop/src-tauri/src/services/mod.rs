@@ -17,6 +17,7 @@ pub mod mini_lyrics;
 pub mod monitors;
 pub mod output;
 pub mod permissions;
+pub mod playback;
 pub mod presentation;
 pub mod shortcuts;
 pub mod slide;
