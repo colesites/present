@@ -73,10 +73,23 @@ const subscribe = (event: string, handler: (payload: never) => void): (() => voi
  *
  * Failing to detach a listener that no longer exists is the outcome we wanted
  * anyway, so it is swallowed rather than reported.
+ *
+ * **Both** failure modes have to be caught, which is what this originally got
+ * wrong. `UnlistenFn` is typed as returning `void`, but Tauri's implementation
+ * calls an async `unregisterListener` and returns its promise, so the lookup
+ * failure arrives as a *rejection* rather than a synchronous throw — straight
+ * past a bare `try`/`catch` and out as `window.unhandledrejection`. Fifteen of
+ * them reached the Rust error log on one clean launch, each one indistinguishable
+ * from a real renderer failure at a glance.
  */
 export const safelyUnlisten = (unlisten: (() => void) | null | undefined): void => {
   try {
-    unlisten?.();
+    // Typed `void`, actually a promise. Not `await`ed: callers are synchronous
+    // teardown functions, and there is nothing to do with the outcome anyway.
+    const settled = unlisten?.() as unknown as Promise<void> | undefined;
+    if (settled && typeof settled.catch === "function") {
+      settled.catch((): void => undefined);
+    }
   } catch {
     // Already detached.
   }
