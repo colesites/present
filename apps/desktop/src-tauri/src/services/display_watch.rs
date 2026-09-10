@@ -32,7 +32,9 @@ use crate::state::DisplayState;
 ///
 /// The three fields mirror Electron's three `screen` events so the mapping
 /// stays legible, even though every one of them triggers the same reconcile.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+// `Eq` follows `Display`, which carries a scale factor and so is `PartialEq`
+// only. See the note on that type.
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct DisplayChange {
     /// Connected since the last look.
     pub added: Vec<Display>,
@@ -250,6 +252,7 @@ mod tests {
                 width,
                 height: 1055,
             },
+            scale_factor: 1.0,
             is_primary: x == 0,
         }
     }

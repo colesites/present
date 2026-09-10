@@ -290,7 +290,7 @@ pub fn respond(state: &FileState, uri: &str, range: Option<&str>) -> http::Respo
     let Some(served) = plan(total, range) else {
         // An unsatisfiable range must say so, or the media element retries the
         // same request forever.
-        return http::Response::builder()
+        return cors(http::Response::builder())
             .status(416)
             .header("Content-Range", format!("bytes */{total}"))
             .header("Accept-Ranges", "bytes")
@@ -308,14 +308,14 @@ pub fn respond(state: &FileState, uri: &str, range: Option<&str>) -> http::Respo
 
     let mime = content_type(&path);
     match served {
-        Served::Whole { .. } => http::Response::builder()
+        Served::Whole { .. } => cors(http::Response::builder())
             .status(200)
             .header("Content-Type", mime)
             .header("Content-Length", body.len().to_string())
             .header("Accept-Ranges", "bytes")
             .body(body)
             .expect("response"),
-        Served::Range { start, end, total } => http::Response::builder()
+        Served::Range { start, end, total } => cors(http::Response::builder())
             .status(206)
             .header("Content-Type", mime)
             .header("Content-Length", body.len().to_string())
@@ -326,8 +326,30 @@ pub fn respond(state: &FileState, uri: &str, range: Option<&str>) -> http::Respo
     }
 }
 
+/// Allow the page to read these responses from script.
+///
+/// A media element does not need this — `<video src>` is a no-CORS load — but
+/// `fetch` does, and the app's origin is never the scheme's. Under `tauri dev`
+/// the page comes from `http://127.0.0.1:5173` and in a packaged build from
+/// `tauri://localhost`, so there is no single origin to name even if one were
+/// wanted. Opening it costs nothing: every response has already passed the
+/// scope check, and no other application can reach this scheme.
+///
+/// `Content-Range` has to be exposed explicitly, or a cross-origin `fetch`
+/// cannot read it and cannot tell a partial response from a whole one.
+fn cors(builder: http::response::Builder) -> http::response::Builder {
+    builder
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+        .header("Access-Control-Allow-Headers", "Range")
+        .header(
+            "Access-Control-Expose-Headers",
+            "Content-Range, Content-Length, Accept-Ranges, Content-Type",
+        )
+}
+
 fn simple(status: u16, message: &str) -> http::Response<Vec<u8>> {
-    http::Response::builder()
+    cors(http::Response::builder())
         .status(status)
         .header("Content-Type", "text/plain")
         .body(message.as_bytes().to_vec())
@@ -566,6 +588,172 @@ mod tests {
         assert_eq!(encode_uri("/ä"), "/%C3%A4");
         assert_eq!(encode_uri("/a#b"), "/a%23b");
         assert_eq!(encode_uri("/Set #2?.mp4"), "/Set%20%232%3F.mp4");
+    }
+
+    /// A real file, a real scope, and the response the webview would get.
+    ///
+    /// The planning functions above are pure and tested on their own; this
+    /// covers the part that reads bytes off a disk and puts headers on them.
+    mod serving {
+        use super::*;
+        use crate::state::FileState;
+
+        struct Fixture {
+            root: PathBuf,
+            media: PathBuf,
+            state: FileState,
+        }
+
+        impl Fixture {
+            fn new(label: &str) -> Self {
+                let root = std::env::temp_dir().join(format!(
+                    "present-media-protocol-{label}-{}-{:?}",
+                    std::process::id(),
+                    std::thread::current().id()
+                ));
+                let _ = std::fs::remove_dir_all(&root);
+                std::fs::create_dir_all(&root).expect("temp dir");
+                let root = std::fs::canonicalize(&root).expect("canonical");
+
+                let media = root.join("media");
+                std::fs::create_dir_all(&media).expect("media dir");
+
+                let state = FileState::load(&root.join("config"));
+                state.add_folder(&media).expect("media folder");
+
+                Self { root, media, state }
+            }
+
+            fn write(&self, name: &str, contents: &[u8]) -> PathBuf {
+                let path = self.media.join(name);
+                std::fs::write(&path, contents).expect("file");
+                path
+            }
+        }
+
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
+        }
+
+        #[test]
+        fn a_granted_file_is_served_whole() {
+            let fixture = Fixture::new("whole");
+            let path = fixture.write("still.png", b"pretend-png-bytes");
+
+            let response = respond(&fixture.state, &url_for(&path), None);
+
+            assert_eq!(response.status(), 200);
+            assert_eq!(response.headers()["Content-Type"], "image/png");
+            assert_eq!(response.headers()["Accept-Ranges"], "bytes");
+            // Without this a `fetch` from the app's origin cannot read the
+            // response at all, whatever the status says.
+            assert_eq!(response.headers()["Access-Control-Allow-Origin"], "*");
+            assert_eq!(response.body().as_slice(), b"pretend-png-bytes");
+        }
+
+        #[test]
+        fn a_range_returns_exactly_those_bytes() {
+            let fixture = Fixture::new("range");
+            let path = fixture.write("clip.mp4", b"0123456789");
+
+            let response = respond(&fixture.state, &url_for(&path), Some("bytes=2-5"));
+
+            assert_eq!(response.status(), 206);
+            assert_eq!(response.headers()["Content-Range"], "bytes 2-5/10");
+            assert_eq!(response.headers()["Content-Length"], "4");
+            assert_eq!(response.body().as_slice(), b"2345");
+        }
+
+        #[test]
+        fn a_suffix_range_returns_the_tail() {
+            let fixture = Fixture::new("suffix");
+            let path = fixture.write("clip.mp4", b"0123456789");
+
+            let response = respond(&fixture.state, &url_for(&path), Some("bytes=-3"));
+
+            assert_eq!(response.status(), 206);
+            assert_eq!(response.headers()["Content-Range"], "bytes 7-9/10");
+            assert_eq!(response.body().as_slice(), b"789");
+        }
+
+        #[test]
+        fn an_unsatisfiable_range_is_416_not_a_retry_loop() {
+            let fixture = Fixture::new("416");
+            let path = fixture.write("clip.mp4", b"0123456789");
+
+            let response = respond(&fixture.state, &url_for(&path), Some("bytes=50-60"));
+
+            assert_eq!(response.status(), 416);
+            assert_eq!(response.headers()["Content-Range"], "bytes */10");
+        }
+
+        /// The Stage 3 gate, at the layer that used to have no check at all.
+        #[test]
+        fn a_file_outside_every_media_folder_is_403() {
+            let fixture = Fixture::new("denied");
+            let secret = fixture.root.join("keys.txt");
+            std::fs::write(&secret, "secret").expect("file");
+
+            let response = respond(&fixture.state, &url_for(&secret), None);
+
+            assert_eq!(response.status(), 403);
+            assert_ne!(response.body().as_slice(), b"secret");
+        }
+
+        #[test]
+        fn a_symlink_planted_in_a_media_folder_is_403() {
+            let fixture = Fixture::new("symlink");
+            let secret = fixture.root.join("keys.txt");
+            std::fs::write(&secret, "secret").expect("file");
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&secret, fixture.media.join("innocent.mp4"))
+                .expect("symlink");
+
+            #[cfg(unix)]
+            {
+                let response = respond(
+                    &fixture.state,
+                    &url_for(&fixture.media.join("innocent.mp4")),
+                    None,
+                );
+                assert_eq!(response.status(), 403);
+            }
+        }
+
+        #[test]
+        fn a_missing_file_inside_a_media_folder_is_404() {
+            let fixture = Fixture::new("404");
+
+            let response = respond(
+                &fixture.state,
+                &url_for(&fixture.media.join("absent.mp4")),
+                None,
+            );
+
+            assert_eq!(response.status(), 404);
+        }
+
+        #[test]
+        fn a_folder_is_not_served_as_a_file() {
+            let fixture = Fixture::new("dir");
+
+            let response = respond(&fixture.state, &url_for(&fixture.media), None);
+
+            assert_eq!(response.status(), 404);
+        }
+
+        #[test]
+        fn a_name_with_spaces_and_accents_round_trips_through_the_url() {
+            let fixture = Fixture::new("encoding");
+            let path = fixture.write("Lobgesänge — Set #2.mp4", b"video");
+
+            let response = respond(&fixture.state, &url_for(&path), None);
+
+            assert_eq!(response.status(), 200);
+            assert_eq!(response.body().as_slice(), b"video");
+        }
     }
 
     #[test]

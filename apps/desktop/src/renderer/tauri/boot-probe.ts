@@ -107,3 +107,93 @@ if (shouldProbe) {
     console.error("[Tauri] window probe failed", error);
   });
 }
+
+if (shouldProbe) {
+  // Stage 3 (native APIs): prove the containment boundary from inside the
+  // webview, which is the only place that can prove it. Two attempts that must
+  // both fail, and one report of what is actually reachable.
+  void (async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const runtime = await import("./electron-bridge");
+
+    const folders = await invoke("list_media_folders");
+
+    // A folder nobody granted. `read_folder` must refuse it by kind, not by
+    // whether it happens to exist.
+    let refusal = "NOT REFUSED — the scope is open";
+    try {
+      await invoke("read_folder", { folderPath: "/etc" });
+    } catch (error) {
+      const kind = (error as { kind?: string } | null)?.kind;
+      refusal = kind === "denied" ? "denied" : `unexpected kind: ${String(kind)}`;
+    }
+
+    // The same question asked the way an attacker would: straight at the media
+    // scheme, which is the hole this stage closed.
+    let protocolStatus = "no response";
+    try {
+      const response = await fetch(runtime.localMediaUrl("/etc/passwd"));
+      protocolStatus = String(response.status);
+    } catch (error) {
+      protocolStatus = `threw: ${String(error)}`;
+    }
+
+    // The other half of the gate: a file the operator *did* grant has to be
+    // served, and served in ranges, or every video in the app stops playing.
+    let granted = "no media folder to test";
+    const first = (folders as { path: string }[])[0];
+    if (first) {
+      const files = await invoke<{ name: string }[]>("read_folder", {
+        folderPath: first.path,
+      });
+      if (files.length === 0) {
+        granted = `${first.path} is empty`;
+      } else {
+        const url = runtime.localMediaUrl(`${first.path}/${files[0].name}`);
+        const response = await fetch(url, { headers: { Range: "bytes=0-15" } });
+        const body = await response.arrayBuffer();
+        granted =
+          `${response.status} ` +
+          `range=${response.headers.get("Content-Range") ?? "none"} ` +
+          `bytes=${body.byteLength}`;
+      }
+    }
+
+    const summary =
+      `mediaFolders=${JSON.stringify(folders)} ` +
+      `readFolderOutsideScope=${refusal} ` +
+      `localMediaOutsideScope=${protocolStatus} ` +
+      `localMediaInsideScope=${granted}`;
+    console.info("[Tauri]", summary);
+    await invoke("report_diagnostic", { message: summary });
+
+    // The dialogs need a human. Exposed so the eight of them can be driven by
+    // hand against real hardware, the same way the window openers are.
+    (window as unknown as { __presentFiles?: unknown }).__presentFiles = {
+      selectFolder: () => invoke("select_folder"),
+      selectMediaFile: () => invoke("select_media_file"),
+      selectAudioFiles: () => invoke("select_audio_files"),
+      selectPropImage: () => invoke("select_prop_image"),
+      selectPropMedia: () => invoke("select_prop_media"),
+      selectPresentationFiles: () => invoke("select_presentation_files"),
+      selectLibraryExportDestination: () => invoke("select_library_export_destination"),
+      selectLibraryImportSource: () => invoke("select_library_import_source"),
+      listMediaFolders: () => invoke("list_media_folders"),
+      removeMediaFolder: (id: string) => invoke("remove_media_folder", { id }),
+      readFolder: (folderPath: string) => invoke("read_folder", { folderPath }),
+      microphoneStatus: () => invoke("get_microphone_access_status"),
+      cameraStatus: () => invoke("get_camera_access_status"),
+      requestMicrophone: () => invoke("request_microphone_access"),
+      mediaUrl: runtime.localMediaUrl,
+    };
+  })().catch((error: unknown) => {
+    console.error("[Tauri] file scope probe failed", error);
+    // Mirrored, unlike the probes above: this one is the security gate, and a
+    // probe that fails silently is indistinguishable from a gate that passed.
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("report_diagnostic", {
+        message: `file scope probe failed: ${String(error)}`,
+      }),
+    );
+  });
+}

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 
+import { createLocalMediaUrl } from "../../../shared/lib/local-media-url";
+
 // Types for media items
 export type MediaItem = {
   id: string;
@@ -151,8 +153,7 @@ function getMediaType(fileName: string): "image" | "video" | null {
 const createMediaId = (folderId: string, fileName: string) =>
   `${folderId}-${fileName}`;
 
-const createMediaUrl = (filePath: string) =>
-  `local-media://media${encodeURI(filePath)}`;
+const createMediaUrl = (filePath: string) => createLocalMediaUrl(filePath);
 
 export function filtersToCSS(filters: MediaFilters): string {
   const parts: string[] = [];

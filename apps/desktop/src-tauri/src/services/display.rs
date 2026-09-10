@@ -9,13 +9,25 @@ use serde::{Deserialize, Serialize};
 /// A monitor as the frontend sees it. Field names match the shape
 /// `get-displays` returns today (`window.ipc.ts:44-52`) so the React side does
 /// not change when the source of this data moves to Rust.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// `Eq` is out once a float is a field. Displays are compared for "did the
+// monitor layout change", which `PartialEq` answers: two scale factors read
+// from the same OS call are bit-identical, so no epsilon is wanted here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Display {
     pub id: i64,
     pub label: String,
+    /// Physical pixels, not the device-independent ones Electron reports. The
+    /// settings picker prints this as the monitor's resolution, where physical
+    /// is the more useful of the two — an operator choosing an output
+    /// resolution is thinking about the projector's native mode. It also means
+    /// a scaled built-in display reads differently here than under Electron.
     pub bounds: Rect,
     pub work_area: Rect,
+    /// What the OS scales this monitor by. Needed by the settings screen, and
+    /// by anything converting between the physical geometry above and the
+    /// logical units `WebviewWindowBuilder` takes.
+    pub scale_factor: f64,
     pub is_primary: bool,
 }
 
@@ -102,6 +114,7 @@ mod tests {
                 width,
                 height,
             },
+            scale_factor: 1.0,
             is_primary: false,
         }
     }

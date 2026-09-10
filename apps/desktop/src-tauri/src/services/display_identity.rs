@@ -133,6 +133,7 @@ pub fn identify(monitors: &[MonitorSnapshot]) -> Vec<(DisplayKey, Display)> {
                     height: monitor.size.1,
                 },
                 work_area: monitor.work_area,
+                scale_factor: monitor.scale_factor,
                 is_primary: monitor.is_primary,
             };
 

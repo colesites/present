@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { cn } from "../../../renderer/shared/lib/utils";
+import { createLocalMediaUrl } from "../../../shared/lib/local-media-url";
 
 interface AudioTabPanelProps {
   orgId: Id<"organizations"> | null;
@@ -79,10 +80,7 @@ const formatDuration = (seconds: number | undefined): string => {
   return `${m}:${String(s % 60).padStart(2, "0")}`;
 };
 
-const pathToFileUrl = (path: string): string => {
-  if (path.startsWith("local-media://")) return path;
-  return `local-media://media${encodeURI(path.startsWith("/") ? path : `/${path}`)}`;
-};
+const pathToFileUrl = (path: string): string => createLocalMediaUrl(path);
 
 export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
   const [audioState, setAudioState] = useState<LocalAudioState>(() =>

@@ -14,6 +14,11 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      Order matters. `boot.ts` installs the `window.electronAPI` bridge
+      synchronously; the React entry below expects it to already exist.
+    -->
+    <script type="module" src="/src/renderer/tauri/boot.ts"></script>
     <script type="module" src="/src/renderer/tauri/boot-probe.ts"></script>
     <script type="module" src="/src/renderer/main/main-renderer.ts"></script>
   </body>
