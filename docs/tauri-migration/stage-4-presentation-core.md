@@ -1,6 +1,6 @@
 # Stage 4 — The presentation core into Rust
 
-**Status:** in progress · **Date:** 2026-09-10
+**Status:** complete · **Date:** 2026-09-10
 
 Moving the state that decides what the congregation sees out of React and into
 Rust, one slice at a time. The gate is characterisation tests written against
@@ -125,34 +125,81 @@ them until the wgpu compositor has to draw them (ADR-001, Stage 5). That is not
 the opaque relay this replaces: they are typed fields of a typed scene, and the
 day the compositor needs them is the day they get a struct.
 
-## 5. What is verified
+## 5. Slice five — the mini lyrics round trip
+
+The last relay this stage owns. A small window edits one item's lyrics and
+cannot do the save itself: the write goes through Convex and the offline queue,
+both of which live in the operator window's React tree.
+
+Electron does it with four channels and a map of pending callbacks keyed by a
+generated string (`window.ipc.ts:142-190`). Here it is two commands and one
+event, and the `mini-lyrics:ready` handshake is gone — the editor asks what it
+is editing, the same way a late-joining output window asks for the scene. That
+closed a gap as well as moving one: the Rust payload previously carried only
+the id and the title, so under Tauri the editor had nothing to edit.
+
+The ten-second timeout is kept. An operator who has typed a verse and hit save
+needs an answer either way.
+
+## 6. What is verified
 
 By running the app, not by reasoning:
 
 - the operator UI renders in full under Tauri — services, media panel, audience
   preview, timers, toolbar, menu
-- no renderer errors at all, where the same build previously threw on
-  `sendToOutput`
-- a looks toggle applied in Rust reaches a subscribed window as an event
+- **zero renderer errors** on a clean launch, where the same build previously
+  threw on `sendToOutput`
+- the three live gates hold on every launch:
+
+```
+localMediaOutsideScope = 403        the Stage 3 file scope
+changeEvent            = delivered  a looks toggle reaching another window
+navigateWithoutDeck    = refused    slide navigation bounded, not guessed
+```
+
 - the layer defaults come back byte-identical to the JS ones
+- everything Stage 4 owns is bridged; what the UI still reaches for and does not
+  find is Bible (Stage 7) and NDI (Stage 6)
+- Electron still packages
 
 Not verified:
 
 - **No service has been run through it.** No slide advanced, no video played, no
-  audience window opened onto a second screen.
+  audience window opened onto a second screen. This is the big one: the code
+  paths are exercised by tests and by startup probes, not by use.
 - The output window and both stage displays render the Rust scene in code and
   have not been opened.
 - Freeze and unfreeze have not been exercised by hand.
+- The mini lyrics editor has not been opened, so its save round trip is
+  untested outside its unit tests.
 - Nothing on Windows or Linux.
 
-## 6. What is left in Stage 4
+## 7. What the stage did not move, and why
 
-The presentation state itself — `PresentContainer.tsx`'s sixteen `useState`
-hooks and the service, item and slide navigation around them. That is the
-~44 000 lines the audit warns about (§10.4), and the AI Operator's existing tool
-catalogue (`next_slide`, `previous_slide`, `go_to_slide`, …) is already the
-command surface it should become.
+`PresentContainer.tsx` still holds most of its sixteen `useState` hooks, and
+that is the intended outcome rather than an unfinished one. Only a handful of
+them describe *the presentation*; the rest are view state — whether the grid is
+showing, what the edit panel scrolled to, which import dialog is open. Moving
+those would be moving UI into the core for nothing, and the audit's own warning
+about the ~44 000 lines (§10.4) is a warning against exactly that.
 
-`reportRendererError` also landed here, out of order, because without it the
-blank window could not be diagnosed at all: the call site is optional-chained,
-so under Tauri every render failure vanished in silence.
+What was moved is the state that decides what the congregation sees, plus the
+position that decides what comes next. The prop chains the audit worried about
+were not rewritten, because the adapter pattern meant they did not have to be:
+every hook kept its signature.
+
+Two things landed here out of stage order, both because the alternative was
+working blind. `reportRendererError` reaches the Rust log — the call site is
+optional-chained, so under Tauri every render failure was vanishing in silence
+and the blank window could not be diagnosed at all. And the auth session moved
+early, because nothing after it could be seen working.
+
+## 8. What Stage 5 inherits
+
+- `OutputScene` is the serialisable output state ADR-001 requires. The wgpu
+  compositor draws *that*, and the two fields carried verbatim today — slide
+  elements and the screen-composer layout — are the ones it will need to type.
+- The single-audible-video guard is in place and proven to fail correctly. It
+  is what stops the media rewrite reintroducing audience echo.
+- `PresentationPosition` already answers "which deck, which slide", so the
+  media engine has something to ask.

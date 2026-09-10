@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 17 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 24 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -35,7 +35,7 @@ the audience screen is a serious bug, not a rough edge.
 | [stage-2-windows.md](stage-2-windows.md) | All eight windows in Rust: specs as data, the output hardening, crash policy, the physical/logical placement trap. |
 | [stage-2-hotplug.md](stage-2-hotplug.md) | Monitors changing under a running app: the poll, what counts as a change, and the work-area feedback loop. |
 | [stage-3-native-apis.md](stage-3-native-apis.md) | The file scope and why it is shaped that way, the media scheme without a stream, dialogs, menu, shortcut, deep links, permissions, and the `electronAPI` bridge. |
-| [stage-4-presentation-core.md](stage-4-presentation-core.md) | **In progress.** The characterisation gate, the output layer flags, the auth session, and the audience scene. What is left. |
+| [stage-4-presentation-core.md](stage-4-presentation-core.md) | The characterisation gate, the output layer flags, the auth session, the audience scene, the presentation position, and what Stage 5 inherits. |
 
 ## 3. Where things stand
 
@@ -76,27 +76,47 @@ shortcut pressed, no permission prompt shown. `__presentFiles` on the operator
 window exposes each of those for exactly that. The full list is in
 stage-3-native-apis.md §6.
 
-### Stages 4–8, untouched
+**Stage 4 — the presentation core.** Done. The gate is met.
+- ✅ Characterisation tests written against the running Electron build first
+- ✅ Output layer flags in Rust, which killed a 400 ms cross-window poll
+- ✅ Auth session in Rust and the OS keychain (pulled forward from Stage 7)
+- ✅ The audience scene: one Rust-owned value, not three relayed streams
+- ✅ The presentation position: which service, which item, which slide
+- ✅ The mini lyrics save round trip
+- ✅ **The Tauri build renders the whole operator UI**, with zero renderer errors
+
+Every hook kept its signature, so no component changed and no prop chain was
+rewritten. `PresentContainer.tsx` still holds most of its sixteen `useState`
+hooks on purpose — only a handful describe the presentation; the rest are view
+state, and moving those would be moving UI into the core for nothing.
+
+### Stages 5–8, untouched
 
 Content and gates from the audit's §12, inlined so this file stands alone.
 
 | Stage | Content | Gate |
 |---|---|---|
-| **4** | Presentation core into Rust, slice by slice: output layer flags → slides → service. React adapter hooks keep component props stable. | Characterisation tests first |
 | **5** | Media engine + single audio path. Fixes the audit's §5.4 as part of the work. | Audio regression suite |
 | **6** | NDI, per ADR-001. | Discovery/connect/output/reconnect |
 | **7** | Bible, fonts, PPTX sidecar, auth, AI Operator on Rust commands, error reporting, settings. | Parity checklist |
 | **8** | Measure against the Electron baseline, then remove Electron. | Definition of done |
 
-Stages 4 and 5 are the bulk of it: Stage 4 touches ~44 000 lines of UI and
-Stage 5 carries the wgpu compositor. **Before either, write characterisation
-tests against the running Electron build** — in particular one asserting that
-exactly one audible media element exists for a given playback. That is the
-regression that must never return, and it is why Electron stays until Stage 8.
+**The single-audible-video guard exists now** (`tests/single-audible-video.test.mjs`)
+and is proven to fail when a second audible element appears. It is what stops
+the Stage 5 media rewrite reintroducing audience echo, and it is why Electron
+stays until Stage 8.
 
 ### Commits on this branch
 
 ```
+bc05ab5 feat(stage-4): replace the mini lyrics save round trip
+f25608c feat(stage-4): move the presentation position into Rust
+82fb3ef docs(stage-4): record the gate, the three slices done, and the two bugs
+d838a47 feat(stage-4): make the audience scene Rust-owned state
+b9ef5d9 feat(stage-4): move the auth session into Rust and the OS keychain
+b55c894 feat(stage-4): move the output layer flags into Rust
+a8c8d25 test(stage-4): pin the audible-video invariant and the output layer flags
+1b6398d docs: correct the test counts and commit list after the URL suite
 d1f4ff0 test(stage-3): pin the local media URL rule on both shells
 4667521 docs(stage-3): record the file scope, what it proves, and what it does not
 0289db5 feat(stage-3): bridge the React tree to the Rust core
@@ -118,37 +138,42 @@ df6c9a7 docs: add session handoff for the Tauri migration
 
 ## 4. The next task, concretely
 
-**Stage 4 — the presentation core into Rust**, slice by slice: output layer
-flags, then slides, then service. React adapter hooks keep component props
-stable. The gate is characterisation tests first, written against the *running
-Electron build* — audit §10.8.
+**Stage 5 — the media engine and a single audio path.** The gate is an audio
+regression suite. This is the stage ADR-001 was written for, and the one where
+getting it wrong is audible to a congregation.
 
-Two things are worth doing before Stage 4 proper, neither of which is Stage 4
-work:
+Do these two first, in this order. Neither is Stage 5 work and both change what
+Stage 5 can be trusted against.
 
-**Drive the Stage 3 native APIs by hand.** Eight dialogs, a deep link, a global
-shortcut and two permission prompts have code and tests but have never been
-operated by a human. `__presentFiles` and `__presentWindows` on the operator
-window expose all of them. This is an hour, not a day, and it is the difference
-between "the tests pass" and "it works".
+**1. Run a service through the Tauri build by hand.** Everything below Stage 5
+has code, tests and startup probes; none of it has been *used*. No slide has
+been advanced, no video played, no audience window opened, no dialog clicked,
+no deep link followed. An hour with the app will find more than another day of
+reading will. `__presentFiles`, `__presentWindows`, `__presentLooks` and
+`__presentPosition` on the operator window expose the pieces that need a human.
 
-**Run the multi-monitor matrix Stage 2 could not.** Needs a second screen, not a
+**2. Run the multi-monitor matrix.** Still the outstanding Stage 2 gate, and
+Stage 5 puts real video on that second screen. Needs a second monitor, not a
 code change.
 
-Stage 4's first slice should be whichever one makes the app visible again. The
-operator window mounts React and renders nothing, because it waits on an auth
-session that does not exist at the Tauri origin (known-issues §2) and
-`getStoredAuthSession` is not bridged. That is nominally Stage 7, but a blank
-window makes every Stage 4 change unverifiable by eye, so consider pulling the
-session read forward.
+Then Stage 5 itself. What it inherits:
+
+- `OutputScene` is the serialisable output state ADR-001 requires. The wgpu
+  compositor draws that. The two fields carried verbatim today — slide elements
+  and the screen-composer layout — are the ones it has to type.
+- The single-audible-video guard is in place and proven to fail correctly.
+- `PresentationPosition` already answers "which deck, which slide".
+- known-issues §1 is Stage 5's to fix: backing tracks bypass the audio-output
+  device setting entirely, because `setSinkId` is called on exactly one element
+  in the whole repository.
 
 Per ADR-001, **output state must be fully describable as serialisable Rust
-structs from here on** — never as React component state. Window specs and the
-reposition decision already are; the scene description is Stage 5.
+structs** — never as React component state. The scene already is; the compositor
+is what makes it authoritative rather than descriptive.
 
 ## 5. What the Rust core contains today
 
-8 300 lines across `apps/desktop/src-tauri/src`, mirroring the Electron main
+13 200 lines across `apps/desktop/src-tauri/src`, mirroring the Electron main
 process's own structure as the audit asked. Nothing here is a stub.
 
 ```
@@ -158,14 +183,26 @@ commands/      thin: deserialise, delegate, map to AppResult
   diagnostics.rs report_webview_capabilities · report_diagnostic
   display.rs     get_displays · get/set_preferred_display
                  get/set_preferred_resolution · reconcile_displays
+  auth.rs        get/set/clear_stored_auth_session · consume_pending_auth_token
+                 begin_auth_flow · open_external_browser · refresh_desktop_session
   file.rs        the eight dialogs · the six file operations · the two
                  library-bundle calls · list/remove_media_folder
+  looks.rs       get_looks_config · set_looks_target · set_selected_look
+                 add_look · set_look_name · set_look_layer · set_look_text_position
+  mini_lyrics.rs get_mini_lyrics_payload · save_mini_lyrics
+                 respond_mini_lyrics_save
+  output.rs      get_output_scene · send_to_output · set/is_output_frozen
   permissions.rs request/get microphone and camera access
+  presentation.rs get_presentation_position · set_presentation_service/_item/_group
+                 set_presentation_deck · go_to_slide · next/previous_slide
+                 reconcile_presentation_services
   speech.rs      request_speech_token · report_speech_usage
   window.rs      open_window · close_window · open/close_mini_lyrics_window
                  list_open_windows
 services/      domain logic, most of it runtime-free and tested
   app_menu.rs        the menu, ported from menu/app.menu.ts
+  auth.rs            session read-back rules, the refresh transport, the
+                     sign-in URL. No Tauri types.
   deep_link.rs       present:// parsing and the pending-link buffer. Parser
                      has no Tauri types.
   dialog.rs          the eight native dialogs; every pick grants scope
@@ -177,30 +214,45 @@ services/      domain logic, most of it runtime-free and tested
   file_scope.rs      THE containment rule. No Tauri types. Read this before
                      touching anything that takes a path.
   filesystem.rs      the file operations, all scope-checked
+  looks.rs           THE output layer flag reducer. No Tauri types. Twin of
+                     shared/lib/looks-config.mjs, case for case.
   media_protocol.rs  the local-media:// handler: URL parsing, range planning,
                      content types, the scope check
+  mini_lyrics.rs     the editor's payload and its save round trip
+  output.rs          THE audience scene, and the rules for merging an update
+                     into it. No Tauri types.
   monitors.rs        Tauri-facing enumeration and role resolution
   permissions.rs     AVFoundation microphone/camera authorisation
+  presentation.rs    where the operator is: service, item, deck, slide, and the
+                     bounds on moving between them. No Tauri types.
   shortcuts.rs       Control+Alt+Space
   speech.rs          AssemblyAI token broker transport
   window.rs          building, showing, placing and closing windows
   window_spec.rs     all eight windows as serialisable structs. No Tauri.
 state/
-  app_state.rs       uptime only
-  display_state.rs   role→display + resolution, persisted atomically
-  file_state.rs      media folders + the live scope they define
-  persist.rs         load-or-default and atomic save, shared
-  window_state.rs    per-window crash history for the loop guard
+  app_state.rs          uptime only
+  auth_state.rs         the session, in the OS keychain
+  display_state.rs      role→display + resolution, persisted atomically
+  file_state.rs         media folders + the live scope they define
+  looks_state.rs        the live layer flags, persisted
+  output_state.rs       the live audience scene + the freeze flag. In memory.
+  persist.rs            load-or-default and atomic save, shared
+  presentation_state.rs the position; the service half persists
+  window_state.rs       per-window crash history for the loop guard
 errors.rs      the single AppError crossing the boundary: { kind, message }
 ```
 
-**Events emitted to the frontend.** `display:list-changed`,
-`output-window-closed`, `media-stage-window-closed`,
-`worship-stage-window-closed`, `open-import`, `ai-operator:toggle-shortcut`,
-`auth-callback`. All but the first match the names Electron sends.
+**Events emitted to the frontend.** `display:list-changed`, `looks:changed`,
+`output:scene-changed`, `presentation:changed`, `output-window-closed`,
+`media-stage-window-closed`, `worship-stage-window-closed`, `open-import`,
+`ai-operator:toggle-shortcut`, `auth-callback`, `mini-lyrics:save-request`.
+The `*-window-closed` names, `open-import`, `auth-callback` and the mini-lyrics
+one match what Electron sends; the rest are new because what they carry is new.
 
 **Files the Rust core owns**, in one app-config directory:
-`display-preferences.json` and `media-folders.json`.
+`display-preferences.json`, `media-folders.json`, `looks.json` and
+`service-position.json`. Plus the auth session, which is in the OS keychain and
+not a file at all.
 
 **The TypeScript side** is `src/renderer/tauri/`:
 
@@ -211,16 +263,20 @@ errors.rs      the single AppError crossing the boundary: { kind, message }
   design; each entry goes away when its subsystem moves to Rust. Anything not
   implemented reads as `undefined` and reports itself once into the Rust log.
 - `runtime.ts` — the typed `invoke` wrapper
-- `boot-probe.ts` — startup smoke test, operator window only. Now also proves
-  the file scope and exposes `__presentFiles` and `__presentWindows` so the
-  dialogs and window openers can be driven by hand.
+- `looks.ts`, `output.ts`, `presentation.ts` — typed clients for the three
+  Rust-owned state slices, each imported dynamically so the Electron bundle
+  never sees `@tauri-apps/api`
+- `boot-probe.ts` — startup smoke test, operator window only. Also proves the
+  file scope, the looks change event and the navigation bounds on every launch,
+  and exposes `__presentFiles`, `__presentWindows`, `__presentLooks` and
+  `__presentPosition` so the parts that need a human can be driven by hand.
 - `capability-probe.ts` — the WKWebView feature report
 
 Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 191 Rust, 55 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 305 Rust, 85 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -276,7 +332,14 @@ Verified by running it, not by reasoning:
 - Media folders loading from `media-folders.json` on a fresh launch, and the
   scope they define working immediately.
 - The application menu installed and correct: `Present File Edit View Window`.
-- React mounting under Tauri and reaching the native layer through the bridge.
+- **The whole operator UI rendering under Tauri** — services sidebar, media
+  panel, audience preview, timers, toolbar — with **zero renderer errors** on a
+  clean launch.
+- A looks toggle applied in Rust reaching a subscribed window as an event
+  rather than on a poll (`changeEvent=delivered`).
+- Slide navigation refusing to run with no deck loaded rather than guessing
+  (`navigateWithoutDeck=refused`).
+- Electron still packaging cleanly with every shared file this branch touched.
 
 **Not verified — do not claim otherwise:**
 
@@ -290,17 +353,70 @@ Verified by running it, not by reasoning:
   placement is exercised only at the origin, which is exactly where a
   physical-vs-logical pixel mistake is invisible, and no window has been moved
   from one monitor to another. This is the outstanding Stage 2 gate.
-- **No Stage 3 dialog has been opened**, no `present://` link followed, no
-  global shortcut pressed, no permission prompt shown. Code and tests only.
-  `__presentFiles` exposes each of them; stage-3-native-apis.md §6 is the list.
+- **No service has been run through the Tauri build.** No slide advanced, no
+  video played, no audience window opened, no dialog clicked, no deep link
+  followed, no shortcut pressed, no permission prompt shown, no mini lyrics
+  editor opened. Everything below Stage 5 is exercised by tests and by startup
+  probes, not by use. This is the single largest gap in the whole migration.
 - **No media has actually played through `local-media://`.** A range request
   returns the right bytes; a video decoding and playing in WKWebView is
   a different claim and has not been made.
-- **The operator window is blank under Tauri.** React mounts and reaches the
-  Rust core, then waits on an auth session the Tauri origin does not have. See
-  §4.
+- **Nobody has signed in under Tauri.** The session store, the refresh
+  transport and the deep-link handler all have tests; the flow has never run.
 
-## 8. Working agreements
+## 8. Open issues
+
+Every bug found so far, with its current state. The detail is in
+[known-issues.md](known-issues.md); this table is so a new session can see the
+whole picture without opening it.
+
+| # | Issue | Severity | State |
+|---|---|---|---|
+| 1 | Backing tracks ignore the audio-output-device setting | High | Open — Stage 5 |
+| 2 | Dev and packaged builds keep entirely separate state | High | **Partly fixed** — see below |
+| 3 | `local-media://` can read any file on disk | Medium | **Fixed** |
+| 4 | Media panel hidden behind a dead File System Access check | Medium | **Fixed** |
+| 5 | `vosk` is a dependency that is never imported | Low | Open — Stage 7 |
+| 6 | Build workflows trigger on a branch that does not exist | Low | Open — deliberately |
+| 7 | Ten pre-existing ESLint errors | Low | Open — deliberately |
+| 8 | Speech-to-search blocked by a CORS preflight | Medium | **Fixed** |
+| 9 | Monitor hot-plug never moved the output window | High | **Fixed** |
+| 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | Open — Stage 7 |
+| 11 | Unfreezing the output does not catch the audience screen up | Medium | **Fixed** |
+| 12 | The Looks window and the operator window agree by polling | Medium | **Fixed** |
+
+**§2 is the one to understand.** Four of its parts are done: the auth session
+is in the OS keychain, and the media folder list, the output layer flags and
+the service position are in Rust files owned by the app rather than by a
+renderer origin. What is still in origin-partitioned web storage is the rest of
+the `present-*` localStorage keys — UI state, timers, service templates, the
+screen composer layout, local audio, media filters, browser history — plus the
+offline IndexedDB blob and its sync queue, and the Dexie Bible cache. Those
+belong to the subsystems that own them; moving them ahead of those stages means
+writing the same migration twice.
+
+**Issues 6 and 7 are open on purpose.** Release triggers are not a migration
+decision, and the ten lint errors are pre-existing on `master` — eight of them
+change render timing in live-service code. Neither belongs inside a migration
+commit.
+
+### Gaps that are not bugs
+
+Things that are missing rather than wrong, and would be easy to mistake for
+finished work.
+
+| Gap | Where it bites |
+|---|---|
+| **No service has been run end to end under Tauri** | The largest gap. No slide advanced, no video played, no audience window opened, no dialog clicked, no deep link followed, no shortcut pressed, nobody signed in |
+| The output window and both stage displays have never been opened | They render the Rust scene in code only |
+| Freeze and unfreeze have not been exercised by hand | The behaviour deliberately differs from Electron now — see §11 |
+| Nothing has run on Windows or Linux | The `http://local-media.localhost` URL form, the single-instance lock, argv deep links and the keychain fallback are all untested there |
+| No window has been on a second monitor | The outstanding Stage 2 gate |
+| No live AssemblyAI transcription | Needs the owner signed in |
+| The mini lyrics editor has never been opened | Its save round trip is tested only in units |
+| Display id across an OS reboot | Only app restarts have been tested |
+
+## 9. Working agreements
 
 - **Never push.** Local commits on `rust` only.
 - **The monorepo runs on bun**, not pnpm. `bunfig.toml` pins the hoisted linker
@@ -320,7 +436,7 @@ Verified by running it, not by reasoning:
   from a terminal — mirror findings into the Rust log via
   `commands::diagnostics::report_diagnostic`.
 
-## 9. Commands
+## 10. Commands
 
 The monorepo runs on **bun**, not pnpm. Root aliases start each app from
 anywhere in the tree:
@@ -348,9 +464,9 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **191 Rust tests, 55 JS tests**, clippy/fmt/typecheck clean.
+Current: **305 Rust tests, 85 JS tests**, clippy/fmt/typecheck clean.
 
-## 10. Installed skills
+## 11. Installed skills
 
 `rust-best-practices`, `rust-async-patterns`, `rust-testing`, `rust-patterns`,
 `rust-engineer`, `tauri-v2`, plus `frontend-design` globally. Project-scoped in
@@ -361,7 +477,7 @@ generic nine-step workflow pack that overlaps and competes with the migration
 plan's own stage gates. Not installed. That was advice, not a veto — install it
 if asked.
 
-## 11. Traps
+## 12. Traps
 
 - **The Electron main process owns almost no state.** It is a relay: `send-to-output`
   forwards opaque `unknown` blobs. Presentation state lives in React
@@ -384,6 +500,20 @@ if asked.
 - **The bridge is not the API.** `window.electronAPI` under Tauri is a
   compatibility shim that shrinks every stage. Do not add to it for anything
   Rust should own outright.
+- **`rename_all = "camelCase"` mangles acronyms.** `media_filter_css` becomes
+  `mediaFilterCss`, and the frontend reads `mediaFilterCSS`. A serialisation
+  test caught it; nothing at runtime would have.
+- **Tauri's unlisten throws when the listener is already gone**, which a Vite
+  hot reload causes by resetting the injected registry. Always detach through
+  `safelyUnlisten` in `src/renderer/tauri/electron-bridge.ts`.
+- **A `State<'_, T>` cannot cross into a spawned task.** Clone the `AppHandle`
+  and re-fetch the state inside. The URI scheme handler does this.
+- **A temporary in a `match` scrutinee lives for the whole match.** An
+  `RwLock` read guard taken there and a write lock taken in an arm is a
+  deadlock, and it presents as a hung test rather than a panic.
+- **Anything that touches the OS keychain must be injectable.** An earlier
+  `AuthState` picked its backend per call and its own tests wrote into the
+  developer's login keychain.
 - **`bunfig.toml` sets `linker = "hoisted"` and that is load-bearing.** Bun
   defaults to an isolated `node_modules` for workspaces. Under it,
   `scripts/stage-ndi.cjs` finds no `grandi` at the repo root and the packaged
