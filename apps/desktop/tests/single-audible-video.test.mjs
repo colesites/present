@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+
+import { findElements } from "./lib/source-scan.mjs";
 
 /**
  * The regression that must never return.
@@ -24,60 +23,11 @@ import { fileURLToPath } from "node:url";
  * guard.
  */
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const sourceRoot = path.join(here, "..", "src");
-
 /** The one element allowed to be audible, and why. */
 const THE_AUDIBLE_PLAYER = {
   file: "src/features/present/PresentCenterArea.tsx",
   reason:
     "the presenter Show View — the application's only audible player, driven by useShowVideoSync",
-};
-
-const collectSourceFiles = (directory) => {
-  const found = [];
-  for (const entry of readdirSync(directory)) {
-    const full = path.join(directory, entry);
-    if (statSync(full).isDirectory()) {
-      found.push(...collectSourceFiles(full));
-      continue;
-    }
-    if (full.endsWith(".tsx")) {
-      found.push(full);
-    }
-  }
-  return found;
-};
-
-/**
- * The attribute text of a JSX opening tag starting at `start`.
- *
- * Scans rather than pattern-matches: an attribute value can contain `>` inside
- * a JSX expression or a string, so the closing bracket has to be found at
- * brace depth zero and outside quotes.
- */
-const openingTagAt = (source, start) => {
-  let depth = 0;
-  let quote = null;
-
-  for (let index = start; index < source.length; index += 1) {
-    const character = source[index];
-
-    if (quote) {
-      if (character === quote && source[index - 1] !== "\\") quote = null;
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      quote = character;
-      continue;
-    }
-    if (character === "{") depth += 1;
-    else if (character === "}") depth -= 1;
-    else if (character === ">" && depth === 0) {
-      return source.slice(start, index + 1);
-    }
-  }
-  return source.slice(start);
 };
 
 /**
@@ -93,25 +43,12 @@ const classify = (attributes) => {
   return match[3].trim() === "true" ? "silent" : "audible";
 };
 
-const videoElements = () => {
-  const found = [];
-  for (const file of collectSourceFiles(sourceRoot)) {
-    const source = readFileSync(file, "utf8");
-    const relative = path.relative(path.join(here, ".."), file);
-
-    let index = source.indexOf("<video");
-    while (index !== -1) {
-      const attributes = openingTagAt(source, index);
-      found.push({
-        file: relative,
-        line: source.slice(0, index).split("\n").length,
-        audio: classify(attributes),
-      });
-      index = source.indexOf("<video", index + 1);
-    }
-  }
-  return found;
-};
+const videoElements = () =>
+  findElements("video").map((element) => ({
+    file: element.file,
+    line: element.line,
+    audio: classify(element.attributes),
+  }));
 
 test("every video element is accounted for", () => {
   const elements = videoElements();
