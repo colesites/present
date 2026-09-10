@@ -229,6 +229,6 @@ Not verified — do not claim otherwise:
 
 ## 7. Test counts
 
-191 Rust tests, 48 JS. The 87 added here are mostly the containment rule and the
+191 Rust tests, 55 JS. The 94 added here are mostly the containment rule and the
 range planner — the two pieces where being wrong is a security hole or a blank
 audience screen.

@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 16 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 17 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -96,6 +96,8 @@ regression that must never return, and it is why Electron stays until Stage 8.
 ### Commits on this branch
 
 ```
+d1f4ff0 test(stage-3): pin the local media URL rule on both shells
+4667521 docs(stage-3): record the file scope, what it proves, and what it does not
 0289db5 feat(stage-3): bridge the React tree to the Rust core
 26ee9e7 feat(stage-3): scoped filesystem, dialogs, menus, shortcut and deep links
 b8413ea docs: bring the handoff up to date for a fresh session
@@ -217,7 +219,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 191 Rust, 48 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 191 Rust, 55 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -345,7 +347,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **191 Rust tests, 48 JS tests**, clippy/fmt/typecheck clean.
+Current: **191 Rust tests, 55 JS tests**, clippy/fmt/typecheck clean.
 
 ## 10. Installed skills
 
