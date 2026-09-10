@@ -171,7 +171,16 @@ pub fn run() {
             commands::output::get_output_scene,
             commands::output::send_to_output,
             commands::output::set_output_frozen,
-            commands::output::is_output_frozen
+            commands::output::is_output_frozen,
+            commands::presentation::get_presentation_position,
+            commands::presentation::set_presentation_service,
+            commands::presentation::set_presentation_service_item,
+            commands::presentation::set_presentation_service_group,
+            commands::presentation::set_presentation_deck,
+            commands::presentation::go_to_slide,
+            commands::presentation::next_slide,
+            commands::presentation::previous_slide,
+            commands::presentation::reconcile_presentation_services
         ])
         .setup(|app| {
             // Display preferences need the resolved app config directory, which
@@ -194,6 +203,10 @@ pub fn run() {
             // files chosen by whether the app was packaged — half of
             // known-issues §2.
             app.manage(state::AuthState::load(&config_dir));
+            // Where the operator is: which service, which item, which slide.
+            // The service half persists so reopening mid-service does not lose
+            // their place.
+            app.manage(state::PresentationState::load(&config_dir));
 
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),

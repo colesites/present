@@ -259,3 +259,44 @@ if (shouldProbe) {
     );
   });
 }
+
+if (shouldProbe) {
+  // Stage 4 (presentation position): the last slice. What is worth proving
+  // live is that navigation is bounded — an operator pressing "next" past the
+  // end of a song must not roll on to the next item and put it on the audience
+  // screen unasked.
+  void (async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const presentation = await import("./presentation");
+
+    (window as unknown as { __presentPosition?: unknown }).__presentPosition = presentation;
+
+    const position = await presentation.getPresentationPosition();
+
+    // With no deck loaded, navigation must refuse rather than guess.
+    let refusal = "NOT REFUSED — navigation ran without a deck";
+    try {
+      await presentation.nextSlide();
+    } catch (error) {
+      const kind = (error as { kind?: string } | null)?.kind;
+      refusal = kind === "invalid" ? "refused" : `unexpected kind: ${String(kind)}`;
+    }
+
+    const summary =
+      `service=${position.service.selectedServiceId ?? "none"} ` +
+      `inside=${position.service.isInsideService} ` +
+      `item=${position.service.serviceItemIndex ?? "none"} ` +
+      `deck=${position.deck.libraryId ?? "none"}/${position.deck.slideCount} ` +
+      `slide=${position.slideIndex ?? "none"} ` +
+      `navigateWithoutDeck=${refusal}`;
+    console.info("[Tauri]", summary);
+    await invoke("report_diagnostic", { message: summary });
+  })().catch((error: unknown) => {
+    console.error("[Tauri] presentation probe failed", error);
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("report_diagnostic", {
+        message: `presentation probe failed: ${String(error)}`,
+      }),
+    );
+  });
+}

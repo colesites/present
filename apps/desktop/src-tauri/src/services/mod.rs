@@ -15,6 +15,7 @@ pub mod media_protocol;
 pub mod monitors;
 pub mod output;
 pub mod permissions;
+pub mod presentation;
 pub mod shortcuts;
 pub mod speech;
 pub mod window;

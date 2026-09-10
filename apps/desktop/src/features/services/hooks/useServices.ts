@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type {
   LibraryItem,
@@ -446,6 +446,18 @@ function normalizeServiceGroups(service: Service): Service {
   };
 }
 
+/**
+ * True inside the Tauri shell, where the Rust core owns this position.
+ *
+ * Read from the global Tauri injects before any app code runs, so the choice is
+ * settled before the first render.
+ */
+const isTauriShell = (): boolean =>
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/** Loaded only under Tauri, so the Electron bundle stays free of it. */
+const rustCore = () => import("../../../renderer/tauri/presentation");
+
 // Load service state from localStorage
 function loadServiceState() {
   if (typeof window === "undefined") return null;
@@ -457,7 +469,15 @@ function loadServiceState() {
   }
 }
 
-// Save service state to localStorage
+/**
+ * Persist where the operator is in the running order.
+ *
+ * Under Tauri this goes to the Rust core, which owns it and writes
+ * `service-position.json`; under Electron it stays in `localStorage`. The
+ * difference matters beyond tidiness: the Rust copy is one file for the app
+ * rather than one per renderer origin, so a packaged build and a dev build no
+ * longer disagree about which service is open (known-issues §2).
+ */
 function saveServiceState(state: {
   selectedServiceId: string | null;
   isInsideService: boolean;
@@ -465,6 +485,20 @@ function saveServiceState(state: {
   selectedServiceGroupId: string | null;
 }) {
   if (typeof window === "undefined") return;
+
+  if (isTauriShell()) {
+    void rustCore()
+      .then(async (core) => {
+        await core.setService(state.selectedServiceId, state.isInsideService);
+        await core.setServiceItem(state.serviceItemIndex);
+        await core.setServiceGroup(state.selectedServiceGroupId);
+      })
+      .catch((error: unknown) => {
+        console.error("Failed to save service state to the Rust core:", error);
+      });
+    return;
+  }
+
   try {
     localStorage.setItem(SERVICE_STATE_KEY, JSON.stringify(state));
   } catch (e) {
@@ -515,8 +549,47 @@ export function useServices(
     };
   }, [workspaceId]);
 
+  // Under Tauri the position is restored from the Rust core rather than from
+  // this origin's `localStorage`, which starts empty. Runs once, before the
+  // persist effect below can write the empty initial state back over it.
+  const hydratedFromRustRef = useRef(!isTauriShell());
+  useEffect(() => {
+    if (hydratedFromRustRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    void rustCore()
+      .then((core) => core.getPresentationPosition())
+      .then((position) => {
+        if (cancelled) return;
+        hydratedFromRustRef.current = true;
+        setSelectedServiceId(
+          (position.service.selectedServiceId as Id<"services"> | null) ?? null,
+        );
+        setIsInsideService(position.service.isInsideService);
+        setServiceItemIndex(position.service.serviceItemIndex);
+        setSelectedServiceGroupId(position.service.selectedServiceGroupId);
+      })
+      .catch((error: unknown) => {
+        // A position that cannot be read is not worth blocking startup for;
+        // the operator lands outside a service and picks one.
+        hydratedFromRustRef.current = true;
+        console.error("Failed to restore the service position:", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Persist state changes
   useEffect(() => {
+    // Not before the restore has landed, or the empty initial state is written
+    // straight back over the operator's saved place.
+    if (!hydratedFromRustRef.current) {
+      return;
+    }
     saveServiceState({
       selectedServiceId: selectedServiceId as string | null,
       isInsideService,

@@ -662,6 +662,39 @@ export function PresentContainer({
     scriptureSlides,
   ]);
 
+  // Stage 4: mirror the live position into the Rust core.
+  //
+  // The core owns "which deck, which slide" so that the AI Operator, the UI
+  // and — from Stage 6 — anything else drive the same state through the same
+  // commands, rather than the operator panel reaching into React setters.
+  // React stays the sender here; the reverse direction lands with the slide
+  // rendering in Stage 5.
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+
+    let cancelled = false;
+    const libraryId = selected?.libraryId ?? null;
+    const slideIndex = selected?.index ?? null;
+
+    void import("../../renderer/tauri/presentation")
+      .then(async (core) => {
+        if (cancelled) return;
+        await core.setDeck(libraryId, slidesForGrid.length);
+        if (cancelled) return;
+        // `index: -1` is how this component says "deck open, nothing showing".
+        if (slideIndex !== null && slideIndex >= 0) {
+          await core.goToSlide(slideIndex);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("[Present] could not mirror the position to the Rust core", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, slidesForGrid.length]);
+
   const scriptureEditorItem = useMemo(
     () =>
       buildScriptureEditorLibraryItem(scriptureSlides, {
