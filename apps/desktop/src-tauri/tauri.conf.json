@@ -12,7 +12,14 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' data: asset: http://asset.localhost; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.present.multivrs.space; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:* https://present.multivrs.space https://present.app https://*.convex.cloud https://*.convex.site wss://*.convex.cloud wss://*.convex.site https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev https://clerk.present.multivrs.space https://clerk-telemetry.com wss://streaming.assemblyai.com wss://streaming.eu.assemblyai.com; img-src 'self' data: blob: asset: http://asset.localhost https://*.convex.cloud https://*.convex.site https://*.gravatar.com https://*.wp.com https://lh3.googleusercontent.com https://*.googleusercontent.com https://img.clerk.com; media-src 'self' blob: asset: http://asset.localhost; font-src 'self' data: https:; frame-src https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev https://clerk.present.multivrs.space https://www.youtube.com https://www.youtube-nocookie.com"
+      "csp": "default-src 'self' 'unsafe-inline' data: asset: http://asset.localhost; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.present.multivrs.space; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost local-media: http://local-media.localhost http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:* https://present.multivrs.space https://present.app https://*.convex.cloud https://*.convex.site wss://*.convex.cloud wss://*.convex.site https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev https://clerk.present.multivrs.space https://clerk-telemetry.com wss://streaming.assemblyai.com wss://streaming.eu.assemblyai.com; img-src 'self' data: blob: asset: http://asset.localhost local-media: http://local-media.localhost https://*.convex.cloud https://*.convex.site https://*.gravatar.com https://*.wp.com https://lh3.googleusercontent.com https://*.googleusercontent.com https://img.clerk.com; media-src 'self' blob: asset: http://asset.localhost local-media: http://local-media.localhost; font-src 'self' data: https:; frame-src https://*.clerk.accounts.dev https://certain-goat-83.clerk.accounts.dev https://clerk.certain-goat-83.accounts.dev https://clerk.present.multivrs.space https://www.youtube.com https://www.youtube-nocookie.com"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["present"]
+      }
     }
   },
   "bundle": {

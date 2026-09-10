@@ -41,6 +41,23 @@ pub fn run() {
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
 
+    // Windows and Linux deliver a `present://` link by launching the app again
+    // with the URL in argv. Without a single-instance lock that starts a second
+    // copy of Present — a second audience window, a second NDI sender — instead
+    // of signing the running one in. Registered first, as the plugin requires.
+    #[cfg(all(desktop, not(target_os = "macos")))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(url) = services::deep_link::find_in_args(argv) {
+                services::deep_link::handle(app, &url);
+            } else if let Some(window) =
+                app.get_webview_window(services::window_spec::WindowRole::Main.label())
+            {
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
     // The only hook Tauri offers for a dead webview content process, and it is
     // macOS/iOS-only. Windows and Linux therefore have no crash recovery at
     // all yet — recorded in docs/tauri-migration/stage-2-windows.md rather than
@@ -52,9 +69,45 @@ pub fn run() {
         });
     }
 
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    }
+
     builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
+        // `local-media://` — the scheme the whole media pipeline fetches
+        // through. Registered asynchronously so a range read off a slow disk
+        // cannot stall the window it is feeding.
+        .register_asynchronous_uri_scheme_protocol("local-media", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let uri = request.uri().to_string();
+            let range = request
+                .headers()
+                .get("Range")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
+
+            // Reading the file happens off the thread this closure runs on:
+            // a range read from a projector-side USB drive is slow enough to be
+            // visible if it blocks the window's message loop.
+            tauri::async_runtime::spawn_blocking(move || {
+                let Some(state) = app.try_state::<state::FileState>() else {
+                    tracing::error!("local-media request before the file scope was registered");
+                    return;
+                };
+                responder.respond(services::media_protocol::respond(
+                    &state,
+                    &uri,
+                    range.as_deref(),
+                ));
+            });
+        })
         .manage(app_state)
         .manage(WindowState::new())
+        .manage(services::deep_link::PendingDeepLink::new())
+        .on_menu_event(services::app_menu::handle)
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_info,
             commands::diagnostics::report_webview_capabilities,
@@ -71,7 +124,30 @@ pub fn run() {
             commands::window::close_window,
             commands::window::open_mini_lyrics_window,
             commands::window::close_mini_lyrics_window,
-            commands::window::list_open_windows
+            commands::window::list_open_windows,
+            commands::file::select_folder,
+            commands::file::select_library_export_destination,
+            commands::file::select_library_import_source,
+            commands::file::select_media_file,
+            commands::file::select_audio_files,
+            commands::file::select_prop_image,
+            commands::file::select_prop_media,
+            commands::file::select_presentation_files,
+            commands::file::list_media_folders,
+            commands::file::remove_media_folder,
+            commands::file::read_folder,
+            commands::file::copy_media_file,
+            commands::file::rename_media_file,
+            commands::file::delete_media_file,
+            commands::file::create_directory,
+            commands::file::rename_directory,
+            commands::file::export_library_bundle,
+            commands::file::import_library_bundle,
+            commands::permissions::request_microphone_access,
+            commands::permissions::request_camera_access,
+            commands::permissions::get_microphone_access_status,
+            commands::permissions::get_camera_access_status,
+            commands::deep_link::take_pending_deep_link
         ])
         .setup(|app| {
             // Display preferences need the resolved app config directory, which
@@ -82,6 +158,10 @@ pub fn run() {
                 .app_config_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             app.manage(state::DisplayState::load(&config_dir));
+            // The media folders, and with them the only paths `local-media://`
+            // will serve. Registered before any window exists so the operator
+            // window's first media request already has a scope to check.
+            app.manage(state::FileState::load(&config_dir));
 
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),
@@ -101,6 +181,36 @@ pub fn run() {
             // (`main/index.ts:74-82`) is a poll. See services/display_watch.rs
             // for why polling rather than three platform observers.
             services::display_watch::spawn(app.handle().clone());
+
+            if let Err(error) = services::app_menu::install(app.handle()) {
+                // A missing menu costs the operator `Cmd+,` and the import
+                // items, not the service. Log it and keep going.
+                tracing::error!(%error, "could not install the application menu");
+            }
+
+            #[cfg(desktop)]
+            services::shortcuts::register(app.handle());
+
+            // The scheme is declared in tauri.conf.json for the installer to
+            // register with the OS; this is the runtime half. On macOS the link
+            // arrives as an Apple event rather than in argv.
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        services::deep_link::handle(&handle, url.as_str());
+                    }
+                });
+
+                // A link that launched the app on Windows or Linux is already
+                // in argv by the time we get here.
+                if let Some(url) = services::deep_link::find_in_args(std::env::args()) {
+                    services::deep_link::handle(app.handle(), &url);
+                }
+            }
 
             Ok(())
         })

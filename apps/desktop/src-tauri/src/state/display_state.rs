@@ -14,9 +14,11 @@ use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::AppResult;
 use crate::services::display::ScreenRole;
 use crate::services::display_identity::DisplayKey;
+
+use super::persist;
 
 const PREFERENCES_FILE: &str = "display-preferences.json";
 const CURRENT_VERSION: u32 = 1;
@@ -141,30 +143,7 @@ impl DisplayState {
     /// app far more than they need their saved screen choice.
     pub fn load(config_dir: &Path) -> Self {
         let path = config_dir.join(PREFERENCES_FILE);
-        let preferences = match std::fs::read_to_string(&path) {
-            Ok(contents) => match serde_json::from_str::<DisplayPreferences>(&contents) {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        path = %path.display(),
-                        "display preferences were unreadable; starting from defaults"
-                    );
-                    DisplayPreferences::default()
-                }
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                DisplayPreferences::default()
-            }
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    path = %path.display(),
-                    "could not read display preferences; starting from defaults"
-                );
-                DisplayPreferences::default()
-            }
-        };
+        let preferences = persist::load_or_default(&path, "display preferences");
 
         Self {
             preferences: RwLock::new(preferences),
@@ -190,28 +169,16 @@ impl DisplayState {
     where
         F: FnOnce(&mut DisplayPreferences),
     {
-        let serialized = {
+        let snapshot = {
             let mut preferences = self
                 .preferences
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             mutate(&mut preferences);
-            serde_json::to_string_pretty(&*preferences).map_err(|error| {
-                AppError::Invalid(format!("Could not encode preferences: {error}"))
-            })?
+            preferences.clone()
         };
 
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        // Write to a sibling then rename, so a crash mid-write cannot leave a
-        // truncated file that loses every saved screen choice.
-        let temporary = self.path.with_extension("json.tmp");
-        std::fs::write(&temporary, serialized)?;
-        std::fs::rename(&temporary, &self.path)?;
-
-        Ok(())
+        persist::save_atomic(&self.path, &snapshot)
     }
 }
 

@@ -22,6 +22,14 @@ pub enum AppError {
     /// The request was well-formed but not valid right now.
     #[error("{0}")]
     Invalid(String),
+
+    /// The caller named a path outside the folders the operator granted.
+    ///
+    /// Distinct from `NotFound` on purpose: a refusal must never depend on
+    /// whether the file exists, or the error itself becomes a way to probe the
+    /// disk. See `services/file_scope.rs`.
+    #[error("{0}")]
+    Denied(String),
 }
 
 /// Machine-readable discriminant so the UI can branch without string matching.
@@ -32,6 +40,7 @@ pub enum AppErrorKind {
     Tauri,
     NotFound,
     Invalid,
+    Denied,
 }
 
 impl AppError {
@@ -41,6 +50,7 @@ impl AppError {
             Self::Tauri(_) => AppErrorKind::Tauri,
             Self::NotFound(_) => AppErrorKind::NotFound,
             Self::Invalid(_) => AppErrorKind::Invalid,
+            Self::Denied(_) => AppErrorKind::Denied,
         }
     }
 }
