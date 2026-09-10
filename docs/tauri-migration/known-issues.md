@@ -8,7 +8,7 @@ zero-behaviour-change change, per migration rule 4.
 |---|---|---|---|
 | 1 | Backing tracks ignore the audio-output-device setting | High | Stage 5 |
 | 2 | Dev and packaged builds keep entirely separate state | High | Stage 3 |
-| 3 | `local-media://` can read any file on disk | Medium | Stage 3 |
+| 3 | `local-media://` can read any file on disk | Medium | **Fixed** |
 | 4 | Media panel hidden behind a dead File System Access check | Medium | **Fixed** |
 | 5 | `vosk` is a dependency that is never imported | Low | Stage 7 |
 | 6 | Build workflows trigger on a branch that does not exist | Low | Open |
@@ -77,16 +77,50 @@ Rust-owned persistence under a single app-data directory, keyed by nothing but
 the app itself. That removes the dev/prod split and the Electron→Tauri
 migration problem in one move. Auth tokens go to the OS keychain.
 
+**Partly done.** Stage 3 moved the media folder list, because the file scope
+depends on it: a list kept in IndexedDB starts empty in the Tauri origin, and a
+scope that starts empty means no media plays. It lives in
+`media-folders.json` beside `display-preferences.json`, in one app-data
+directory, and survives a restart.
+
+The other twenty-odd `present-*` localStorage keys, the offline IndexedDB blob
+and its sync queue, and the auth session are all still where they were. They
+belong to the subsystems that own them — settings and looks are Stage 4, the
+session is Stage 7 — and moving them ahead of those stages would mean writing
+the same migration twice. The remaining work is a Rust-owned key/value store
+plus a one-time import, and it is not done.
+
 ---
 
-## 3. `local-media://` can read any file on disk
+## 3. `local-media://` can read any file on disk — FIXED
 
 `protocol.service.ts:137-145` takes the URL pathname and passes it straight to
 `fs.stat` / `fs.createReadStream` with no containment check, so the renderer can
-read any file the user can read.
+read any file the user can read. The file commands in `file.ipc.ts` are the
+same: their arguments go to `node:fs` unvalidated.
 
-**Fix (Stage 3):** Tauri's asset protocol with an explicit scope limited to the
-configured media folders. Do not reproduce the open-ended behaviour.
+**Fixed** in the Tauri build — see
+[stage-3-native-apis.md](stage-3-native-apis.md).
+
+Tauri's own asset protocol was the obvious replacement and was not used. Its
+scope is the `fs` plugin's, the URL shape is `convertFileSrc`'s rather than the
+`local-media://media/...` the React tree already builds, and the media folders
+this app has to allow are chosen at runtime by the operator. A scheme handler
+in Rust keeps the URLs unchanged, keeps the scope ours, and keeps control of the
+range behaviour that video playback depends on.
+
+The rule: a path is reachable only from inside a folder the operator chose in a
+dialog they saw — a media folder, which persists, or a file picked this run,
+which does not. Paths are canonicalised before comparison, so symlinks out of a
+media folder, `..` walks and lookalike siblings such as `Media-old` are all
+refused.
+
+Confirmed against the running app, not only in tests: `read_folder` on `/etc`
+returns `denied`, `local-media://media/etc/passwd` returns **403**, and a file
+in a granted folder returns 206 with the right `Content-Range`. The refusal
+logs as `/private/etc/passwd`, which shows canonicalisation ran first.
+
+Electron is untouched, per migration rule 4.
 
 ---
 

@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 11 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 16 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -29,11 +29,12 @@ the audience screen is a serious bug, not a rough edge.
 |---|---|
 | [stage-0-audit.md](stage-0-audit.md) | The full audit. Architecture map, all 79 IPC channels, media/audio/output pipeline, state model, native deps, build system, 31-row migration matrix, risks. **The reference for anything about how Electron does it today.** |
 | [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. |
-| [known-issues.md](known-issues.md) | Ten bugs found so far, each assigned to the stage that owns the fix. Four fixed. |
+| [known-issues.md](known-issues.md) | Ten bugs found so far, each assigned to the stage that owns the fix. Five fixed. |
 | [stage-1-tauri-skeleton.md](stage-1-tauri-skeleton.md) | The Tauri shell beside Electron. |
 | [stage-2-displays.md](stage-2-displays.md) | Display enumeration, identity, persistence, monitor names. |
 | [stage-2-windows.md](stage-2-windows.md) | All eight windows in Rust: specs as data, the output hardening, crash policy, the physical/logical placement trap. |
 | [stage-2-hotplug.md](stage-2-hotplug.md) | Monitors changing under a running app: the poll, what counts as a change, and the work-area feedback loop. |
+| [stage-3-native-apis.md](stage-3-native-apis.md) | The file scope and why it is shaped that way, the media scheme without a stream, dialogs, menu, shortcut, deep links, permissions, and the `electronAPI` bridge. |
 
 ## 3. Where things stand
 
@@ -56,13 +57,30 @@ manual matrix, and this machine has one screen. No window has been placed on, or
 moved to, a second monitor. Run that matrix before trusting Stage 2 in front of
 a congregation — the list is in stage-2-hotplug.md's "Not verified".
 
-### Stages 3–8, untouched
+**Stage 3 — native APIs.** Done. The gate is met.
+- ✅ Scoped filesystem: `local-media://` and all fourteen file channels
+- ✅ `local-media://` outside the scope returns 403, confirmed in the running app
+- ✅ The eight native dialogs, filters unchanged
+- ✅ Application menu, `Control+Alt+Space`, `present://`, mic/camera permissions
+- ✅ `window.electronAPI` bridged to Rust, so the React tree runs under Tauri
+
+**What Stage 3 did not finish.** Known-issues §2 was assigned here and is only
+partly done. The media folder list moved into Rust because the scope depends on
+it; the twenty-odd `present-*` localStorage keys, the offline IndexedDB blob and
+the auth session did not. They belong to Stages 4 and 7, and moving them early
+would mean writing the same migration twice. See §2 in known-issues.md.
+
+Nothing has been driven by hand: no dialog opened, no deep link followed, no
+shortcut pressed, no permission prompt shown. `__presentFiles` on the operator
+window exposes each of those for exactly that. The full list is in
+stage-3-native-apis.md §6.
+
+### Stages 4–8, untouched
 
 Content and gates from the audit's §12, inlined so this file stands alone.
 
 | Stage | Content | Gate |
 |---|---|---|
-| **3** | Native APIs: filesystem (scoped), dialogs, deep links, global shortcut, menus, permissions. | `local-media` scope closed |
 | **4** | Presentation core into Rust, slice by slice: output layer flags → slides → service. React adapter hooks keep component props stable. | Characterisation tests first |
 | **5** | Media engine + single audio path. Fixes the audit's §5.4 as part of the work. | Audio regression suite |
 | **6** | NDI, per ADR-001. | Discovery/connect/output/reconnect |
@@ -78,6 +96,9 @@ regression that must never return, and it is why Electron stays until Stage 8.
 ### Commits on this branch
 
 ```
+0289db5 feat(stage-3): bridge the React tree to the Rust core
+26ee9e7 feat(stage-3): scoped filesystem, dialogs, menus, shortcut and deep links
+b8413ea docs: bring the handoff up to date for a fresh session
 49cb401 feat(stage-2): reconcile windows when the monitors change
 b8961fe docs: reassign the webview crash-recovery gap to Stage 7
 308cec1 chore: move the monorepo from pnpm to bun
@@ -94,24 +115,29 @@ df6c9a7 docs: add session handoff for the Tauri migration
 
 ## 4. The next task, concretely
 
-**Stage 3 — native APIs.** The audit's §12 lists it as: filesystem (scoped),
-dialogs, deep links, global shortcut, menus, permissions. The gate is closing
-the `local-media://` scope.
+**Stage 4 — the presentation core into Rust**, slice by slice: output layer
+flags, then slides, then service. React adapter hooks keep component props
+stable. The gate is characterisation tests first, written against the *running
+Electron build* — audit §10.8.
 
-Start with the filesystem, because two known issues are waiting on it and one is
-a security hole. `local-media://` takes a URL pathname straight to `fs.stat` and
-`fs.createReadStream` with no containment check, so the renderer can read any
-file the user can (`protocol.service.ts:137-145`, known-issues §3). Do not
-reproduce it. Tauri's asset protocol with a scope limited to the configured
-media folders is the replacement.
+Two things are worth doing before Stage 4 proper, neither of which is Stage 4
+work:
 
-Stage 3 also owns known-issues §2, the dev/packaged state split. Tauri serves
-from `tauri://localhost`, which is a *sixth* origin, so the Tauri build starts
-with no session, no settings and no offline data. That needs a deliberate import
-path rather than being discovered by a user mid-service.
+**Drive the Stage 3 native APIs by hand.** Eight dialogs, a deep link, a global
+shortcut and two permission prompts have code and tests but have never been
+operated by a human. `__presentFiles` and `__presentWindows` on the operator
+window expose all of them. This is an hour, not a day, and it is the difference
+between "the tests pass" and "it works".
 
-Before that, consider running the multi-monitor matrix Stage 2 could not. It
-needs a second screen, not a code change.
+**Run the multi-monitor matrix Stage 2 could not.** Needs a second screen, not a
+code change.
+
+Stage 4's first slice should be whichever one makes the app visible again. The
+operator window mounts React and renders nothing, because it waits on an auth
+session that does not exist at the Tauri origin (known-issues §2) and
+`getStoredAuthSession` is not bridged. That is nominally Stage 7, but a blank
+window makes every Stage 4 change unverifiable by eye, so consider pulling the
+session read forward.
 
 Per ADR-001, **output state must be fully describable as serialisable Rust
 structs from here on** — never as React component state. Window specs and the
@@ -119,46 +145,79 @@ reposition decision already are; the scene description is Stage 5.
 
 ## 5. What the Rust core contains today
 
-4 300 lines across `apps/desktop/src-tauri/src`, mirroring the Electron main
+8 300 lines across `apps/desktop/src-tauri/src`, mirroring the Electron main
 process's own structure as the audit asked. Nothing here is a stub.
 
 ```
 commands/      thin: deserialise, delegate, map to AppResult
   app.rs         get_app_info
+  deep_link.rs   take_pending_deep_link
   diagnostics.rs report_webview_capabilities · report_diagnostic
   display.rs     get_displays · get/set_preferred_display
                  get/set_preferred_resolution · reconcile_displays
+  file.rs        the eight dialogs · the six file operations · the two
+                 library-bundle calls · list/remove_media_folder
+  permissions.rs request/get microphone and camera access
   speech.rs      request_speech_token · report_speech_usage
   window.rs      open_window · close_window · open/close_mini_lyrics_window
                  list_open_windows
 services/      domain logic, most of it runtime-free and tested
+  app_menu.rs        the menu, ported from menu/app.menu.ts
+  deep_link.rs       present:// parsing and the pending-link buffer. Parser
+                     has no Tauri types.
+  dialog.rs          the eight native dialogs; every pick grants scope
   display.rs         the role→monitor selection rule, ported from
                      src/shared/lib/display-selection.mjs. No Tauri types.
   display_identity.rs (name, ordinal) identity + the FNV-1a 53-bit id
   display_names.rs   AppKit NSScreen.localizedName, main-thread hop
   display_watch.rs   the hot-plug poll, diff and reconcile pass
+  file_scope.rs      THE containment rule. No Tauri types. Read this before
+                     touching anything that takes a path.
+  filesystem.rs      the file operations, all scope-checked
+  media_protocol.rs  the local-media:// handler: URL parsing, range planning,
+                     content types, the scope check
   monitors.rs        Tauri-facing enumeration and role resolution
+  permissions.rs     AVFoundation microphone/camera authorisation
+  shortcuts.rs       Control+Alt+Space
   speech.rs          AssemblyAI token broker transport
   window.rs          building, showing, placing and closing windows
   window_spec.rs     all eight windows as serialisable structs. No Tauri.
 state/
   app_state.rs       uptime only
   display_state.rs   role→display + resolution, persisted atomically
+  file_state.rs      media folders + the live scope they define
+  persist.rs         load-or-default and atomic save, shared
   window_state.rs    per-window crash history for the loop guard
 errors.rs      the single AppError crossing the boundary: { kind, message }
 ```
 
 **Events emitted to the frontend.** `display:list-changed`,
 `output-window-closed`, `media-stage-window-closed`,
-`worship-stage-window-closed`. The last three match the names Electron sends.
+`worship-stage-window-closed`, `open-import`, `ai-operator:toggle-shortcut`,
+`auth-callback`. All but the first match the names Electron sends.
 
-**The TypeScript side** is `src/renderer/tauri/`: `runtime.ts` is the typed
-`invoke` wrapper, `boot-probe.ts` the startup smoke test, `capability-probe.ts`
-the WKWebView feature report. Nothing else in `src/` knows Tauri exists yet —
-the React tree still talks to `window.electronAPI`, which does not exist under
-Tauri. Bridging that is Stage 3 and 4 work.
+**Files the Rust core owns**, in one app-config directory:
+`display-preferences.json` and `media-folders.json`.
 
-**Test counts.** 104 Rust, 48 JS. `bun run --filter @present/desktop tauri:check`
+**The TypeScript side** is `src/renderer/tauri/`:
+
+- `boot.ts` — the first module each Tauri window runs. Installs the bridge.
+  Loaded before the React entry in `index.html` and `output.html`, and the
+  ordering there is the whole mechanism.
+- `electron-bridge.ts` — `window.electronAPI` backed by `invoke`. Temporary by
+  design; each entry goes away when its subsystem moves to Rust. Anything not
+  implemented reads as `undefined` and reports itself once into the Rust log.
+- `runtime.ts` — the typed `invoke` wrapper
+- `boot-probe.ts` — startup smoke test, operator window only. Now also proves
+  the file scope and exposes `__presentFiles` and `__presentWindows` so the
+  dialogs and window openers can be driven by hand.
+- `capability-probe.ts` — the WKWebView feature report
+
+Outside that directory, exactly three files know both shells exist:
+`src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
+two callers that use it.
+
+**Test counts.** 191 Rust, 48 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -206,6 +265,15 @@ Verified by running it, not by reasoning:
 - Hot-plug reconcile, both paths: a window already covering its display is left
   untouched, and a displaced one is moved back and re-fullscreened. A steady
   single-monitor run produces no display-change events at all.
+- **The file scope, from inside the webview.** `read_folder` on `/etc` returns
+  `denied`; `local-media://media/etc/passwd` returns **403**; a file in a
+  granted folder returns **206** with `Content-Range: bytes 0-15/57` and 16
+  bytes. The refusal logs the canonical `/private/etc/passwd`, so the symlink
+  was resolved before the check.
+- Media folders loading from `media-folders.json` on a fresh launch, and the
+  scope they define working immediately.
+- The application menu installed and correct: `Present File Edit View Window`.
+- React mounting under Tauri and reaching the native layer through the bridge.
 
 **Not verified — do not claim otherwise:**
 
@@ -219,6 +287,15 @@ Verified by running it, not by reasoning:
   placement is exercised only at the origin, which is exactly where a
   physical-vs-logical pixel mistake is invisible, and no window has been moved
   from one monitor to another. This is the outstanding Stage 2 gate.
+- **No Stage 3 dialog has been opened**, no `present://` link followed, no
+  global shortcut pressed, no permission prompt shown. Code and tests only.
+  `__presentFiles` exposes each of them; stage-3-native-apis.md §6 is the list.
+- **No media has actually played through `local-media://`.** A range request
+  returns the right bytes; a video decoding and playing in WKWebView is
+  a different claim and has not been made.
+- **The operator window is blank under Tauri.** React mounts and reaches the
+  Rust core, then waits on an auth session the Tauri origin does not have. See
+  §4.
 
 ## 8. Working agreements
 
@@ -268,7 +345,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **104 Rust tests, 48 JS tests**, clippy/fmt/typecheck clean.
+Current: **191 Rust tests, 48 JS tests**, clippy/fmt/typecheck clean.
 
 ## 10. Installed skills
 
@@ -292,8 +369,18 @@ if asked.
 - **Dev and packaged builds keep entirely separate state** — different session
   files *and* different renderer origins, so different localStorage/IndexedDB.
   Tauri is a sixth origin and starts blank. known-issues §2.
-- **`local-media://` reads any file on disk.** Do not reproduce it; use a scoped
-  asset protocol. known-issues §3.
+- **The file scope is the security boundary, and it is one module.**
+  `services/file_scope.rs`. Anything new that takes a path from the frontend
+  goes through `FileState::resolve_existing` or `resolve_new` — not through
+  `std::fs` directly. A command that skips it reopens known-issues §3.
+- **`Display.bounds` is physical pixels under Tauri and device-independent
+  pixels under Electron.** The settings picker prints it, so a scaled built-in
+  display reads 3840×2400 there rather than Electron's 1920×1200.
+- **A Tauri custom-scheme response is a `Vec<u8>`, not a stream.** Anything
+  serving bytes has to chunk. `media_protocol.rs` caps at 8 MiB.
+- **The bridge is not the API.** `window.electronAPI` under Tauri is a
+  compatibility shim that shrinks every stage. Do not add to it for anything
+  Rust should own outright.
 - **`bunfig.toml` sets `linker = "hoisted"` and that is load-bearing.** Bun
   defaults to an isolated `node_modules` for workspaces. Under it,
   `scripts/stage-ndi.cjs` finds no `grandi` at the repo root and the packaged
