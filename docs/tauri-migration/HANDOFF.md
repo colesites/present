@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 31 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 36 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -128,6 +128,8 @@ stays until Stage 8.
 ### Commits on this branch
 
 ```
+37ef7b7 test(stage-5): say what each .play() plays, not just where it is
+26f777b docs(stage-5): record the typed scene, the transport, and the hybrid surface
 5f9076b feat(stage-5): move the media transport into Rust
 375585a feat(stage-5): type the slide elements the compositor has to draw
 9b9db6e docs(stage-5): record §1 fixed, and what the running app proved
