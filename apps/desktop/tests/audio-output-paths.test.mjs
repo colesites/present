@@ -193,17 +193,22 @@ test("no source file outside the inventory plays media programmatically", () => 
   // `.play()` on an element the suites do not know about is how a fourth audio
   // path would arrive. Every call today belongs to a file already accounted
   // for above or in the video guard.
-  // Exactly the files that call it today. Deliberately not "every file in the
-  // video guard": an allowlist wider than reality would wave through a new
-  // `.play()` in a file that has never had one.
-  const known = new Set([
-    "src/features/present/PresentCenterArea.tsx",
-    "src/features/settings/components/SettingsScreen.tsx",
-    "src/features/sidebar-rail/panels/AudioTabPanel.tsx",
-    "src/features/slides/OutputPreview.tsx",
-    "src/features/stage/WorshipStageDisplayWindow.tsx",
-    "src/renderer/output/OutputWindow.tsx",
-    "src/renderer/shared/hooks/useShowVideoSync.ts",
+  // Every `.play()` in the tree, with what it plays. The reason is carried
+  // per entry rather than as a bare list, because the two kinds are not
+  // interchangeable: an element player can put sound in a room, a transport
+  // call cannot. A new file in the first group is a new audio path.
+  const known = new Map([
+    // Media elements — each one can make a sound.
+    ["src/features/present/PresentCenterArea.tsx", "element: the audible Show View player"],
+    ["src/features/settings/components/SettingsScreen.tsx", "element: a muted preview thumbnail"],
+    ["src/features/sidebar-rail/panels/AudioTabPanel.tsx", "element: the backing-track player"],
+    ["src/features/slides/OutputPreview.tsx", "element: a muted mirror"],
+    ["src/features/stage/WorshipStageDisplayWindow.tsx", "element: a muted mirror"],
+    ["src/renderer/output/OutputWindow.tsx", "element: muted mirrors on the audience screen"],
+    ["src/renderer/shared/hooks/useShowVideoSync.ts", "element: drives the Show View player"],
+    // Not an element. `playback.play()` is a Rust command on the media
+    // transport, which owns whether a video is running and owns no audio.
+    ["src/renderer/tauri/boot-probe.ts", "transport: proves the Rust transport refuses with nothing loaded"],
   ]);
 
   const unexpected = new Set();
