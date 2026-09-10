@@ -16,6 +16,8 @@ zero-behaviour-change change, per migration rule 4.
 | 8 | Speech-to-search blocked by a CORS preflight, not by Electron | Medium | **Fixed** |
 | 9 | Monitor hot-plug never moved the output window | High | **Fixed** |
 | 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | Stage 7 |
+| 11 | Unfreezing the output does not catch the audience screen up | Medium | **Fixed** |
+| 12 | The Looks window and the operator window agree by polling | Medium | **Fixed** |
 
 ---
 
@@ -325,3 +327,53 @@ checklist. The options are a wry patch exposing the WebView2 `ProcessFailed`
 event and the WebKitGTK `web-process-terminated` signal, or a liveness check
 driven from Rust. Both need the Tauri build actually run on those platforms
 first; CI produces Windows and Linux bundles today but nobody has launched one.
+
+
+---
+
+## 11. Unfreezing the output does not catch the audience screen up — FIXED
+
+`useOutputBroadcast.ts:201-205`:
+
+```js
+const previouslyFrozen = wasFrozenRef.current;
+wasFrozenRef.current = !!isFrozen;
+if (isFrozen) return;
+if (previouslyFrozen && !isFrozen) return;
+```
+
+The second early return fires on the render that *clears* the freeze. Nothing
+is sent on that pass, and nothing was sent during the freeze either, so the
+audience screen keeps showing the frozen content until some unrelated state
+change happens to re-run the effect.
+
+In practice an operator freezes the output, changes slides behind it, and
+unfreezes — and the congregation stays on the old slide until the operator
+touches something else. Whatever the second return was meant to prevent, this
+is what it does.
+
+**Fixed** in the Tauri build. `OutputState::set_frozen(false)` broadcasts the
+scene the operator arrived at. Freeze still means "stop changing the audience
+screen" rather than "stop tracking what the operator is doing", so the scene
+keeps updating underneath and the catch-up is one event.
+
+Electron is untouched, per migration rule 4.
+
+---
+
+## 12. The Looks window and the operator window agree by polling — FIXED
+
+The output layer flags — which of slide, media, messages, props and mask each
+surface shows — live in a `localStorage` key shared between windows.
+`localStorage` fires no `storage` event in the window that wrote it, so
+`useLooksConfig.ts:87` polls every 400 ms.
+
+Two consequences. A layer the operator toggles can take that long to reach the
+audience screen. And two windows writing in the same tick lose one of the
+writes, with nothing to indicate it happened.
+
+**Fixed** in the Tauri build: Rust owns the flags and emits `looks:changed`.
+Verified in the running app — a toggle applied in Rust reached a subscribed
+window rather than waiting for a poll.
+
+Electron is untouched.
