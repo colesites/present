@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 36 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 38 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -102,7 +102,9 @@ yet.
 - ✅ Slide elements typed, with round-trip fidelity and degradation proven
 - ✅ The media transport in Rust — resume points, both drift tolerances
 - ⬜ Wiring the React player onto the transport
-- ⬜ The wgpu compositor, per ADR-001 as amended (hybrid surface)
+- ✅ The compositor draws slides: background, shapes, text, images, scope-checked media
+- ⬜ Video frames in the compositor — the largest remaining gap
+- ⬜ Overlays, screen-composer layout, and the surface swap
 
 The old guard scanned `<video>` and nothing else, so three other routes to a
 speaker were unguarded: the backing-track `new Audio()`, the audience YouTube
@@ -211,6 +213,7 @@ process's own structure as the audit asked. Nothing here is a stub.
 ```
 commands/      thin: deserialise, delegate, map to AppResult
   app.rs         get_app_info
+  compositor.rs  render_output_frame — renders the live scene, optionally to PNG
   audio.rs       get_audio_graph · get_source_routing · set_audio_device
                  set_audio_source_gain/_muted · set_audio_master_gain/_muted
   deep_link.rs   take_pending_deep_link
@@ -262,6 +265,17 @@ services/      domain logic, most of it runtime-free and tested
                      into it. No Tauri types.
   monitors.rs        Tauri-facing enumeration and role resolution
   permissions.rs     AVFoundation microphone/camera authorisation
+  compositor/        THE frame pipeline (ADR-001). Rasterises on the CPU with
+                     tiny-skia, not wgpu — see frame.rs for why. Every layer
+                     refuses to guess rather than painting over the lyrics.
+    color.rs           CSS colours; an unrecognised one paints nothing
+    frame.rs           the buffer, and to_bgra() for NDI
+    geometry.rs        deck units to frame units
+    images.rs          decode and object-fit
+    loader.rs          THE scope check for scene media. Never std::fs directly.
+    scene.rs           the layer order, and what was left to the webview
+    shapes.rs          rects, radii, inset borders
+    text.rs            cosmic-text layout and rasterisation
   playback.rs        THE media transport: resume points, and the two drift
                      tolerances the audit recorded as one. No Tauri types.
   presentation.rs    where the operator is: service, item, deck, slide, and the
@@ -325,7 +339,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 351 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 429 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -386,6 +400,10 @@ Verified by running it, not by reasoning:
   clean launch.
 - A looks toggle applied in Rust reaching a subscribed window as an event
   rather than on a poll (`changeEvent=delivered`).
+- **A real lyric slide drawn by the Rust compositor** and looked at, with the
+  `web` element correctly left as a hole for the webview layer above.
+- The compositor's scope check refusing a file outside the granted folders and
+  a traversal out of one.
 - **The audio graph across the real serialisation boundary**: both audible
   sources returning the same output device (`audioSink=shared`) and all twelve
   mirror/source combinations refused (`audibleMirrors=none`).
@@ -518,7 +536,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **351 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
+Current: **429 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
 
 ## 11. Installed skills
 

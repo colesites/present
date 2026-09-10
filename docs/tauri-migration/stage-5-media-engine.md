@@ -10,6 +10,7 @@ one ADR-001 was written for. Its gate is an audio regression suite.
 
 ## 1. What the gate needed first
 
+
 The suite that existed guarded one source class. `single-audible-video.test.mjs`
 scans the fifteen `<video>` elements and proves exactly one of them can make a
 sound, which is real and holds — but it scans for `<video>`, so anything that
@@ -39,6 +40,7 @@ assertion was proven to go red before being trusted, and so was the original
 guard after its scanner moved to `tests/lib/source-scan.mjs`.
 
 ## 2. Slice one — the audio graph
+
 
 Both of the audit's audio findings come from one cause: **audio properties are
 attached to elements rather than to an audio path.**
@@ -89,6 +91,7 @@ already disagree about it and Tauri starts with no choice at all
 
 ## 3. Where the typing stops, and why audio is not decoded in Rust yet
 
+
 Audio still comes out of WKWebView. The graph produces *instructions* that the
 renderer applies to its own elements.
 
@@ -98,7 +101,60 @@ video pixels still drawn by the webview — and require the two to be
 re-synchronised, which is worse than either end state. The graph is the part
 that can move now, and it is the part the compositor will need when it arrives.
 
-## 4. On the TypeScript side
+## 4. Slice two — routing both sources, and closing §1
+
+
+The defect was never a forgotten call. `setSinkId` is a **per-element** call, so
+the audio-output-device setting reached whichever elements somebody remembered
+to route. Adding a second call site would have left the same shape in place.
+
+So there is now exactly one place either source can be routed from —
+`applyAudioRouting` — which both shells and both sources go through. A source
+cannot be left behind by omission, because omitting it means producing no audio.
+
+`useAudioRouting` is the adapter, shaped like every other slice's: the hook
+keeps its signature, no component learns which shell it is in, Electron is
+unchanged. The routing rule is deliberately not reimplemented in JS. Asking Rust
+costs one `invoke` per mounted surface per change, and a graph change is an
+operator moving a slider, not a render loop.
+
+**The settings picker had to move with it.** Both sources now read the device
+from the sink, so a picker still writing only to `localStorage` would have taken
+the video's routing *away* rather than given the backing track its own.
+`useAudioDeviceSync` seeds React from Rust on mount rather than the other way
+round: the Tauri build is a fresh browser origin with an empty settings key
+(known-issues §2), so pushing first would overwrite a saved device with a blank
+one on every launch.
+
+**The mirrors keep their `muted` attributes.** Replacing fourteen of them with
+hook calls is churn in live-service code for a guarantee the suite already
+gives, and ADR-001 deletes those elements outright when the compositor lands.
+The graph refuses mirrors today; the attributes are belt and braces until there
+is nothing left to brace.
+
+### What the running app reports
+
+A clean launch, zero renderer errors, every earlier gate still passing:
+
+```
+audioDevice=system-default audioSink=shared audibleMirrors=none
+```
+
+`shared` is known-issues §1: both sources return the same device. `none` is the
+audit's §5.3 invariant, checked across the real serialisation boundary — where a
+mistake in the surface names would fail open in exactly the place a unit test
+cannot see.
+
+That launch also turned up a bug in the shell. `safelyUnlisten` was written for
+the unlisten failure a Vite reload causes, and its own comment names the symptom
+("surfaces as an unhandled rejection"), but the guard was a bare `try`/`catch`
+and the failure arrives as a promise rejection. Fifteen reached the Rust error
+log on one launch, each indistinguishable from a real renderer failure — in the
+one place this migration relies on to see anything, since a Tauri webview's
+console cannot be read from a terminal. Now zero.
+
+## 5. On the TypeScript side
+
 
 `applyRouting` in `src/renderer/tauri/audio.ts` is the only function in the
 renderer that touches `muted`, `volume` or the sink. Mirrors call it too,
@@ -111,26 +167,8 @@ to `element.volume` throws — and a throw would abort the caller's effect and
 leave the *previous* level applied, which is audio that ignores the operator
 rather than audio that goes quiet.
 
-## 5. What is verified
+## 6. Slice three — typing the scene, and the media transport
 
-By running it:
-
-- 351 Rust tests, 93 JS tests, clippy `-D warnings` and fmt clean, typecheck
-  clean, lint unchanged at the 10 pre-existing errors
-- every assertion in the new suite proven to fail: a second `new Audio()`, a
-  stray `.play()`, a dropped `mute=1`, a raised silence gain, an added
-  `setSinkId`, an `<audio>` element, and an unmuted mirror beside a capture
-  stream
-- the original video guard re-proven to fail on an injected audible `<video>`
-  after its scanner moved
-
-**Not verified.** *Nothing has been heard.* No audio has come out of a speaker
-under Tauri, and no device has been switched at runtime by a person. The gate
-proves the graph answers correctly and that both sources agree on the device; it
-does not prove a sound came out of the right box. That needs the manual run
-below.
-
-## 6. Slice four — typing the scene, and the media transport
 
 Two pieces the compositor needs whichever shape it takes.
 
@@ -192,68 +230,110 @@ sync and wants the manual run done first. What is in is the transport, a startup
 gate proving it is reachable and bounded, and `__presentPlayback` so it can be
 driven by hand during that run.
 
-## 6. Slice three — routing both sources, and closing §1
+## 7. Slice four — the compositor
 
-The defect was never a forgotten call. `setSinkId` is a **per-element** call, so
-the audio-output-device setting reached whichever elements somebody remembered
-to route. Adding a second call site would have left the same shape in place.
 
-So there is now exactly one place either source can be routed from —
-`applyAudioRouting` — which both shells and both sources go through. A source
-cannot be left behind by omission, because omitting it means producing no audio.
+ADR-001's headline. A scene goes in, pixels come out.
 
-`useAudioRouting` is the adapter, shaped like every other slice's: the hook
-keeps its signature, no component learns which shell it is in, Electron is
-unchanged. The routing rule is deliberately not reimplemented in JS. Asking Rust
-costs one `invoke` per mounted surface per change, and a graph change is an
-operator moving a slider, not a render loop.
+### It rasterises on the CPU, and that is deliberate
 
-**The settings picker had to move with it.** Both sources now read the device
-from the sink, so a picker still writing only to `localStorage` would have taken
-the video's routing *away* rather than given the backing track its own.
-`useAudioDeviceSync` seeds React from Rust on mount rather than the other way
-round: the Tauri build is a fresh browser origin with an empty settings key
-(known-issues §2), so pushing first would overwrite a saved device with a blank
-one on every launch.
+The ADR names wgpu. It named it before anyone had looked at how slides are
+actually drawn, and they are drawn with the Canvas 2D API — `measureText`,
+`fillText`, paths, rounded rects, `drawImage`, sixty context calls in
+`CanvasSlideLayer.tsx`. `tiny-skia` is a Skia subset with that same model, so
+what is here is a port rather than a reimplementation.
 
-**The mirrors keep their `muted` attributes.** Replacing fourteen of them with
-hook calls is churn in live-service code for a guarantee the suite already
-gives, and ADR-001 deletes those elements outright when the compositor lands.
-The graph refuses mirrors today; the attributes are belt and braces until there
-is nothing left to brace.
+The ADR's *decision* was compositing in Rust over OS capture and offscreen
+Chromium, and that is unchanged. Three things follow from the choice of
+rasteriser:
 
-### What the running app reports
+- **NDI wants a CPU-side BGRA bitmap.** That is what `capturePage` produced and
+  what `grandi` consumes (audit §10.1). A GPU compositor would have to read back
+  every frame to feed it; rasterising on the CPU removes that readback rather
+  than adding one.
+- **It is testable headlessly**, with assertions about actual pixels. A wgpu
+  path needs a GPU adapter, which CI runners frequently do not have.
+- **There is nothing for a GPU to composite yet.** The expensive case is video
+  frames at 30 fps, and this tree has no Rust video decoder.
 
-A clean launch, zero renderer errors, every earlier gate still passing:
+`Frame` is a plain buffer precisely so a GPU path can replace the internals
+later without any consumer changing.
 
-```
-audioDevice=system-default audioSink=shared audibleMirrors=none
-```
+### What each layer refuses to guess
 
-`shared` is known-issues §1: both sources return the same device. `none` is the
-audit's §5.3 invariant, checked across the real serialisation boundary — where a
-mistake in the surface names would fail open in exactly the place a unit test
-cannot see.
+| Layer | The refusal |
+|---|---|
+| colour | an unrecognised CSS string paints **nothing** — guessing black covers the lyrics, guessing white covers the video |
+| geometry | rotation about the element's centre, not the origin; radius clamped to half the shorter side |
+| shapes | the border insets by half its width, because a stroke straddles its path |
+| text | size scales uniformly, never per-axis; unstyled text defaults to white |
+| images | `cover` is the default, because letterboxing a background shows bars |
+| scene | an empty scene renders black rather than failing |
 
-That launch also turned up a bug in the shell. `safelyUnlisten` was written for
-the unlisten failure a Vite reload causes, and its own comment names the symptom
-("surfaces as an unhandled rejection"), but the guard was a bare `try`/`catch`
-and the failure arrives as a promise rejection. Fifteen reached the Rust error
-log on one launch, each indistinguishable from a real renderer failure — in the
-one place this migration relies on to see anything, since a Tauri webview's
-console cannot be read from a terminal. Now zero.
+`web` elements and unknown types are **deferred, not drawn** — they belong to
+the webview layer above, and painting anything in their place would cover them.
 
-## 6. What is left
+### The security boundary
+
+The renderer cannot open a file. Every URL in a scene came from the frontend,
+and `file_scope` is the only thing allowed to turn one into a read. A compositor
+calling `std::fs::read` would reopen known-issues §3 from a new direction, with
+no HTTP response for anyone to notice the missing 403 on. `ScopedMediaLoader`
+goes through `FileState`, and its tests prove that a file outside the granted
+folders and a traversal out of one are both refused.
+
+### What it looks like
+
+`cargo run --example render_sample` writes a frame somebody can open. The pixel
+tests assert about ink and colour, which is what keeps them independent of a
+machine's fonts; they cannot say whether the result *looks* right, and ADR-001
+requires the Rust and React renderings of the same slide to stay visually
+identical. That is a judgement only an eye makes.
+
+## 8. What is verified
+
+
+By running it:
+
+- 429 Rust tests, 93 JS tests, clippy `-D warnings` and fmt clean, typecheck
+  clean, lint unchanged at the 10 pre-existing errors
+- every assertion in the new suite proven to fail: a second `new Audio()`, a
+  stray `.play()`, a dropped `mute=1`, a raised silence gain, an added
+  `setSinkId`, an `<audio>` element, and an unmuted mirror beside a capture
+  stream
+- the original video guard re-proven to fail on an injected audible `<video>`
+  after its scanner moved
+- **a real lyric slide rendered by the compositor** and looked at: centred
+  verse, italic footer, a rounded lower-third with a border and opacity, and the
+  `web` element correctly left as a hole for the layer above
+- the compositor's scope check refusing both a file outside the granted folders
+  and a traversal out of one
+
+**Not verified.** *Nothing has been heard.* No audio has come out of a speaker
+under Tauri, and no device has been switched at runtime by a person. The gate
+proves the graph answers correctly and that both sources agree on the device; it
+does not prove a sound came out of the right box. That needs the manual run
+below.
+
+## 9. What is left
 
 **Wire the React player to the transport.** `useShowVideoSync` still owns
 playback in refs. Moving it onto the Rust transport is the cutover, and it
-touches live-service video sync, so it wants the manual run done first.
+touches live-service video sync.
 
-**The compositor.** ADR-001's headline and the expensive part — weeks, not days.
-`slide_elements` is typed now; `screen_composer_layout` still is not. The
-surface is a hybrid per the ADR amendment: Rust composites the slide, media and
-overlays, a transparent webview above it keeps the YouTube and capture props,
-and those two layers do not reach NDI.
+**Bring the compositor to parity, then swap the surface.** The frame pipeline
+exists and draws slides. What it does not draw yet:
+
+| Gap | Why it is not there |
+|---|---|
+| **Video frames** | there is no Rust video decoder in this tree. The largest single gap, and the reason the surface has not swapped |
+| Message, props and timer overlays | straightforward ports of `OutputWindow`'s layers onto the same primitives |
+| `screen_composer_layout` | still carried verbatim; needs typing the way `slide_elements` was |
+| Text shadow, gradient fill, text stroke | `CanvasSlideLayer` supports all three |
+| Scripture auto-fit | `resolveScriptureAutoFitScale`, which shrinks a long verse to fit its box |
+
+Until it reaches parity the output window stays a webview, which is what
+ADR-001 requires so parity is never lost mid-migration.
 
 **Two prerequisites that are not code**, both still outstanding from the
 handoff, and both needing a person:
@@ -262,6 +342,7 @@ handoff, and both needing a person:
    been *used* — no slide advanced, no video played, no audience window opened.
 2. Run the multi-monitor matrix, the outstanding Stage 2 gate.
 
-Building a compositor onto an audience surface that has never once displayed a
-slide is the risk worth naming: the compositor would be the first thing to
-render there, and every failure would look like a compositor bug.
+**Stage 6 depends on this stage finishing.** NDI has no frame source until the
+compositor is the audience surface — that is the whole of ADR-001's blocker
+§10.1. `Frame::to_bgra` is the shape `grandi` consumes, so the interface Stage 6
+needs is already there; what it is waiting for is frames with video in them.
