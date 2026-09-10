@@ -1,9 +1,10 @@
 # Stage 2 (part 2) — Windows
 
-**Status:** complete; hot-plug still to do · **Date:** 2026-09-09
+**Status:** complete · **Date:** 2026-09-09, hot-plug 2026-09-10
 
-All eight windows are created by the Rust core. The display half of Stage 2 is
-[stage-2-displays.md](stage-2-displays.md).
+All eight windows are created by the Rust core, and they follow the monitors.
+The display half of Stage 2 is [stage-2-displays.md](stage-2-displays.md);
+hot-plug is [stage-2-hotplug.md](stage-2-hotplug.md).
 
 ## What moved
 
@@ -245,8 +246,6 @@ known-issues §9. The guard is preserved verbatim here rather than half-fixed.
 
 ## Next
 
-Monitor hot-plug → reconcile, which is the rest of Stage 2. Tauri surfaces no
-monitor-change event, so the trigger has to be built: either polling
-`available_monitors()` or a platform notification
-(`NSApplicationDidChangeScreenParametersNotification` on macOS). That task also
-owns known-issues §9.
+Nothing in Stage 2. Hot-plug reconcile, the last item, is
+[stage-2-hotplug.md](stage-2-hotplug.md). Stage 3 is native APIs: scoped
+filesystem, dialogs, deep links, global shortcut, menus and permissions.

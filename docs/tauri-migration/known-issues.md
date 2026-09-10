@@ -14,7 +14,7 @@ zero-behaviour-change change, per migration rule 4.
 | 6 | Build workflows trigger on a branch that does not exist | Low | Open |
 | 7 | Ten pre-existing ESLint errors | Low | Deferred — see below |
 | 8 | Speech-to-search blocked by a CORS preflight, not by Electron | Medium | **Fixed** |
-| 9 | Monitor hot-plug never moves the output window | High | Stage 2 (hot-plug) |
+| 9 | Monitor hot-plug never moved the output window | High | **Fixed** |
 | 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | Stage 7 |
 
 ---
@@ -232,7 +232,7 @@ dead code and go with the rest of the Electron layer in Stage 7.
 
 ---
 
-## 9. Monitor hot-plug never moves the output window
+## 9. Monitor hot-plug never moved the output window — FIXED
 
 `main/index.ts:74-82` subscribes to `display-added`, `display-removed` and
 `display-metrics-changed`, and each one calls `reconcileOutputWindowDisplay()`.
@@ -255,15 +255,19 @@ scenario they exist for — a projector unplugged and replugged mid-service, or 
 resolution change — leaves the output window on whichever monitor it started on,
 or on no visible monitor at all.
 
-**Fix (Stage 2, hot-plug):** owned by the remaining half of Stage 2. It is left
-in place for now because the fix is not simply deleting the guard: moving a
-fullscreen window on macOS means leaving fullscreen, repositioning, and
-re-entering, which is visible on the projector. Choosing between that and
-leaving a mispositioned window is the decision that task has to make, and it
-needs a second monitor to make it against.
+**Fixed** in the Tauri build — see
+[stage-2-hotplug.md](stage-2-hotplug.md). The guard was replaced rather than
+deleted: deleting it would drop the projector out of fullscreen and back on
+every unrelated display event. `plan_reposition` asks whether the window is
+already exactly covering the right monitor, in fullscreen, and only a window
+that is genuinely wrong pays the transition.
 
-The Rust port preserves the guard verbatim (`services/window.rs`, `place`), so
-the behaviour is unchanged rather than accidentally half-fixed.
+Two things came out of fixing it. The reconcile now covers the two stage
+displays as well as the audience output, which have the same problem. And
+including the work area in the change comparison caused a feedback loop, because
+macOS changes it when the menu bar hides for a fullscreen window.
+
+Electron is untouched, per migration rule 4.
 
 ---
 

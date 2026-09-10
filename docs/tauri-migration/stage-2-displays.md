@@ -150,10 +150,12 @@ reach the UI even if AppKit declines to answer. Names that merely resemble it
 
 ## Next
 
+Nothing. Stage 2 is complete.
+
 1. ~~Window creation~~ — done, see [stage-2-windows.md](stage-2-windows.md).
    The monitor-reading code in this document moved from `commands/display.rs`
    to `services/monitors.rs` there, so window placement and the display
    commands resolve a role the same way.
-2. Monitor hot-plug → reconcile, matching the three `screen` events in
-   `src/main/index.ts:74-82`. Note that those events do not currently move the
-   output window at all — see known-issues §9.
+2. ~~Monitor hot-plug → reconcile~~ — done, see
+   [stage-2-hotplug.md](stage-2-hotplug.md). Those Electron events never moved
+   the output window at all; known-issues §9 covers why.

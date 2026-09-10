@@ -31,7 +31,7 @@ use tauri::{
 };
 
 use crate::errors::AppResult;
-use crate::services::display::Display;
+use crate::services::display::{Display, Rect};
 use crate::services::monitors;
 use crate::services::window_spec::{Placement, Rgb, WindowRole, WindowSpec};
 use crate::state::WindowState;
@@ -66,14 +66,89 @@ fn logical_geometry(
     ))
 }
 
+/// What to do about a window that may or may not be on the right monitor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reposition {
+    /// The window already covers the target. Touching it would be a visible
+    /// change for no reason.
+    Leave,
+    /// Move and resize it. `leave_fullscreen` when the window has to be taken
+    /// out of fullscreen first, which on macOS is an animated transition the
+    /// audience can see.
+    Move { leave_fullscreen: bool },
+}
+
+/// Decide whether a window needs moving.
+///
+/// This is the fix for known-issues §9. Electron guards the whole reposition on
+/// the window *not* being fullscreen (`display.service.ts:135-152`), and the
+/// audience window always is, so its hot-plug handlers have never moved
+/// anything. Removing the guard outright would be worse than leaving it: every
+/// unrelated display event would drop the projector out of fullscreen and back
+/// again, mid-service.
+///
+/// So the guard is replaced rather than deleted. The question is not "is it
+/// fullscreen" but "is it already where it belongs", and only a window that is
+/// genuinely on the wrong monitor pays the transition.
+pub fn plan_reposition(
+    window_position: (i32, i32),
+    window_size: (u32, u32),
+    is_fullscreen: bool,
+    target: Rect,
+) -> Reposition {
+    // Fullscreen is part of "correct", not just geometry. A window can sit at
+    // exactly the right bounds and still be an ordinary window — macOS leaves
+    // one that way after the monitor it was fullscreen on disappears — and on
+    // the audience screen that means the menu bar and Dock sit over the output.
+    let already_correct = is_fullscreen
+        && window_position == (target.x, target.y)
+        && window_size == (target.width, target.height);
+
+    if already_correct {
+        Reposition::Leave
+    } else {
+        Reposition::Move {
+            leave_fullscreen: is_fullscreen,
+        }
+    }
+}
+
+/// How long to give macOS to finish the exit-fullscreen animation before
+/// repositioning. A window still animating ignores `set_position`.
+const FULLSCREEN_EXIT_SETTLE: Duration = Duration::from_millis(700);
+
 /// Move an existing window onto `target` and fill it.
 ///
-/// The Electron original (`display.service.ts:135-152`) only repositions a
-/// window that is not already fullscreen, because moving a fullscreen window on
-/// macOS tears it out of its Space. Same rule here.
+/// Does nothing when the window already covers `target`, which is the common
+/// case for a display event on some other monitor.
 pub fn place(window: &WebviewWindow, target: &Display) -> AppResult<()> {
-    if window.is_fullscreen()? {
+    let position = window.outer_position()?;
+    let size = window.outer_size()?;
+    let is_fullscreen = window.is_fullscreen()?;
+
+    let plan = plan_reposition(
+        (position.x, position.y),
+        (size.width, size.height),
+        is_fullscreen,
+        target.bounds,
+    );
+
+    let Reposition::Move { leave_fullscreen } = plan else {
         return Ok(());
+    };
+
+    tracing::info!(
+        label = %window.label(),
+        display = target.id,
+        %leave_fullscreen,
+        "moving window onto its preferred display"
+    );
+
+    if leave_fullscreen {
+        window.set_fullscreen(false)?;
+        // Not on the main thread — this is the watcher thread or a command —
+        // so sleeping here blocks nothing that matters.
+        std::thread::sleep(FULLSCREEN_EXIT_SETTLE);
     }
 
     // Physical units: these are the exact numbers the monitor reported, so no
@@ -304,4 +379,133 @@ pub fn reconcile(app: &AppHandle, spec: &WindowSpec, target: Option<&Display>) -
         return Ok(());
     };
     place(&window, display)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PROJECTOR: Rect = Rect {
+        x: 1512,
+        y: 0,
+        width: 1920,
+        height: 1080,
+    };
+
+    #[test]
+    fn a_window_already_covering_its_display_is_left_alone() {
+        // The common case: something changed on another monitor. Under the old
+        // guard this was also a no-op, and it must stay one — dropping the
+        // audience output out of fullscreen for an unrelated event would be a
+        // visible fault during a service.
+        assert_eq!(
+            plan_reposition((1512, 0), (1920, 1080), true, PROJECTOR),
+            Reposition::Leave
+        );
+    }
+
+    #[test]
+    fn a_fullscreen_window_on_the_wrong_monitor_is_moved() {
+        // This is known-issues §9. Electron returns early here because the
+        // window is fullscreen, so the projector never follows the preference.
+        assert_eq!(
+            plan_reposition((0, 0), (1512, 982), true, PROJECTOR),
+            Reposition::Move {
+                leave_fullscreen: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_windowed_window_on_the_wrong_monitor_needs_no_transition() {
+        assert_eq!(
+            plan_reposition((0, 0), (1512, 982), false, PROJECTOR),
+            Reposition::Move {
+                leave_fullscreen: false
+            }
+        );
+    }
+
+    #[test]
+    fn correct_bounds_without_fullscreen_still_needs_fixing() {
+        // macOS leaves a window at the right size but windowed after the
+        // monitor it was fullscreen on goes away. On the audience screen that
+        // shows the menu bar and Dock over the output.
+        assert_eq!(
+            plan_reposition((1512, 0), (1920, 1080), false, PROJECTOR),
+            Reposition::Move {
+                leave_fullscreen: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_resolution_change_on_the_same_monitor_moves_the_window() {
+        // Same origin, new size: the projector switched to 720p. The window has
+        // to be resized or it overhangs.
+        let downscaled = Rect {
+            x: 1512,
+            y: 0,
+            width: 1280,
+            height: 720,
+        };
+        assert_eq!(
+            plan_reposition((1512, 0), (1920, 1080), true, downscaled),
+            Reposition::Move {
+                leave_fullscreen: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_monitor_rearranged_to_a_new_origin_moves_the_window() {
+        // Dragging the projector to the left of the laptop in display settings
+        // changes its origin without changing its size.
+        let relocated = Rect {
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        assert_eq!(
+            plan_reposition((1512, 0), (1920, 1080), true, relocated),
+            Reposition::Move {
+                leave_fullscreen: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_one_pixel_difference_still_counts() {
+        // Exact comparison on purpose. A window one pixel short of the monitor
+        // shows a line of desktop on the audience screen.
+        assert_eq!(
+            plan_reposition((1512, 0), (1920, 1079), true, PROJECTOR),
+            Reposition::Move {
+                leave_fullscreen: true
+            }
+        );
+    }
+
+    #[test]
+    fn negative_origins_compare_correctly() {
+        // A monitor placed above or left of the primary has negative
+        // coordinates, and the comparison must not treat them as unset.
+        let above = Rect {
+            x: 0,
+            y: -1080,
+            width: 1920,
+            height: 1080,
+        };
+        assert_eq!(
+            plan_reposition((0, -1080), (1920, 1080), true, above),
+            Reposition::Leave
+        );
+        assert_eq!(
+            plan_reposition((0, 0), (1920, 1080), true, above),
+            Reposition::Move {
+                leave_fullscreen: true
+            }
+        );
+    }
 }

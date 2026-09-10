@@ -66,6 +66,7 @@ pub fn run() {
             commands::display::set_preferred_display,
             commands::display::set_preferred_resolution,
             commands::display::get_preferred_resolution,
+            commands::display::reconcile_displays,
             commands::window::open_window,
             commands::window::close_window,
             commands::window::open_mini_lyrics_window,
@@ -94,6 +95,12 @@ pub fn run() {
             // carry the deferred first paint or the crash policy, and would
             // drift from its Rust twin the first time either changed.
             services::window::open(app.handle(), &spec_for(WindowRole::Main), None)?;
+
+            // Tauri emits no monitor-change event on any platform, so the
+            // equivalent of Electron's three `screen` subscriptions
+            // (`main/index.ts:74-82`) is a poll. See services/display_watch.rs
+            // for why polling rather than three platform observers.
+            services::display_watch::spawn(app.handle().clone());
 
             Ok(())
         })

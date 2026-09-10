@@ -1,9 +1,9 @@
 # Present — Electron → Tauri migration: session handoff
 
-**Read this first.** It is the state of the migration as of 2026-09-09, written
+**Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 8 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 11 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -29,10 +29,11 @@ the audience screen is a serious bug, not a rough edge.
 |---|---|
 | [stage-0-audit.md](stage-0-audit.md) | The full audit. Architecture map, all 79 IPC channels, media/audio/output pipeline, state model, native deps, build system, 31-row migration matrix, risks. **The reference for anything about how Electron does it today.** |
 | [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. |
-| [known-issues.md](known-issues.md) | Ten bugs found so far, each assigned to the stage that owns the fix. Three fixed. |
+| [known-issues.md](known-issues.md) | Ten bugs found so far, each assigned to the stage that owns the fix. Four fixed. |
 | [stage-1-tauri-skeleton.md](stage-1-tauri-skeleton.md) | The Tauri shell beside Electron. |
 | [stage-2-displays.md](stage-2-displays.md) | Display enumeration, identity, persistence, monitor names. |
 | [stage-2-windows.md](stage-2-windows.md) | All eight windows in Rust: specs as data, the output hardening, crash policy, the physical/logical placement trap. |
+| [stage-2-hotplug.md](stage-2-hotplug.md) | Monitors changing under a running app: the poll, what counts as a change, and the work-area feedback loop. |
 
 ## 3. Where things stand
 
@@ -43,41 +44,44 @@ the same `src/` React tree Webpack serves for Electron; the whole existing UI
 mounts under Tauri. Electron is untouched and still works. CI covers Rust
 quality plus macOS/Windows/Linux bundles.
 
-**Stage 2 — windows and display.** Nearly done.
+**Stage 2 — windows and display.** Done.
 - ✅ Display selection rule extracted, characterised (12 tests), ported to Rust
 - ✅ Monitor enumeration, synthesised stable identity, persisted preferences
 - ✅ Real monitor names in the picker
 - ✅ All eight windows created by Rust, including the operator window
-- ⬜ **Next: monitor hot-plug → reconcile** (also owns known-issues §9)
+- ✅ Monitor hot-plug → reconcile, which also fixed known-issues §9
+
+**The stage gate is not fully met.** The audit's Stage 2 gate is a multi-monitor
+manual matrix, and this machine has one screen. No window has been placed on, or
+moved to, a second monitor. Run that matrix before trusting Stage 2 in front of
+a congregation — the list is in stage-2-hotplug.md's "Not verified".
 
 Stages 3–8 are untouched. Order and content are in the audit's §12.
 
 ## 4. The next task, concretely
 
-Monitor hot-plug → reconcile. Under Electron this is the three `screen` events
-in `src/main/index.ts:74-82`, each calling `reconcileOutputWindowDisplay()`.
+**Stage 3 — native APIs.** The audit's §12 lists it as: filesystem (scoped),
+dialogs, deep links, global shortcut, menus, permissions. The gate is closing
+the `local-media://` scope.
 
-Two things make it more than a port.
+Start with the filesystem, because two known issues are waiting on it and one is
+a security hole. `local-media://` takes a URL pathname straight to `fs.stat` and
+`fs.createReadStream` with no containment check, so the renderer can read any
+file the user can (`protocol.service.ts:137-145`, known-issues §3). Do not
+reproduce it. Tauri's asset protocol with a scope limited to the configured
+media folders is the replacement.
 
-**Tauri emits no monitor-change event.** tao does not surface one. The trigger
-has to be built — polling `available_monitors()` on an interval, or a platform
-notification (`NSApplicationDidChangeScreenParametersNotification` on macOS,
-`WM_DISPLAYCHANGE` on Windows). `services/monitors.rs` already answers "what is
-connected now"; only the trigger is missing. `services/window.rs::reconcile` is
-already written and waiting for it.
+Stage 3 also owns known-issues §2, the dev/packaged state split. Tauri serves
+from `tauri://localhost`, which is a *sixth* origin, so the Tauri build starts
+with no session, no settings and no offline data. That needs a deliberate import
+path rather than being discovered by a user mid-service.
 
-**The Electron original does nothing.** `moveOutputWindowToDisplay` is guarded
-on the window *not* being fullscreen, and the output window always is — so the
-three subscriptions have never moved the audience output. That is known-issues
-§9, and this task owns it. The guard is preserved verbatim in the Rust port
-rather than half-fixed, because the fix is a real decision: moving a fullscreen
-window on macOS means leaving fullscreen, repositioning, and re-entering, which
-is visible on the projector. Make that call against a second monitor, not from
-reasoning.
+Before that, consider running the multi-monitor matrix Stage 2 could not. It
+needs a second screen, not a code change.
 
 Per ADR-001, **output state must be fully describable as serialisable Rust
-structs from here on** — never as React component state. Window specs already
-are (`services/window_spec.rs`); the scene description is Stage 5.
+structs from here on** — never as React component state. Window specs and the
+reposition decision already are; the scene description is Stage 5.
 
 ## 5. Decisions already made — do not relitigate
 
@@ -121,6 +125,9 @@ Verified by running it, not by reasoning:
   URL. The three fullscreen roles reported `fullscreen: true`.
 - macOS lifecycle: closing the last window leaves the process running, and
   `open -a Present.app` recreates the operator window in that same process.
+- Hot-plug reconcile, both paths: a window already covering its display is left
+  untouched, and a displaced one is moved back and re-fullscreened. A steady
+  single-monitor run produces no display-change events at all.
 
 **Not verified — do not claim otherwise:**
 
@@ -130,9 +137,10 @@ Verified by running it, not by reasoning:
 - Nothing on Windows or Linux. macOS only so far. In particular there is **no
   webview crash recovery at all** on those two platforms — Tauri's only hook is
   macOS/iOS-gated. known-issues §10.
-- No Tauri window has been opened on a second monitor yet. This machine has one
-  screen, so window placement is exercised only at the origin — which is exactly
-  the case where a physical-vs-logical pixel mistake is invisible.
+- **Nothing on a second monitor.** This machine has one screen. Window
+  placement is exercised only at the origin, which is exactly where a
+  physical-vs-logical pixel mistake is invisible, and no window has been moved
+  from one monitor to another. This is the outstanding Stage 2 gate.
 
 ## 7. Working agreements
 
@@ -182,7 +190,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **85 Rust tests, 48 JS tests**, clippy/fmt/typecheck clean.
+Current: **104 Rust tests, 48 JS tests**, clippy/fmt/typecheck clean.
 
 ## 9. Installed skills
 

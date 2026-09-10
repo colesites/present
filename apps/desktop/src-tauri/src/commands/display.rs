@@ -77,3 +77,14 @@ pub fn get_preferred_resolution(
 ) -> AppResult<Resolution> {
     Ok(state.snapshot().resolution_for(role))
 }
+
+/// Put every open full-screen window back on the display its role resolves to.
+///
+/// The hot-plug watcher does this automatically. This exposes it so an operator
+/// can force it from the UI after changing a screen preference, without closing
+/// and reopening the audience output.
+#[tauri::command]
+pub async fn reconcile_displays(app: AppHandle) -> AppResult<()> {
+    crate::services::display_watch::reconcile_all(&app);
+    Ok(())
+}

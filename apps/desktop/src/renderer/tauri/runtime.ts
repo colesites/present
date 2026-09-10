@@ -150,3 +150,27 @@ export type OpenWindowInfo = {
  */
 export const listOpenWindows = (): Promise<OpenWindowInfo[]> =>
   invoke<OpenWindowInfo[]>("list_open_windows");
+
+/**
+ * Put every open full-screen window back on the display its role resolves to.
+ *
+ * The Rust core does this automatically when monitors change; this is the
+ * manual trigger for after an operator picks a different screen.
+ */
+export const reconcileDisplays = (): Promise<void> => invoke("reconcile_displays");
+
+/** Emitted by the Rust core when the connected monitors change. */
+export const DISPLAY_LIST_CHANGED = "display:list-changed";
+
+/**
+ * Subscribe to monitor changes. Resolves to an unsubscribe function.
+ *
+ * This replaces polling: `App.tsx` re-reads the display list every 15 seconds
+ * because Electron gave the renderer no way to hear about a hot-plug.
+ */
+export const onDisplayListChanged = async (
+  handler: (displays: Display[]) => void,
+): Promise<() => void> => {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<Display[]>(DISPLAY_LIST_CHANGED, (event) => handler(event.payload));
+};

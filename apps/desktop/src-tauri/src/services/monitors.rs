@@ -50,7 +50,28 @@ fn localized_names(app: &AppHandle) -> HashMap<(i32, i32), String> {
 
 /// Read the monitors the OS currently reports.
 fn snapshot_monitors(app: &AppHandle) -> AppResult<Vec<MonitorSnapshot>> {
-    let localized = localized_names(app);
+    snapshot_monitors_with_labels(app, true)
+}
+
+/// Geometry only, skipping the AppKit lookup for human-readable names.
+///
+/// The hot-plug watcher runs this on a timer and only needs to know whether
+/// anything moved. `localized_names` hops to the main thread, so calling it on
+/// every tick would contend with the UI for no benefit — labels are cosmetic
+/// and only matter when a display list is handed to the frontend.
+pub fn geometry_snapshot(app: &AppHandle) -> AppResult<Vec<MonitorSnapshot>> {
+    snapshot_monitors_with_labels(app, false)
+}
+
+fn snapshot_monitors_with_labels(
+    app: &AppHandle,
+    with_labels: bool,
+) -> AppResult<Vec<MonitorSnapshot>> {
+    let localized = if with_labels {
+        localized_names(app)
+    } else {
+        HashMap::new()
+    };
 
     let primary = app.primary_monitor()?;
     let primary_position = primary.as_ref().map(|monitor| {
