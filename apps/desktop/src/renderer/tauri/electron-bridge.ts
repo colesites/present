@@ -261,6 +261,33 @@ const bridge = {
     }),
   openExternalBrowser: (url: string) => invoke<boolean>("open_external_browser", { url }),
 
+  // --- Stage 4: the audience scene --------------------------------------
+  // One scene in Rust, not three relayed streams. `sendToStage` and
+  // `sendToWorshipStage` are the same call as `sendToOutput`: under Electron
+  // each window had to be addressed separately because each kept its own
+  // accumulated copy. The names survive so the sending code did not change.
+  sendToOutput: (payload: unknown) => {
+    void invoke("send_to_output", { payload }).catch((error: unknown) => {
+      console.error("[Output] update rejected by the Rust core", error);
+    });
+  },
+  sendToStage: (payload: unknown) => {
+    void invoke("send_to_output", { payload }).catch(noop);
+  },
+  sendToWorshipStage: (payload: unknown) => {
+    void invoke("send_to_output", { payload }).catch(noop);
+  },
+
+  // The late-join handshake is gone. A window that opens mid-service asks for
+  // the scene rather than asking the operator window to repeat itself, so
+  // there is nothing to notify and nothing to wait for.
+  notifyOutputReady: noop,
+  notifyStageReady: noop,
+  notifyWorshipStageReady: noop,
+  onOutputReady: () => noop,
+  onStageReady: () => noop,
+  onWorshipStageReady: () => noop,
+
   // Errors the renderer catches. Optional-chained at the call site, so
   // leaving this out meant every render failure vanished without trace.
   reportRendererError: (error: unknown) => {

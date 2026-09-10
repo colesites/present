@@ -10,6 +10,7 @@ pub mod auth_state;
 pub mod display_state;
 pub mod file_state;
 pub mod looks_state;
+pub mod output_state;
 pub mod persist;
 pub mod window_state;
 
@@ -18,4 +19,5 @@ pub use auth_state::AuthState;
 pub use display_state::DisplayState;
 pub use file_state::FileState;
 pub use looks_state::LooksState;
+pub use output_state::OutputState;
 pub use window_state::WindowState;

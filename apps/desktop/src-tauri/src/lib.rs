@@ -108,6 +108,10 @@ pub fn run() {
         .manage(app_state)
         .manage(WindowState::new())
         .manage(services::deep_link::PendingDeepLink::new())
+        // The audience scene. In memory only: this is what is on screen right
+        // now, and restoring last Sunday's slide on launch would be worse than
+        // starting blank.
+        .manage(state::OutputState::new())
         .on_menu_event(services::app_menu::handle)
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_info,
@@ -163,7 +167,11 @@ pub fn run() {
             commands::auth::consume_pending_auth_token,
             commands::auth::begin_auth_flow,
             commands::auth::open_external_browser,
-            commands::auth::refresh_desktop_session
+            commands::auth::refresh_desktop_session,
+            commands::output::get_output_scene,
+            commands::output::send_to_output,
+            commands::output::set_output_frozen,
+            commands::output::is_output_frozen
         ])
         .setup(|app| {
             // Display preferences need the resolved app config directory, which

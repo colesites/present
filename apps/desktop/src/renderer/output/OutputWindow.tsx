@@ -258,7 +258,43 @@ export function OutputWindow() {
     screenComposerLayout: DEFAULT_SCREEN_LAYOUT,
   });
 
+  // Under Tauri the whole scene comes from Rust and this window renders it
+  // rather than reconstructing it from partial payloads. The merge below only
+  // exists to keep the styles this window seeds its own defaults with.
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+
+    void (async () => {
+      const core = await import("../tauri/output");
+      const unlisten = await core.onOutputSceneChanged((scene) => {
+        if (!cancelled) setState((prev) => core.mergeScene(prev, scene));
+      });
+      if (cancelled) {
+        unlisten();
+        return;
+      }
+      detach = unlisten;
+
+      // Late join, without a handshake: whatever is on screen right now.
+      const scene = await core.getOutputScene();
+      if (!cancelled) setState((prev) => core.mergeScene(prev, scene));
+    })().catch((error: unknown) => {
+      console.error("[Output] could not reach the Rust core", error);
+    });
+
+    return () => {
+      cancelled = true;
+      const stop = detach;
+      detach = null;
+      stop?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if ("__TAURI_INTERNALS__" in window) return;
     if (!window.electronAPI) return;
 
     const cleanup = window.electronAPI.onOutputData((data: unknown) => {

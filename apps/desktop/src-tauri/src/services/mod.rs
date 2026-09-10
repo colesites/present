@@ -13,6 +13,7 @@ pub mod filesystem;
 pub mod looks;
 pub mod media_protocol;
 pub mod monitors;
+pub mod output;
 pub mod permissions;
 pub mod shortcuts;
 pub mod speech;
