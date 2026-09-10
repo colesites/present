@@ -6,6 +6,7 @@
 pub mod app;
 pub mod audio;
 pub mod auth;
+pub mod compositor;
 pub mod deep_link;
 pub mod diagnostics;
 pub mod display;

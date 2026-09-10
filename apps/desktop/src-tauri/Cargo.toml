@@ -44,6 +44,9 @@ base64 = "0.23.1"
 # `shell.openExternal` for the sign-in flow (`auth.service.ts:71`).
 tauri-plugin-opener = "2.5.5"
 tokio = { version = "1.53.1", features = ["sync", "time"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+cosmic-text = "0.19"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 
 # Desktop-only plugins. The crate keeps a mobile entry point (see `[lib]`), and
 # neither of these builds for iOS or Android.

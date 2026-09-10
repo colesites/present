@@ -176,6 +176,7 @@ pub fn run() {
             commands::playback::report_playback_position,
             commands::playback::set_playback_duration,
             commands::playback::playback_ended,
+            commands::compositor::render_output_frame,
             commands::looks::get_looks_config,
             commands::looks::set_looks_target,
             commands::looks::set_selected_look,
