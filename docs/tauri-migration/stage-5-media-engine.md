@@ -1,6 +1,7 @@
 # Stage 5 — the media engine and a single audio path
 
-**Status:** in progress. Two slices landed; the surfaces are not yet wired.
+**Status:** in progress. The audio half is done and verified in the running
+app. The compositor has not been started.
 
 The stage the audit calls the highest-value, highest-risk work (§10.3), and the
 one ADR-001 was written for. Its gate is an audio regression suite.
@@ -123,17 +124,64 @@ By running it:
 - the original video guard re-proven to fail on an injected audible `<video>`
   after its scanner moved
 
-**Not verified.** Nothing has been heard. No audio has come out of a speaker
-under Tauri, no device has been switched at runtime, and no surface consumes
-the graph yet. The slice is a reducer with tests, not a working mixer.
+**Not verified.** *Nothing has been heard.* No audio has come out of a speaker
+under Tauri, and no device has been switched at runtime by a person. The gate
+proves the graph answers correctly and that both sources agree on the device; it
+does not prove a sound came out of the right box. That needs the manual run
+below.
+
+## 6. Slice three — routing both sources, and closing §1
+
+The defect was never a forgotten call. `setSinkId` is a **per-element** call, so
+the audio-output-device setting reached whichever elements somebody remembered
+to route. Adding a second call site would have left the same shape in place.
+
+So there is now exactly one place either source can be routed from —
+`applyAudioRouting` — which both shells and both sources go through. A source
+cannot be left behind by omission, because omitting it means producing no audio.
+
+`useAudioRouting` is the adapter, shaped like every other slice's: the hook
+keeps its signature, no component learns which shell it is in, Electron is
+unchanged. The routing rule is deliberately not reimplemented in JS. Asking Rust
+costs one `invoke` per mounted surface per change, and a graph change is an
+operator moving a slider, not a render loop.
+
+**The settings picker had to move with it.** Both sources now read the device
+from the sink, so a picker still writing only to `localStorage` would have taken
+the video's routing *away* rather than given the backing track its own.
+`useAudioDeviceSync` seeds React from Rust on mount rather than the other way
+round: the Tauri build is a fresh browser origin with an empty settings key
+(known-issues §2), so pushing first would overwrite a saved device with a blank
+one on every launch.
+
+**The mirrors keep their `muted` attributes.** Replacing fourteen of them with
+hook calls is churn in live-service code for a guarantee the suite already
+gives, and ADR-001 deletes those elements outright when the compositor lands.
+The graph refuses mirrors today; the attributes are belt and braces until there
+is nothing left to brace.
+
+### What the running app reports
+
+A clean launch, zero renderer errors, every earlier gate still passing:
+
+```
+audioDevice=system-default audioSink=shared audibleMirrors=none
+```
+
+`shared` is known-issues §1: both sources return the same device. `none` is the
+audit's §5.3 invariant, checked across the real serialisation boundary — where a
+mistake in the surface names would fail open in exactly the place a unit test
+cannot see.
+
+That launch also turned up a bug in the shell. `safelyUnlisten` was written for
+the unlisten failure a Vite reload causes, and its own comment names the symptom
+("surfaces as an unhandled rejection"), but the guard was a bare `try`/`catch`
+and the failure arrives as a promise rejection. Fifteen reached the Rust error
+log on one launch, each indistinguishable from a real renderer failure — in the
+one place this migration relies on to see anything, since a Tauri webview's
+console cannot be read from a terminal. Now zero.
 
 ## 6. What is left
-
-**Wire the surfaces.** Replace the nine hard-coded `muted` attributes and the
-two level-setting effects with `applyRouting`. This is the slice that actually
-closes known-issues §1, and until it lands the defect is unchanged on both
-shells. It touches `ServicesSidebar.tsx`, which currently carries the owner's
-own uncommitted edits — coordinate before starting.
 
 **Media playback state in Rust.** The plan's §Stage 5 list: play, pause, stop,
 seek, volume, mute, position, lifecycle, preview/output sync. `OutputScene`

@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 26 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 29 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -97,7 +97,8 @@ yet.
 - ✅ The audio regression suite covers every route to a speaker, not just `<video>`
 - ✅ The audio graph in Rust: one sink, one device, two sources
 - ✅ Only the operator surface can produce sound, structurally rather than by convention
-- ⬜ Wiring the surfaces to it — the slice that actually closes known-issues §1
+- ✅ Both audible sources routed through one sink — **known-issues §1 fixed** under Tauri
+- ✅ Proven in the running app: `audioSink=shared audibleMirrors=none`, zero renderer errors
 - ⬜ Media playback state (play/pause/seek/position/lifecycle)
 - ⬜ The wgpu compositor, per ADR-001
 
@@ -125,6 +126,9 @@ stays until Stage 8.
 ### Commits on this branch
 
 ```
+b949248 feat(stage-5): route both audible sources through the one sink
+417d435 fix(tauri): catch the unlisten rejection the guard was written for
+c4cd375 docs(stage-5): record the audio inventory, the graph, and what is left
 13c1fdb feat(stage-5): make the single audio path a Rust-owned graph
 9303665 test(stage-5): inventory every audio path before the media engine moves any
 bc05ab5 feat(stage-4): replace the mini lyrics save round trip
@@ -176,11 +180,6 @@ code change.
 
 Then the remaining Stage 5 slices:
 
-- **Wire the surfaces to `applyRouting`.** Replace the nine hard-coded `muted`
-  attributes and the two level-setting effects with the one call. This is what
-  actually closes known-issues §1 — until it lands the defect is unchanged on
-  both shells. It touches `ServicesSidebar.tsx`, which carries the owner's own
-  uncommitted edits, so coordinate before starting.
 - **Media playback state in Rust** — play, pause, stop, seek, volume, mute,
   position, lifecycle, preview/output sync. `OutputScene` already carries
   `is_video_playing` and `video_current_time`; what is missing is the transport
@@ -295,8 +294,9 @@ not a file at all.
   design; each entry goes away when its subsystem moves to Rust. Anything not
   implemented reads as `undefined` and reports itself once into the Rust log.
 - `runtime.ts` — the typed `invoke` wrapper
-- `audio.ts` — the audio graph client, and `applyRouting`: the only function
-  in the renderer that touches `muted`, `volume` or the sink
+- `audio.ts` — the audio graph client. Transport only; the one place that
+  applies routing is `applyAudioRouting` in `shared/hooks/useAudioRouting.ts`,
+  which works on both shells
 - `looks.ts`, `output.ts`, `presentation.ts` — typed clients for the three
   Rust-owned state slices, each imported dynamically so the Electron bundle
   never sees `@tauri-apps/api`
@@ -310,7 +310,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 321 Rust, 92 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 321 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -371,6 +371,11 @@ Verified by running it, not by reasoning:
   clean launch.
 - A looks toggle applied in Rust reaching a subscribed window as an event
   rather than on a poll (`changeEvent=delivered`).
+- **The audio graph across the real serialisation boundary**: both audible
+  sources returning the same output device (`audioSink=shared`) and all twelve
+  mirror/source combinations refused (`audibleMirrors=none`).
+- A clean Tauri launch going from **15 unhandled rejections to 0** after the
+  `safelyUnlisten` fix, with zero renderer errors.
 - Slide navigation refusing to run with no deck loaded rather than guessing
   (`navigateWithoutDeck=refused`).
 - Electron still packaging cleanly with every shared file this branch touched.
@@ -406,7 +411,7 @@ whole picture without opening it.
 
 | # | Issue | Severity | State |
 |---|---|---|---|
-| 1 | Backing tracks ignore the audio-output-device setting | High | Open — Stage 5 |
+| 1 | Backing tracks ignore the audio-output-device setting | High | **Fixed** under Tauri |
 | 2 | Dev and packaged builds keep entirely separate state | High | **Partly fixed** — see below |
 | 3 | `local-media://` can read any file on disk | Medium | **Fixed** |
 | 4 | Media panel hidden behind a dead File System Access check | Medium | **Fixed** |
@@ -487,7 +492,7 @@ Everything else:
 ```bash
 bun run desktop:tauri:build                     # production bundle
 bun run --filter @present/desktop tauri:check   # fmt + clippy -D warnings + tests
-bun run test                                    # 92 JS tests
+bun run test                                    # 93 JS tests
 bun run typecheck
 bun run lint
 node apps/desktop/scripts/check-tauri-version.mjs [--fix]
@@ -498,7 +503,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **321 Rust tests, 92 JS tests**, clippy/fmt/typecheck clean.
+Current: **321 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
 
 ## 11. Installed skills
 
@@ -539,7 +544,9 @@ if asked.
   test caught it; nothing at runtime would have.
 - **Tauri's unlisten throws when the listener is already gone**, which a Vite
   hot reload causes by resetting the injected registry. Always detach through
-  `safelyUnlisten` in `src/renderer/tauri/electron-bridge.ts`.
+  `safelyUnlisten` in `src/renderer/tauri/electron-bridge.ts`. Note *how* it
+  fails: `UnlistenFn` is typed `void` but returns a promise, so the failure is a
+  rejection and a bare `try`/`catch` never sees it.
 - **A `State<'_, T>` cannot cross into a spawned task.** Clone the `AppHandle`
   and re-fetch the state inside. The URI scheme handler does this.
 - **A temporary in a `match` scrutinee lives for the whole match.** An

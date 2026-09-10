@@ -6,7 +6,7 @@ zero-behaviour-change change, per migration rule 4.
 
 | # | Issue | Severity | Status |
 |---|---|---|---|
-| 1 | Backing tracks ignore the audio-output-device setting | High | **Partly fixed** — Stage 5 |
+| 1 | Backing tracks ignore the audio-output-device setting | High | **Fixed** under Tauri; unchanged under Electron |
 | 2 | Dev and packaged builds keep entirely separate state | High | Stage 3 |
 | 3 | `local-media://` can read any file on disk | Medium | **Fixed** |
 | 4 | Media panel hidden behind a dead File System Access check | Medium | **Fixed** |
@@ -32,15 +32,23 @@ So the audio-output-device setting added in `e81feb0` covers video and nothing
 else. On a laptop whose default output is the built-in speakers, video audio
 goes to the desk while backing tracks come out of the laptop.
 
-**Fix (Stage 5), half landed.** The Rust audio graph exists: one sink that owns
-the device, two sources that both read it, and `applyRouting` as the only place
-in the renderer that touches `muted`, `volume` or the sink
-(`services/audio.rs`, `src/renderer/tauri/audio.ts`).
+**Fixed (Stage 5), on the Tauri shell.**
 
-**The defect is unchanged on both shells until the surfaces are wired to it.**
-Nothing consumes the graph yet, so `AudioTabPanel` still plays through its own
-`new Audio()` and still never calls `setSinkId`. That wiring is the next slice.
-See [stage-5-media-engine.md](stage-5-media-engine.md).
+The defect was never a forgotten call. `setSinkId` is a *per-element* call, so
+the setting reached whichever elements someone remembered to route. The fix is
+that there is now exactly one place either source can be routed from —
+`applyAudioRouting` in `shared/hooks/useAudioRouting.ts` — backed by a Rust sink
+that owns the device (`services/audio.rs`). A source cannot be left behind by
+omission any more, because omitting it means producing no audio at all.
+
+Verified in the running app. The startup gate reports `audioSink=shared`, which
+is both sources returning the same device, and `audibleMirrors=none`.
+
+**Unchanged under Electron**, which is the standing call in handoff §6: fix in
+the rewrite, not in the shipping build. The Electron path passes the same values
+it set inline before, `deviceId: null` for the backing track included. Flipping
+it is a one-line change to the fallback in `AudioTabPanel.tsx` if that call
+changes.
 
 ---
 
