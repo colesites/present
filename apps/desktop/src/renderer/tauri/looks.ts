@@ -12,6 +12,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import { safelyUnlisten } from "./electron-bridge";
+
 import type {
   LookLayerKey,
   LookTargetKey,
@@ -60,13 +62,13 @@ export const onLooksChanged = async (
 ): Promise<() => void> => {
   const unlisten = await listen<LooksConfig>(LOOKS_CHANGED, (event) => handler(event.payload));
 
-  // Guarded because Tauri's unlisten throws on a listener that is already gone
-  // ("undefined is not an object (evaluating 'listeners[eventId].handlerId')"),
-  // and React 19 runs effect cleanup more than once in development.
+  // Guarded twice over: once so a second cleanup does nothing, and once
+  // because Tauri's unlisten throws outright on a listener that has already
+  // gone. See `safelyUnlisten`.
   let detached = false;
   return () => {
     if (detached) return;
     detached = true;
-    unlisten();
+    safelyUnlisten(unlisten);
   };
 };

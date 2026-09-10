@@ -13,6 +13,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import { safelyUnlisten } from "./electron-bridge";
+
 import type { OutputState } from "../../shared/types/output-window";
 
 /** `OUTPUT_CHANGED_EVENT`. */
@@ -52,13 +54,12 @@ export const onOutputSceneChanged = async (
     handler(event.payload),
   );
 
-  // Guarded: Tauri's unlisten throws on a listener that has already gone, and
-  // React 19 runs effect cleanup twice in development.
+  // Guarded twice over; see `safelyUnlisten`.
   let detached = false;
   return () => {
     if (detached) return;
     detached = true;
-    unlisten();
+    safelyUnlisten(unlisten);
   };
 };
 

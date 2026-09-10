@@ -112,6 +112,8 @@ pub fn run() {
         // now, and restoring last Sunday's slide on launch would be worse than
         // starting blank.
         .manage(state::OutputState::new())
+        // Open lyric editors and the saves they are waiting on.
+        .manage(services::mini_lyrics::MiniLyricsState::new())
         .on_menu_event(services::app_menu::handle)
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_info,
@@ -180,7 +182,10 @@ pub fn run() {
             commands::presentation::go_to_slide,
             commands::presentation::next_slide,
             commands::presentation::previous_slide,
-            commands::presentation::reconcile_presentation_services
+            commands::presentation::reconcile_presentation_services,
+            commands::mini_lyrics::get_mini_lyrics_payload,
+            commands::mini_lyrics::save_mini_lyrics,
+            commands::mini_lyrics::respond_mini_lyrics_save
         ])
         .setup(|app| {
             // Display preferences need the resolved app config directory, which

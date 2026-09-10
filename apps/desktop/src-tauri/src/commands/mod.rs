@@ -10,6 +10,7 @@ pub mod diagnostics;
 pub mod display;
 pub mod file;
 pub mod looks;
+pub mod mini_lyrics;
 pub mod output;
 pub mod permissions;
 pub mod presentation;

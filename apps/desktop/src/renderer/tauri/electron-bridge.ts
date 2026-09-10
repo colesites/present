@@ -45,7 +45,7 @@ const subscribe = (event: string, handler: (payload: never) => void): (() => voi
   void listen(event, (message) => handler(message.payload as never))
     .then((unlisten) => {
       if (cancelled) {
-        unlisten();
+        safelyUnlisten(unlisten);
         return;
       }
       detach = unlisten;
@@ -56,13 +56,30 @@ const subscribe = (event: string, handler: (payload: never) => void): (() => voi
 
   return () => {
     cancelled = true;
-    // Tauri's unlisten throws if the listener has already gone, and React 19
-    // runs effect cleanup more than once in development, so this must be safe
-    // to call twice.
     const stop = detach;
     detach = null;
-    stop?.();
+    safelyUnlisten(stop);
   };
+};
+
+/**
+ * Detach a listener without ever throwing.
+ *
+ * Tauri's unlisten looks the listener up by id and throws
+ * ("undefined is not an object (evaluating 'listeners[eventId].handlerId')")
+ * when it is already gone. That happens on a Vite hot reload, which resets the
+ * injected registry while the closure still holds the old id, and it surfaces
+ * as an unhandled rejection rather than anything actionable.
+ *
+ * Failing to detach a listener that no longer exists is the outcome we wanted
+ * anyway, so it is swallowed rather than reported.
+ */
+export const safelyUnlisten = (unlisten: (() => void) | null | undefined): void => {
+  try {
+    unlisten?.();
+  } catch {
+    // Already detached.
+  }
 };
 
 /** Base64 to bytes, for the presentation files the picker returns. */
@@ -162,7 +179,9 @@ const bridge = {
     invoke<boolean>("open_window", { role: "screen-composer", options: null }),
   closeScreenComposerWindow: () =>
     invoke<boolean>("close_window", { role: "screen-composer" }),
-  openMiniLyricsWindow: (payload: { libraryId: string; title?: string }) =>
+  // The payload now carries the body too: the editor asks the core what it is
+  // editing rather than waiting to be sent it, so the core has to know.
+  openMiniLyricsWindow: (payload: unknown) =>
     invoke<boolean>("open_mini_lyrics_window", { payload }),
   closeMiniLyricsWindow: (libraryId: string) =>
     invoke<boolean>("close_mini_lyrics_window", { libraryId }),
@@ -287,6 +306,34 @@ const bridge = {
   onOutputReady: () => noop,
   onStageReady: () => noop,
   onWorshipStageReady: () => noop,
+
+  // The mini lyrics editor. The `mini-lyrics:ready` handshake is gone — the
+  // window asks for its payload the way a late-joining output window asks for
+  // the scene.
+  onMiniLyricsData: (callback: (payload: unknown) => void) => {
+    const libraryId = new URLSearchParams(window.location.search).get("libraryId");
+    if (!libraryId) return noop;
+
+    let cancelled = false;
+    void invoke<unknown>("get_mini_lyrics_payload", { libraryId })
+      .then((payload) => {
+        if (payload && !cancelled) callback(payload);
+      })
+      .catch((error: unknown) => {
+        console.error("[MiniLyrics] could not read the payload", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  },
+  notifyMiniLyricsReady: noop,
+  saveMiniLyrics: (payload: unknown) => invoke("save_mini_lyrics", { payload }),
+  onMiniLyricsSaveRequest: (callback: (request: never) => void) =>
+    subscribe("mini-lyrics:save-request", callback),
+  respondMiniLyricsSave: (response: unknown) => {
+    void invoke("respond_mini_lyrics_save", { response }).catch(noop);
+  },
 
   // Errors the renderer catches. Optional-chained at the call site, so
   // leaving this out meant every render failure vanished without trace.

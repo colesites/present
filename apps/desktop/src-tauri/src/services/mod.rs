@@ -12,6 +12,7 @@ pub mod file_scope;
 pub mod filesystem;
 pub mod looks;
 pub mod media_protocol;
+pub mod mini_lyrics;
 pub mod monitors;
 pub mod output;
 pub mod permissions;

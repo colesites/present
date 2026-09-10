@@ -18,6 +18,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::errors::{AppError, AppResult};
 use crate::services::display::ScreenRole;
+use crate::services::mini_lyrics::{MiniLyricsPayload, MiniLyricsState};
 use crate::services::monitors::{self, ResolvedDisplay};
 use crate::services::window;
 use crate::services::window_spec::{mini_lyrics_spec, spec_for, WindowRole, WindowSpec};
@@ -161,18 +162,16 @@ pub async fn close_window(app: AppHandle, role: WindowRole) -> AppResult<bool> {
     window::close(&app, role.label())
 }
 
-/// The payload `openMiniLyricsWindow` already sends (`electron.d.ts:152`).
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MiniLyricsPayload {
-    pub library_id: String,
-    #[serde(default)]
-    pub title: String,
-}
-
+/// Opens an editor, remembering what it is for.
+///
+/// The payload used to carry only the id and the title, because that was all
+/// the window spec needed. It carries the body too now: the editor asks the
+/// core what it is editing instead of waiting to be sent it, so the core has to
+/// know. See `services/mini_lyrics.rs`.
 #[tauri::command]
 pub async fn open_mini_lyrics_window(
     app: AppHandle,
+    state: State<'_, MiniLyricsState>,
     payload: MiniLyricsPayload,
 ) -> AppResult<bool> {
     let spec = mini_lyrics_spec(&payload.library_id, &payload.title).ok_or_else(|| {
@@ -182,15 +181,21 @@ pub async fn open_mini_lyrics_window(
         ))
     })?;
 
+    crate::commands::mini_lyrics::remember(&state, payload)?;
     window::open(&app, &spec, None)?;
     Ok(true)
 }
 
 #[tauri::command]
-pub async fn close_mini_lyrics_window(app: AppHandle, library_id: String) -> AppResult<bool> {
+pub async fn close_mini_lyrics_window(
+    app: AppHandle,
+    state: State<'_, MiniLyricsState>,
+    library_id: String,
+) -> AppResult<bool> {
     let Some(spec) = mini_lyrics_spec(&library_id, "") else {
         return Ok(false);
     };
+    state.forget(&library_id);
     window::close(&app, &spec.label)
 }
 
