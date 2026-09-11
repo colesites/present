@@ -60,6 +60,13 @@ folder needs to be told before the service, not shown a black rectangle during
 it. That is a UI requirement this decision creates, not an implementation
 detail.
 
+**Done.** An unplayable file carries an amber border and warning badge in the
+media panel, with advice that names the file and the next step rather than
+diagnosing the container. The check returns only the problems, so a library of
+MP4s costs one round trip and an empty array, and it asks about the visible
+items rather than the whole library. Tauri only: under Electron the media goes
+through Chromium, which opens more.
+
 **Three backends over time.** macOS is the only platform this migration has run
 on, so it is the only one being written now. Windows and Linux inherit the same
 trait and an unimplemented backend, which is honest about where the work is.

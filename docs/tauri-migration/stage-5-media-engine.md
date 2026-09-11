@@ -398,12 +398,33 @@ path. That same 2048×1152 file now composites in **9.9 ms**, marginally faster
 than the 1080p one because the hardware hands back a frame that needs no further
 work.
 
+### Telling somebody before the service
+
+Choosing the platform decoder means some containers do not open, and ADR-002 is
+explicit that this creates a UI requirement rather than an implementation
+detail. Writing a decoder for them is not the answer: that means shipping FFmpeg,
+which is what the ADR rejected, and paying for it on every service for files
+nobody has.
+
+So an unplayable file is flagged where it is added rather than where it fails.
+Amber border and badge in the media panel, the advice on the row in list view
+and on hover, and the advice names the file and the next step — whoever reads it
+is setting up on a Sunday morning and needs to know what to do, not why.
+
+A startup gate proves the check discriminates rather than simply agreeing,
+because a check that always answered "fine" would look identical to a clean
+library:
+
+```
+unplayableCheck=flags the avi only
+```
+
 ## 8. What is verified
 
 
 By running it:
 
-- 456 Rust tests, 93 JS tests, clippy `-D warnings` and fmt clean, typecheck
+- 461 Rust tests, 93 JS tests, clippy `-D warnings` and fmt clean, typecheck
   clean, lint unchanged at the 10 pre-existing errors
 - every assertion in the new suite proven to fail: a second `new Audio()`, a
   stray `.play()`, a dropped `mute=1`, a raised silence gain, an added

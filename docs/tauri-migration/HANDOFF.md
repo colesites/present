@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 48 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 50 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -108,6 +108,7 @@ yet.
 - ⬜ Cache the composited frame — a static slide is recomposed 30x a second for nothing
 - ✅ Video decode via the platform decoder (ADR-002), verified on their own library
 - ✅ The frame budget met with room: 9-12 ms against NDI's 33.3 ms, both resolutions
+- ✅ Unplayable media flagged in the panel, with advice (ADR-002's UI requirement)
 - ⬜ Overlays, screen-composer layout, and the surface swap
 
 The old guard scanned `<video>` and nothing else, so three other routes to a
@@ -218,6 +219,7 @@ process's own structure as the audit asked. Nothing here is a stub.
 commands/      thin: deserialise, delegate, map to AppResult
   app.rs         get_app_info
   compositor.rs  render_output_frame — renders the live scene, optionally to PNG
+  media.rs       check_video_support — which files the decoder cannot open
   audio.rs       get_audio_graph · get_source_routing · set_audio_device
                  set_audio_source_gain/_muted · set_audio_master_gain/_muted
   deep_link.rs   take_pending_deep_link
@@ -349,7 +351,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 456 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 461 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -549,7 +551,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **456 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
+Current: **461 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
 
 ## 11. Installed skills
 
