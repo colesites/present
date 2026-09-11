@@ -14,6 +14,7 @@ pub mod frame;
 pub mod geometry;
 pub mod images;
 pub mod loader;
+pub mod parallel;
 pub mod pipeline;
 pub mod scene;
 pub mod shapes;

@@ -42,6 +42,12 @@ pub struct SceneCompositor {
     cached_for: Option<OutputScene>,
     /// What the cached layer cost to build, for diagnostics.
     last_rebuild: bool,
+    /// The output buffer, kept between frames.
+    ///
+    /// Eight megabytes at 1920x1080. Allocating and freeing that thirty times a
+    /// second is a quarter of a gigabyte a second of allocator traffic for a
+    /// buffer whose size only changes when the output does.
+    frame: Option<Frame>,
 }
 
 impl SceneCompositor {
@@ -52,6 +58,7 @@ impl SceneCompositor {
             cached_layers: None,
             cached_for: None,
             last_rebuild: false,
+            frame: None,
         }
     }
 
@@ -71,12 +78,18 @@ impl SceneCompositor {
         self.cached_for = None;
     }
 
+    /// The frame from the last successful `render`.
+    pub fn frame(&self) -> Option<&Frame> {
+        self.frame.as_ref()
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if (self.width, self.height) == (width, height) {
             return;
         }
         self.width = width;
         self.height = height;
+        self.frame = None;
         self.invalidate();
     }
 
@@ -92,38 +105,50 @@ impl SceneCompositor {
         scene: &OutputScene,
         video: Option<&VideoFrame>,
         loader: &dyn MediaLoader,
-    ) -> Option<(Frame, Rendered)> {
+    ) -> Option<(&Frame, Rendered)> {
         let mut report = Rendered::default();
 
+        // Reuse the buffer when it is the right shape. Only its contents change
+        // between frames; its size changes when the output does.
+        let mut frame = match self.frame.take() {
+            Some(frame) if frame.width() == self.width && frame.height() == self.height => frame,
+            _ => Frame::new(self.width, self.height)?,
+        };
+
         // The fast path: a video that already matches the frame *is* the
-        // background. Building the frame from its bytes skips the black fill,
-        // the colour fill, an intermediate pixmap and a bilinear resample —
-        // four passes over two million pixels that produce what the video
-        // already was.
+        // background. Overwriting the buffer from its bytes skips the black
+        // fill, the colour fill, an intermediate pixmap and a bilinear
+        // resample — four passes over two million pixels that reproduce what
+        // the video already was.
         let direct_video = video
             .filter(|_| !scene.hide_background && scene.show_media)
             .filter(|frame| frame.width == self.width && frame.height == self.height)
             .filter(|frame| frame.is_well_formed());
 
-        let mut frame = match direct_video {
+        match direct_video {
             Some(video) => {
-                let frame = Frame::from_bgra(video.width, video.height, &video.bgra)?;
-                report.background_media_drawn = true;
-                frame
+                if frame.overwrite_from_bgra(&video.bgra) {
+                    report.background_media_drawn = true;
+                } else {
+                    report.background_media_missing = true;
+                    frame.clear(Color::BLACK);
+                }
             }
             None => {
-                let mut frame = Frame::new(self.width, self.height)?;
-
                 if scene.hide_background {
                     frame.clear(Color::BLACK);
                 } else if let Some(background) = scene.slide_background_color.as_deref() {
-                    shapes::fill_background(&mut frame.pixmap_mut(), background);
+                    // The reused buffer still holds the previous frame, so the
+                    // background must cover it rather than assume black.
+                    if !shapes::fill_background(&mut frame.pixmap_mut(), background) {
+                        frame.clear(Color::BLACK);
+                    }
+                } else {
+                    frame.clear(Color::BLACK);
                 }
 
                 if !scene.hide_background && scene.show_media {
                     if let Some(video) = video {
-                        // A video that does not match the frame: scaled, which
-                        // is the case the general path is actually for.
                         self.draw_video(&mut frame, video, &mut report);
                     } else if let Some(url) =
                         scene.media_url.as_deref().filter(|url| !url.is_empty())
@@ -131,16 +156,16 @@ impl SceneCompositor {
                         draw_still(&mut frame, url, loader, &mut report);
                     }
                 }
-                frame
             }
-        };
+        }
 
         // 3. The slide layers, only when the scene has actually changed.
         if let Some(layers) = self.layers_for(scene, loader, &mut report) {
             blend_over(&mut frame, layers);
         }
 
-        Some((frame, report))
+        self.frame = Some(frame);
+        Some((self.frame.as_ref()?, report))
     }
 
     /// The cached slide layer, rebuilt if the scene moved.
@@ -262,35 +287,39 @@ fn blend_over(frame: &mut Frame, layers: &Pixmap) {
         return;
     }
 
-    let source = layers.pixels();
-    let destination = frame.pixmap_mut_pixels();
+    super::parallel::zip_bands(
+        layers.pixels(),
+        frame.pixmap_mut_pixels(),
+        |source, destination| {
+            for (over, under) in source.iter().zip(destination.iter_mut()) {
+                let alpha = over.alpha();
+                if alpha == 0 {
+                    // Transparent: the frame already holds the answer.
+                    continue;
+                }
+                if alpha == 255 {
+                    // Opaque: the frame's pixel does not contribute.
+                    *under = *over;
+                    continue;
+                }
 
-    for (over, under) in source.iter().zip(destination.iter_mut()) {
-        let alpha = over.alpha();
-        if alpha == 0 {
-            // Transparent: the frame already holds the answer.
-            continue;
-        }
-        if alpha == 255 {
-            // Opaque: the frame's pixel does not contribute.
-            *under = *over;
-            continue;
-        }
-
-        // Both sides are premultiplied, so source-over is one multiply-add per
-        // channel with no division.
-        let inverse = 255 - alpha as u32;
-        let mix = |src: u8, dst: u8| -> u8 {
-            (src as u32 + (dst as u32 * inverse + 127) / 255).min(255) as u8
-        };
-        *under = tiny_skia::PremultipliedColorU8::from_rgba(
-            mix(over.red(), under.red()),
-            mix(over.green(), under.green()),
-            mix(over.blue(), under.blue()),
-            (alpha as u32 + (under.alpha() as u32 * inverse + 127) / 255).min(255) as u8,
-        )
-        .unwrap_or(*under);
-    }
+                // Both sides are premultiplied, so source-over is one
+                // multiply-add per channel with no division.
+                let inverse = 255 - u32::from(alpha);
+                let mix = |src: u8, dst: u8| -> u8 {
+                    (u32::from(src) + (u32::from(dst) * inverse + 127) / 255).min(255) as u8
+                };
+                *under = tiny_skia::PremultipliedColorU8::from_rgba(
+                    mix(over.red(), under.red()),
+                    mix(over.green(), under.green()),
+                    mix(over.blue(), under.blue()),
+                    (u32::from(alpha) + (u32::from(under.alpha()) * inverse + 127) / 255).min(255)
+                        as u8,
+                )
+                .unwrap_or(*under);
+            }
+        },
+    );
 }
 
 /// A decoded frame as something tiny-skia can paint.
@@ -413,14 +442,22 @@ mod tests {
             ..scene()
         };
 
-        let (built, _) = compositor.render(&scene, None, &NoMedia).expect("first");
-        let (cached, _) = compositor.render(&scene, None, &NoMedia).expect("second");
+        // Copied out before the second render: the compositor now hands back a
+        // borrow of the buffer it reuses, which is the whole point of reusing.
+        let built = compositor
+            .render(&scene, None, &NoMedia)
+            .expect("first")
+            .0
+            .as_rgba()
+            .to_vec();
+        let cached = compositor
+            .render(&scene, None, &NoMedia)
+            .expect("second")
+            .0
+            .as_rgba()
+            .to_vec();
 
-        assert_eq!(
-            built.as_rgba(),
-            cached.as_rgba(),
-            "the cached frame differs"
-        );
+        assert_eq!(built, cached, "the cached frame differs");
     }
 
     #[test]
@@ -558,9 +595,12 @@ mod tests {
         compositor.resize(200, 200);
         assert_eq!(compositor.dimensions(), (200, 200));
 
-        let (frame, _) = compositor.render(&scene(), None, &NoMedia).expect("second");
+        let size = {
+            let (frame, _) = compositor.render(&scene(), None, &NoMedia).expect("second");
+            (frame.width(), frame.height())
+        };
         assert!(compositor.rebuilt_last_frame(), "a resize must rebuild");
-        assert_eq!((frame.width(), frame.height()), (200, 200));
+        assert_eq!(size, (200, 200));
     }
 
     #[test]

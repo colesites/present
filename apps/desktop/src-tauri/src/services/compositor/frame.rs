@@ -73,26 +73,49 @@ impl Frame {
     /// frame exactly; anything else still goes the general way, because that is
     /// when the scaling is real work rather than waste.
     pub fn from_bgra(width: u32, height: u32, bgra: &[u8]) -> Option<Self> {
-        if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
-            return None;
-        }
-        if bgra.len() != width as usize * height as usize * 4 {
-            return None;
+        let mut frame = Self::new(width, height)?;
+        frame.overwrite_from_bgra(bgra).then_some(frame)
+    }
+
+    /// Overwrite every pixel from a decoded frame's BGRA bytes.
+    ///
+    /// Separate from [`from_bgra`](Self::from_bgra) so a compositor can keep
+    /// one frame and refill it. At 1920x1080 a frame is eight megabytes, and
+    /// allocating and freeing that thirty times a second is a quarter of a
+    /// gigabyte of allocator traffic for a buffer whose size never changes.
+    ///
+    /// The conversion runs in parallel bands. It is two million independent
+    /// pixels and was using one core of twelve.
+    pub fn overwrite_from_bgra(&mut self, bgra: &[u8]) -> bool {
+        let expected = self.width() as usize * self.height() as usize * 4;
+        if bgra.len() != expected {
+            return false;
         }
 
-        let mut pixmap = Pixmap::new(width, height)?;
-        for (slot, source) in pixmap.pixels_mut().iter_mut().zip(bgra.chunks_exact(4)) {
-            let (b, g, r, a) = (source[0], source[1], source[2], source[3]);
-            *slot = if a == 255 {
-                // Video is opaque in practice, and premultiplying by one is
-                // three multiplications that cannot change anything.
-                tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, 255)
-                    .unwrap_or_else(|| tiny_skia::ColorU8::from_rgba(r, g, b, a).premultiply())
-            } else {
-                tiny_skia::ColorU8::from_rgba(r, g, b, a).premultiply()
+        // Banded by destination, with each band slicing its own source bytes.
+        // `as_chunks` would read better and is stable only from 1.88; this
+        // crate declares 1.82 and raising an MSRV for syntax is not a trade
+        // worth making.
+        super::parallel::for_each_band(self.pixmap.pixels_mut(), |destination, offset| {
+            let start = offset * 4;
+            let end = start + destination.len() * 4;
+            let Some(band) = bgra.get(start..end) else {
+                return;
             };
-        }
-        Some(Self { pixmap })
+
+            for (slot, pixel) in destination.iter_mut().zip(band.chunks_exact(4)) {
+                let (b, g, r, a) = (pixel[0], pixel[1], pixel[2], pixel[3]);
+                *slot = if a == 255 {
+                    // Video is opaque in practice, and premultiplying by one is
+                    // three multiplications that change nothing.
+                    tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, 255)
+                        .unwrap_or_else(|| tiny_skia::ColorU8::from_rgba(r, g, b, a).premultiply())
+                } else {
+                    tiny_skia::ColorU8::from_rgba(r, g, b, a).premultiply()
+                };
+            }
+        });
+        true
     }
 
     pub fn width(&self) -> u32 {

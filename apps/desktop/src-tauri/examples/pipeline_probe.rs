@@ -70,16 +70,21 @@ fn main() {
         decode_ms += started.elapsed().as_secs_f64() * 1000.0;
 
         let started = std::time::Instant::now();
-        let Some((frame, _)) = compositor.render(&scene, Some(&decoded), &NoMedia) else {
-            eprintln!("composite failed");
-            break;
+        let rendered = {
+            let Some((frame, _)) = compositor.render(&scene, Some(&decoded), &NoMedia) else {
+                eprintln!("composite failed");
+                break;
+            };
+            // Touch the frame inside the borrow so the work is not optimised
+            // away, then release it before asking the compositor anything else.
+            std::hint::black_box(frame.as_rgba().len())
         };
         composite_ms += started.elapsed().as_secs_f64() * 1000.0;
+        std::hint::black_box(rendered);
 
         if compositor.rebuilt_last_frame() {
             rebuilds += 1;
         }
-        std::hint::black_box(&frame);
         frames += 1;
     }
 
