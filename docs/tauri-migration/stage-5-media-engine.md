@@ -336,12 +336,66 @@ machine's fonts; they cannot say whether the result *looks* right, and ADR-001
 requires the Rust and React renderings of the same slide to stay visually
 identical. That is a judgement only an eye makes.
 
+## 8. Slice five — video, and making the frame budget
+
+ADR-002: the operating system decodes. `services/video` is the trait and the
+support check; `services/video/macos.rs` is AVFoundation behind it.
+
+`AVAssetReader` pulls frames rather than `AVPlayer` playing them, because
+`services::playback` already owns position and a player would bring a second
+clock. Frames are requested as BGRA so VideoToolbox does the colour conversion
+in hardware — the half of decode quality that is easy to get wrong by hand.
+
+Two bugs only running it found. **Seeking aborted the process**: an
+`AVAssetReader`'s time range is immutable once reading starts, and setting it
+afterwards raises an Objective-C exception, which Rust cannot catch. And
+**pixel buffer rows are padded**, so copying the block in one go sheared every
+frame diagonally.
+
+### The frame budget
+
+NDI gives a frame 33.3 ms. Getting under it took three changes, each found by
+measuring rather than reasoning. Compositing a slide over one of the owner's own
+1080p service videos, ninety frames:
+
+| | decode | composite | total |
+|---|---:|---:|---:|
+| first working version | 4.3 ms | 84.4 ms | 88.7 ms |
+| build the frame from the video's bytes | 4.6 ms | 53.1 ms | 57.7 ms |
+| blend only the pixels that are not transparent | 4.7 ms | 23.1 ms | **27.8 ms** |
+
+Repeat runs land at 22 to 28 ms. Decode never moved: it was 4.3 to 4.7 ms
+throughout, which is hardware decode doing its job. Every gain was in the
+compositing.
+
+What each change removed:
+
+- **A full-screen video at native size is the frame.** Routing it through the
+  general image path cost five passes over two million pixels, one of them
+  bilinear resampling a 1920×1080 image into a 1920×1080 rectangle — arithmetic
+  for a copy.
+- **Most of a slide layer is nothing.** Lyrics cover perhaps a sixth of the
+  screen; the rest is transparent and contributes zero. A hand-written
+  source-over that skips those beats `draw_pixmap` taking every pixel through
+  tiny-skia's shader machinery for an aligned blit.
+
+### The resolution trap
+
+That budget held for 1920×1080 and collapsed to **117 ms** for a 2048×1152
+source, because the fast path only applies to a frame that arrives at the size
+it will be drawn at. Anything else fell back to software resampling.
+
+So the decoder is asked for frames at the output size, and VideoToolbox scales
+on the hardware that just decoded — free, since the scaler is already in that
+path. **That change is in and its tests pass, but the measurement after it did
+not finish.** Treat the 2048×1152 figure as unknown rather than fixed.
+
 ## 8. What is verified
 
 
 By running it:
 
-- 429 Rust tests, 93 JS tests, clippy `-D warnings` and fmt clean, typecheck
+- 450 Rust tests, 93 JS tests, clippy `-D warnings` and fmt clean, typecheck
   clean, lint unchanged at the 10 pre-existing errors
 - every assertion in the new suite proven to fail: a second `new Audio()`, a
   stray `.play()`, a dropped `mute=1`, a raised silence gain, an added
@@ -354,6 +408,10 @@ By running it:
   `web` element correctly left as a hole for the layer above
 - the compositor's scope check refusing both a file outside the granted folders
   and a traversal out of one
+- **video decoding from the owner's own library**: eight files, 720p to
+  2048×1152, every seek landing on the requested second, and a decoded frame
+  written out and looked at to confirm the channel order
+- **the full pipeline inside the frame budget** for 1080p: 27.8 ms against 33.3
 - the frame time measured rather than assumed: **300 ms** at 1920×1080 before
   the glyph fix and **29.5 ms** after it, against NDI's 33 ms budget
 

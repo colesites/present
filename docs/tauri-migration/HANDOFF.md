@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 42 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 46 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -28,6 +28,7 @@ the audience screen is a serious bug, not a rough edge.
 | Doc | What it holds |
 |---|---|
 | [stage-0-audit.md](stage-0-audit.md) | The full audit. Architecture map, all 79 IPC channels, media/audio/output pipeline, state model, native deps, build system, 31-row migration matrix, risks. **The reference for anything about how Electron does it today.** |
+| [adr-002-video-decode.md](adr-002-video-decode.md) | Video is decoded by the OS, not a bundled FFmpeg. What that costs in containers, and what their own library says about it. |
 | [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. **Amended**: the surface is a hybrid, with a webview layer above it for YouTube and capture props. |
 | [known-issues.md](known-issues.md) | Twelve bugs found so far, each assigned to the stage that owns the fix. Seven fixed. |
 | [stage-1-tauri-skeleton.md](stage-1-tauri-skeleton.md) | The Tauri shell beside Electron. |
@@ -105,7 +106,9 @@ yet.
 - ✅ The compositor draws slides: background, shapes, text, images, scope-checked media
 - ✅ Frame time measured: **29.5 ms** at 1920×1080, inside NDI's 33 ms budget
 - ⬜ Cache the composited frame — a static slide is recomposed 30x a second for nothing
-- ⬜ Video frames in the compositor — the largest remaining gap
+- ✅ Video decode via the platform decoder (ADR-002), verified on their own library
+- ✅ The frame budget met for 1080p: 27.8 ms against NDI's 33.3 ms
+- ⬜ Re-measure a non-1080p source after the hardware-scaling change
 - ⬜ Overlays, screen-composer layout, and the surface swap
 
 The old guard scanned `<video>` and nothing else, so three other routes to a
@@ -277,7 +280,12 @@ services/      domain logic, most of it runtime-free and tested
     loader.rs          THE scope check for scene media. Never std::fs directly.
     scene.rs           the layer order, and what was left to the webview
     shapes.rs          rects, radii, inset borders
+    pipeline.rs        THE per-frame path: caches the slide, composites video
     text.rs            cosmic-text layout and rasterisation
+  video/             THE video decoder (ADR-002). Platform decoders, macOS only
+                     so far. The support check is separate and answers by
+                     extension, so an unplayable file is caught in the panel
+                     rather than on the audience screen.
   playback.rs        THE media transport: resume points, and the two drift
                      tolerances the audit recorded as one. No Tauri types.
   presentation.rs    where the operator is: service, item, deck, slide, and the
@@ -341,7 +349,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 429 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 450 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -541,7 +549,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **429 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
+Current: **450 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
 
 ## 11. Installed skills
 
