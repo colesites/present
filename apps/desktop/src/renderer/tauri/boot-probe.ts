@@ -387,3 +387,41 @@ if (shouldProbe) {
     );
   });
 }
+
+if (shouldProbe) {
+  // ADR-002's UI requirement: a file the platform decoder cannot open has to be
+  // flagged in the media panel while there is still time to convert it, not
+  // discovered as a black rectangle during a service. What is proved here is
+  // that the check says yes to what plays and no to what does not — a check
+  // that silently answered "everything is fine" would look identical to a
+  // library with no problems in it.
+  void (async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    type Unplayable = { path: string; advice: string };
+    const reported = await invoke<Unplayable[]>("check_video_support", {
+      paths: [
+        "/media/bumper.mp4",
+        "/media/wedding.avi",
+        "/media/background.jpg",
+      ],
+    });
+
+    const flagged = reported.map((item) => item.path);
+    const correct =
+      flagged.length === 1 && flagged[0] === "/media/wedding.avi"
+        ? "flags the avi only"
+        : `WRONG: ${JSON.stringify(flagged)}`;
+
+    const summary = `unplayableCheck=${correct}`;
+    console.info("[Tauri]", summary);
+    await invoke("report_diagnostic", { message: summary });
+  })().catch((error: unknown) => {
+    console.error("[Tauri] media support probe failed", error);
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("report_diagnostic", {
+        message: `media support probe failed: ${String(error)}`,
+      })
+    );
+  });
+}

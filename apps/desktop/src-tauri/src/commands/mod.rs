@@ -12,6 +12,7 @@ pub mod diagnostics;
 pub mod display;
 pub mod file;
 pub mod looks;
+pub mod media;
 pub mod mini_lyrics;
 pub mod output;
 pub mod permissions;

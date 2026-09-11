@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Image,
   Video,
+  AlertTriangle,
   Folder,
   Monitor,
   Plus,
@@ -36,6 +37,7 @@ import {
   DropdownMenuSeparator,
 } from "../../renderer/shared/components/ui/dropdown-menu";
 import type { MediaState, MediaItem, MediaFolder } from "./hooks";
+import { useVideoSupport } from "../../renderer/shared/hooks/useVideoSupport";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
@@ -76,6 +78,7 @@ const MediaItemCard = memo(function MediaItemCard({
   onDelete,
   isInsideService,
   isGridView,
+  unplayableReason,
 }: {
   item: MediaItem;
   isActive: boolean;
@@ -85,6 +88,8 @@ const MediaItemCard = memo(function MediaItemCard({
   onDelete: (item: MediaItem) => void;
   isInsideService: boolean;
   isGridView?: boolean;
+  /** Set when the platform decoder cannot open this file (ADR-002). */
+  unplayableReason?: string;
 }) {
   const cardRef = useRef<HTMLButtonElement | null>(null);
   const [isInView, setIsInView] = useState(false);
@@ -118,12 +123,15 @@ const MediaItemCard = memo(function MediaItemCard({
       type="button"
       onClick={() => onSelect(item)}
       ref={cardRef}
+      title={unplayableReason}
       className={cn(
         "group relative overflow-hidden rounded-xl border bg-black transition-all duration-150",
         isGridView ? "aspect-video w-full" : "flex h-16 w-full flex-row items-center",
         isActive
           ? "border-primary/70 ring-2 ring-primary/70 ring-offset-1 ring-offset-background"
-          : "border-border/60 hover:border-primary/40 hover:shadow-md hover:shadow-black/30"
+          : unplayableReason
+            ? "border-amber-500/70 hover:border-amber-500"
+            : "border-border/60 hover:border-primary/40 hover:shadow-md hover:shadow-black/30"
       )}
     >
           <div className={cn(
@@ -164,13 +172,25 @@ const MediaItemCard = memo(function MediaItemCard({
               <p className="truncate text-xs text-white">{item.name}</p>
             </div>
           ) : (
-            <div className="flex flex-1 items-center px-4 overflow-hidden">
+            <div className="flex flex-1 flex-col justify-center px-4 overflow-hidden">
               <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
+              {unplayableReason ? (
+                <p className="truncate text-xs text-amber-500">{unplayableReason}</p>
+              ) : null}
             </div>
           )}
-          {/* Type indicator */}
-          <div className="absolute right-1 top-1 rounded bg-black/60 p-1">
-            {item.type === "video" ? (
+          {/* Type indicator, or a warning when the file will not play.
+              ADR-002: a volunteer needs to find this out while there is still
+              time to convert the file, not when it reaches the screen. */}
+          <div
+            className={cn(
+              "absolute right-1 top-1 rounded p-1",
+              unplayableReason ? "bg-amber-500" : "bg-black/60"
+            )}
+          >
+            {unplayableReason ? (
+              <AlertTriangle className="h-3 w-3 text-black" aria-hidden />
+            ) : item.type === "video" ? (
               <Video className="h-3 w-3 text-white" />
             ) : (
               <Image className="h-3 w-3 text-white" />
@@ -346,6 +366,18 @@ export const MediaPanel = memo(
       }
       return filteredItems;
     }, [filter, filteredItems]);
+
+    // Which of the visible videos the platform decoder cannot open (ADR-002).
+    // Asked about what is on screen rather than the whole library, so a folder
+    // of a thousand files does not check nine hundred it is not showing.
+    const visibleVideoPaths = useMemo(
+      () =>
+        visibleMediaItems
+          .filter((item) => item.type === "video")
+          .map((item) => item.path),
+      [visibleMediaItems]
+    );
+    const unplayableMedia = useVideoSupport(visibleVideoPaths);
 
     const handleAddToService = async (item: MediaItem) => {
       if (!selectedServiceId) {
@@ -766,6 +798,7 @@ export const MediaPanel = memo(
                             onDelete={setMediaToRemove}
                             isInsideService={isInsideService}
                             isGridView={isGridView}
+                            unplayableReason={unplayableMedia.get(item.path)}
                           />
                         </div>
                       ))}
