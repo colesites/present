@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 46 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 48 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -107,8 +107,7 @@ yet.
 - ✅ Frame time measured: **29.5 ms** at 1920×1080, inside NDI's 33 ms budget
 - ⬜ Cache the composited frame — a static slide is recomposed 30x a second for nothing
 - ✅ Video decode via the platform decoder (ADR-002), verified on their own library
-- ✅ The frame budget met for 1080p: 27.8 ms against NDI's 33.3 ms
-- ⬜ Re-measure a non-1080p source after the hardware-scaling change
+- ✅ The frame budget met with room: 9-12 ms against NDI's 33.3 ms, both resolutions
 - ⬜ Overlays, screen-composer layout, and the surface swap
 
 The old guard scanned `<video>` and nothing else, so three other routes to a
@@ -280,6 +279,7 @@ services/      domain logic, most of it runtime-free and tested
     loader.rs          THE scope check for scene media. Never std::fs directly.
     scene.rs           the layer order, and what was left to the webview
     shapes.rs          rects, radii, inset borders
+    parallel.rs        splitting the per-pixel passes across cores
     pipeline.rs        THE per-frame path: caches the slide, composites video
     text.rs            cosmic-text layout and rasterisation
   video/             THE video decoder (ADR-002). Platform decoders, macOS only
@@ -349,7 +349,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 450 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 456 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -549,7 +549,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **450 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
+Current: **456 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
 
 ## 11. Installed skills
 

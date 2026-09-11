@@ -354,19 +354,24 @@ frame diagonally.
 
 ### The frame budget
 
-NDI gives a frame 33.3 ms. Getting under it took three changes, each found by
-measuring rather than reasoning. Compositing a slide over one of the owner's own
-1080p service videos, ninety frames:
+NDI gives a frame 33.3 ms. Getting well under it took five changes, every one of
+them found by measuring rather than reasoning. Compositing a slide over one of
+the owner's own 1080p service videos, ninety frames, release build:
 
 | | decode | composite | total |
 |---|---:|---:|---:|
 | first working version | 4.3 ms | 84.4 ms | 88.7 ms |
 | build the frame from the video's bytes | 4.6 ms | 53.1 ms | 57.7 ms |
-| blend only the pixels that are not transparent | 4.7 ms | 23.1 ms | **27.8 ms** |
+| blend only the pixels that are not transparent | 4.7 ms | 23.1 ms | 27.8 ms |
+| spread the pixel work across cores | | | |
+| stop reallocating the frame every tick | 4.2 ms | 6.5 ms | **10.7 ms** |
 
-Repeat runs land at 22 to 28 ms. Decode never moved: it was 4.3 to 4.7 ms
-throughout, which is hardware decode doing its job. Every gain was in the
-compositing.
+Repeat runs land at 9 to 12 ms across seven of their videos — under a third of
+the budget, with decode now the larger half of what remains.
+
+**Decode never moved.** It was 4.2 to 4.7 ms at every step, which is the
+hardware doing its job. Every gain was in compositing, which is worth knowing
+before anyone reaches for a faster decoder.
 
 What each change removed:
 
@@ -375,27 +380,30 @@ What each change removed:
   bilinear resampling a 1920×1080 image into a 1920×1080 rectangle — arithmetic
   for a copy.
 - **Most of a slide layer is nothing.** Lyrics cover perhaps a sixth of the
-  screen; the rest is transparent and contributes zero. A hand-written
-  source-over that skips those beats `draw_pixmap` taking every pixel through
-  tiny-skia's shader machinery for an aligned blit.
+  screen; the rest is transparent and contributes zero.
+- **Twelve cores, one in use.** Both hot loops are two million independent
+  pixels. They run in bands now, one per core.
+- **Sixteen megabytes allocated and freed per frame.** The output buffer's size
+  only changes when the output does, so it is kept and overwritten.
 
 ### The resolution trap
 
-That budget held for 1920×1080 and collapsed to **117 ms** for a 2048×1152
+The budget held for 1920×1080 and collapsed to **117 ms** for a 2048×1152
 source, because the fast path only applies to a frame that arrives at the size
 it will be drawn at. Anything else fell back to software resampling.
 
-So the decoder is asked for frames at the output size, and VideoToolbox scales
+The decoder is asked for frames at the output size now, and VideoToolbox scales
 on the hardware that just decoded — free, since the scaler is already in that
-path. **That change is in and its tests pass, but the measurement after it did
-not finish.** Treat the 2048×1152 figure as unknown rather than fixed.
+path. That same 2048×1152 file now composites in **9.9 ms**, marginally faster
+than the 1080p one because the hardware hands back a frame that needs no further
+work.
 
 ## 8. What is verified
 
 
 By running it:
 
-- 450 Rust tests, 93 JS tests, clippy `-D warnings` and fmt clean, typecheck
+- 456 Rust tests, 93 JS tests, clippy `-D warnings` and fmt clean, typecheck
   clean, lint unchanged at the 10 pre-existing errors
 - every assertion in the new suite proven to fail: a second `new Audio()`, a
   stray `.play()`, a dropped `mute=1`, a raised silence gain, an added
@@ -411,7 +419,8 @@ By running it:
 - **video decoding from the owner's own library**: eight files, 720p to
   2048×1152, every seek landing on the requested second, and a decoded frame
   written out and looked at to confirm the channel order
-- **the full pipeline inside the frame budget** for 1080p: 27.8 ms against 33.3
+- **the full pipeline at a third of the frame budget**: 9 to 12 ms against 33.3,
+  measured across seven of their own videos and both resolutions
 - the frame time measured rather than assumed: **300 ms** at 1920×1080 before
   the glyph fix and **29.5 ms** after it, against NDI's 33 ms budget
 
