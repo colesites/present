@@ -140,13 +140,38 @@ fn draw_element(
     viewport: &geometry::Viewport,
     loader: &dyn MediaLoader,
 ) -> bool {
+    let mut pixmap = frame.pixmap_mut();
+    draw_element_into_mut(&mut pixmap, element, viewport, loader)
+}
+
+/// Draw one element into a standalone pixmap.
+///
+/// Exists so the caching pipeline can build the slide layers over transparency
+/// rather than over a frame. Same drawing either way — the layer order lives in
+/// the caller, and there is one implementation of each element type.
+pub(super) fn draw_element_into(
+    pixmap: &mut tiny_skia::Pixmap,
+    element: &SlideElement,
+    viewport: &geometry::Viewport,
+    loader: &dyn MediaLoader,
+) -> bool {
+    let mut view = pixmap.as_mut();
+    draw_element_into_mut(&mut view, element, viewport, loader)
+}
+
+fn draw_element_into_mut(
+    pixmap: &mut tiny_skia::PixmapMut<'_>,
+    element: &SlideElement,
+    viewport: &geometry::Viewport,
+    loader: &dyn MediaLoader,
+) -> bool {
     match element.element_type {
         SlideElementType::Shape => {
-            shapes::draw(&mut frame.pixmap_mut(), element, viewport);
+            shapes::draw(pixmap, element, viewport);
             true
         }
         SlideElementType::Text => {
-            text::draw(&mut frame.pixmap_mut(), element, viewport);
+            text::draw(pixmap, element, viewport);
             true
         }
         SlideElementType::Image => {
@@ -160,7 +185,7 @@ fn draw_element(
             let (width, height) = viewport.element_size(element);
             let style = element.style.as_ref();
             images::draw(
-                &mut frame.pixmap_mut(),
+                pixmap,
                 &decoded,
                 viewport.element_transform(element),
                 width,
@@ -170,7 +195,8 @@ fn draw_element(
             );
             true
         }
-        // A video element's frames need a decoder this tree does not have yet.
+        // A video element's own frames are the background media path; an
+        // inline video element is not composited yet.
         SlideElementType::Video => false,
         SlideElementType::Web | SlideElementType::Unknown => false,
     }

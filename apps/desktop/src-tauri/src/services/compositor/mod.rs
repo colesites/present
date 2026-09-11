@@ -14,10 +14,12 @@ pub mod frame;
 pub mod geometry;
 pub mod images;
 pub mod loader;
+pub mod pipeline;
 pub mod scene;
 pub mod shapes;
 pub mod text;
 
 pub use frame::Frame;
 pub use loader::ScopedMediaLoader;
+pub use pipeline::SceneCompositor;
 pub use scene::{render, MediaLoader, NoMedia, Rendered};

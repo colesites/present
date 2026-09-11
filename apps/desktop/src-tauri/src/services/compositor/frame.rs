@@ -58,6 +58,43 @@ impl Frame {
         Some(Self { pixmap })
     }
 
+    /// Build a frame straight from a decoded video frame's BGRA bytes.
+    ///
+    /// The fast path, and the reason it exists is worth stating because it was
+    /// measured rather than guessed. Routing a full-screen video frame through
+    /// the general image path cost five passes over two million pixels — fill
+    /// black, fill the background colour, convert into an intermediate pixmap,
+    /// sample that pixmap through a bilinear pattern, then blend the slide.
+    /// That measured 85 ms a frame against a 33 ms budget, and the bilinear
+    /// sampling was the worst of it: interpolating a 1920x1080 image into a
+    /// 1920x1080 rectangle is arithmetic for a copy.
+    ///
+    /// This collapses the first four into one write. The scale must match the
+    /// frame exactly; anything else still goes the general way, because that is
+    /// when the scaling is real work rather than waste.
+    pub fn from_bgra(width: u32, height: u32, bgra: &[u8]) -> Option<Self> {
+        if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
+            return None;
+        }
+        if bgra.len() != width as usize * height as usize * 4 {
+            return None;
+        }
+
+        let mut pixmap = Pixmap::new(width, height)?;
+        for (slot, source) in pixmap.pixels_mut().iter_mut().zip(bgra.chunks_exact(4)) {
+            let (b, g, r, a) = (source[0], source[1], source[2], source[3]);
+            *slot = if a == 255 {
+                // Video is opaque in practice, and premultiplying by one is
+                // three multiplications that cannot change anything.
+                tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, 255)
+                    .unwrap_or_else(|| tiny_skia::ColorU8::from_rgba(r, g, b, a).premultiply())
+            } else {
+                tiny_skia::ColorU8::from_rgba(r, g, b, a).premultiply()
+            };
+        }
+        Some(Self { pixmap })
+    }
+
     pub fn width(&self) -> u32 {
         self.pixmap.width()
     }
@@ -74,6 +111,12 @@ impl Frame {
     /// The drawing surface, for the layers.
     pub fn pixmap_mut(&mut self) -> PixmapMut<'_> {
         self.pixmap.as_mut()
+    }
+
+    /// The raw premultiplied pixels, for compositing that does not need
+    /// tiny-skia's transform and shader machinery.
+    pub fn pixmap_mut_pixels(&mut self) -> &mut [tiny_skia::PremultipliedColorU8] {
+        self.pixmap.pixels_mut()
     }
 
     pub fn pixmap(&self) -> &Pixmap {
