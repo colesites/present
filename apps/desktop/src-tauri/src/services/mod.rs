@@ -23,5 +23,6 @@ pub mod presentation;
 pub mod shortcuts;
 pub mod slide;
 pub mod speech;
+pub mod video;
 pub mod window;
 pub mod window_spec;
