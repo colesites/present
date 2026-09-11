@@ -20,7 +20,9 @@ fn main() {
     };
     let path = std::path::PathBuf::from(path);
 
-    let mut decoder = match video::open(&path) {
+    // Ask the decoder for frames at the output size so the hardware scaler
+    // does the resizing, not the compositor.
+    let mut decoder = match video::open_scaled(&path, Some((1920, 1080))) {
         Ok(decoder) => decoder,
         Err(error) => {
             eprintln!("open failed: {error}");

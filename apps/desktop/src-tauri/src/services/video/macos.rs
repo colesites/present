@@ -38,6 +38,15 @@ const PIXEL_FORMAT_32BGRA: u32 = 0x4247_5241;
 /// the CoreVideo string constants are not exposed by the binding crate.
 const PIXEL_FORMAT_KEY: &str = "PixelFormatType";
 
+/// `kCVPixelBufferWidthKey` / `kCVPixelBufferHeightKey`.
+///
+/// Setting these makes VideoToolbox scale during decode, on the same hardware
+/// that did the decoding. It is the difference between a 2048x1152 source
+/// costing 117 ms a frame to resample in software and costing what a 1080p one
+/// costs — the scaler is already there and already free.
+const WIDTH_KEY: &str = "Width";
+const HEIGHT_KEY: &str = "Height";
+
 /// Ticks per second for the times handed to AVFoundation. 600 is the
 /// conventional choice: it divides evenly by 24, 25, 30 and 60, so a seek to a
 /// round second lands on a frame boundary for every frame rate in use.
@@ -48,6 +57,8 @@ pub struct MacVideoDecoder {
     track: Retained<AVAssetTrack>,
     reader: Retained<AVAssetReader>,
     output: Retained<AVAssetReaderTrackOutput>,
+    /// The size frames are requested at, if the caller asked for one.
+    target: Option<(u32, u32)>,
     width: u32,
     height: u32,
     duration_seconds: Option<f64>,
@@ -61,7 +72,7 @@ pub struct MacVideoDecoder {
 unsafe impl Send for MacVideoDecoder {}
 
 impl MacVideoDecoder {
-    pub fn open(path: &Path) -> Result<Self, VideoError> {
+    pub fn open(path: &Path, target: Option<(u32, u32)>) -> Result<Self, VideoError> {
         let asset = unsafe {
             let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
             AVURLAsset::URLAssetWithURL_options(&url, None)
@@ -112,13 +123,18 @@ impl MacVideoDecoder {
             }
         };
 
-        let (reader, output) = Self::build_reader(&asset, &track, 0.0)?;
+        let (reader, output) = Self::build_reader(&asset, &track, 0.0, target)?;
+
+        // What the compositor will actually receive, which is the scaled size
+        // when one was asked for.
+        let (width, height) = target.unwrap_or((width, height));
 
         Ok(Self {
             asset,
             track,
             reader,
             output,
+            target,
             width,
             height,
             duration_seconds,
@@ -135,6 +151,7 @@ impl MacVideoDecoder {
         asset: &AVURLAsset,
         track: &AVAssetTrack,
         start_seconds: f64,
+        target: Option<(u32, u32)>,
     ) -> Result<(Retained<AVAssetReader>, Retained<AVAssetReaderTrackOutput>), VideoError> {
         unsafe {
             let reader = AVAssetReader::assetReaderWithAsset_error(asset).map_err(|error| {
@@ -143,11 +160,20 @@ impl MacVideoDecoder {
 
             // BGRA, so VideoToolbox converts colour in hardware. See the module
             // comment — this is the line that keeps blacks black.
+            let mut keys = vec![NSString::from_str(PIXEL_FORMAT_KEY)];
+            let mut values: Vec<Retained<AnyObject>> =
+                vec![Retained::into(NSNumber::new_u32(PIXEL_FORMAT_32BGRA))];
+
+            if let Some((width, height)) = target {
+                keys.push(NSString::from_str(WIDTH_KEY));
+                values.push(Retained::into(NSNumber::new_u32(width)));
+                keys.push(NSString::from_str(HEIGHT_KEY));
+                values.push(Retained::into(NSNumber::new_u32(height)));
+            }
+
+            let key_refs: Vec<&NSString> = keys.iter().map(|key| &**key).collect();
             let settings: Retained<NSDictionary<NSString, AnyObject>> =
-                NSDictionary::from_retained_objects(
-                    &[&*NSString::from_str(PIXEL_FORMAT_KEY)],
-                    &[Retained::into(NSNumber::new_u32(PIXEL_FORMAT_32BGRA))],
-                );
+                NSDictionary::from_retained_objects(&key_refs, &values);
 
             let output = AVAssetReaderTrackOutput::assetReaderTrackOutputWithTrack_outputSettings(
                 track,
@@ -297,7 +323,7 @@ impl VideoDecoder for MacVideoDecoder {
             self.reader.cancelReading();
         }
 
-        let (reader, output) = Self::build_reader(&self.asset, &self.track, seconds)?;
+        let (reader, output) = Self::build_reader(&self.asset, &self.track, seconds, self.target)?;
         self.reader = reader;
         self.output = output;
         self.finished = false;
