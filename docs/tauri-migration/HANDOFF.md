@@ -174,41 +174,40 @@ df6c9a7 docs: add session handoff for the Tauri migration
 
 ## 4. The next task, concretely
 
-**Stage 5 — the media engine and a single audio path**, continued. Two slices
-are in; see [stage-5-media-engine.md](stage-5-media-engine.md) for what they
-did and why.
+**Stage 5 is done.** Its gate — an audio regression suite — is met, and so is
+everything the stage names: the media engine, the single audio path,
+known-issues §1, and the compositor ADR-001 scheduled here. See
+[stage-5-media-engine.md](stage-5-media-engine.md).
 
-Two things still come first, in this order. **Neither is Stage 5 work, both
-need a person, and both change what Stage 5 can be trusted against.**
+**Two things come next, and they are independent of each other.**
 
-**1. Run a service through the Tauri build by hand.** Everything below Stage 5
-has code, tests and startup probes; none of it has been *used*. No slide has
-been advanced, no video played, no audience window opened, no dialog clicked,
-no deep link followed. An hour with the app will find more than another day of
-reading will. `__presentFiles`, `__presentWindows`, `__presentLooks` and
-`__presentPosition` on the operator window expose the pieces that need a human.
+**1. Work through [§8, the manual test list](#8-the-manual-test-list-stages-1-to-5).**
+Everything below Stage 6 is exercised by tests and startup probes, not by use.
+No slide has been advanced by a person, no audience window opened, and no audio
+has come out of a speaker. Section A of that list needs nothing but the machine
+it is already on, and will find more in an hour than another day of reading.
 
-**2. Run the multi-monitor matrix.** Still the outstanding Stage 2 gate, and
-Stage 5 puts real video on that second screen. Needs a second monitor, not a
-code change.
+**2. Stage 6 — NDI, plus the audience surface swap.**
 
-Then the remaining Stage 5 slices:
+The swap was deliberately carried here from Stage 5. The compositor produces the
+frames; nothing yet puts them on screen instead of React. That is not a port but
+a platform integration — a native render layer under a transparent webview — and
+it is the change in this migration most able to put a black screen in front of a
+congregation.
 
-- **Media playback state in Rust** — play, pause, stop, seek, volume, mute,
-  position, lifecycle, preview/output sync. `OutputScene` already carries
-  `is_video_playing` and `video_current_time`; what is missing is the transport
-  that owns them rather than mirroring React.
-- **The compositor**, per ADR-001. The expensive part: weeks, not days. It needs
-  `slide_elements` and `screen_composer_layout`, carried verbatim since Stage 4,
-  to become real structs.
+It belongs with NDI because NDI is the frames' first consumer. `Frame::to_bgra`
+is already the format `grandi` expects, so the compositor can be watched on a
+monitor before it is trusted on a wall. That is the right order in which to find
+out that a font is wrong.
 
-Building the compositor onto an audience surface that has never once displayed
-a slide is the risk worth naming: it would be the first thing to render there,
-and every failure would look like a compositor bug.
+What Stage 6 inherits:
 
-Per ADR-001, **output state must be fully describable as serialisable Rust
-structs** — never as React component state. The scene already is; the compositor
-is what makes it authoritative rather than descriptive.
+- A frame pipeline measured at **9 to 12 ms** against NDI's 33.3 ms budget,
+  across seven real service videos at two resolutions.
+- Hardware video decode through AVFoundation, with frames arriving already
+  scaled to the output.
+- A compositor that draws backgrounds, slides, overlays and composer regions,
+  and defers YouTube, NDI and capture layers to the webview above it.
 
 ## 5. What the Rust core contains today
 
@@ -453,7 +452,114 @@ Verified by running it, not by reasoning:
 - **Nobody has signed in under Tauri.** The session store, the refresh
   transport and the deep-link handler all have tests; the flow has never run.
 
-## 8. Open issues
+## 8. The manual test list, Stages 1 to 5
+
+Everything below Stage 6 has code, tests and startup probes. **Almost none of it
+has been used.** This is the whole of what needs a person, gathered in one place
+so it can be worked through rather than rediscovered.
+
+Run `bun run desktop:tauri`. A Tauri webview's console cannot be read from a
+terminal, so findings that need recording should go through
+`window.__presentRustCore` or the diagnostics command and will appear in the
+terminal running the app.
+
+**Handles for driving things by hand**, on the operator window only:
+`__presentFiles`, `__presentWindows`, `__presentLooks`, `__presentPosition`,
+`__presentAudio`, `__presentPlayback`.
+
+### A. One machine, signed out — start here
+
+Nothing below needs a second screen or an account. This is the hour that will
+find the most.
+
+- [ ] **Advance a slide.** Load a service, press next and previous through a
+      song. Does the deck move, and does it stop at the ends rather than rolling
+      into the next item?
+- [ ] **Open the audience output window.** It has never been opened. Expect the
+      Rust scene rendered in a webview.
+- [ ] **Open both stage displays** — worship stage and media stage. Same.
+- [ ] **Open the mini lyrics editor**, change a verse, save it. The round trip
+      is tested only in units. There is a ten-second timeout; an operator who
+      hits save needs an answer either way.
+- [ ] **Play a video** from the media panel. Does it decode and play in the
+      webview? Nothing has ever played through `local-media://`.
+- [ ] **Hear something.** No audio has come out of a speaker under Tauri at all.
+      Play a video with sound, then a backing track from the audio panel.
+- [ ] **Change the audio output device** in settings, with both a video and a
+      backing track playing. **Both should follow it** — that is known-issues §1
+      fixed, and the part that has only been proven through the startup gate.
+- [ ] **Freeze and unfreeze the output.** The behaviour deliberately differs
+      from Electron now: unfreezing catches the audience screen up rather than
+      leaving it stale (known-issues §11).
+- [ ] **Toggle the output layers** from the Looks window and watch the audience
+      screen follow. It should be immediate, not on a 400 ms poll.
+- [ ] **Open each of the eight native dialogs** via `__presentFiles`: folder,
+      media file, audio files, prop image, prop media, presentation files,
+      library export destination, library import source. None has been clicked.
+- [ ] **Press `Control+Alt+Space`.** The AI Operator shortcut has never been
+      pressed.
+- [ ] **Trigger the permission prompts** for microphone and camera. Never shown.
+- [ ] **Use the application menu** — Present, File, Edit, View, Window.
+- [ ] **Add an `.avi` or `.mkv` to a media folder.** It should appear with an
+      amber border and a warning telling you to convert it. All 67 of your
+      current files are MP4 or MOV, so this needs a deliberately odd file.
+- [ ] **Export a library bundle, then import it back.** Tested only in units,
+      never driven through the UI.
+- [ ] **Close the last window**, then reopen from the Dock. The process should
+      survive and recreate the operator window.
+
+### B. Needs a second monitor — the outstanding Stage 2 gate
+
+This is the one gap that is a *gate* rather than a gap. Window placement has
+only ever been exercised at the origin, which is exactly where a
+physical-versus-logical pixel mistake is invisible.
+
+- [ ] Put the audience output on the second monitor and confirm it covers it
+      exactly — no offset, no partial coverage, no wrong screen. **A
+      physical-versus-logical pixel mistake is a whole screen's width of error
+      and is invisible at the origin**, which is the only place this has run.
+- [ ] Same for both stage displays.
+- [ ] **Unplug the second monitor mid-service.** Windows should reconcile.
+- [ ] **Plug it back in.** They should return to it. The untested case is
+      specifically crossing a boundary: whether unfullscreen, reposition,
+      refullscreen lands on the *other* display, and whether the 700 ms
+      transition allowance is enough there (stage-2-hotplug.md).
+- [ ] Change the second monitor's resolution while a window is on it.
+- [ ] Confirm the display picker names the monitors the way macOS does.
+- [ ] Play a video full-screen on the second monitor and watch for tearing or
+      dropped frames.
+
+### C. Needs an account
+
+- [ ] **Sign in.** Nobody has signed in under Tauri. The session store, the
+      refresh transport and the deep-link handler all have tests; the flow has
+      never run.
+- [ ] Confirm the session survives a restart — it is in the OS keychain now,
+      not a file.
+- [ ] **Follow a `present://` deep link** while the app is running, and again
+      while it is closed.
+- [ ] **Run live speech-to-search.** No AssemblyAI transcription has run
+      end to end.
+
+### D. Worth doing once, not urgent
+
+- [ ] Restart the **operating system** and confirm the display id is unchanged.
+      Only app restarts have been tested. Lower risk than it sounds — the name
+      is a hardware model number, not a display id.
+- [ ] Run the packaged `.app` rather than `tauri dev` and repeat section A
+      quickly. The packaged build serves from `tauri://localhost` rather than a
+      dev server, which is a different origin and a different URL form.
+
+### What to watch for throughout
+
+- **Any black frame on the audience screen**, however brief. That is the
+  failure this migration cares about most.
+- **The same audio twice**, a fraction of a second apart. That is audience echo,
+  and it is the regression that must never return.
+- Renderer errors in the terminal. A clean launch currently produces **zero**,
+  so anything at all is new.
+
+## 9. Open issues
 
 Every bug found so far, with its current state. The detail is in
 [known-issues.md](known-issues.md); this table is so a new session can see the
@@ -491,21 +597,21 @@ commit.
 
 ### Gaps that are not bugs
 
-Things that are missing rather than wrong, and would be easy to mistake for
-finished work.
+Things that are missing rather than wrong. **All of them are in
+[§8, the manual test list](#8-the-manual-test-list-stages-1-to-5)** — this is
+the short version, for anyone deciding what to trust rather than what to do.
 
 | Gap | Where it bites |
 |---|---|
-| **No service has been run end to end under Tauri** | The largest gap. No slide advanced, no video played, no audience window opened, no dialog clicked, no deep link followed, no shortcut pressed, nobody signed in |
-| The output window and both stage displays have never been opened | They render the Rust scene in code only |
-| Freeze and unfreeze have not been exercised by hand | The behaviour deliberately differs from Electron now — see §11 |
-| Nothing has run on Windows or Linux | The `http://local-media.localhost` URL form, the single-instance lock, argv deep links and the keychain fallback are all untested there |
+| **No service has been run end to end under Tauri** | The largest gap in the whole migration |
+| **No audio has come out of a speaker** | The single audio path is proven by tests and a startup gate, not by hearing it |
 | No window has been on a second monitor | The outstanding Stage 2 gate |
-| No live AssemblyAI transcription | Needs the owner signed in |
-| The mini lyrics editor has never been opened | Its save round trip is tested only in units |
-| Display id across an OS reboot | Only app restarts have been tested |
+| The audience window and both stage displays have never been opened | They render the Rust scene in code only |
+| Nobody has signed in | Session store, refresh transport and deep links are tested, never run |
+| The audience surface is still a webview | Deliberate: carried to Stage 6, where NDI consumes the same frames |
+| Nothing has run on Windows or Linux | The URL form, single-instance lock, argv deep links, keychain fallback and **video decode** are all macOS-only |
 
-## 9. Working agreements
+## 10. Working agreements
 
 - **Never push.** Local commits on `rust` only.
 - **The monorepo runs on bun**, not pnpm. `bunfig.toml` pins the hoisted linker
@@ -525,7 +631,7 @@ finished work.
   from a terminal — mirror findings into the Rust log via
   `commands::diagnostics::report_diagnostic`.
 
-## 10. Commands
+## 11. Commands
 
 The monorepo runs on **bun**, not pnpm. Root aliases start each app from
 anywhere in the tree:
@@ -555,7 +661,7 @@ a script. Run it from `apps/desktop` or use the alias.
 
 Current: **485 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
 
-## 11. Installed skills
+## 12. Installed skills
 
 `rust-best-practices`, `rust-async-patterns`, `rust-testing`, `rust-patterns`,
 `rust-engineer`, `tauri-v2`, plus `frontend-design` globally. Project-scoped in
@@ -566,7 +672,7 @@ generic nine-step workflow pack that overlaps and competes with the migration
 plan's own stage gates. Not installed. That was advice, not a veto — install it
 if asked.
 
-## 12. Traps
+## 13. Traps
 
 - **The Electron main process owns almost no state.** It is a relay: `send-to-output`
   forwards opaque `unknown` blobs. Presentation state lives in React
