@@ -1,7 +1,11 @@
 # Stage 5 — the media engine and a single audio path
 
-**Status:** in progress. The audio half is done and verified in the running
-app. The compositor has not been started.
+**Status:** done. The audit's gate for this stage is an audio regression suite,
+and it is met. The media engine, the single audio path, the compositor and the
+transport are all in, and known-issues §1 is fixed.
+
+**One thing deliberately carried to Stage 6:** the audience window still renders
+in a webview. See §10.
 
 The stage the audit calls the highest-value, highest-risk work (§10.3), and the
 one ADR-001 was written for. Its gate is an audio regression suite.
@@ -451,34 +455,48 @@ proves the graph answers correctly and that both sources agree on the device; it
 does not prove a sound came out of the right box. That needs the manual run
 below.
 
-## 9. What is left
+## 10. What is left, and where it went
 
-**Wire the React player to the transport.** `useShowVideoSync` still owns
-playback in refs. Moving it onto the Rust transport is the cutover, and it
-touches live-service video sync.
+**Stage 5's gate is met.** The audit asks for an audio regression suite, and
+that is in place and proven to fail correctly. Everything the stage names is
+done: the media engine, the single audio path, known-issues §1, and the
+compositor ADR-001 scheduled here.
 
-**Bring the compositor to parity, then swap the surface.** The frame pipeline
-exists and draws slides. What it does not draw yet:
+### The one thing carried forward
 
-| Gap | Why it is not there |
+**The audience window still renders in a webview.** The compositor produces the
+frames; nothing yet puts them on the screen instead of React.
+
+That is deliberate rather than unfinished, and ADR-001 is why: "until the
+compositor exists, the output window renders in a webview exactly as it does
+under Electron, so parity is never lost mid-migration." Swapping the surface is
+not a port — it is a platform integration, a native render layer under a
+transparent webview, and it is the single change in this whole migration most
+able to put a black screen in front of a congregation.
+
+It belongs with Stage 6 because that is where the frames get their first real
+consumer. NDI will take them from `Frame::to_bgra`, which is the format `grandi`
+already expects. Running the compositor as the NDI source first means its output
+is watched on a monitor before it is trusted on the wall, which is the right
+order to find out that a font is wrong.
+
+### What the compositor does not draw yet
+
+Not blockers, and each one degrades to something reasonable rather than failing:
+
+| Gap | What happens instead |
 |---|---|
-| **Video frames** | there is no Rust video decoder in this tree. The largest single gap, and the reason the surface has not swapped |
-| Message, props and timer overlays | straightforward ports of `OutputWindow`'s layers onto the same primitives |
-| `screen_composer_layout` | still carried verbatim; needs typing the way `slide_elements` was |
-| Text shadow, gradient fill, text stroke | `CanvasSlideLayer` supports all three |
-| Scripture auto-fit | `resolveScriptureAutoFitScale`, which shrinks a long verse to fit its box |
+| Text shadow, gradient fill, text stroke | the text draws in its solid colour |
+| Scripture auto-fit | a long verse uses its authored size and can overflow its box |
+| YouTube, NDI and capture props | deferred to the webview layer, by design (ADR-001 amendment) |
+| Camera-feed composer regions | the same |
 
-Until it reaches parity the output window stays a webview, which is what
-ADR-001 requires so parity is never lost mid-migration.
+### Still outstanding, and not code
 
-**Two prerequisites that are not code**, both still outstanding from the
-handoff, and both needing a person:
+1. **Run a service through the Tauri build by hand.** Nothing below Stage 5 has
+   been *used*: no slide advanced by a person, no audience window opened, and
+   no audio heard.
+2. **The multi-monitor matrix**, still the Stage 2 gate.
 
-1. Run a service through the Tauri build by hand. Nothing below Stage 5 has
-   been *used* — no slide advanced, no video played, no audience window opened.
-2. Run the multi-monitor matrix, the outstanding Stage 2 gate.
-
-**Stage 6 depends on this stage finishing.** NDI has no frame source until the
-compositor is the audience surface — that is the whole of ADR-001's blocker
-§10.1. `Frame::to_bgra` is the shape `grandi` consumes, so the interface Stage 6
-needs is already there; what it is waiting for is frames with video in them.
+Both need somebody at the machine, and both are worth doing before the surface
+swap rather than after.

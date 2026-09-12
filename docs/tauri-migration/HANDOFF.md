@@ -3,7 +3,7 @@
 **Read this first.** It is the state of the migration as of 2026-09-10, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 50 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 53 commits ahead of `master`, **nothing pushed**.
 
 ---
 
@@ -92,9 +92,7 @@ rewritten. `PresentContainer.tsx` still holds most of its sixteen `useState`
 hooks on purpose — only a handful describe the presentation; the rest are view
 state, and moving those would be moving UI into the core for nothing.
 
-**Stage 5 — the media engine and a single audio path.** In progress. Two
-slices landed; the gate is met on the audio side, and nothing has been heard
-yet.
+**Stage 5 — the media engine and a single audio path.** Done. The gate is met.
 - ✅ The audio regression suite covers every route to a speaker, not just `<video>`
 - ✅ The audio graph in Rust: one sink, one device, two sources
 - ✅ Only the operator surface can produce sound, structurally rather than by convention
@@ -109,7 +107,9 @@ yet.
 - ✅ Video decode via the platform decoder (ADR-002), verified on their own library
 - ✅ The frame budget met with room: 9-12 ms against NDI's 33.3 ms, both resolutions
 - ✅ Unplayable media flagged in the panel, with advice (ADR-002's UI requirement)
-- ⬜ Overlays, screen-composer layout, and the surface swap
+- ✅ Message, props and timer overlays, and the screen composer, drawn in Rust
+- ✅ The React player moved onto the Rust transport
+- ⬜ **The surface swap — carried to Stage 6**, where NDI is the frames' first consumer
 
 The old guard scanned `<video>` and nothing else, so three other routes to a
 speaker were unguarded: the backing-track `new Audio()`, the audience YouTube
@@ -123,7 +123,7 @@ Content and gates from the audit's §12, inlined so this file stands alone.
 
 | Stage | Content | Gate |
 |---|---|---|
-| **6** | NDI, per ADR-001. | Discovery/connect/output/reconnect |
+| **6** | NDI, per ADR-001, **plus the audience surface swap** — Stage 5 built the frames and NDI is their first consumer, so the compositor gets watched on a monitor before it is trusted on a wall. | Discovery/connect/output/reconnect |
 | **7** | Bible, fonts, PPTX sidecar, auth, AI Operator on Rust commands, error reporting, settings. | Parity checklist |
 | **8** | Measure against the Electron baseline, then remove Electron. | Definition of done |
 
@@ -281,6 +281,8 @@ services/      domain logic, most of it runtime-free and tested
     loader.rs          THE scope check for scene media. Never std::fs directly.
     scene.rs           the layer order, and what was left to the webview
     shapes.rs          rects, radii, inset borders
+    composer.rs        the screen composer's layout, typed
+    overlays.rs        message banner, props and the timer
     parallel.rs        splitting the per-pixel passes across cores
     pipeline.rs        THE per-frame path: caches the slide, composites video
     text.rs            cosmic-text layout and rasterisation
@@ -351,7 +353,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 461 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 485 Rust, 93 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -551,7 +553,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **461 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
+Current: **485 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
 
 ## 11. Installed skills
 
