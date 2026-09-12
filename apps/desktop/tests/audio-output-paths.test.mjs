@@ -209,6 +209,10 @@ test("no source file outside the inventory plays media programmatically", () => 
     // Not an element. `playback.play()` is a Rust command on the media
     // transport, which owns whether a video is running and owns no audio.
     ["src/renderer/tauri/boot-probe.ts", "transport: proves the Rust transport refuses with nothing loaded"],
+    [
+      "src/renderer/shared/hooks/usePlaybackTransport.ts",
+      "transport: the adapter onto the Rust transport, which owns no audio",
+    ],
   ]);
 
   const unexpected = new Set();

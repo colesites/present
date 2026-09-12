@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MediaItem, VideoSettings } from "../../../features/media/hooks/useMediaFolders";
 import { applyAudioRouting, useAudioRouting } from "./useAudioRouting";
+import { usePlaybackTransport } from "./usePlaybackTransport";
 
 export function useShowVideoSync(params: {
   showViewMedia: MediaItem;
@@ -104,7 +105,32 @@ export function useShowVideoSync(params: {
     onAutoPlayConsumed();
   }, [activeMediaItem?.type, onAutoPlayConsumed, shouldAutoPlay]);
 
-  const effectiveIsVideoPlaying = forcePlay || isVideoPlaying;
+  // The Rust transport, where there is one. It owns whether the video is
+  // running and where it has got to, and it remembers both per media item -
+  // behaviour that used to live in refs here and died with the component.
+  //
+  // Under Electron this returns the values passed in, so the shipping shell
+  // keeps its own state and nothing about its timing changes.
+  const transport = usePlaybackTransport({
+    playing: isVideoPlaying,
+    positionSeconds: videoCurrentTime,
+    durationSeconds: null,
+  });
+
+  const effectiveIsVideoPlaying = forcePlay || transport.playing;
+  const effectiveVideoTime = transport.positionSeconds;
+
+  // Which item the transport is on. Rust keeps a resume point per media id, so
+  // this is what makes stepping away from a video and back resume rather than
+  // restart - the behaviour that used to live in two refs in this file.
+  const selectPlaybackMedia = transport.selectMedia;
+  useEffect(() => {
+    if (currentVideoItem?.type !== "video") {
+      selectPlaybackMedia(null, false);
+      return;
+    }
+    selectPlaybackMedia(currentVideoItem.id, shouldAutoPlay);
+  }, [currentVideoItem?.id, currentVideoItem?.type, selectPlaybackMedia, shouldAutoPlay]);
 
   // The presenter Show View is the application's only audible video player.
   // All external display windows are muted mirrors, so video audio works even
@@ -136,11 +162,14 @@ export function useShowVideoSync(params: {
   useEffect(() => {
     if (showVideoRef.current && currentVideoItem?.type === "video") {
       isProgrammaticPlayRef.current = true;
+      // 0.5s, matching `OPERATOR_DRIFT_TOLERANCE` in services/playback.rs. The
+      // operator's own player is corrected loosely so that scrubbing is not
+      // fought; the audience mirror uses a much tighter 0.12s.
       if (
-        Number.isFinite(videoCurrentTime) &&
-        Math.abs(showVideoRef.current.currentTime - videoCurrentTime) > 0.5
+        Number.isFinite(effectiveVideoTime) &&
+        Math.abs(showVideoRef.current.currentTime - effectiveVideoTime) > 0.5
       ) {
-        showVideoRef.current.currentTime = videoCurrentTime;
+        showVideoRef.current.currentTime = effectiveVideoTime;
       }
 
       if (effectiveIsVideoPlaying) {
@@ -168,20 +197,24 @@ export function useShowVideoSync(params: {
 
   const handleVideoEnded = useCallback(() => {
     setIsVideoPlaying(false);
-  }, []);
+    transport.ended(videoSettings.loop);
+  }, [transport, videoSettings.loop]);
 
   const toggleVideoPlayback = useCallback(() => {
     if (currentVideoItem?.type !== "video") {
       return;
     }
     setIsVideoPlaying((previous) => !previous);
-  }, [currentVideoItem?.type]);
+    transport.toggle();
+  }, [currentVideoItem?.type, transport]);
 
   const handleVideoSeeked = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
-      setVideoCurrentTime(e.currentTarget.currentTime);
+      const position = e.currentTarget.currentTime;
+      setVideoCurrentTime(position);
+      transport.seek(position);
     },
-    [],
+    [transport],
   );
 
   const handleVideoTimeUpdate = useCallback(
@@ -191,15 +224,19 @@ export function useShowVideoSync(params: {
         return;
       }
       lastTimeUpdateMsRef.current = now;
-      setVideoCurrentTime(e.currentTarget.currentTime);
+      const position = e.currentTarget.currentTime;
+      setVideoCurrentTime(position);
+      // An observation, not an instruction. Rust decides whether it is worth
+      // telling anyone about.
+      transport.reportPosition(position);
     },
-    [],
+    [transport],
   );
 
   return {
     showVideoRef,
     isVideoPlaying: effectiveIsVideoPlaying,
-    videoCurrentTime,
+    videoCurrentTime: effectiveVideoTime,
 
     handleVideoPlay,
     handleVideoPause,
