@@ -69,6 +69,34 @@ fn main() {
                 "content": "https://youtu.be/example"
             }
         ])),
+        // A notice banner and a countdown, so the overlay layers are in the
+        // picture somebody looks at rather than only in the tests.
+        message_overlay: Some(present_lib::services::output::MessageOverlay {
+            id: "m1".to_owned(),
+            text: "Cry room is open at the back".to_owned(),
+            position: "top".to_owned(),
+            theme_key: "info".to_owned(),
+            shown_at_ms: 0.0,
+            dismiss_mode: "manual".to_owned(),
+            animation: "none".to_owned(),
+            speed_seconds: 0.0,
+            font_scale: 1.0,
+        }),
+        timer_visible: true,
+        timer_text: Some("04:32".to_owned()),
+        timer_label: Some("Until service".to_owned()),
+        timer_layout: Some(present_lib::services::output::TimerLayout {
+            x_percent: 88.0,
+            y_percent: 92.0,
+            clock_font_px: 56.0,
+            name_font_px: 22.0,
+            name_banner_height_px: 0.0,
+            clock_color: "#a9c0d8".to_owned(),
+            name_color: "#a9c0d8".to_owned(),
+            name_banner_enabled: false,
+            name_banner_color: "#000000".to_owned(),
+            title_position: "bottom".to_owned(),
+        }),
         ..OutputScene::default()
     };
 

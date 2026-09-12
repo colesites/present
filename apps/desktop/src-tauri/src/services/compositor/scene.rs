@@ -54,56 +54,37 @@ pub struct Rendered {
     pub background_media_drawn: bool,
     /// The scene named background media and the loader could not supply it.
     pub background_media_missing: bool,
+    /// Message banner, drawable props and the timer.
+    pub overlays_drawn: usize,
 }
 
 /// Draw `scene` into a new frame.
+///
+/// A one-shot wrapper around [`SceneCompositor`](super::SceneCompositor), which
+/// is the only implementation. It exists for callers that want a single frame
+/// and have nowhere to keep a compositor — a diagnostic, a test, the sample
+/// renderer.
+///
+/// It delegates rather than duplicating because the two used to be separate and
+/// drifted immediately: overlays were added to the stateful path and the sample
+/// renderer, using this one, quietly produced frames with no banner and no
+/// timer. One path cannot disagree with itself.
 pub fn render(
     scene: &OutputScene,
     width: u32,
     height: u32,
     loader: &dyn MediaLoader,
 ) -> Option<(Frame, Rendered)> {
-    let mut frame = Frame::new(width, height)?;
-    let mut report = Rendered::default();
-
-    let viewport = geometry::Viewport::new(scene.slide_canvas_size.as_deref(), width, height);
-
-    // The background. `hide_background` wins over everything, which is what the
-    // operator's "hide background" toggle means: black, not the slide colour.
-    if scene.hide_background {
-        frame.clear(Color::BLACK);
-    } else {
-        if let Some(background) = scene.slide_background_color.as_deref() {
-            shapes::fill_background(&mut frame.pixmap_mut(), background);
-        }
-
-        if scene.show_media {
-            if let Some(url) = scene.media_url.as_deref().filter(|url| !url.is_empty()) {
-                draw_background_media(&mut frame, url, loader, &mut report);
-            }
-        }
-    }
-
-    // Slide elements, in the order the deck lists them: later elements sit on
-    // top, which is what the Canvas version's single pass does.
-    if scene.show_text {
-        for element in scene.slide_elements().unwrap_or_default() {
-            if !element.is_visible() {
-                continue;
-            }
-            if !element.element_type.is_composited() {
-                report.elements_deferred += 1;
-                continue;
-            }
-            if draw_element(&mut frame, &element, &viewport, loader) {
-                report.elements_drawn += 1;
-            }
-        }
-    }
-
+    let mut compositor = super::SceneCompositor::new(width, height);
+    let report = {
+        let (_, report) = compositor.render(scene, None, loader)?;
+        report
+    };
+    let frame = compositor.take_frame()?;
     Some((frame, report))
 }
 
+#[allow(dead_code)]
 fn draw_background_media(
     frame: &mut Frame,
     url: &str,
@@ -134,6 +115,7 @@ fn draw_background_media(
     report.background_media_drawn = true;
 }
 
+#[allow(dead_code)]
 fn draw_element(
     frame: &mut Frame,
     element: &SlideElement,
@@ -149,6 +131,15 @@ fn draw_element(
 /// Exists so the caching pipeline can build the slide layers over transparency
 /// rather than over a frame. Same drawing either way — the layer order lives in
 /// the caller, and there is one implementation of each element type.
+pub(super) fn draw_element_into_pixmap(
+    pixmap: &mut tiny_skia::PixmapMut<'_>,
+    element: &SlideElement,
+    viewport: &geometry::Viewport,
+    loader: &dyn MediaLoader,
+) -> bool {
+    draw_element_into_mut(pixmap, element, viewport, loader)
+}
+
 pub(super) fn draw_element_into(
     pixmap: &mut tiny_skia::Pixmap,
     element: &SlideElement,

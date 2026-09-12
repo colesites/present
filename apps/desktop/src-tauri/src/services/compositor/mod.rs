@@ -10,10 +10,12 @@
 //! one capturing separately.
 
 pub mod color;
+pub mod composer;
 pub mod frame;
 pub mod geometry;
 pub mod images;
 pub mod loader;
+pub mod overlays;
 pub mod parallel;
 pub mod pipeline;
 pub mod scene;

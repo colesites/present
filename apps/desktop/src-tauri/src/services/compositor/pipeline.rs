@@ -83,6 +83,16 @@ impl SceneCompositor {
         self.frame.as_ref()
     }
 
+    /// Take the frame out, giving up the reuse.
+    ///
+    /// For a caller that wants one frame and is finished — the one-shot
+    /// `scene::render`, a diagnostic, a test. A compositor that is going to
+    /// draw again should read [`frame`](Self::frame) instead and keep the
+    /// buffer.
+    pub fn take_frame(&mut self) -> Option<Frame> {
+        self.frame.take()
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if (self.width, self.height) == (width, height) {
             return;
@@ -185,7 +195,7 @@ impl SceneCompositor {
             // The counts belong to the frame being reported on, not to the one
             // the cache happened to be built from, so they are recomputed.
             // Counting is cheap; drawing is what was expensive.
-            if scene.show_text {
+            if scene.show_text && !scene.screen_composer_enabled {
                 for element in scene.slide_elements().unwrap_or_default() {
                     if !element.is_visible() {
                         continue;
@@ -197,6 +207,7 @@ impl SceneCompositor {
                     }
                 }
             }
+            report.overlays_drawn = count_overlays(scene, &mut report.elements_deferred);
             return self.cached_layers.as_ref();
         }
 
@@ -205,7 +216,7 @@ impl SceneCompositor {
         let viewport =
             geometry::Viewport::new(scene.slide_canvas_size.as_deref(), self.width, self.height);
 
-        if scene.show_text {
+        if scene.show_text && !scene.screen_composer_enabled {
             for element in scene.slide_elements().unwrap_or_default() {
                 if !element.is_visible() {
                     continue;
@@ -217,6 +228,40 @@ impl SceneCompositor {
                 if super::scene::draw_element_into(&mut layers, &element, &viewport, loader) {
                     report.elements_drawn += 1;
                 }
+            }
+        }
+
+        // The screen composer replaces the slide rather than sitting above it:
+        // when it is on, the regions are the output. So it is drawn instead of
+        // the elements above, not as well as them.
+        if scene.screen_composer_enabled {
+            if let Some(layout) = scene.screen_composer_layout() {
+                let mut view = layers.as_mut();
+                let regions = super::overlays::draw_composer(&mut view, &layout, loader);
+                report.elements_drawn += regions.drawn;
+                report.elements_deferred += regions.deferred;
+            }
+        }
+
+        // Overlays sit above the slide and below nothing. They live in the
+        // cached layer rather than being drawn per frame because they change
+        // when the scene does — a banner is put up and taken down by the
+        // operator, not animated by the clock.
+        {
+            let mut view = layers.as_mut();
+
+            if let Some(message) = scene.message_overlay.as_ref() {
+                super::overlays::draw_message(&mut view, message);
+                report.overlays_drawn += 1;
+            }
+
+            let props = super::overlays::draw_props(&mut view, &scene.props_overlay, loader);
+            report.overlays_drawn += props.drawn;
+            report.elements_deferred += props.deferred;
+
+            if scene.timer_visible {
+                super::overlays::draw_timer(&mut view, scene, scene.timer_layout.as_ref());
+                report.overlays_drawn += 1;
             }
         }
 
@@ -350,6 +395,31 @@ pub fn background_color(scene: &OutputScene) -> Option<Color> {
         .slide_background_color
         .as_deref()
         .and_then(color::parse)
+}
+
+/// How many overlays a scene shows, without drawing them.
+///
+/// The cached path needs the counts for the frame it is reporting on, not for
+/// the frame the cache happened to be built from. Counting is cheap; drawing is
+/// what was worth avoiding.
+fn count_overlays(scene: &OutputScene, deferred: &mut usize) -> usize {
+    let mut drawn = 0;
+
+    if scene.message_overlay.is_some() {
+        drawn += 1;
+    }
+    for prop in &scene.props_overlay {
+        if matches!(prop.kind.as_str(), "image" | "text" | "media") {
+            drawn += 1;
+        } else {
+            *deferred += 1;
+        }
+    }
+    if scene.timer_visible {
+        drawn += 1;
+    }
+
+    drawn
 }
 
 #[cfg(test)]
@@ -614,6 +684,127 @@ mod tests {
             !compositor.rebuilt_last_frame(),
             "a no-op resize must not rebuild"
         );
+    }
+
+    #[test]
+    fn the_composer_replaces_the_slide_rather_than_sitting_over_it() {
+        // When the composer is on, the regions *are* the output. Drawing the
+        // ordinary slide as well would put two things on the screen at once.
+        let mut compositor = SceneCompositor::new(200, 100);
+        let scene = OutputScene {
+            screen_composer_enabled: true,
+            screen_composer_layout: Some(json!({
+                "regions": [{
+                    "x": 0.0, "y": 0.0, "width": 0.5, "height": 1.0,
+                    "source": "slides",
+                    "backgroundColor": "#00ff00"
+                }]
+            })),
+            slide_elements: Some(json!([{
+                "id": "a", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+                "style": { "backgroundColor": "#ff0000" }
+            }])),
+            slide_canvas_size: Some("200x100".to_owned()),
+            ..scene()
+        };
+
+        let (frame, report) = compositor.render(&scene, None, &NoMedia).expect("frame");
+
+        assert_eq!(
+            frame.pixel_at(50, 50),
+            Some((0, 255, 0, 255)),
+            "the region, not the slide"
+        );
+        assert_eq!(
+            frame.pixel_at(150, 50),
+            Some((0, 0, 0, 255)),
+            "outside the region"
+        );
+        assert_eq!(
+            report.elements_drawn, 1,
+            "one region, not the slide element"
+        );
+    }
+
+    #[test]
+    fn a_camera_region_is_left_to_the_webview_layer() {
+        let mut compositor = SceneCompositor::new(200, 100);
+        let scene = OutputScene {
+            screen_composer_enabled: true,
+            screen_composer_layout: Some(json!({
+                "regions": [{
+                    "x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0,
+                    "source": "camera-feed",
+                    "backgroundColor": "#00ff00"
+                }]
+            })),
+            ..scene()
+        };
+
+        let (frame, report) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(report.elements_deferred, 1);
+        assert_eq!(
+            frame.pixel_at(100, 50),
+            Some((0, 0, 0, 255)),
+            "nothing painted where the webview layer goes"
+        );
+    }
+
+    #[test]
+    fn a_message_banner_reaches_the_frame() {
+        use crate::services::output::MessageOverlay;
+
+        let mut compositor = SceneCompositor::new(320, 180);
+        let scene = OutputScene {
+            message_overlay: Some(MessageOverlay {
+                id: "m".to_owned(),
+                text: "Cry room open".to_owned(),
+                position: "top".to_owned(),
+                theme_key: "info".to_owned(),
+                shown_at_ms: 0.0,
+                dismiss_mode: "manual".to_owned(),
+                animation: "none".to_owned(),
+                speed_seconds: 0.0,
+                font_scale: 1.0,
+            }),
+            ..scene()
+        };
+
+        let (frame, report) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(report.overlays_drawn, 1);
+
+        let (_, _, blue, _) = frame.pixel_at(160, 8).expect("pixel");
+        assert!(blue > 150, "the info banner should be blue, got {blue}");
+    }
+
+    #[test]
+    fn overlays_are_counted_the_same_whether_cached_or_not() {
+        use crate::services::output::MessageOverlay;
+
+        let mut compositor = SceneCompositor::new(320, 180);
+        let scene = OutputScene {
+            message_overlay: Some(MessageOverlay {
+                id: "m".to_owned(),
+                text: "Notice".to_owned(),
+                position: "top".to_owned(),
+                theme_key: "info".to_owned(),
+                shown_at_ms: 0.0,
+                dismiss_mode: "manual".to_owned(),
+                animation: "none".to_owned(),
+                speed_seconds: 0.0,
+                font_scale: 1.0,
+            }),
+            timer_visible: true,
+            timer_text: Some("05:00".to_owned()),
+            ..scene()
+        };
+
+        let (_, first) = compositor.render(&scene, None, &NoMedia).expect("first");
+        let (_, second) = compositor.render(&scene, None, &NoMedia).expect("second");
+
+        assert_eq!(first.overlays_drawn, 2, "banner and timer");
+        assert_eq!(first, second, "a cached frame must report what it shows");
     }
 
     #[test]

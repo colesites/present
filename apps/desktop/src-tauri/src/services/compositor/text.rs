@@ -29,7 +29,7 @@ use std::sync::{Mutex, OnceLock};
 use cosmic_text::{
     Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight, Wrap,
 };
-use tiny_skia::PixmapMut;
+use tiny_skia::{PixmapMut, Transform};
 
 use crate::services::slide::{SlideElement, SlideElementStyle};
 
@@ -135,6 +135,183 @@ fn capitalize(text: &str, mode: Option<&str>) -> String {
 }
 
 /// Draw one `text` element.
+/// A run of text and the box it goes in, in frame pixels.
+///
+/// The shape both callers reduce to. A slide element resolves its style and
+/// geometry into one of these; an overlay builds one directly, because an
+/// overlay is positioned against the frame rather than against a deck's canvas
+/// and inventing a `SlideElement` to carry that would be a lie about where the
+/// numbers came from.
+#[derive(Debug, Clone)]
+pub struct TextBox {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub font_size: f32,
+    pub line_height: f32,
+    pub family: Option<String>,
+    pub weight: Weight,
+    pub italic: bool,
+    pub color: tiny_skia::Color,
+    pub align: Align,
+    /// `top`, `middle` or `bottom`; anything else reads as `top`.
+    pub vertical_align: Option<String>,
+    /// Applied to the whole box after laying out, for rotation and flip.
+    pub transform: Transform,
+}
+
+impl TextBox {
+    /// A box with this application's defaults: white, left-aligned, upright.
+    pub fn new(x: f32, y: f32, width: f32, height: f32, font_size: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+            font_size,
+            line_height: font_size * DEFAULT_LINE_HEIGHT,
+            family: None,
+            weight: Weight::NORMAL,
+            italic: false,
+            color: color::parse(DEFAULT_COLOR).unwrap_or(tiny_skia::Color::WHITE),
+            align: Align::Left,
+            vertical_align: None,
+            transform: Transform::identity(),
+        }
+    }
+
+    pub fn centred(mut self) -> Self {
+        self.align = Align::Center;
+        self.vertical_align = Some("middle".to_owned());
+        self
+    }
+
+    pub fn with_color(mut self, color: tiny_skia::Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    pub fn with_weight(mut self, weight: Weight) -> Self {
+        self.weight = weight;
+        self
+    }
+}
+
+/// Draw text into a box.
+///
+/// The one rasterisation path. Glyphs go into a scratch pixmap and are
+/// composited once — see the note in the element path for why that is the
+/// difference between a frame budget and a slideshow.
+pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
+    if spec.width <= 0.0 || spec.height <= 0.0 || text.trim().is_empty() {
+        return;
+    }
+
+    let Ok(mut fonts) = fonts().lock() else {
+        tracing::error!("the font system is poisoned; skipping text");
+        return;
+    };
+    let Fonts { system, cache } = &mut *fonts;
+
+    let font_size = spec.font_size.max(1.0);
+    let line_height = if spec.line_height > 0.0 {
+        spec.line_height
+    } else {
+        font_size * DEFAULT_LINE_HEIGHT
+    };
+
+    let mut buffer = Buffer::new(system, Metrics::new(font_size, line_height));
+    buffer.set_size(Some(spec.width), Some(spec.height));
+    buffer.set_wrap(Wrap::Word);
+
+    let mut attrs = Attrs::new().weight(spec.weight);
+    if spec.italic {
+        attrs = attrs.style(Style::Italic);
+    }
+    if let Some(family) = spec
+        .family
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+    {
+        attrs = attrs.family(Family::Name(family.trim()));
+    }
+
+    buffer.set_text(text, &attrs, Shaping::Advanced, Some(spec.align));
+    buffer.shape_until_scroll(system, false);
+
+    let laid_out = buffer
+        .layout_runs()
+        .map(|run| run.line_top + run.line_height)
+        .fold(0.0_f32, f32::max);
+    let offset_x = spec.x;
+    let offset_y = spec.y + vertical_offset(spec.vertical_align.as_deref(), spec.height, laid_out);
+
+    let Some(mut scratch) =
+        tiny_skia::Pixmap::new((pixmap.width()).max(1), (pixmap.height()).max(1))
+    else {
+        return;
+    };
+    let scratch_width = scratch.width() as i32;
+    let scratch_height = scratch.height() as i32;
+
+    let base = spec.color.to_color_u8();
+    let (base_r, base_g, base_b) = (base.red(), base.green(), base.blue());
+    let base_alpha = f32::from(base.alpha()) / 255.0;
+
+    buffer.draw(
+        system,
+        cache,
+        cosmic_text::Color::rgba(255, 255, 255, 255),
+        |x, y, w, h, coverage| {
+            let alpha = coverage.a();
+            if alpha == 0 {
+                return;
+            }
+            let alpha = f32::from(alpha) / 255.0 * base_alpha;
+            if alpha <= 0.0 {
+                return;
+            }
+
+            for offset_row in 0..h as i32 {
+                for offset_col in 0..w as i32 {
+                    let px = offset_x as i32 + x + offset_col;
+                    let py = offset_y as i32 + y + offset_row;
+                    if px < 0 || py < 0 || px >= scratch_width || py >= scratch_height {
+                        continue;
+                    }
+                    blend(
+                        &mut scratch,
+                        (py * scratch_width + px) as usize,
+                        base_r,
+                        base_g,
+                        base_b,
+                        alpha,
+                    );
+                }
+            }
+        },
+    );
+
+    let quality = if spec.transform.is_translate() {
+        tiny_skia::FilterQuality::Nearest
+    } else {
+        tiny_skia::FilterQuality::Bilinear
+    };
+
+    pixmap.draw_pixmap(
+        0,
+        0,
+        scratch.as_ref(),
+        &tiny_skia::PixmapPaint {
+            quality,
+            ..tiny_skia::PixmapPaint::default()
+        },
+        spec.transform,
+        None,
+    );
+}
+
 pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geometry::Viewport) {
     let (width, height) = viewport.element_size(element);
     if width <= 0.0 || height <= 0.0 {

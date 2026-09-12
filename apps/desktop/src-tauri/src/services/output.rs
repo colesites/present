@@ -288,6 +288,18 @@ impl OutputScene {
             .collect()
     }
 
+    /// The screen composer's layout, typed.
+    ///
+    /// The field stays a `serde_json::Value` for the same two reasons
+    /// `slide_elements` does: the scene is relayed to windows that still render
+    /// it in React, and a typed field fails as a whole where one unreadable
+    /// region should cost one region.
+    pub fn screen_composer_layout(
+        &self,
+    ) -> Option<crate::services::compositor::composer::ComposerLayout> {
+        crate::services::compositor::composer::parse_layout(self.screen_composer_layout.as_ref())
+    }
+
     /// Does this scene differ from `other` in a way worth sending?
     ///
     /// `should_sync_time` is excluded, exactly as the Electron signature
