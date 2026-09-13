@@ -9,7 +9,11 @@ use std::sync::RwLock;
 use crate::services::output::{OutputScene, OutputUpdate};
 
 pub struct OutputState {
+    /// What the operator has set up, frozen or not.
     scene: RwLock<OutputScene>,
+    /// What the surfaces were last told to show. The same as `scene` except
+    /// while frozen, when it is the held screen.
+    on_screen: RwLock<OutputScene>,
     frozen: RwLock<bool>,
 }
 
@@ -23,12 +27,36 @@ impl OutputState {
     pub fn new() -> Self {
         Self {
             scene: RwLock::new(OutputScene::default()),
+            on_screen: RwLock::new(OutputScene::default()),
             frozen: RwLock::new(false),
         }
     }
 
+    /// The scene the operator has set up, including anything queued behind a
+    /// freeze.
     pub fn scene(&self) -> OutputScene {
         self.read_scene().clone()
+    }
+
+    /// The scene the audience is looking at.
+    ///
+    /// What anything that *draws* the output must use. Under Electron the NDI
+    /// stream was a capture of the audience window, so a freeze held the
+    /// stream too; a sender reading [`scene`](Self::scene) instead would show
+    /// a livestream the slides the operator is lining up behind the freeze.
+    /// The same goes for an audience window opened mid-freeze.
+    pub fn on_screen(&self) -> OutputScene {
+        self.on_screen
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn show(&self, scene: &OutputScene) {
+        *self
+            .on_screen
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = scene.clone();
     }
 
     pub fn is_frozen(&self) -> bool {
@@ -63,6 +91,7 @@ impl OutputState {
             return None;
         }
 
+        self.show(&scene);
         Some(scene.clone())
     }
 
@@ -88,7 +117,9 @@ impl OutputState {
         };
 
         if was_frozen && !frozen {
-            return Some(self.scene());
+            let scene = self.scene();
+            self.show(&scene);
+            return Some(scene);
         }
         None
     }
@@ -194,6 +225,44 @@ mod tests {
         let caught_up = state.set_frozen(false).expect("a scene to catch up with");
         assert_eq!(caught_up.video_current_time, 30.0);
         assert!(!caught_up.is_video_playing);
+    }
+
+    #[test]
+    fn what_is_on_screen_follows_every_broadcast() {
+        let state = OutputState::new();
+        state.apply(media_update(true, 12.0, false));
+
+        assert_eq!(state.on_screen(), state.scene());
+    }
+
+    #[test]
+    fn a_freeze_holds_what_is_on_screen_while_the_operator_moves_on() {
+        // The NDI stream and a late-opened audience window draw this. Drawing
+        // `scene()` instead would show the livestream what the freeze is hiding.
+        let state = OutputState::new();
+        state.apply(media_update(true, 12.0, false));
+        state.set_frozen(true);
+        state.apply(media_update(false, 30.0, false));
+
+        let held = state.on_screen();
+        assert_eq!(held.video_current_time, 12.0);
+        assert!(held.is_video_playing);
+        assert_eq!(
+            state.scene().video_current_time,
+            30.0,
+            "the operator's scene moved on"
+        );
+    }
+
+    #[test]
+    fn unfreezing_puts_the_operators_scene_on_screen() {
+        let state = OutputState::new();
+        state.apply(media_update(true, 12.0, false));
+        state.set_frozen(true);
+        state.apply(media_update(false, 30.0, false));
+        state.set_frozen(false);
+
+        assert_eq!(state.on_screen().video_current_time, 30.0);
     }
 
     #[test]

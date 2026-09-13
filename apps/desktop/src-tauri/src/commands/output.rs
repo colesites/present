@@ -33,14 +33,19 @@ fn broadcast(app: &AppHandle, scene: Option<OutputScene>) {
     }
 }
 
-/// The scene as it stands.
+/// The scene as it stands on screen.
 ///
 /// This is what makes a late-joining window work without a handshake. Electron
 /// needs `output-ready` to travel to the operator window so it can re-send
 /// everything it last sent; here the window that just opened simply asks.
+///
+/// It asks for what the audience is looking at, not what the operator has set
+/// up: an audience window reopened during a freeze shows the held screen. The
+/// Electron one shows nothing at all until the freeze ends, because the
+/// re-send it waits for is itself held back by the freeze.
 #[tauri::command]
 pub async fn get_output_scene(state: State<'_, OutputState>) -> AppResult<OutputScene> {
-    Ok(state.scene())
+    Ok(state.on_screen())
 }
 
 /// Apply an update from the operator window.
