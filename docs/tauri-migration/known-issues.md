@@ -18,6 +18,9 @@ zero-behaviour-change change, per migration rule 4.
 | 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | Stage 7 |
 | 11 | Unfreezing the output does not catch the audience screen up | Medium | **Fixed** |
 | 12 | The Looks window and the operator window agree by polling | Medium | **Fixed** |
+| 13 | The Looks window's NDI column does nothing | Medium | **Fixed** under Tauri |
+| 14 | The compositor does not draw scripture, plain text, filters, or media the way the window does | **High** | Open — Stage 6 |
+| 15 | Four compositor costs that stall a 30 fps stream | High | **Fixed** |
 
 ---
 
@@ -390,3 +393,77 @@ Verified in the running app — a toggle applied in Rust reached a subscribed
 window rather than waiting for a poll.
 
 Electron is untouched.
+
+---
+
+## 13. The Looks window's NDI column does nothing
+
+The Looks window edits three columns of layer flags: Screen 1, Stage and NDI.
+Electron's NDI stream is `capturePage()` on the audience window
+(`ndi.service.ts:335`), and that window only ever receives the program flags,
+folded into the scene by `App.tsx:535-546`. Nothing reads the NDI column. An
+operator can hide the timer from the livestream in the Looks window and the
+livestream shows it anyway.
+
+**Fixed under Tauri** (Stage 6), by the owner's call: the stream follows the
+NDI column. `services/ndi/look.rs` derives the scene fields from it exactly as
+`App.tsx` derives them from the program column, with one deliberate difference —
+the NDI messages flag gates the banner, because unlike the program toggle
+nothing clears the overlay when it changes.
+
+What this does not do: the operator's quick toggles still write only the
+program column, so clearing the words on the projector does not clear them on
+the stream. Recorded in stage-6-ndi.md §1.
+
+Electron is untouched.
+
+---
+
+## 14. The compositor does not draw what the audience window draws
+
+Found reading `OutputWindow.tsx` against `services/compositor` while wiring NDI,
+which is the compositor's first real consumer. ADR-001 requires the two
+renderings of a slide to stay visually identical; they are not yet:
+
+- **Scripture is not drawn at all.** A `scripture:` slide with no authored
+  elements goes through `ScriptureTextLayer` (auto-fit text, footer, shadow).
+  The compositor draws only slide elements, and generated scripture has none.
+- **Library slides without elements are not drawn** — the window's
+  `CanvasSlideLayer` falls back to one centred line of text.
+- **Media is cropped rather than letterboxed**, and the decoder stretches a
+  video whose aspect ratio differs from the frame.
+- **The slide background colour sits under the media** instead of over it, and
+  is dropped when the mask layer is on.
+- **`mediaFilterCSS` is ignored**, so a background the operator dimmed is not
+  dimmed.
+
+**Severity is high because of where it bites.** Under Electron the NDI stream is
+a capture of the real window and has none of these problems; under Tauri every
+one is a regression on the stream, and it would be one on the projector once the
+surface swap lands. Nothing in Tauri reaches an audience through the compositor
+today except NDI.
+
+**Fix (Stage 6):** parity first for scripture, then media fit and order, then
+filters, then plain text, each pinned by a pixel test against what the window
+does. See stage-6-ndi.md §6 and §9.
+
+---
+
+## 15. Four compositor costs that stall a 30 fps stream — FIXED
+
+Measured by streaming a lyric slide over a real service video to a receiver, on
+the release profile. The first run received 28.7 fps with a gap over 50 ms once a
+second. Each cause was affordable for Stage 5's one-off renders:
+
+1. The cached slide layer was keyed on `OutputScene::differs`, which counts the
+   video's position, so it was rebuilt on every position report while a video
+   played.
+2. A background image was read and decoded every frame, and a video with no
+   decoded frame yet was read from disk as an image every frame.
+3. A countdown timer lived in the slide layer, so each tick rebuilt it — a median
+   92 ms.
+4. Text was composited through `draw_pixmap` over a full-frame scratch, 37 ms for
+   a clock whose text took under one.
+
+**Fixed** (Stage 6). After: 30.0 fps received, no gap over 50 ms, with and
+without the timer showing. Details in stage-6-ndi.md §5.
