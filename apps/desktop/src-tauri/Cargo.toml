@@ -47,6 +47,10 @@ tokio = { version = "1.53.1", features = ["sync", "time"] }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 cosmic-text = "0.19"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+# The NDI runtime, opened when NDI is first used rather than linked at build
+# time — so no machine that builds Present needs the NDI SDK installed, and a
+# machine without NDI still launches. See `services/ndi/library.rs`.
+libloading = "0.8"
 
 # Desktop-only plugins. The crate keeps a mobile entry point (see `[lib]`), and
 # neither of these builds for iOS or Android.
