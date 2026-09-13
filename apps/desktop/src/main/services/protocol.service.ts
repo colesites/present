@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { ndiFrameRequestSourceName, ndiFrameResponse } from '../../shared/lib/ndi-rules.mjs';
 import { isDev } from '../utils/app.utils';
 import { getLatestNdiInputFrame } from './ndi.service';
 
@@ -201,23 +202,11 @@ export const registerProtocolHandlers = (): void => {
   });
 
   protocol.handle('ndi-frame', (request) => {
-    const url = new URL(request.url);
-    const sourceName = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
-    const frame = getLatestNdiInputFrame(sourceName || null);
+    const frame = getLatestNdiInputFrame(ndiFrameRequestSourceName(request.url));
+    const response = ndiFrameResponse(frame);
     if (!frame.data) {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          'Cache-Control': 'no-store',
-        },
-      });
+      return new Response(null, response);
     }
-    return new Response(new Uint8Array(frame.data), {
-      headers: {
-        'Cache-Control': 'no-store',
-        'Content-Type': frame.contentType,
-        'X-NDI-Frame-Updated-At': String(frame.updatedAtMs),
-      },
-    });
+    return new Response(new Uint8Array(frame.data), response);
   });
 };
