@@ -22,13 +22,30 @@
 //! The cached layer is composited over the video with one blit. What used to be
 //! a full re-render becomes a fill, a blit and a blit.
 
+use std::time::{Duration, Instant};
+
 use tiny_skia::{Color, Pixmap, Transform};
 
-use crate::services::output::OutputScene;
+use crate::services::output::{MediaKind, OutputScene};
 use crate::services::video::VideoFrame;
 
 use super::scene::{MediaLoader, Rendered};
 use super::{color, geometry, images, shapes, Frame};
+
+/// How long a background image that failed to load is left before trying again.
+///
+/// Long enough that a missing file is not re-read thirty times a second, short
+/// enough that an operator who copies it into place sees it without doing
+/// anything else.
+const STILL_RETRY: Duration = Duration::from_secs(2);
+
+/// A background image, decoded once.
+struct CachedStill {
+    url: String,
+    /// `None` when it could not be read or decoded.
+    image: Option<Pixmap>,
+    tried_at: Instant,
+}
 
 /// Draws scenes, remembering what it can.
 pub struct SceneCompositor {
@@ -48,6 +65,11 @@ pub struct SceneCompositor {
     /// second is a quarter of a gigabyte a second of allocator traffic for a
     /// buffer whose size only changes when the output does.
     frame: Option<Frame>,
+    /// The background image, so a static background is read and decoded once
+    /// rather than on every frame. A 1080p JPEG costs tens of milliseconds to
+    /// decode; a sender drawing thirty frames a second cannot pay that each
+    /// time.
+    still: Option<CachedStill>,
 }
 
 impl SceneCompositor {
@@ -59,6 +81,7 @@ impl SceneCompositor {
             cached_for: None,
             last_rebuild: false,
             frame: None,
+            still: None,
         }
     }
 
@@ -76,6 +99,7 @@ impl SceneCompositor {
     pub fn invalidate(&mut self) {
         self.cached_layers = None;
         self.cached_for = None;
+        self.still = None;
     }
 
     /// The frame from the last successful `render`.
@@ -160,10 +184,15 @@ impl SceneCompositor {
                 if !scene.hide_background && scene.show_media {
                     if let Some(video) = video {
                         self.draw_video(&mut frame, video, &mut report);
+                    } else if scene.media_type == Some(MediaKind::Video) {
+                        // A video with no decoded frame yet is not a still. The
+                        // image path would read the whole file — hundreds of
+                        // megabytes — and fail to decode it, on every frame.
+                        report.background_media_missing = true;
                     } else if let Some(url) =
                         scene.media_url.as_deref().filter(|url| !url.is_empty())
                     {
-                        draw_still(&mut frame, url, loader, &mut report);
+                        self.draw_still(&mut frame, url, loader, &mut report);
                     }
                 }
             }
@@ -291,27 +320,45 @@ impl SceneCompositor {
     }
 }
 
-fn draw_still(frame: &mut Frame, url: &str, loader: &dyn MediaLoader, report: &mut Rendered) {
-    let Some(bytes) = loader.load(url) else {
-        report.background_media_missing = true;
-        return;
-    };
-    let Some(decoded) = images::decode(&bytes) else {
-        report.background_media_missing = true;
-        return;
-    };
+impl SceneCompositor {
+    fn draw_still(
+        &mut self,
+        frame: &mut Frame,
+        url: &str,
+        loader: &dyn MediaLoader,
+        report: &mut Rendered,
+    ) {
+        let now = Instant::now();
+        let reusable = self.still.as_ref().is_some_and(|still| {
+            still.url == url
+                && (still.image.is_some() || now.duration_since(still.tried_at) < STILL_RETRY)
+        });
+        if !reusable {
+            let image = loader.load(url).and_then(|bytes| images::decode(&bytes));
+            self.still = Some(CachedStill {
+                url: url.to_owned(),
+                image,
+                tried_at: now,
+            });
+        }
 
-    let (width, height) = (frame.width() as f32, frame.height() as f32);
-    images::draw(
-        &mut frame.pixmap_mut(),
-        &decoded,
-        Transform::identity(),
-        width,
-        height,
-        images::ObjectFit::Cover,
-        None,
-    );
-    report.background_media_drawn = true;
+        let Some(decoded) = self.still.as_ref().and_then(|still| still.image.as_ref()) else {
+            report.background_media_missing = true;
+            return;
+        };
+
+        let (width, height) = (frame.width() as f32, frame.height() as f32);
+        images::draw(
+            &mut frame.pixmap_mut(),
+            decoded,
+            Transform::identity(),
+            width,
+            height,
+            images::ObjectFit::Cover,
+            None,
+        );
+        report.background_media_drawn = true;
+    }
 }
 
 /// Composite the cached slide layer onto the frame.
@@ -502,6 +549,97 @@ mod tests {
             !compositor.rebuilt_last_frame(),
             "an unchanged scene must reuse it"
         );
+    }
+
+    /// Counts reads, and answers with `bytes` or nothing.
+    struct CountingLoader {
+        bytes: Option<Vec<u8>>,
+        reads: std::cell::Cell<usize>,
+    }
+
+    impl MediaLoader for CountingLoader {
+        fn load(&self, _url: &str) -> Option<Vec<u8>> {
+            self.reads.set(self.reads.get() + 1);
+            self.bytes.clone()
+        }
+    }
+
+    fn red_png() -> Vec<u8> {
+        let image = image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut out, image::ImageFormat::Png)
+            .expect("encode");
+        out.into_inner()
+    }
+
+    #[test]
+    fn a_video_with_no_frame_yet_is_never_read_as_an_image() {
+        // The image path would read the whole video file and fail to decode
+        // it — every frame, for as long as the decoder has nothing to give.
+        let loader = CountingLoader {
+            bytes: Some(vec![0; 64]),
+            reads: std::cell::Cell::new(0),
+        };
+        let scene = OutputScene {
+            media_url: Some("local-media://media/loop.mp4".to_owned()),
+            media_type: Some(MediaKind::Video),
+            ..scene()
+        };
+        let mut compositor = SceneCompositor::new(100, 100);
+
+        let (_, report) = compositor.render(&scene, None, &loader).expect("frame");
+        assert!(report.background_media_missing);
+        compositor.render(&scene, None, &loader).expect("frame");
+        assert_eq!(loader.reads.get(), 0);
+    }
+
+    #[test]
+    fn a_background_image_is_read_once_not_every_frame() {
+        let loader = CountingLoader {
+            bytes: Some(red_png()),
+            reads: std::cell::Cell::new(0),
+        };
+        let scene = OutputScene {
+            media_url: Some("local-media://media/bg.png".to_owned()),
+            media_type: Some(MediaKind::Image),
+            ..scene()
+        };
+        let mut compositor = SceneCompositor::new(100, 100);
+
+        for _ in 0..3 {
+            let (frame, report) = compositor.render(&scene, None, &loader).expect("frame");
+            assert!(report.background_media_drawn);
+            assert_eq!(frame.pixel_at(50, 50), Some((255, 0, 0, 255)));
+        }
+        assert_eq!(loader.reads.get(), 1);
+
+        let other = OutputScene {
+            media_url: Some("local-media://media/other.png".to_owned()),
+            ..scene
+        };
+        compositor.render(&other, None, &loader).expect("frame");
+        assert_eq!(loader.reads.get(), 2, "a different image is read");
+    }
+
+    #[test]
+    fn a_missing_background_image_is_not_retried_every_frame() {
+        let loader = CountingLoader {
+            bytes: None,
+            reads: std::cell::Cell::new(0),
+        };
+        let scene = OutputScene {
+            media_url: Some("local-media://media/missing.png".to_owned()),
+            media_type: Some(MediaKind::Image),
+            ..scene()
+        };
+        let mut compositor = SceneCompositor::new(100, 100);
+
+        for _ in 0..5 {
+            let (_, report) = compositor.render(&scene, None, &loader).expect("frame");
+            assert!(report.background_media_missing);
+        }
+        assert_eq!(loader.reads.get(), 1);
     }
 
     #[test]
