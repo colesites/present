@@ -94,9 +94,82 @@ where
     });
 }
 
+/// Run `work` over pixels and a byte buffer holding `bytes_per_pixel` bytes for
+/// each of them, in parallel bands that never cut a pixel in half.
+///
+/// For converting between a pixel type and packed bytes, where source and
+/// destination differ in length and `zip_bands` would misalign them.
+pub fn zip_pixel_bands<S, F>(source: &[S], destination: &mut [u8], bytes_per_pixel: usize, work: F)
+where
+    S: Sync,
+    F: Fn(&[S], &mut [u8]) + Sync,
+{
+    if bytes_per_pixel == 0 || source.len().checked_mul(bytes_per_pixel) != Some(destination.len())
+    {
+        return;
+    }
+
+    let total = source.len();
+    let bands = bands();
+
+    if bands <= 1 || total < MINIMUM_PARALLEL_PIXELS {
+        work(source, destination);
+        return;
+    }
+
+    let band = total.div_ceil(bands);
+
+    std::thread::scope(|scope| {
+        for (source_chunk, destination_chunk) in source
+            .chunks(band)
+            .zip(destination.chunks_mut(band * bytes_per_pixel))
+        {
+            let work = &work;
+            scope.spawn(move || work(source_chunk, destination_chunk));
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pixel_bands_never_cut_a_pixel_in_half() {
+        // A band boundary inside a pixel would pair one pixel's source with
+        // another's bytes — every band after the first shifted by a channel.
+        let length = MINIMUM_PARALLEL_PIXELS * 2 + 5;
+        let source: Vec<u32> = (0..length as u32).collect();
+        let mut destination = vec![0u8; length * 4];
+
+        zip_pixel_bands(&source, &mut destination, 4, |pixels, bytes| {
+            for (pixel, slot) in pixels.iter().zip(bytes.chunks_exact_mut(4)) {
+                slot.copy_from_slice(&pixel.to_le_bytes());
+            }
+        });
+
+        assert!(
+            destination
+                .chunks_exact(4)
+                .enumerate()
+                .all(
+                    |(index, bytes)| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+                        == index as u32
+                ),
+            "a pixel landed in another pixel's bytes"
+        );
+    }
+
+    #[test]
+    fn pixel_bands_refuse_a_buffer_of_the_wrong_size() {
+        let source = vec![1u32; 10];
+        let mut destination = vec![0u8; 39];
+
+        zip_pixel_bands(&source, &mut destination, 4, |_, _| {
+            panic!("should not run")
+        });
+        assert!(destination.iter().all(|value| *value == 0));
+    }
 
     #[test]
     fn every_element_is_visited_exactly_once() {

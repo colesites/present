@@ -30,6 +30,8 @@
 
 use tiny_skia::{Color, Pixmap, PixmapMut};
 
+use super::parallel;
+
 /// The largest frame that will be allocated, per side.
 ///
 /// A scene carries its canvas size as text from the renderer, and a malformed
@@ -159,27 +161,39 @@ impl Frame {
     /// message banner, a lower third — arrives on the NDI destination darkened
     /// against black.
     pub fn to_bgra(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.pixmap.data().len());
-
-        for pixel in self.pixmap.pixels() {
-            let alpha = pixel.alpha();
-            let (r, g, b) = if alpha == 0 {
-                // Nothing to recover, and dividing by zero would not be
-                // recoverable either.
-                (0, 0, 0)
-            } else if alpha == 255 {
-                (pixel.red(), pixel.green(), pixel.blue())
-            } else {
-                (
-                    unpremultiply(pixel.red(), alpha),
-                    unpremultiply(pixel.green(), alpha),
-                    unpremultiply(pixel.blue(), alpha),
-                )
-            };
-            out.extend_from_slice(&[b, g, r, alpha]);
-        }
-
+        let mut out = Vec::new();
+        self.write_bgra(&mut out);
         out
+    }
+
+    /// [`to_bgra`](Self::to_bgra), into a buffer the caller keeps.
+    ///
+    /// NDI takes thirty of these a second. Allocating eight megabytes for each
+    /// and walking two million pixels on one core is the same waste the
+    /// compositor already stopped paying for its own frame buffer; this reuses
+    /// the buffer and splits the walk across cores.
+    pub fn write_bgra(&self, out: &mut Vec<u8>) {
+        out.resize(self.pixmap.data().len(), 0);
+
+        parallel::zip_pixel_bands(self.pixmap.pixels(), out, 4, |pixels, bytes| {
+            for (pixel, slot) in pixels.iter().zip(bytes.chunks_exact_mut(4)) {
+                let alpha = pixel.alpha();
+                let (r, g, b) = if alpha == 0 {
+                    // Nothing to recover, and dividing by zero would not be
+                    // recoverable either.
+                    (0, 0, 0)
+                } else if alpha == 255 {
+                    (pixel.red(), pixel.green(), pixel.blue())
+                } else {
+                    (
+                        unpremultiply(pixel.red(), alpha),
+                        unpremultiply(pixel.green(), alpha),
+                        unpremultiply(pixel.blue(), alpha),
+                    )
+                };
+                slot.copy_from_slice(&[b, g, r, alpha]);
+            }
+        });
     }
 
     /// The colour at a pixel, un-premultiplied. For tests and diagnostics.
@@ -299,6 +313,36 @@ mod tests {
 
         assert_eq!(frame.as_rgba().len(), 1920 * 1080 * 4);
         assert_eq!(frame.to_bgra().len(), 1920 * 1080 * 4);
+    }
+
+    #[test]
+    fn a_kept_buffer_gets_every_pixel_of_a_full_frame_in_order() {
+        // Large enough to split across cores, with a different value in every
+        // row, so a band written out of place or a stale pixel left over from
+        // the previous frame both show up.
+        let (width, height) = (1920_u32, 1080_u32);
+        let mut frame = Frame::new(width, height).expect("frame");
+        for (index, pixel) in frame.pixmap_mut_pixels().iter_mut().enumerate() {
+            let row = (index / width as usize) as u8;
+            let alpha = if index % 3 == 0 { 128 } else { 255 };
+            *pixel = tiny_skia::ColorU8::from_rgba(row, 255 - row, 40, alpha).premultiply();
+        }
+
+        let mut kept = vec![7_u8; 3]; // wrong size and dirty, as a reused buffer might be
+        frame.write_bgra(&mut kept);
+        assert_eq!(kept, frame.to_bgra());
+
+        let mut serial = Vec::with_capacity(kept.len());
+        for y in 0..height {
+            for x in 0..width {
+                let (r, g, b, a) = frame.pixel_at(x, y).expect("in bounds");
+                serial.extend_from_slice(&[b, g, r, a]);
+            }
+        }
+        assert!(
+            kept == serial,
+            "the parallel write disagrees with a pixel-by-pixel one"
+        );
     }
 
     #[test]

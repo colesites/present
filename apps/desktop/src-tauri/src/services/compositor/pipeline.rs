@@ -188,7 +188,7 @@ impl SceneCompositor {
         let unchanged = self
             .cached_for
             .as_ref()
-            .is_some_and(|cached| !cached.differs(scene));
+            .is_some_and(|cached| !layers_differ(cached, scene));
 
         if unchanged && self.cached_layers.is_some() {
             self.last_rebuild = false;
@@ -397,6 +397,29 @@ pub fn background_color(scene: &OutputScene) -> Option<Color> {
         .and_then(color::parse)
 }
 
+/// Whether the slide layers drawn for `cached` could look different for `scene`.
+///
+/// Deliberately not [`OutputScene::differs`], which answers "is this worth
+/// broadcasting" — and the video's clock is, because the mirrors seek on it.
+/// It is not worth redrawing text for. `video_current_time` moves every time
+/// the operator's player reports, about ten times a second while a video
+/// plays, and comparing it here rebuilt the slide layer — the most expensive
+/// thing a frame does — on every report, which is exactly when a frame also
+/// has a video to decode. The Stage 5 measurement used a static scene, where
+/// the clock never moves, so it could not see this.
+///
+/// Only the transport is ignored. Nothing in the layers reads it; every other
+/// field might.
+fn layers_differ(cached: &OutputScene, scene: &OutputScene) -> bool {
+    let without_transport = |value: &OutputScene| OutputScene {
+        video_current_time: 0.0,
+        is_video_playing: false,
+        should_sync_time: false,
+        ..value.clone()
+    };
+    without_transport(cached) != without_transport(scene)
+}
+
 /// How many overlays a scene shows, without drawing them.
 ///
 /// The cached path needs the counts for the frame it is reporting on, not for
@@ -479,6 +502,48 @@ mod tests {
             !compositor.rebuilt_last_frame(),
             "an unchanged scene must reuse it"
         );
+    }
+
+    #[test]
+    fn a_playing_videos_clock_does_not_redraw_the_slide() {
+        // The operator's player reports its position about ten times a second.
+        // Each report changes the scene; none of them changes the lyrics.
+        let mut compositor = SceneCompositor::new(100, 100);
+        let playing = OutputScene {
+            slide_elements: Some(json!([{
+                "id": "a", "type": "shape",
+                "x": 10.0, "y": 10.0, "width": 80.0, "height": 80.0,
+                "style": { "backgroundColor": "#ff0000" }
+            }])),
+            is_video_playing: true,
+            video_current_time: 12.0,
+            ..scene()
+        };
+        compositor.render(&playing, None, &NoMedia).expect("first");
+
+        for (time, playing_now, sync) in [
+            (12.1, true, false),
+            (12.2, true, true),
+            (12.2, false, false),
+        ] {
+            let reported = OutputScene {
+                video_current_time: time,
+                is_video_playing: playing_now,
+                should_sync_time: sync,
+                ..playing.clone()
+            };
+            assert!(
+                reported.differs(&playing),
+                "the report is still a broadcast"
+            );
+            compositor
+                .render(&reported, None, &NoMedia)
+                .expect("report");
+            assert!(
+                !compositor.rebuilt_last_frame(),
+                "a clock report at {time}s must reuse the slide layer"
+            );
+        }
     }
 
     #[test]
