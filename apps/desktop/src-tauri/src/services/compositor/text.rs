@@ -258,6 +258,7 @@ pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
     let base = spec.color.to_color_u8();
     let (base_r, base_g, base_b) = (base.red(), base.green(), base.blue());
     let base_alpha = f32::from(base.alpha()) / 255.0;
+    let mut ink = InkBounds::default();
 
     buffer.draw(
         system,
@@ -280,6 +281,7 @@ pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
                     if px < 0 || py < 0 || px >= scratch_width || py >= scratch_height {
                         continue;
                     }
+                    ink.include(px, py);
                     blend(
                         &mut scratch,
                         (py * scratch_width + px) as usize,
@@ -293,23 +295,7 @@ pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
         },
     );
 
-    let quality = if spec.transform.is_translate() {
-        tiny_skia::FilterQuality::Nearest
-    } else {
-        tiny_skia::FilterQuality::Bilinear
-    };
-
-    pixmap.draw_pixmap(
-        0,
-        0,
-        scratch.as_ref(),
-        &tiny_skia::PixmapPaint {
-            quality,
-            ..tiny_skia::PixmapPaint::default()
-        },
-        spec.transform,
-        None,
-    );
+    composite(pixmap, &scratch, ink, spec.transform);
 }
 
 pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geometry::Viewport) {
@@ -426,6 +412,7 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     let base = text_color.to_color_u8();
     let (base_r, base_g, base_b) = (base.red(), base.green(), base.blue());
     let base_alpha = f32::from(base.alpha()) / 255.0;
+    let mut ink = InkBounds::default();
 
     buffer.draw(
         system,
@@ -448,6 +435,7 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
                     if px < 0 || py < 0 || px >= scratch_width || py >= scratch_height {
                         continue;
                     }
+                    ink.include(px, py);
                     blend(
                         &mut scratch,
                         (py * scratch_width + px) as usize,
@@ -461,26 +449,109 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         },
     );
 
-    let transform = viewport.element_transform(element);
-    // Nearest for a plain translation keeps glyph edges exactly as rasterised;
-    // anything rotated or mirrored needs interpolation or the text crawls.
-    let quality = if transform.is_translate() {
-        tiny_skia::FilterQuality::Nearest
-    } else {
-        tiny_skia::FilterQuality::Bilinear
+    composite(pixmap, &scratch, ink, viewport.element_transform(element));
+}
+
+/// The rectangle of a scratch pixmap that holds any ink, inclusive.
+#[derive(Debug, Clone, Copy, Default)]
+struct InkBounds {
+    area: Option<(i32, i32, i32, i32)>,
+}
+
+impl InkBounds {
+    fn include(&mut self, x: i32, y: i32) {
+        self.area = Some(match self.area {
+            None => (x, y, x, y),
+            Some((left, top, right, bottom)) => {
+                (left.min(x), top.min(y), right.max(x), bottom.max(y))
+            }
+        });
+    }
+}
+
+/// Put rasterised text onto the destination.
+///
+/// An upright box — no rotation, flip or scale, which is nearly every text box
+/// on a slide and every overlay — is a copy at an offset, and is done as one:
+/// source-over of the inked rectangle only. `draw_pixmap` runs tiny-skia's
+/// pipeline over every pixel of the scratch whether it holds ink or not, and
+/// that was measured at 37 ms for a full-frame scratch holding nothing but a
+/// countdown clock: the whole cost of the timer, paid once a second.
+///
+/// Anything rotated or mirrored still goes through `draw_pixmap`, which is
+/// what interpolates it; without that the text crawls.
+fn composite(
+    pixmap: &mut PixmapMut<'_>,
+    scratch: &tiny_skia::Pixmap,
+    ink: InkBounds,
+    transform: Transform,
+) {
+    let Some((left, top, right, bottom)) = ink.area else {
+        return;
     };
 
-    pixmap.draw_pixmap(
-        0,
-        0,
-        scratch.as_ref(),
-        &tiny_skia::PixmapPaint {
-            quality,
-            ..tiny_skia::PixmapPaint::default()
-        },
-        transform,
-        None,
-    );
+    if transform.has_scale() || transform.has_skew() {
+        pixmap.draw_pixmap(
+            0,
+            0,
+            scratch.as_ref(),
+            &tiny_skia::PixmapPaint {
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..tiny_skia::PixmapPaint::default()
+            },
+            transform,
+            None,
+        );
+        return;
+    }
+
+    // Where nearest-neighbour sampling puts source pixel 0 for a fractional
+    // translation, so this lands exactly where `draw_pixmap` did.
+    let dx = (transform.tx - 0.5).ceil() as i32;
+    let dy = (transform.ty - 0.5).ceil() as i32;
+    let (dest_width, dest_height) = (pixmap.width() as i32, pixmap.height() as i32);
+    let source_width = scratch.width() as i32;
+    let source = scratch.pixels();
+    let destination = pixmap.pixels_mut();
+
+    for sy in top..=bottom {
+        let y = sy + dy;
+        if y < 0 || y >= dest_height {
+            continue;
+        }
+        for sx in left..=right {
+            let x = sx + dx;
+            if x < 0 || x >= dest_width {
+                continue;
+            }
+            let Some(over) = source.get((sy * source_width + sx) as usize) else {
+                continue;
+            };
+            let alpha = over.alpha();
+            if alpha == 0 {
+                continue;
+            }
+            let Some(under) = destination.get_mut((y * dest_width + x) as usize) else {
+                continue;
+            };
+            if alpha == 255 {
+                *under = *over;
+                continue;
+            }
+            let inverse = 255 - u32::from(alpha);
+            let mix = |src: u8, dst: u8| -> u8 {
+                (u32::from(src) + (u32::from(dst) * inverse + 127) / 255).min(255) as u8
+            };
+            *under = tiny_skia::PremultipliedColorU8::from_rgba(
+                mix(over.red(), under.red()),
+                mix(over.green(), under.green()),
+                mix(over.blue(), under.blue()),
+                (u32::from(alpha) + (u32::from(under.alpha()) * inverse + 127) / 255).min(255)
+                    as u8,
+            )
+            .unwrap_or(*under);
+        }
+    }
 }
 
 /// Source-over one glyph pixel into the scratch buffer.

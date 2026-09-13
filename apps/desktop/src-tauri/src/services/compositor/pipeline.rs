@@ -70,6 +70,33 @@ pub struct SceneCompositor {
     /// decode; a sender drawing thirty frames a second cannot pay that each
     /// time.
     still: Option<CachedStill>,
+    /// The timer, drawn over transparency, apart from the slide layers.
+    ///
+    /// A countdown changes once a second. Kept inside the slide layer, every
+    /// tick rebuilt the whole layer — measured at a median 92 ms for a lyric
+    /// slide at 1920x1080, which is a visible stall on a 30 fps stream, once a
+    /// second, for as long as the countdown runs. Apart, a tick redraws only
+    /// the clock.
+    timer_layer: Option<Pixmap>,
+    timer_for: Option<TimerKey>,
+}
+
+/// Everything `overlays::draw_timer` reads.
+#[derive(Debug, Clone, PartialEq)]
+struct TimerKey {
+    text: Option<String>,
+    label: Option<String>,
+    layout: Option<crate::services::output::TimerLayout>,
+}
+
+impl TimerKey {
+    fn of(scene: &OutputScene) -> Self {
+        Self {
+            text: scene.timer_text.clone(),
+            label: scene.timer_label.clone(),
+            layout: scene.timer_layout.clone(),
+        }
+    }
 }
 
 impl SceneCompositor {
@@ -82,6 +109,8 @@ impl SceneCompositor {
             last_rebuild: false,
             frame: None,
             still: None,
+            timer_layer: None,
+            timer_for: None,
         }
     }
 
@@ -100,6 +129,8 @@ impl SceneCompositor {
         self.cached_layers = None;
         self.cached_for = None;
         self.still = None;
+        self.timer_layer = None;
+        self.timer_for = None;
     }
 
     /// The frame from the last successful `render`.
@@ -203,8 +234,28 @@ impl SceneCompositor {
             blend_over(&mut frame, layers);
         }
 
+        // 4. The timer, on top of everything, redrawn only when it ticks.
+        if scene.timer_visible {
+            if let Some(timer) = self.timer_for(scene) {
+                blend_over(&mut frame, timer);
+            }
+            report.overlays_drawn += 1;
+        }
+
         self.frame = Some(frame);
         Some((self.frame.as_ref()?, report))
+    }
+
+    /// The cached timer layer, redrawn if what it shows changed.
+    fn timer_for(&mut self, scene: &OutputScene) -> Option<&Pixmap> {
+        let key = TimerKey::of(scene);
+        if self.timer_for.as_ref() != Some(&key) || self.timer_layer.is_none() {
+            let mut layer = Pixmap::new(self.width, self.height)?;
+            super::overlays::draw_timer(&mut layer.as_mut(), scene, scene.timer_layout.as_ref());
+            self.timer_layer = Some(layer);
+            self.timer_for = Some(key);
+        }
+        self.timer_layer.as_ref()
     }
 
     /// The cached slide layer, rebuilt if the scene moved.
@@ -287,11 +338,6 @@ impl SceneCompositor {
             let props = super::overlays::draw_props(&mut view, &scene.props_overlay, loader);
             report.overlays_drawn += props.drawn;
             report.elements_deferred += props.deferred;
-
-            if scene.timer_visible {
-                super::overlays::draw_timer(&mut view, scene, scene.timer_layout.as_ref());
-                report.overlays_drawn += 1;
-            }
         }
 
         self.cached_layers = Some(layers);
@@ -455,16 +501,23 @@ pub fn background_color(scene: &OutputScene) -> Option<Color> {
 /// has a video to decode. The Stage 5 measurement used a static scene, where
 /// the clock never moves, so it could not see this.
 ///
-/// Only the transport is ignored. Nothing in the layers reads it; every other
+/// The timer is ignored for the same reason: it has a layer of its own.
+///
+/// Only those are ignored. Nothing in the slide layers reads them; every other
 /// field might.
 fn layers_differ(cached: &OutputScene, scene: &OutputScene) -> bool {
-    let without_transport = |value: &OutputScene| OutputScene {
+    let without_clocks = |value: &OutputScene| OutputScene {
         video_current_time: 0.0,
         is_video_playing: false,
         should_sync_time: false,
+        timer_label: None,
+        timer_text: None,
+        timer_running: false,
+        timer_visible: false,
+        timer_layout: None,
         ..value.clone()
     };
-    without_transport(cached) != without_transport(scene)
+    without_clocks(cached) != without_clocks(scene)
 }
 
 /// How many overlays a scene shows, without drawing them.
@@ -485,10 +538,6 @@ fn count_overlays(scene: &OutputScene, deferred: &mut usize) -> usize {
             *deferred += 1;
         }
     }
-    if scene.timer_visible {
-        drawn += 1;
-    }
-
     drawn
 }
 
@@ -640,6 +689,52 @@ mod tests {
             assert!(report.background_media_missing);
         }
         assert_eq!(loader.reads.get(), 1);
+    }
+
+    #[test]
+    fn a_ticking_countdown_redraws_the_clock_but_not_the_slide() {
+        let mut compositor = SceneCompositor::new(200, 120);
+        let tick = |text: &str| OutputScene {
+            slide_elements: Some(json!([{
+                "id": "a", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 50.0, "height": 50.0,
+                "style": { "backgroundColor": "#ff0000" }
+            }])),
+            timer_visible: true,
+            timer_text: Some(text.to_owned()),
+            ..scene()
+        };
+
+        let first = compositor
+            .render(&tick("05:00"), None, &NoMedia)
+            .expect("first")
+            .0
+            .as_rgba()
+            .to_vec();
+        let second = compositor
+            .render(&tick("04:59"), None, &NoMedia)
+            .expect("second")
+            .0
+            .as_rgba()
+            .to_vec();
+
+        assert!(
+            !compositor.rebuilt_last_frame(),
+            "a tick must not rebuild the slide layer"
+        );
+        assert_ne!(first, second, "but the clock on screen must change");
+
+        let hidden = OutputScene {
+            timer_visible: false,
+            ..tick("04:59")
+        };
+        let without = compositor
+            .render(&hidden, None, &NoMedia)
+            .expect("hidden")
+            .0
+            .as_rgba()
+            .to_vec();
+        assert_ne!(without, second, "hiding the timer takes it off the frame");
     }
 
     #[test]
