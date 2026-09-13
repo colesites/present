@@ -348,6 +348,15 @@ const bridge = {
     void invoke("respond_mini_lyrics_save", { response }).catch(noop);
   },
 
+  // --- Stage 6: NDI output ----------------------------------------------
+  // Same payloads as `ndi:start` / `ndi:stop` / `ndi:status`, so Settings did
+  // not change. The frames come from the Rust compositor rather than a
+  // capture of the audience window.
+  startNdiOutput: (sourceName: string, groupName: string) =>
+    invoke("start_ndi_output", { sourceName, groupName }),
+  stopNdiOutput: () => invoke<void>("stop_ndi_output"),
+  getNdiStatus: () => invoke("get_ndi_status"),
+
   // Errors the renderer catches. Optional-chained at the call site, so
   // leaving this out meant every render failure vanished without trace.
   reportRendererError: (error: unknown) => {

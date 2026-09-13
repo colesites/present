@@ -14,6 +14,7 @@ pub mod file;
 pub mod looks;
 pub mod media;
 pub mod mini_lyrics;
+pub mod ndi;
 pub mod output;
 pub mod permissions;
 pub mod playback;

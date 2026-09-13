@@ -249,3 +249,30 @@ fn a_frame_sent_over_ndi_arrives_intact_and_the_receiver_survives_the_source_res
         "top left after reconnect",
     );
 }
+
+#[test]
+#[ignore = "needs the NDI runtime; run with --ignored"]
+fn the_sender_keeps_its_own_clock_with_nobody_watching() {
+    // The send loop relies on `clock_video` for pacing. If the SDK only
+    // clocked a connected sender, a stream nobody is watching would spin a
+    // core flat out rendering frames that go nowhere.
+    let runtime = library::load(&library::candidates_from_env(None)).expect("load the NDI runtime");
+    let name = format!("Present Unwatched {}", std::process::id());
+    let mut sender = Sender::new(runtime.lib, &name, rules::DEFAULT_GROUP_NAME).expect("sender");
+    let frame = pattern();
+
+    let started = Instant::now();
+    for _ in 0..60 {
+        sender.send_bgra(WIDTH, HEIGHT, &frame).expect("send");
+    }
+    let rate = 60.0 / started.elapsed().as_secs_f64();
+    println!(
+        "unwatched sender: 60 frames in {:?} ({rate:.1} fps), connections={}",
+        started.elapsed(),
+        sender.connections(Duration::ZERO)
+    );
+    assert!(
+        rate < 40.0,
+        "an unwatched sender ran at {rate:.1} fps; the send loop needs its own pacing"
+    );
+}

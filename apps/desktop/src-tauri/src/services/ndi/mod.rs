@@ -8,24 +8,31 @@
 //! from the Rust compositor instead.
 //!
 //! ```text
-//! rules     the characterised behaviour, shared with Electron. No FFI.
-//! library   where the NDI runtime is found, and loading it
-//! sys       the C interface, resolved from the loaded runtime
-//! finder    discovery
-//! sender    one source on the network
-//! receiver  one source received
+//! rules       the characterised behaviour, shared with Electron. No FFI.
+//! library     where the NDI runtime is found, and loading it
+//! sys         the C interface, resolved from the loaded runtime
+//! finder      discovery
+//! sender      one source on the network
+//! receiver    one source received
+//! look        the audience scene through the Looks window's NDI column
+//! video_feed  which frame of the background video is due
+//! output      the send loop, and the status Settings reads
+//! stream      what the running app draws into it
 //! ```
 //!
-//! Only `rules` and `library` are safe to reason about without the SDK
-//! documentation to hand. Everything that crosses into C is in `sys`, and the
-//! three wrappers are the only code that calls it.
+//! Everything that crosses into C is in `sys`, and `finder`, `sender` and
+//! `receiver` are the only code that calls it.
 
 pub mod finder;
 pub mod library;
+pub mod look;
+pub mod output;
 pub mod receiver;
 pub mod rules;
 pub mod sender;
+pub mod stream;
 mod sys;
+pub mod video_feed;
 
 pub use library::LoadedRuntime;
 pub use sys::NdiLib;

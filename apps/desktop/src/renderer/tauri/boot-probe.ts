@@ -389,6 +389,39 @@ if (shouldProbe) {
 }
 
 if (shouldProbe) {
+  // Stage 6 (NDI): whether the runtime loads, and from where. Reads only — a
+  // stream on the network is not something a launch should start by itself.
+  // `__presentNdi` is here so the stream can be started, watched and stopped
+  // by hand from this window's console.
+  void (async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const ndi = {
+      start: (sourceName = "Present Main Output", groupName = "Public") =>
+        invoke("start_ndi_output", { sourceName, groupName }),
+      stop: () => invoke("stop_ndi_output"),
+      status: () => invoke("get_ndi_status"),
+    };
+    (window as unknown as { __presentNdi?: unknown }).__presentNdi = ndi;
+
+    const status = (await ndi.status()) as {
+      libraryLoaded: boolean;
+      libraryVersion: string | null;
+      lastError: string | null;
+    };
+    const summary = status.libraryLoaded
+      ? `ndiRuntime=loaded (${status.libraryVersion ?? "unknown version"})`
+      : "ndiRuntime=unavailable";
+    console.info("[Tauri]", summary);
+    await invoke("report_diagnostic", { message: summary });
+  })().catch((error: unknown) => {
+    console.error("[Tauri] NDI probe failed", error);
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("report_diagnostic", { message: `NDI probe failed: ${String(error)}` }),
+    );
+  });
+}
+
+if (shouldProbe) {
   // ADR-002's UI requirement: a file the platform decoder cannot open has to be
   // flagged in the media panel while there is still time to convert it, not
   // discovered as a black rectangle during a service. What is proved here is

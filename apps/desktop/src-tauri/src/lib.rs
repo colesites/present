@@ -112,6 +112,9 @@ pub fn run() {
         // now, and restoring last Sunday's slide on launch would be worse than
         // starting blank.
         .manage(state::OutputState::new())
+        // The NDI runtime and the stream while it runs. In memory: whether NDI
+        // is on is a setting React re-applies on launch.
+        .manage(state::NdiState::new())
         // The media transport. In memory: where a video had got to describes
         // the moment, not the operator's setup.
         .manage(state::PlaybackState::new())
@@ -192,6 +195,9 @@ pub fn run() {
             commands::auth::begin_auth_flow,
             commands::auth::open_external_browser,
             commands::auth::refresh_desktop_session,
+            commands::ndi::start_ndi_output,
+            commands::ndi::stop_ndi_output,
+            commands::ndi::get_ndi_status,
             commands::output::get_output_scene,
             commands::output::send_to_output,
             commands::output::set_output_frozen,
