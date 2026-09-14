@@ -94,6 +94,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSResponder",
     "NSGraphics",
     "objc2-quartz-core",
+    # The system font list, as font-list's helpers read it.
+    "NSFontManager",
 ] }
 # The view's layer, and the image each frame becomes.
 objc2-quartz-core = { version = "0.3", default-features = false, features = [
@@ -118,6 +120,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSDictionary",
     "NSValue",
     "NSEnumerator",
+    "NSArray",
 ] }
 core-graphics = "0.25"
 # Microphone and camera authorisation, replacing Electron's

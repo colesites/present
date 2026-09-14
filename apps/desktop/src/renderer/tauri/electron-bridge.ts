@@ -497,8 +497,30 @@ const reportMissing = (name: string) => {
  * Six of the eight windows load the same HTML entry, so this runs once per open
  * window — hence the idempotence rather than an assertion.
  */
+/**
+ * `window.fontAPI`, the preload's second global (`preload.ts:250-257`). The
+ * font pickers read it directly, so under Tauri they had only their
+ * seven-family fallback list until this existed.
+ */
+const fontApi = {
+  getSystemFonts: () => invoke<string[]>("get_system_fonts"),
+  getSystemFontFaces: () => invoke("get_system_font_faces"),
+  pickFontFile: () => invoke<string[] | null>("pick_font_file"),
+  installCustomFonts: (filePaths: string[]) =>
+    invoke("install_custom_fonts", { filePaths: filePaths ?? [] }),
+  getCustomFonts: () => invoke("get_custom_fonts"),
+};
+
 export const installElectronBridge = (): void => {
   if (!isTauri()) return;
+  if (!("fontAPI" in window)) {
+    Object.defineProperty(window, "fontAPI", {
+      value: Object.freeze(fontApi),
+      configurable: false,
+      enumerable: true,
+      writable: false,
+    });
+  }
   if ("electronAPI" in window) return;
 
   const proxied = new Proxy(bridge, {

@@ -26,6 +26,8 @@ const PROP_VIDEO_EXTENSIONS: &[&str] = &["mp4", "webm", "mov", "avi", "mkv", "m4
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp"];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "webm", "mov", "avi", "mkv", "m4v"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "m4a", "aac", "ogg", "flac"];
+/// Font files to install (`font.ipc.ts:21-37`).
+const FONT_EXTENSIONS: &[&str] = &["ttf", "otf", "woff", "woff2"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,6 +179,35 @@ pub fn select_media_file(
     };
     let path = state.grant_picked_file(&to_path(picked)?)?;
     Ok(Some(described(&path)))
+}
+
+/// Fonts to install. Multi-select; `None` when cancelled, as Electron returns
+/// `null` rather than an empty list.
+pub fn select_font_files(
+    app: &AppHandle,
+    state: &FileState,
+    requester: Option<&WebviewWindow>,
+) -> AppResult<Option<Vec<String>>> {
+    let Some(picked) = builder(app, requester)
+        .add_filter("Font Files", FONT_EXTENSIONS)
+        .blocking_pick_files()
+    else {
+        return Ok(None);
+    };
+    if picked.is_empty() {
+        return Ok(None);
+    }
+
+    let mut paths = Vec::with_capacity(picked.len());
+    for entry in picked {
+        paths.push(
+            state
+                .grant_picked_file(&to_path(entry)?)?
+                .display()
+                .to_string(),
+        );
+    }
+    Ok(Some(paths))
 }
 
 /// Backing tracks for the Audio tab. Multi-select, like Electron.

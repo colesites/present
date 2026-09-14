@@ -12,6 +12,7 @@ pub mod deep_link;
 pub mod diagnostics;
 pub mod display;
 pub mod file;
+pub mod fonts;
 pub mod looks;
 pub mod media;
 pub mod mini_lyrics;
