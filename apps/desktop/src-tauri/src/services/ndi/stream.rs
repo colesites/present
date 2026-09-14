@@ -95,5 +95,5 @@ fn open_scoped(
     let resolved = files
         .resolve_existing(&path.to_string_lossy())
         .map_err(|error| error.to_string())?;
-    video::open_scaled(&resolved, Some(size)).map_err(|error| error.to_string())
+    video::open_contained(&resolved, size).map_err(|error| error.to_string())
 }

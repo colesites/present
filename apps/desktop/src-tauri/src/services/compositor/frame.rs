@@ -96,7 +96,7 @@ impl Frame {
 
         // Banded by destination, with each band slicing its own source bytes.
         // `as_chunks` would read better and is stable only from 1.88; this
-        // crate declares 1.82 and raising an MSRV for syntax is not a trade
+        // crate declares 1.83 and raising an MSRV for syntax is not a trade
         // worth making.
         super::parallel::for_each_band(self.pixmap.pixels_mut(), |destination, offset| {
             let start = offset * 4;

@@ -95,7 +95,7 @@ impl FrameSource for ProbeSource {
 
         let path = self.video_path.clone();
         let open = move |_url: &str, size: (u32, u32)| -> Result<Box<dyn VideoDecoder>, String> {
-            video::open_scaled(&path, Some(size)).map_err(|error| error.to_string())
+            video::open_contained(&path, size).map_err(|error| error.to_string())
         };
         let Self {
             compositor, feed, ..

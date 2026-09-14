@@ -33,6 +33,7 @@ use tiny_skia::{PixmapMut, Transform};
 
 use crate::services::slide::{SlideElement, SlideElementStyle};
 
+use super::optical_size::OpticalSizes;
 use super::{color, geometry};
 
 /// The multiplier the Canvas version applies when a paragraph does not give a
@@ -50,6 +51,8 @@ const DEFAULT_COLOR: &str = "#ffffff";
 struct Fonts {
     system: FontSystem,
     cache: SwashCache,
+    /// Variable fonts instanced at the optical size they are drawn at.
+    optical: OpticalSizes,
 }
 
 fn fonts() -> &'static Mutex<Fonts> {
@@ -58,6 +61,7 @@ fn fonts() -> &'static Mutex<Fonts> {
         Mutex::new(Fonts {
             system: FontSystem::new(),
             cache: SwashCache::new(),
+            optical: OpticalSizes::default(),
         })
     })
 }
@@ -212,7 +216,11 @@ pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
         tracing::error!("the font system is poisoned; skipping text");
         return;
     };
-    let Fonts { system, cache } = &mut *fonts;
+    let Fonts {
+        system,
+        cache,
+        optical,
+    } = &mut *fonts;
 
     let font_size = spec.font_size.max(1.0);
     let line_height = if spec.line_height > 0.0 {
@@ -225,16 +233,20 @@ pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
     buffer.set_size(Some(spec.width), Some(spec.height));
     buffer.set_wrap(Wrap::Word);
 
+    let family = resolve_family(
+        system,
+        optical,
+        spec.family.as_deref(),
+        spec.weight,
+        spec.italic,
+        font_size,
+    );
     let mut attrs = Attrs::new().weight(spec.weight);
     if spec.italic {
         attrs = attrs.style(Style::Italic);
     }
-    if let Some(family) = spec
-        .family
-        .as_deref()
-        .filter(|name| !name.trim().is_empty())
-    {
-        attrs = attrs.family(Family::Name(family.trim()));
+    if let Some(family) = family.as_deref() {
+        attrs = attrs.family(Family::Name(family));
     }
 
     buffer.set_text(text, &attrs, Shaping::Advanced, Some(spec.align));
@@ -357,18 +369,24 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         tracing::error!("the font system is poisoned; skipping a text element");
         return;
     };
-    let Fonts { system, cache } = &mut *fonts;
+    let Fonts {
+        system,
+        cache,
+        optical,
+    } = &mut *fonts;
 
+    let weight = weight_of(style);
+    let family = resolve_family(system, optical, Some(family), weight, italic, font_size);
     let mut buffer = Buffer::new(system, Metrics::new(font_size, line_height));
     buffer.set_size(Some(content_width), Some(content_height));
     buffer.set_wrap(Wrap::Word);
 
-    let mut attrs = Attrs::new().weight(weight_of(style));
+    let mut attrs = Attrs::new().weight(weight);
     if italic {
         attrs = attrs.style(Style::Italic);
     }
-    if !family.trim().is_empty() {
-        attrs = attrs.family(Family::Name(family.trim()));
+    if let Some(family) = family.as_deref() {
+        attrs = attrs.family(Family::Name(family));
     }
 
     let align = horizontal_align(style.and_then(|s| s.text_align.as_deref()));
@@ -509,9 +527,26 @@ fn composite(
     // translation, so this lands exactly where `draw_pixmap` did.
     let dx = (transform.tx - 0.5).ceil() as i32;
     let dy = (transform.ty - 0.5).ceil() as i32;
+    blit_over(
+        pixmap,
+        scratch.pixels(),
+        scratch.width() as i32,
+        (left, top, right, bottom),
+        (dx, dy),
+    );
+}
+
+/// Source-over the inclusive rectangle `area` of premultiplied `source` pixels
+/// onto `pixmap`, moved by `offset`. Transparent pixels are skipped, which is
+/// what makes a mostly empty scratch cheap.
+fn blit_over(
+    pixmap: &mut PixmapMut<'_>,
+    source: &[tiny_skia::PremultipliedColorU8],
+    source_width: i32,
+    (left, top, right, bottom): (i32, i32, i32, i32),
+    (dx, dy): (i32, i32),
+) {
     let (dest_width, dest_height) = (pixmap.width() as i32, pixmap.height() as i32);
-    let source_width = scratch.width() as i32;
-    let source = scratch.pixels();
     let destination = pixmap.pixels_mut();
 
     for sy in top..=bottom {
@@ -552,6 +587,279 @@ fn composite(
             .unwrap_or(*under);
         }
     }
+}
+
+/// How a block of free text is set: the parts of CSS the audience window's own
+/// text layers use, which are not a slide element's.
+#[derive(Debug, Clone)]
+pub struct TextStyle {
+    pub font_size: f32,
+    /// Line box height in pixels, as CSS `line-height` resolves it.
+    pub line_height: f32,
+    pub family: Option<String>,
+    pub weight: Weight,
+    pub italic: bool,
+    /// CSS `letter-spacing`, in em.
+    pub letter_spacing_em: f32,
+    pub align: Align,
+    /// Wrap at words, breaking a word only when it cannot fit — CSS
+    /// `overflow-wrap: break-word`. Off sets one line however long it is.
+    pub wrap: bool,
+}
+
+/// A drop shadow, as CSS `drop-shadow(dx dy blur color)` describes one.
+#[derive(Debug, Clone, Copy)]
+pub struct Shadow {
+    pub dx: f32,
+    pub dy: f32,
+    /// The Gaussian's standard deviation: half the CSS blur length.
+    pub sigma: f32,
+    pub color: tiny_skia::Color,
+}
+
+/// The family name to hand cosmic-text: the one asked for, or an instance of it
+/// at the optical size `font_size` is drawn at when it is a variable font with
+/// that axis. `None` for the default family.
+fn resolve_family(
+    system: &mut FontSystem,
+    optical: &mut OpticalSizes,
+    family: Option<&str>,
+    weight: Weight,
+    italic: bool,
+    font_size: f32,
+) -> Option<String> {
+    let family = family.map(str::trim).filter(|name| !name.is_empty())?;
+    Some(
+        optical
+            .family_for(system, family, weight, italic, font_size)
+            .unwrap_or_else(|| family.to_owned()),
+    )
+}
+
+fn attrs_for<'a>(style: &TextStyle, family: Option<&'a str>) -> Attrs<'a> {
+    let mut attrs = Attrs::new().weight(style.weight);
+    if style.italic {
+        attrs = attrs.style(Style::Italic);
+    }
+    if style.letter_spacing_em != 0.0 && style.letter_spacing_em.is_finite() {
+        attrs = attrs.letter_spacing(style.letter_spacing_em);
+    }
+    if let Some(family) = family {
+        attrs = attrs.family(Family::Name(family));
+    }
+    attrs
+}
+
+fn lay_out(
+    system: &mut FontSystem,
+    optical: &mut OpticalSizes,
+    text: &str,
+    width: Option<f32>,
+    style: &TextStyle,
+) -> Buffer {
+    let font_size = style.font_size.max(1.0);
+    let family = resolve_family(
+        system,
+        optical,
+        style.family.as_deref(),
+        style.weight,
+        style.italic,
+        font_size,
+    );
+    let line_height = if style.line_height > 0.0 {
+        style.line_height
+    } else {
+        font_size * DEFAULT_LINE_HEIGHT
+    };
+    let mut buffer = Buffer::new(system, Metrics::new(font_size, line_height));
+    // No height: a height makes `layout_runs` stop at it, and a measurement
+    // that stops where it was told to cannot say the text overflows.
+    buffer.set_size(width.filter(|_| style.wrap), None);
+    buffer.set_wrap(if style.wrap {
+        Wrap::WordOrGlyph
+    } else {
+        Wrap::None
+    });
+    buffer.set_text(
+        text,
+        &attrs_for(style, family.as_deref()),
+        Shaping::Advanced,
+        Some(style.align),
+    );
+    buffer.shape_until_scroll(system, false);
+    buffer
+}
+
+fn extent(buffer: &Buffer) -> (f32, f32) {
+    buffer
+        .layout_runs()
+        .fold((0.0_f32, 0.0_f32), |(height, width), run| {
+            (
+                height.max(run.line_top + run.line_height),
+                width.max(run.line_w),
+            )
+        })
+}
+
+/// The height `text` takes laid out `width` wide, and its widest line.
+pub fn measure(text: &str, width: f32, style: &TextStyle) -> (f32, f32) {
+    let Ok(mut fonts) = fonts().lock() else {
+        return (0.0, 0.0);
+    };
+    let Fonts {
+        system, optical, ..
+    } = &mut *fonts;
+    let buffer = lay_out(system, optical, text, Some(width), style);
+    extent(&buffer)
+}
+
+/// Draw `text` laid out `width` wide with its top-left corner at `(x, y)`.
+///
+/// `shadow` is drawn under the text, from the text's own coverage. `squeeze`
+/// is Canvas `fillText`'s `maxWidth`: a line wider than it is scaled
+/// horizontally about `anchor_x` until it fits, rather than wrapped.
+pub fn draw_paragraph(
+    pixmap: &mut PixmapMut<'_>,
+    text: &str,
+    (x, y, width): (f32, f32, f32),
+    style: &TextStyle,
+    color: tiny_skia::Color,
+    shadow: Option<&Shadow>,
+    squeeze: Option<(f32, f32)>,
+) {
+    if width <= 0.0 || text.trim().is_empty() {
+        return;
+    }
+    let Ok(mut fonts) = fonts().lock() else {
+        tracing::error!("the font system is poisoned; skipping text");
+        return;
+    };
+    let Fonts {
+        system,
+        cache,
+        optical,
+    } = &mut *fonts;
+    let mut buffer = lay_out(system, optical, text, Some(width), style);
+    let (_, widest) = extent(&buffer);
+
+    // A squeezed line is rasterised whole, into a scratch as wide as the line,
+    // and scaled into place afterwards. Rasterised where it lands, the part
+    // wider than the frame would be cut off before it was scaled down.
+    let squeeze = squeeze.filter(|(max_width, _)| *max_width > 0.0 && widest > *max_width);
+    let (x, scratch_width) = match squeeze {
+        Some(_) => (1.0, widest.ceil() as u32 + 2),
+        None => (x, pixmap.width()),
+    };
+    let Some(mut scratch) = tiny_skia::Pixmap::new(scratch_width.max(1), pixmap.height().max(1))
+    else {
+        return;
+    };
+    let scratch_width = scratch.width() as i32;
+    let scratch_height = scratch.height() as i32;
+    let base = color.to_color_u8();
+    let base_alpha = f32::from(base.alpha()) / 255.0;
+    let mut ink = InkBounds::default();
+
+    buffer.draw(
+        system,
+        cache,
+        cosmic_text::Color::rgba(255, 255, 255, 255),
+        |glyph_x, glyph_y, w, h, coverage| {
+            let alpha = f32::from(coverage.a()) / 255.0 * base_alpha;
+            if alpha <= 0.0 {
+                return;
+            }
+            for row in 0..h as i32 {
+                for col in 0..w as i32 {
+                    let px = x as i32 + glyph_x + col;
+                    let py = y as i32 + glyph_y + row;
+                    if px < 0 || py < 0 || px >= scratch_width || py >= scratch_height {
+                        continue;
+                    }
+                    ink.include(px, py);
+                    blend(
+                        &mut scratch,
+                        (py * scratch_width + px) as usize,
+                        base.red(),
+                        base.green(),
+                        base.blue(),
+                        alpha,
+                    );
+                }
+            }
+        },
+    );
+    drop(fonts);
+
+    // Canvas `fillText` squeezes about its alignment point: centred on
+    // `anchor_x`, the line's own centre lands there.
+    let transform = match squeeze {
+        Some((max_width, anchor_x)) => {
+            let scale = max_width / widest;
+            Transform::from_translate(anchor_x - scale * (widest / 2.0 + 1.0), 0.0)
+                .pre_scale(scale, 1.0)
+        }
+        None => Transform::identity(),
+    };
+
+    if let Some(shadow) = shadow {
+        draw_shadow(pixmap, &scratch, ink, shadow, transform);
+    }
+    composite(pixmap, &scratch, ink, transform);
+}
+
+/// A blurred, tinted, offset copy of the text's coverage, under the text.
+fn draw_shadow(
+    pixmap: &mut PixmapMut<'_>,
+    scratch: &tiny_skia::Pixmap,
+    ink: InkBounds,
+    shadow: &Shadow,
+    transform: Transform,
+) {
+    let Some((left, top, right, bottom)) = ink.area else {
+        return;
+    };
+    let sigma = shadow.sigma.max(0.0);
+    let pad = (sigma * 3.0).ceil() as i32 + 1;
+    let (width, height) = (scratch.width() as i32, scratch.height() as i32);
+    let (left, top) = ((left - pad).max(0), (top - pad).max(0));
+    let (right, bottom) = ((right + pad).min(width - 1), (bottom + pad).min(height - 1));
+    let (region_width, region_height) = ((right - left + 1) as usize, (bottom - top + 1) as usize);
+
+    let tint = shadow.color.to_color_u8();
+    let source = scratch.pixels();
+    let mut region = Vec::with_capacity(region_width * region_height);
+    for sy in top..=bottom {
+        for sx in left..=right {
+            let coverage = source
+                .get((sy * width + sx) as usize)
+                .map_or(0, |pixel| pixel.alpha());
+            let alpha = (u32::from(coverage) * u32::from(tint.alpha()) + 127) / 255;
+            let premultiply = |channel: u8| ((u32::from(channel) * alpha + 127) / 255) as u8;
+            region.push(
+                tiny_skia::PremultipliedColorU8::from_rgba(
+                    premultiply(tint.red()),
+                    premultiply(tint.green()),
+                    premultiply(tint.blue()),
+                    alpha as u8,
+                )
+                .unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT),
+            );
+        }
+    }
+    super::filters::blur(&mut region, region_width, region_height, sigma, 1.0);
+
+    let offset = (
+        left + (transform.tx + shadow.dx).round() as i32,
+        top + (transform.ty + shadow.dy).round() as i32,
+    );
+    blit_over(
+        pixmap,
+        &region,
+        region_width as i32,
+        (0, 0, region_width as i32 - 1, region_height as i32 - 1),
+        offset,
+    );
 }
 
 /// Source-over one glyph pixel into the scratch buffer.

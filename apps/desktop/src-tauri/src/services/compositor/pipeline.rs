@@ -30,7 +30,8 @@ use crate::services::output::{MediaKind, OutputScene};
 use crate::services::video::VideoFrame;
 
 use super::scene::{MediaLoader, Rendered};
-use super::{color, geometry, images, shapes, Frame};
+use super::slide_text::{self, SlideTextLayer};
+use super::{color, filters, geometry, images, parallel, shapes, Frame};
 
 /// How long a background image that failed to load is left before trying again.
 ///
@@ -79,7 +80,28 @@ pub struct SceneCompositor {
     /// the clock.
     timer_layer: Option<Pixmap>,
     timer_for: Option<TimerKey>,
+    /// The message banner and props, over transparency, apart from the slide:
+    /// the window draws them above the timer, and the timer above the slide.
+    overlay_layer: Option<(Pixmap, OverlayCounts)>,
+    overlay_for: Option<OverlayKey>,
 }
+
+/// Everything `draw_message` and `draw_props` read.
+#[derive(Debug, Clone, PartialEq)]
+struct OverlayKey {
+    message: Option<crate::services::output::MessageOverlay>,
+    props: Vec<crate::services::output::PropsOverlayItem>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct OverlayCounts {
+    drawn: usize,
+    deferred: usize,
+}
+
+/// Where background media landed in the frame, in whole pixels: x, y, width,
+/// height. What the operator's filters apply to.
+type MediaRect = (u32, u32, u32, u32);
 
 /// Everything `overlays::draw_timer` reads.
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +133,8 @@ impl SceneCompositor {
             still: None,
             timer_layer: None,
             timer_for: None,
+            overlay_layer: None,
+            overlay_for: None,
         }
     }
 
@@ -131,6 +155,8 @@ impl SceneCompositor {
         self.still = None;
         self.timer_layer = None;
         self.timer_for = None;
+        self.overlay_layer = None;
+        self.overlay_for = None;
     }
 
     /// The frame from the last successful `render`.
@@ -180,66 +206,75 @@ impl SceneCompositor {
             _ => Frame::new(self.width, self.height)?,
         };
 
-        // The fast path: a video that already matches the frame *is* the
-        // background. Overwriting the buffer from its bytes skips the black
-        // fill, the colour fill, an intermediate pixmap and a bilinear
-        // resample — four passes over two million pixels that reproduce what
-        // the video already was.
-        let direct_video = video
-            .filter(|_| !scene.hide_background && scene.show_media)
-            .filter(|frame| frame.width == self.width && frame.height == self.height)
-            .filter(|frame| frame.is_well_formed());
+        // The layer order is `OutputWindow.tsx`'s, outside the composer:
+        //
+        //   black ─ media (contain) ─ slide background colour ─ slide text
+        //         ─ timer ─ props ─ message banner
+        //
+        // Inside it the regions are the output, each with its own media and
+        // plate, so nothing full-screen is drawn under them.
+        let media_url = scene
+            .media_url
+            .as_deref()
+            .filter(|url| !url.is_empty())
+            .filter(|_| scene.show_media && !scene.hide_background)
+            .filter(|_| !scene.screen_composer_enabled);
 
-        match direct_video {
-            Some(video) => {
-                if frame.overwrite_from_bgra(&video.bgra) {
-                    report.background_media_drawn = true;
-                } else {
-                    report.background_media_missing = true;
-                    frame.clear(Color::BLACK);
-                }
+        // 1. The background media, letterboxed as `object-contain` does.
+        let media_rect = match (media_url, video.filter(|video| video.is_well_formed())) {
+            (Some(_), Some(video)) => self.draw_video(&mut frame, video, &mut report),
+            (Some(_), None) if scene.media_type == Some(MediaKind::Video) => {
+                // A video with no decoded frame yet is not a still. The image
+                // path would read the whole file — hundreds of megabytes — and
+                // fail to decode it, on every frame.
+                frame.clear(Color::BLACK);
+                report.background_media_missing = true;
+                None
             }
-            None => {
-                if scene.hide_background {
-                    frame.clear(Color::BLACK);
-                } else if let Some(background) = scene.slide_background_color.as_deref() {
-                    // The reused buffer still holds the previous frame, so the
-                    // background must cover it rather than assume black.
-                    if !shapes::fill_background(&mut frame.pixmap_mut(), background) {
-                        frame.clear(Color::BLACK);
-                    }
-                } else {
-                    frame.clear(Color::BLACK);
-                }
+            (Some(url), None) => {
+                frame.clear(Color::BLACK);
+                self.draw_still(&mut frame, url, loader, &mut report)
+            }
+            (None, _) => {
+                frame.clear(Color::BLACK);
+                None
+            }
+        };
 
-                if !scene.hide_background && scene.show_media {
-                    if let Some(video) = video {
-                        self.draw_video(&mut frame, video, &mut report);
-                    } else if scene.media_type == Some(MediaKind::Video) {
-                        // A video with no decoded frame yet is not a still. The
-                        // image path would read the whole file — hundreds of
-                        // megabytes — and fail to decode it, on every frame.
-                        report.background_media_missing = true;
-                    } else if let Some(url) =
-                        scene.media_url.as_deref().filter(|url| !url.is_empty())
-                    {
-                        self.draw_still(&mut frame, url, loader, &mut report);
-                    }
-                }
+        // 2. The operator's adjustments, on the media and nothing else: the
+        //    window's `filter` is on the `<video>` or `<img>` alone.
+        if let Some(rect) = media_rect {
+            apply_media_filters(&mut frame, rect, &scene.media_filter_css);
+        }
+
+        // 3. The slide's background colour, over the media. The window draws
+        //    it as a full-screen div after the media, whatever the mask says.
+        if !scene.screen_composer_enabled {
+            if let Some(background) = scene.slide_background_color.as_deref() {
+                shapes::fill_background(&mut frame.pixmap_mut(), background);
             }
         }
 
-        // 3. The slide layers, only when the scene has actually changed.
+        // 4. The slide, only rebuilt when it changed.
         if let Some(layers) = self.layers_for(scene, loader, &mut report) {
             blend_over(&mut frame, layers);
         }
 
-        // 4. The timer, on top of everything, redrawn only when it ticks.
+        // 5. The timer, redrawn only when it ticks.
         if scene.timer_visible {
             if let Some(timer) = self.timer_for(scene) {
                 blend_over(&mut frame, timer);
             }
             report.overlays_drawn += 1;
+        }
+
+        // 6. Props and the message banner, on top.
+        if let Some((overlays, counts)) = self.overlays_for(scene, loader) {
+            report.overlays_drawn += counts.drawn;
+            report.elements_deferred += counts.deferred;
+            if counts.drawn > 0 {
+                blend_over(&mut frame, overlays);
+            }
         }
 
         self.frame = Some(frame);
@@ -256,6 +291,41 @@ impl SceneCompositor {
             self.timer_for = Some(key);
         }
         self.timer_layer.as_ref()
+    }
+
+    /// The cached banner-and-props layer, redrawn if either changed.
+    fn overlays_for(
+        &mut self,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+    ) -> Option<(&Pixmap, OverlayCounts)> {
+        let key = OverlayKey {
+            message: scene.message_overlay.clone(),
+            props: scene.props_overlay.clone(),
+        };
+        if key.message.is_none() && key.props.is_empty() {
+            return None;
+        }
+        if self.overlay_for.as_ref() != Some(&key) || self.overlay_layer.is_none() {
+            let mut layer = Pixmap::new(self.width, self.height)?;
+            let mut counts = OverlayCounts::default();
+            {
+                let mut view = layer.as_mut();
+                // Props under the banner, as the window stacks them.
+                let props = super::overlays::draw_props(&mut view, &scene.props_overlay, loader);
+                counts.drawn += props.drawn;
+                counts.deferred += props.deferred;
+                if let Some(message) = scene.message_overlay.as_ref() {
+                    super::overlays::draw_message(&mut view, message);
+                    counts.drawn += 1;
+                }
+            }
+            self.overlay_layer = Some((layer, counts));
+            self.overlay_for = Some(key);
+        }
+        self.overlay_layer
+            .as_ref()
+            .map(|(layer, counts)| (layer, *counts))
     }
 
     /// The cached slide layer, rebuilt if the scene moved.
@@ -287,7 +357,12 @@ impl SceneCompositor {
                     }
                 }
             }
-            report.overlays_drawn = count_overlays(scene, &mut report.elements_deferred);
+            if scene.show_text
+                && !scene.screen_composer_enabled
+                && slide_text::layer_for(scene) != SlideTextLayer::Elements
+            {
+                report.elements_drawn += 1;
+            }
             return self.cached_layers.as_ref();
         }
 
@@ -297,16 +372,39 @@ impl SceneCompositor {
             geometry::Viewport::new(scene.slide_canvas_size.as_deref(), self.width, self.height);
 
         if scene.show_text && !scene.screen_composer_enabled {
-            for element in scene.slide_elements().unwrap_or_default() {
-                if !element.is_visible() {
-                    continue;
-                }
-                if !element.element_type.is_composited() {
-                    report.elements_deferred += 1;
-                    continue;
-                }
-                if super::scene::draw_element_into(&mut layers, &element, &viewport, loader) {
+            match slide_text::layer_for(scene) {
+                SlideTextLayer::Scripture => {
+                    slide_text::draw_scripture(
+                        &mut layers.as_mut(),
+                        scene.slide_text.as_deref().unwrap_or_default(),
+                        scene.slide_footer.as_deref(),
+                        scene.scripture_style.as_ref(),
+                    );
                     report.elements_drawn += 1;
+                }
+                SlideTextLayer::PlainText => {
+                    slide_text::draw_plain(
+                        &mut layers.as_mut(),
+                        scene.slide_text.as_deref().unwrap_or_default(),
+                        scene.library_style.as_ref(),
+                        &viewport,
+                    );
+                    report.elements_drawn += 1;
+                }
+                SlideTextLayer::Elements => {
+                    for element in scene.slide_elements().unwrap_or_default() {
+                        if !element.is_visible() {
+                            continue;
+                        }
+                        if !element.element_type.is_composited() {
+                            report.elements_deferred += 1;
+                            continue;
+                        }
+                        if super::scene::draw_element_into(&mut layers, &element, &viewport, loader)
+                        {
+                            report.elements_drawn += 1;
+                        }
+                    }
                 }
             }
         }
@@ -323,46 +421,63 @@ impl SceneCompositor {
             }
         }
 
-        // Overlays sit above the slide and below nothing. They live in the
-        // cached layer rather than being drawn per frame because they change
-        // when the scene does — a banner is put up and taken down by the
-        // operator, not animated by the clock.
-        {
-            let mut view = layers.as_mut();
-
-            if let Some(message) = scene.message_overlay.as_ref() {
-                super::overlays::draw_message(&mut view, message);
-                report.overlays_drawn += 1;
-            }
-
-            let props = super::overlays::draw_props(&mut view, &scene.props_overlay, loader);
-            report.overlays_drawn += props.drawn;
-            report.elements_deferred += props.deferred;
-        }
-
         self.cached_layers = Some(layers);
         self.cached_for = Some(scene.clone());
         self.cached_layers.as_ref()
     }
 
-    /// Paint a decoded video frame across the whole surface.
-    fn draw_video(&self, frame: &mut Frame, video: &VideoFrame, report: &mut Rendered) {
+    /// Paint a decoded video frame, letterboxed. Returns where it landed.
+    ///
+    /// Three ways, cheapest first. A frame exactly the output's size is the
+    /// output. A frame the decoder already scaled to fit — which is what the
+    /// stream asks it for — is a centred copy onto black. Anything else is
+    /// scaled here.
+    fn draw_video(
+        &self,
+        frame: &mut Frame,
+        video: &VideoFrame,
+        report: &mut Rendered,
+    ) -> Option<MediaRect> {
+        let (width, height) = (self.width, self.height);
+        if (video.width, video.height) == (width, height) {
+            if frame.overwrite_from_bgra(&video.bgra) {
+                report.background_media_drawn = true;
+                return Some((0, 0, width, height));
+            }
+            frame.clear(Color::BLACK);
+            report.background_media_missing = true;
+            return None;
+        }
+
+        frame.clear(Color::BLACK);
+        if video.width <= width && video.height <= height {
+            let fitted =
+                crate::services::video::contain_size((video.width, video.height), (width, height));
+            if fitted == (video.width, video.height) {
+                let x = (width - video.width) / 2;
+                let y = (height - video.height) / 2;
+                copy_bgra_into(frame, video, (x, y));
+                report.background_media_drawn = true;
+                return Some((x, y, video.width, video.height));
+            }
+        }
+
         let Some(pixmap) = video_to_pixmap(video) else {
             report.background_media_missing = true;
-            return;
+            return None;
         };
-
-        let (width, height) = (frame.width() as f32, frame.height() as f32);
+        let rect = contained_rect(video.width, video.height, width, height)?;
         images::draw(
             &mut frame.pixmap_mut(),
             &pixmap,
             Transform::identity(),
-            width,
-            height,
-            images::ObjectFit::Cover,
+            width as f32,
+            height as f32,
+            images::ObjectFit::Contain,
             None,
         );
         report.background_media_drawn = true;
+        Some(rect)
     }
 }
 
@@ -373,7 +488,7 @@ impl SceneCompositor {
         url: &str,
         loader: &dyn MediaLoader,
         report: &mut Rendered,
-    ) {
+    ) -> Option<MediaRect> {
         let now = Instant::now();
         let reusable = self.still.as_ref().is_some_and(|still| {
             still.url == url
@@ -390,20 +505,102 @@ impl SceneCompositor {
 
         let Some(decoded) = self.still.as_ref().and_then(|still| still.image.as_ref()) else {
             report.background_media_missing = true;
-            return;
+            return None;
         };
 
-        let (width, height) = (frame.width() as f32, frame.height() as f32);
+        let rect = contained_rect(decoded.width(), decoded.height(), self.width, self.height)?;
         images::draw(
             &mut frame.pixmap_mut(),
             decoded,
             Transform::identity(),
-            width,
-            height,
-            images::ObjectFit::Cover,
+            self.width as f32,
+            self.height as f32,
+            images::ObjectFit::Contain,
             None,
         );
         report.background_media_drawn = true;
+        Some(rect)
+    }
+}
+
+/// Where `object-contain` puts a `source`-sized image in the frame.
+fn contained_rect(
+    source_width: u32,
+    source_height: u32,
+    width: u32,
+    height: u32,
+) -> Option<MediaRect> {
+    let placement = images::place(
+        source_width,
+        source_height,
+        width as f32,
+        height as f32,
+        images::ObjectFit::Contain,
+    )?;
+    let x = placement.offset_x.max(0.0).round() as u32;
+    let y = placement.offset_y.max(0.0).round() as u32;
+    let w = ((source_width as f32 * placement.scale_x).round() as u32).min(width.saturating_sub(x));
+    let h =
+        ((source_height as f32 * placement.scale_y).round() as u32).min(height.saturating_sub(y));
+    (w > 0 && h > 0).then_some((x, y, w, h))
+}
+
+/// Copy a decoded frame's BGRA into the frame at `(x, y)`, unscaled.
+fn copy_bgra_into(frame: &mut Frame, video: &VideoFrame, (left, top): (u32, u32)) {
+    let frame_width = frame.width() as usize;
+    let (video_width, video_height) = (video.width as usize, video.height as usize);
+    let (left, top) = (left as usize, top as usize);
+    let bgra = &video.bgra;
+
+    parallel::for_each_band(frame.pixmap_mut_pixels(), |band, offset| {
+        for (index, slot) in band.iter_mut().enumerate() {
+            let at = offset + index;
+            let (x, y) = (at % frame_width, at / frame_width);
+            if x < left || y < top || x >= left + video_width || y >= top + video_height {
+                continue;
+            }
+            let source = ((y - top) * video_width + (x - left)) * 4;
+            let Some(pixel) = bgra.get(source..source + 4) else {
+                continue;
+            };
+            *slot =
+                tiny_skia::ColorU8::from_rgba(pixel[2], pixel[1], pixel[0], pixel[3]).premultiply();
+        }
+    });
+}
+
+/// Apply `mediaFilterCSS` to the media's rectangle.
+fn apply_media_filters(frame: &mut Frame, (x, y, w, h): MediaRect, css: &str) {
+    let parsed = filters::parse(css);
+    if parsed.is_empty() {
+        return;
+    }
+    let sigma = filters::blur_sigma(&parsed);
+    let frame_width = frame.width();
+
+    if (x, y, w, h) == (0, 0, frame.width(), frame.height()) {
+        let pixels = frame.pixmap_mut_pixels();
+        filters::apply_color(pixels, &parsed);
+        if let Some(sigma) = sigma {
+            filters::blur(pixels, w as usize, h as usize, sigma, 1.0);
+        }
+        return;
+    }
+
+    let pixels = frame.pixmap_mut_pixels();
+    let mut region: Vec<tiny_skia::PremultipliedColorU8> = Vec::with_capacity((w * h) as usize);
+    for row in y..y + h {
+        let start = (row * frame_width + x) as usize;
+        region.extend_from_slice(&pixels[start..start + w as usize]);
+    }
+    filters::apply_color(&mut region, &parsed);
+    if let Some(sigma) = sigma {
+        filters::blur(&mut region, w as usize, h as usize, sigma, 1.0);
+    }
+    for (offset, row) in (y..y + h).enumerate() {
+        let start = (row * frame_width + x) as usize;
+        let source = offset * w as usize;
+        pixels[start..start + w as usize].copy_from_slice(&region[source..source + w as usize]);
     }
 }
 
@@ -501,7 +698,8 @@ pub fn background_color(scene: &OutputScene) -> Option<Color> {
 /// has a video to decode. The Stage 5 measurement used a static scene, where
 /// the clock never moves, so it could not see this.
 ///
-/// The timer is ignored for the same reason: it has a layer of its own.
+/// The timer, the banner and the props are ignored for the same reason: each
+/// has a layer of its own.
 ///
 /// Only those are ignored. Nothing in the slide layers reads them; every other
 /// field might.
@@ -515,30 +713,11 @@ fn layers_differ(cached: &OutputScene, scene: &OutputScene) -> bool {
         timer_running: false,
         timer_visible: false,
         timer_layout: None,
+        message_overlay: None,
+        props_overlay: Vec::new(),
         ..value.clone()
     };
     without_clocks(cached) != without_clocks(scene)
-}
-
-/// How many overlays a scene shows, without drawing them.
-///
-/// The cached path needs the counts for the frame it is reporting on, not for
-/// the frame the cache happened to be built from. Counting is cheap; drawing is
-/// what was worth avoiding.
-fn count_overlays(scene: &OutputScene, deferred: &mut usize) -> usize {
-    let mut drawn = 0;
-
-    if scene.message_overlay.is_some() {
-        drawn += 1;
-    }
-    for prop in &scene.props_overlay {
-        if matches!(prop.kind.as_str(), "image" | "text" | "media") {
-            drawn += 1;
-        } else {
-            *deferred += 1;
-        }
-    }
-    drawn
 }
 
 #[cfg(test)]
@@ -547,6 +726,17 @@ mod tests {
     use serde_json::json;
 
     use crate::services::compositor::scene::NoMedia;
+
+    /// A scene showing a background video, which is the only way a decoded
+    /// frame reaches the screen: the window draws media only for a scene that
+    /// names some.
+    fn video_scene() -> OutputScene {
+        OutputScene {
+            media_url: Some("local-media://media/clip.mp4".to_owned()),
+            media_type: Some(MediaKind::Video),
+            ..scene()
+        }
+    }
 
     fn scene() -> OutputScene {
         OutputScene {
@@ -689,6 +879,141 @@ mod tests {
             assert!(report.background_media_missing);
         }
         assert_eq!(loader.reads.get(), 1);
+    }
+
+    #[test]
+    fn a_video_of_another_shape_is_pillarboxed_not_stretched() {
+        // `object-contain`, as the window draws it. A 4:3 video on a 16:9
+        // output keeps its shape and leaves black either side.
+        let mut compositor = SceneCompositor::new(160, 90);
+        let video = frame_of(120, 90, [0, 0, 255, 255]);
+        let (frame, report) = compositor
+            .render(&video_scene(), Some(&video), &NoMedia)
+            .expect("frame");
+
+        assert!(report.background_media_drawn);
+        assert_eq!(frame.pixel_at(5, 45), Some((0, 0, 0, 255)), "left bar");
+        assert_eq!(frame.pixel_at(154, 45), Some((0, 0, 0, 255)), "right bar");
+        assert_eq!(
+            frame.pixel_at(80, 45),
+            Some((255, 0, 0, 255)),
+            "the video, unstretched"
+        );
+        assert_eq!(
+            frame.pixel_at(21, 45),
+            Some((255, 0, 0, 255)),
+            "its left edge where 4:3 puts it"
+        );
+    }
+
+    #[test]
+    fn a_video_the_decoder_has_not_scaled_is_contained_too() {
+        let mut compositor = SceneCompositor::new(160, 90);
+        let video = frame_of(80, 60, [0, 255, 0, 255]);
+        let (frame, _) = compositor
+            .render(&video_scene(), Some(&video), &NoMedia)
+            .expect("frame");
+        assert_eq!(
+            frame.pixel_at(3, 45),
+            Some((0, 0, 0, 255)),
+            "no smeared edge in the bar"
+        );
+        assert_eq!(frame.pixel_at(80, 45), Some((0, 255, 0, 255)));
+    }
+
+    #[test]
+    fn the_operators_filters_dim_the_video_and_not_the_bars_or_the_words() {
+        let mut compositor = SceneCompositor::new(160, 90);
+        let scene = OutputScene {
+            media_filter_css: "brightness(50%) contrast(50%)".to_owned(),
+            slide_elements: Some(json!([{
+                "id": "a", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+                "style": { "backgroundColor": "#ffffff" }
+            }])),
+            slide_canvas_size: Some("1920x1080".to_owned()),
+            ..video_scene()
+        };
+        let video = frame_of(120, 90, [200, 200, 200, 255]);
+        let (frame, _) = compositor
+            .render(&scene, Some(&video), &NoMedia)
+            .expect("frame");
+
+        // 200/255 halved is 100/255, then pulled halfway to mid-grey.
+        let (r, _, _, _) = frame.pixel_at(80, 60).expect("pixel");
+        assert!((105..=118).contains(&r), "the video is dimmed: {r}");
+        assert_eq!(
+            frame.pixel_at(158, 60),
+            Some((0, 0, 0, 255)),
+            "the bar is not lifted to grey"
+        );
+        assert_eq!(
+            frame.pixel_at(2, 2),
+            Some((255, 255, 255, 255)),
+            "the slide is not dimmed"
+        );
+    }
+
+    #[test]
+    fn the_slide_colour_is_drawn_over_the_video() {
+        let mut compositor = SceneCompositor::new(100, 100);
+        let scene = OutputScene {
+            slide_background_color: Some("rgba(0, 0, 255, 0.5)".to_owned()),
+            ..video_scene()
+        };
+        let video = frame_of(100, 100, [0, 0, 255, 255]);
+        let (frame, _) = compositor
+            .render(&scene, Some(&video), &NoMedia)
+            .expect("frame");
+        let (r, _, b, _) = frame.pixel_at(50, 50).expect("pixel");
+        assert!(
+            r > 100 && r < 160 && b > 100 && b < 160,
+            "half blue over red: {r} {b}"
+        );
+    }
+
+    #[test]
+    fn the_composer_draws_no_full_screen_background_under_its_regions() {
+        let mut compositor = SceneCompositor::new(100, 100);
+        let scene = OutputScene {
+            screen_composer_enabled: true,
+            slide_background_color: Some("#0000ff".to_owned()),
+            ..video_scene()
+        };
+        let video = frame_of(100, 100, [0, 255, 0, 255]);
+        let (frame, report) = compositor
+            .render(&scene, Some(&video), &NoMedia)
+            .expect("frame");
+        assert_eq!(frame.pixel_at(50, 50), Some((0, 0, 0, 255)));
+        assert!(!report.background_media_drawn);
+    }
+
+    #[test]
+    fn a_verse_reaches_the_frame() {
+        // Every Bible verse used to be missing: generated scripture is plain
+        // text, and only elements were drawn.
+        let mut compositor = SceneCompositor::new(640, 360);
+        let scene = OutputScene {
+            active_slide_id: Some("scripture:0".to_owned()),
+            slide_text: Some("For God so loved the world".to_owned()),
+            slide_footer: Some("John 3:16".to_owned()),
+            ..scene()
+        };
+        let (frame, report) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(report.elements_drawn, 1);
+        let lit = frame
+            .pixmap()
+            .pixels()
+            .iter()
+            .filter(|p| p.red() > 200)
+            .count();
+        assert!(lit > 500, "the verse is on the frame: {lit} bright pixels");
+
+        compositor.render(&scene, None, &NoMedia).expect("again");
+        assert!(
+            !compositor.rebuilt_last_frame(),
+            "and cached like any slide"
+        );
     }
 
     #[test]
@@ -893,7 +1218,7 @@ mod tests {
         let video = frame_of(4, 4, [0, 0, 255, 255]);
 
         let (frame, _) = compositor
-            .render(&scene(), Some(&video), &NoMedia)
+            .render(&video_scene(), Some(&video), &NoMedia)
             .expect("frame");
 
         assert_eq!(
@@ -914,7 +1239,7 @@ mod tests {
         };
 
         let (_, report) = compositor
-            .render(&scene(), Some(&broken), &NoMedia)
+            .render(&video_scene(), Some(&broken), &NoMedia)
             .expect("frame");
 
         assert!(report.background_media_missing);

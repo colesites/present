@@ -72,7 +72,11 @@ pub struct MacVideoDecoder {
 unsafe impl Send for MacVideoDecoder {}
 
 impl MacVideoDecoder {
-    pub fn open(path: &Path, target: Option<(u32, u32)>) -> Result<Self, VideoError> {
+    /// Open, choosing the size frames are requested at from the video's own.
+    pub fn open_sized(
+        path: &Path,
+        size: impl FnOnce((u32, u32)) -> Option<(u32, u32)>,
+    ) -> Result<Self, VideoError> {
         let asset = unsafe {
             let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
             AVURLAsset::URLAssetWithURL_options(&url, None)
@@ -123,6 +127,7 @@ impl MacVideoDecoder {
             }
         };
 
+        let target = size((width, height));
         let (reader, output) = Self::build_reader(&asset, &track, 0.0, target)?;
 
         // What the compositor will actually receive, which is the scaled size

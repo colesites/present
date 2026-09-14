@@ -170,6 +170,49 @@ pub fn open_scaled(
     path: &Path,
     target: Option<(u32, u32)>,
 ) -> Result<Box<dyn VideoDecoder>, VideoError> {
+    open_sized(path, move |_| target)
+}
+
+/// Open a video, asking for frames as large as fit inside `bounds` with the
+/// video's own shape kept.
+///
+/// What an output wants. `open_scaled` to the output's size stretches a video
+/// whose aspect ratio differs — a 4:3 clip made 16:9 — where the audience
+/// window letterboxes it (`object-contain`).
+pub fn open_contained(
+    path: &Path,
+    bounds: (u32, u32),
+) -> Result<Box<dyn VideoDecoder>, VideoError> {
+    open_sized(path, move |natural| Some(contain_size(natural, bounds)))
+}
+
+/// The largest size with `source`'s aspect ratio that fits inside `bounds`.
+///
+/// A dimension that lands within a pixel of the bound is snapped to it, so a
+/// 1920×1080 video asked into 1920×1080 comes back exactly that size rather
+/// than a pixel short to rounding — which is the difference between the
+/// compositor's direct copy and a resample.
+pub fn contain_size(source: (u32, u32), bounds: (u32, u32)) -> (u32, u32) {
+    let (source_width, source_height) = (f64::from(source.0.max(1)), f64::from(source.1.max(1)));
+    let (bound_width, bound_height) = (f64::from(bounds.0.max(1)), f64::from(bounds.1.max(1)));
+    let scale = (bound_width / source_width).min(bound_height / source_height);
+    let snap = |value: f64, bound: f64| {
+        if (bound - value).abs() < 1.0 {
+            bound
+        } else {
+            value.round().clamp(1.0, bound)
+        }
+    };
+    (
+        snap(source_width * scale, bound_width) as u32,
+        snap(source_height * scale, bound_height) as u32,
+    )
+}
+
+fn open_sized(
+    path: &Path,
+    size: impl FnOnce((u32, u32)) -> Option<(u32, u32)>,
+) -> Result<Box<dyn VideoDecoder>, VideoError> {
     match support_for(path) {
         Support::UnsupportedContainer => {
             return Err(VideoError::Unsupported(
@@ -191,14 +234,14 @@ pub fn open_scaled(
 
     #[cfg(target_os = "macos")]
     {
-        macos::MacVideoDecoder::open(path, target)
+        macos::MacVideoDecoder::open_sized(path, size)
             .map(|decoder| Box::new(decoder) as Box<dyn VideoDecoder>)
     }
     // Windows and Linux inherit the trait and no backend, which is the honest
     // state of ADR-002 rather than a stub that pretends otherwise.
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = target;
+        let _ = size;
         Err(VideoError::NoBackend)
     }
 }
@@ -207,6 +250,36 @@ pub fn open_scaled(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_video_of_the_outputs_shape_fills_it_exactly() {
+        assert_eq!(contain_size((1920, 1080), (1920, 1080)), (1920, 1080));
+        assert_eq!(contain_size((1280, 720), (1920, 1080)), (1920, 1080));
+        assert_eq!(
+            contain_size((2048, 1152), (1920, 1080)),
+            (1920, 1080),
+            "a hair off 16:9"
+        );
+    }
+
+    #[test]
+    fn a_video_of_another_shape_is_letterboxed_not_stretched() {
+        assert_eq!(
+            contain_size((1440, 1080), (1920, 1080)),
+            (1440, 1080),
+            "4:3 pillarboxed"
+        );
+        assert_eq!(
+            contain_size((1080, 1920), (1920, 1080)),
+            (608, 1080),
+            "portrait"
+        );
+        assert_eq!(
+            contain_size((1920, 800), (1920, 1080)),
+            (1920, 800),
+            "scope letterboxed"
+        );
+    }
 
     #[test]
     fn the_mpeg4_family_is_supported() {

@@ -118,7 +118,19 @@ pub fn draw(
     let Some(placement) = place(source.width(), source.height(), box_width, box_height, fit) else {
         return;
     };
-    let Some(rect) = Rect::from_xywh(0.0, 0.0, box_width, box_height) else {
+    // The box, or for `contain` only the part the image covers. The pattern
+    // pads its edge pixels outwards, so filling the whole box would smear the
+    // image's edges across the letterbox instead of leaving it empty.
+    let (left, top, right, bottom) = match fit {
+        ObjectFit::Contain => (
+            placement.offset_x.max(0.0),
+            placement.offset_y.max(0.0),
+            (placement.offset_x + source.width() as f32 * placement.scale_x).min(box_width),
+            (placement.offset_y + source.height() as f32 * placement.scale_y).min(box_height),
+        ),
+        ObjectFit::Cover | ObjectFit::Fill => (0.0, 0.0, box_width, box_height),
+    };
+    let Some(rect) = Rect::from_ltrb(left, top, right, bottom) else {
         return;
     };
 

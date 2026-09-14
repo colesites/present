@@ -265,21 +265,38 @@ mod tests {
     }
 
     #[test]
-    fn hiding_the_background_beats_the_slide_colour() {
-        // What the operator's "hide background" toggle means: black, not the
-        // slide's own colour showing through.
-        let scene = OutputScene {
+    fn hiding_the_background_hides_the_media_and_not_the_slide_colour() {
+        // The mask gates the media element only. The slide's colour is a
+        // separate full-screen div in `OutputWindow.tsx` with no such gate, so
+        // the window shows it — and this matched a guess instead, until the
+        // stream was checked against the window.
+        let loader = OneImage {
+            url: "local-media://media/bg.png",
+            bytes: png(8, 8, [0, 255, 0, 255]),
+        };
+        let masked = OutputScene {
             hide_background: true,
-            slide_background_color: Some("#0000ff".to_owned()),
+            media_url: Some(loader.url.to_owned()),
             ..scene()
         };
+        let (frame, report) = render(&masked, 64, 64, &loader).expect("frame");
+        assert_eq!(frame.pixel_at(32, 32), Some((0, 0, 0, 255)), "no media");
+        assert!(!report.background_media_drawn);
 
-        let (frame, _) = render(&scene, 64, 64, &NoMedia).expect("frame");
-        assert_eq!(frame.pixel_at(32, 32), Some((0, 0, 0, 255)));
+        let coloured = OutputScene {
+            slide_background_color: Some("#0000ff".to_owned()),
+            ..masked
+        };
+        let (frame, _) = render(&coloured, 64, 64, &loader).expect("frame");
+        assert_eq!(
+            frame.pixel_at(32, 32),
+            Some((0, 0, 255, 255)),
+            "but the colour"
+        );
     }
 
     #[test]
-    fn background_media_covers_the_frame() {
+    fn background_media_sits_under_the_slide_colour() {
         let loader = OneImage {
             url: "local-media://media/bg.png",
             bytes: png(8, 8, [0, 255, 0, 255]),
@@ -294,8 +311,19 @@ mod tests {
         assert!(report.background_media_drawn);
         assert_eq!(
             frame.pixel_at(32, 32),
+            Some((255, 0, 0, 255)),
+            "the slide colour is drawn over the media, as the window stacks them"
+        );
+
+        let uncoloured = OutputScene {
+            slide_background_color: None,
+            ..scene
+        };
+        let (frame, _) = render(&uncoloured, 64, 64, &loader).expect("frame");
+        assert_eq!(
+            frame.pixel_at(32, 32),
             Some((0, 255, 0, 255)),
-            "the media covers the colour beneath it"
+            "the media fills a square frame"
         );
     }
 

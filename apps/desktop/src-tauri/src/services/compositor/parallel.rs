@@ -18,7 +18,7 @@
 ///
 /// One per core, capped so a many-core machine does not spend more on spawning
 /// than on pixels, and floored at one so the logic holds on a single core.
-fn bands() -> usize {
+pub(super) fn bands() -> usize {
     std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1)

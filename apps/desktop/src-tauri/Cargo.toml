@@ -5,7 +5,7 @@ description = "Church presentation software for worship services"
 authors = ["Cole"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.83"
 
 # Required for mobile targets, and harmless on desktop: Tauri replaces `main()`
 # with a generated entry point there, so every bit of application logic has to
@@ -51,6 +51,11 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # time — so no machine that builds Present needs the NDI SDK installed, and a
 # machine without NDI still launches. See `services/ndi/library.rs`.
 libloading = "0.8"
+# Instancing variable fonts at an optical size, so Inter is set as the audience
+# window sets it. See `services/compositor/optical_size.rs`. No default
+# features: flate2's pure-Rust backend rather than a system zlib. Its 1.83 is
+# why this crate declares 1.83.
+allsorts = { version = "0.17", default-features = false, features = ["flate2_rust"] }
 
 # Desktop-only plugins. The crate keeps a mobile entry point (see `[lib]`), and
 # neither of these builds for iOS or Android.
@@ -72,8 +77,8 @@ tauri-plugin-single-instance = { version = "2.4.4", features = ["deep-link"] }
 # build time, which would add a system dependency to the Linux CI bundle for a
 # platform the Tauri build has never been run on. Linux falls back to a 0600
 # file, which is what Electron does on a host where safeStorage is unavailable.
-# Version 3 rather than 4 because 4 raises the MSRV above this crate's declared
-# 1.82.
+# Version 3 rather than 4 because 4 raises the MSRV above what this crate
+# declares.
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
 

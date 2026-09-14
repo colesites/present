@@ -11,15 +11,18 @@
 
 pub mod color;
 pub mod composer;
+pub mod filters;
 pub mod frame;
 pub mod geometry;
 pub mod images;
 pub mod loader;
+pub mod optical_size;
 pub mod overlays;
 pub mod parallel;
 pub mod pipeline;
 pub mod scene;
 pub mod shapes;
+pub mod slide_text;
 pub mod text;
 
 pub use frame::Frame;
