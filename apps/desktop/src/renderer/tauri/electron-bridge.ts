@@ -356,6 +356,18 @@ const bridge = {
     invoke("start_ndi_output", { sourceName, groupName }),
   stopNdiOutput: () => invoke<void>("stop_ndi_output"),
   getNdiStatus: () => invoke("get_ndi_status"),
+  // NDI props: discovery for the Layers panel, and the receiver the prop
+  // layers share. Frames arrive through `ndi-frame://`, as under Electron.
+  listNdiSources: (groupName?: string) =>
+    invoke("list_ndi_sources", { groupName: groupName ?? null }),
+  startNdiInput: (sourceName: string, groupName?: string, clientId?: string) =>
+    invoke("start_ndi_input", {
+      sourceName,
+      groupName: groupName ?? null,
+      clientId: clientId ?? null,
+    }),
+  stopNdiInput: (clientId?: string) =>
+    invoke<void>("stop_ndi_input", { clientId: clientId ?? null }),
 
   // Errors the renderer catches. Optional-chained at the call site, so
   // leaving this out meant every render failure vanished without trace.

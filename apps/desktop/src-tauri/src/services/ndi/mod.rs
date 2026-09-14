@@ -14,6 +14,7 @@
 //! finder      discovery
 //! sender      one source on the network
 //! receiver    one source received
+//! input       receiving a source for a prop, and its JPEG frames
 //! look        the audience scene through the Looks window's NDI column
 //! video_feed  which frame of the background video is due
 //! output      the send loop, and the status Settings reads
@@ -24,6 +25,7 @@
 //! `receiver` are the only code that calls it.
 
 pub mod finder;
+pub mod input;
 pub mod library;
 pub mod look;
 pub mod output;

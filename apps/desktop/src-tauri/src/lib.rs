@@ -105,6 +105,24 @@ pub fn run() {
                 ));
             });
         })
+        // `ndi-frame://frame/<source>` — the latest frame of the source an NDI
+        // prop shows, as a JPEG, for the `<img>` that asks eight times a second.
+        .register_asynchronous_uri_scheme_protocol("ndi-frame", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let uri = request.uri().to_string();
+            tauri::async_runtime::spawn_blocking(move || {
+                let Some(state) = app.try_state::<std::sync::Arc<state::NdiInputState>>() else {
+                    responder.respond(
+                        tauri::http::Response::builder()
+                            .status(204)
+                            .body(Vec::new())
+                            .unwrap_or_default(),
+                    );
+                    return;
+                };
+                responder.respond(state::ndi_input_state::respond(&state, &uri));
+            });
+        })
         .manage(app_state)
         .manage(WindowState::new())
         .manage(services::deep_link::PendingDeepLink::new())
@@ -115,6 +133,9 @@ pub fn run() {
         // The NDI runtime and the stream while it runs. In memory: whether NDI
         // is on is a setting React re-applies on launch.
         .manage(state::NdiState::new())
+        // The one NDI receiver props share. `Arc` because a delayed stop runs
+        // on its own thread.
+        .manage(std::sync::Arc::new(state::NdiInputState::new()))
         // The media transport. In memory: where a video had got to describes
         // the moment, not the operator's setup.
         .manage(state::PlaybackState::new())
@@ -198,6 +219,9 @@ pub fn run() {
             commands::ndi::start_ndi_output,
             commands::ndi::stop_ndi_output,
             commands::ndi::get_ndi_status,
+            commands::ndi::list_ndi_sources,
+            commands::ndi::start_ndi_input,
+            commands::ndi::stop_ndi_input,
             commands::output::get_output_scene,
             commands::output::send_to_output,
             commands::output::set_output_frozen,
