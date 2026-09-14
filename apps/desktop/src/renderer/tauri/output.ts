@@ -63,6 +63,41 @@ export const onOutputSceneChanged = async (
   };
 };
 
+/** `SURFACE_CHANGED_EVENT` in `src-tauri/src/state/output_surface_state.rs`. */
+export const OUTPUT_SURFACE_CHANGED = "output-surface:changed";
+
+/**
+ * Whether the compositor is drawing the audience window natively.
+ *
+ * `presenting` is the only field that may change what the window draws: while
+ * it is false the webview draws the whole output, whatever the setting says,
+ * so a native view that never produced a frame costs nothing on screen.
+ */
+export type OutputSurface = {
+  enabled: boolean;
+  presenting: boolean;
+  supported: boolean;
+};
+
+export const getOutputSurface = (): Promise<OutputSurface> => invoke("get_output_surface");
+
+export const setOutputSurfaceNative = (enabled: boolean): Promise<OutputSurface> =>
+  invoke("set_output_surface_native", { enabled });
+
+export const onOutputSurfaceChanged = async (
+  handler: (surface: OutputSurface) => void,
+): Promise<() => void> => {
+  const unlisten = await listen<OutputSurface>(OUTPUT_SURFACE_CHANGED, (event) =>
+    handler(event.payload),
+  );
+  let detached = false;
+  return () => {
+    if (detached) return;
+    detached = true;
+    safelyUnlisten(unlisten);
+  };
+};
+
 /**
  * Merge a scene over a window's current state.
  *

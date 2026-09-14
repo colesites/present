@@ -34,7 +34,7 @@ use crate::errors::AppResult;
 use crate::services::display::{Display, Rect};
 use crate::services::monitors;
 use crate::services::window_spec::{Placement, Rgb, WindowRole, WindowSpec};
-use crate::state::WindowState;
+use crate::state::{OutputSurfaceState, WindowState};
 
 fn color(rgb: Rgb) -> Color {
     Color(rgb.0, rgb.1, rgb.2, 255)
@@ -280,6 +280,14 @@ pub fn open(
     spawn_show_watchdog(app, spec, Arc::clone(&shown));
     register_close_handler(app, &window, spec);
 
+    // The operator's opt-in to the natively drawn audience screen. A no-op
+    // when it is off, which it is by default.
+    if spec.role == WindowRole::Output {
+        if let Some(surface) = app.try_state::<Arc<OutputSurfaceState>>() {
+            surface.attach(app);
+        }
+    }
+
     tracing::info!(
         label = %spec.label,
         url = %spec.url,
@@ -339,6 +347,12 @@ fn register_close_handler(app: &AppHandle, window: &WebviewWindow, spec: &Window
 
         if let Some(state) = app.try_state::<WindowState>() {
             state.forget(&label);
+        }
+
+        if role == WindowRole::Output {
+            if let Some(surface) = app.try_state::<Arc<OutputSurfaceState>>() {
+                surface.detach();
+            }
         }
 
         // Settings is a child of the operator window and does not outlive it

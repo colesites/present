@@ -166,6 +166,18 @@ impl Frame {
         out
     }
 
+    /// Premultiplied BGRA, for a native view that composites premultiplied
+    /// pixels itself. Only the channel order changes, so there is no division
+    /// per pixel as there is for NDI's straight alpha.
+    pub fn write_bgra_premultiplied(&self, out: &mut Vec<u8>) {
+        out.resize(self.pixmap.data().len(), 0);
+        parallel::zip_pixel_bands(self.pixmap.pixels(), out, 4, |pixels, bytes| {
+            for (pixel, slot) in pixels.iter().zip(bytes.chunks_exact_mut(4)) {
+                slot.copy_from_slice(&[pixel.blue(), pixel.green(), pixel.red(), pixel.alpha()]);
+            }
+        });
+    }
+
     /// [`to_bgra`](Self::to_bgra), into a buffer the caller keeps.
     ///
     /// NDI takes thirty of these a second. Allocating eight megabytes for each

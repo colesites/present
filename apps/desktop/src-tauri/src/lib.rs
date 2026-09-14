@@ -222,6 +222,8 @@ pub fn run() {
             commands::ndi::list_ndi_sources,
             commands::ndi::start_ndi_input,
             commands::ndi::stop_ndi_input,
+            commands::surface::get_output_surface,
+            commands::surface::set_output_surface_native,
             commands::output::get_output_scene,
             commands::output::send_to_output,
             commands::output::set_output_frozen,
@@ -268,6 +270,11 @@ pub fn run() {
             // Persisted because the device choice is wired up once when the
             // desk is, and because localStorage partitions it per origin.
             app.manage(state::AudioState::load(&config_dir));
+            // Whether the audience window is drawn natively. Off unless the
+            // operator turned it on; Stage 6 ships it opt-in.
+            app.manage(std::sync::Arc::new(state::OutputSurfaceState::load(
+                &config_dir,
+            )));
 
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),

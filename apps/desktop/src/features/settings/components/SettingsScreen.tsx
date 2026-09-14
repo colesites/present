@@ -23,6 +23,7 @@ import type {
   ScriptureVerticalAlign,
 } from "../../../shared/types/output-window";
 import { areDisplayListsEqual } from "../../../renderer/shared/lib/display-list";
+import { NativeOutputSurfaceToggle } from "./NativeOutputSurfaceToggle";
 
 type AudioInputOption = {
   deviceId: string;
@@ -1666,6 +1667,8 @@ export function SettingsScreen({
                   </Select>
                 </div>
               </section>
+
+              <NativeOutputSurfaceToggle />
 
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

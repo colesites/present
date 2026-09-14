@@ -293,6 +293,55 @@ export function OutputWindow() {
     };
   }, []);
 
+  // Under Tauri, with the operator's opt-in, the compositor draws this window
+  // onto a native view below the page. Only while it reports frames on screen
+  // does this page step back to the props it cannot draw; any other moment,
+  // including a native view that failed, this page draws everything as usual.
+  const [nativeSurface, setNativeSurface] = useState(false);
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+
+    void (async () => {
+      const core = await import("../tauri/output");
+      const unlisten = await core.onOutputSurfaceChanged((surface) => {
+        if (!cancelled) setNativeSurface(surface.presenting);
+      });
+      if (cancelled) {
+        unlisten();
+        return;
+      }
+      detach = unlisten;
+      const surface = await core.getOutputSurface();
+      if (!cancelled) setNativeSurface(surface.presenting);
+    })().catch((error: unknown) => {
+      console.error("[Output] could not read the native surface", error);
+    });
+
+    return () => {
+      cancelled = true;
+      const stop = detach;
+      detach = null;
+      stop?.();
+    };
+  }, []);
+
+  // The page is black in `output.html` so it never flashes white. With the
+  // native view drawing underneath, black would cover it.
+  useEffect(() => {
+    if (!nativeSurface) return;
+    const { documentElement: html, body } = document;
+    const previous = [html.style.backgroundColor, body.style.backgroundColor];
+    html.style.backgroundColor = "transparent";
+    body.style.backgroundColor = "transparent";
+    return () => {
+      html.style.backgroundColor = previous[0];
+      body.style.backgroundColor = previous[1];
+    };
+  }, [nativeSurface]);
+
   useEffect(() => {
     if ("__TAURI_INTERNALS__" in window) return;
     if (!window.electronAPI) return;
@@ -651,6 +700,48 @@ export function OutputWindow() {
     Boolean(state.activeSlideId?.startsWith("scripture:")) &&
     renderableSlideElements === null &&
     Boolean(state.slideText?.trim());
+
+  if (nativeSurface) {
+    // Everything the compositor draws is on the view below this page. What it
+    // leaves here is a browser and a camera: YouTube, NDI and capture props,
+    // video props, and camera regions in the composer (ADR-001's amendment).
+    const webOnlyProps = (state.propsOverlay ?? []).filter(
+      (item) =>
+        item.kind === "youtube" ||
+        item.kind === "ndi" ||
+        item.kind === "capture" ||
+        item.kind === "video",
+    );
+    return (
+      <div className="relative h-screen w-screen overflow-hidden bg-transparent">
+        {isComposerEnabled
+          ? regions
+              .filter((region) => region.source === "camera-feed")
+              .map((region) => (
+                <div
+                  key={region.id}
+                  className="absolute overflow-hidden"
+                  style={{
+                    left: `${region.x}%`,
+                    top: `${region.y}%`,
+                    width: `${region.width}%`,
+                    height: `${region.height}%`,
+                    padding: `${region.padding}px`,
+                  }}
+                >
+                  <div
+                    className="relative h-full w-full overflow-hidden"
+                    style={{ borderRadius: `${region.borderRadius}px` }}
+                  >
+                    {renderRegionContent(region)}
+                  </div>
+                </div>
+              ))
+          : null}
+        <PropsOverlayLayer items={webOnlyProps} />
+      </div>
+    );
+  }
 
   if (!isComposerEnabled) {
     return (

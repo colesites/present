@@ -88,6 +88,29 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",
     "NSScreen",
+    # The natively drawn audience screen: a layer-backed view below the
+    # webview (`services/surface/macos.rs`).
+    "NSView",
+    "NSResponder",
+    "NSGraphics",
+    "objc2-quartz-core",
+] }
+# The view's layer, and the image each frame becomes.
+objc2-quartz-core = { version = "0.3", default-features = false, features = [
+    "std",
+    "CALayer",
+    "CATransaction",
+    "objc2-core-foundation",
+] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "std",
+    "CGImage",
+    "CGDataProvider",
+    "CGColorSpace",
+] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "CFCGTypes",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std",
