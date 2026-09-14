@@ -30,7 +30,8 @@
     "longDescription": "Present — church presentation software for worship services.",
     "copyright": "Present",
     "resources": {
-      "ndi/": "ndi/"
+      "ndi/": "ndi/",
+      "../bible/": "bible/"
     },
     "icon": [
       "icons/32x32.png",

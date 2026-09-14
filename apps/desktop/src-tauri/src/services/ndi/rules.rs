@@ -8,10 +8,11 @@
 //!
 //! No Tauri types and no library calls.
 
-use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+
+use crate::services::collation;
 
 pub const DEFAULT_SOURCE_NAME: &str = "Present Main Output";
 pub const DEFAULT_GROUP_NAME: &str = "Public";
@@ -125,57 +126,8 @@ pub fn order_sources(sources: Vec<Source>) -> Vec<Source> {
         .into_iter()
         .filter(|source| !source.name.is_empty())
         .collect();
-    named.sort_by(|a, b| reading_order(&a.name, &b.name));
+    named.sort_by(|a, b| collation::locale_order(&a.name, &b.name));
     named
-}
-
-/// The order `localeCompare` gives in Node, closely enough for source names.
-///
-/// Electron sorts with ICU's root collation, and a character-code sort would
-/// not match it where it shows: every upper-case machine name would come
-/// before every lower-case one. So, as ICU does for these names:
-///
-/// 1. compare ignoring case, with whitespace before punctuation before digits
-///    before letters;
-/// 2. when that ties, the first difference in case decides, lower case first.
-///
-/// This is not a collation implementation. Accented letters and the relative
-/// order of punctuation marks can differ from ICU, and nothing in an NDI
-/// machine name depends on either.
-fn reading_order(a: &str, b: &str) -> Ordering {
-    fn class(character: char) -> u8 {
-        if character.is_whitespace() {
-            0
-        } else if character.is_numeric() {
-            2
-        } else if character.is_alphabetic() {
-            3
-        } else {
-            1
-        }
-    }
-    let primary = |value: &str| -> Vec<(u8, char)> {
-        value
-            .chars()
-            .flat_map(|character| {
-                character
-                    .to_lowercase()
-                    .map(move |lower| (class(character), lower))
-            })
-            .collect()
-    };
-
-    primary(a)
-        .cmp(&primary(b))
-        .then_with(|| {
-            a.chars()
-                .zip(b.chars())
-                .find(|(left, right)| left != right)
-                .map_or(Ordering::Equal, |(left, right)| {
-                    left.is_uppercase().cmp(&right.is_uppercase())
-                })
-        })
-        .then_with(|| a.cmp(b))
 }
 
 /// The one receiver the whole app shares, as the start and stop plans see it.

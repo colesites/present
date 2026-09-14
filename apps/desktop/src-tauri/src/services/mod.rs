@@ -3,6 +3,8 @@
 pub mod app_menu;
 pub mod audio;
 pub mod auth;
+pub mod bible;
+pub mod collation;
 pub mod compositor;
 pub mod deep_link;
 pub mod dialog;

@@ -368,6 +368,23 @@ const bridge = {
     }),
   stopNdiInput: (clientId?: string) =>
     invoke<void>("stop_ndi_input", { clientId: clientId ?? null }),
+  // --- Stage 7: Bibles -------------------------------------------------
+  // The payloads of `list-bundled-bibles`, `read-bundled-bible` and
+  // `fetch-hosted-bible-catalog`. A Bible's bytes come back as binary, not as
+  // a JSON array of five million numbers; like Electron, a refusal is `null`.
+  listBundledBibles: () => invoke("list_bundled_bibles"),
+  readBundledBible: async (filePath: string) => {
+    try {
+      const bytes = await invoke<ArrayBuffer>("read_bundled_bible", { filePath });
+      return new Uint8Array(bytes);
+    } catch (error) {
+      console.error("[Tauri] could not read a bundled Bible", error);
+      return null;
+    }
+  },
+  fetchHostedBibleCatalog: (catalogUrl: string) =>
+    invoke("fetch_hosted_bible_catalog", { catalogUrl }),
+
   // The opt-in natively drawn audience screen. Tauri only: Settings shows the
   // switch when these exist, so the Electron build never offers it.
   getNativeOutputSurface: () => invoke("get_output_surface"),
