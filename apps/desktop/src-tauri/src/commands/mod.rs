@@ -25,4 +25,5 @@ pub mod presentation;
 pub mod speech;
 pub mod stage;
 pub mod surface;
+pub mod web_storage;
 pub mod window;

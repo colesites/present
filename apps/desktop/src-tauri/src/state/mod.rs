@@ -19,6 +19,7 @@ pub mod persist;
 pub mod playback_state;
 pub mod presentation_state;
 pub mod stage_relay_state;
+pub mod web_storage_state;
 pub mod window_state;
 
 pub use app_state::AppState;
@@ -34,4 +35,5 @@ pub use output_surface_state::OutputSurfaceState;
 pub use playback_state::PlaybackState;
 pub use presentation_state::PresentationState;
 pub use stage_relay_state::StageRelayState;
+pub use web_storage_state::WebStorageState;
 pub use window_state::WindowState;

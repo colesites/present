@@ -59,6 +59,9 @@ allsorts = { version = "0.17", default-features = false, features = ["flate2_rus
 # The error log's redaction patterns (`services/error_log.rs`). Already in the
 # tree through several dependencies.
 regex = "1"
+# Reading the Electron build's localStorage once, to carry an operator's
+# settings over (`services/web_storage.rs`). Chromium keeps it in LevelDB.
+rusty-leveldb = "4.0.1"
 
 # Desktop-only plugins. The crate keeps a mobile entry point (see `[lib]`), and
 # neither of these builds for iOS or Android.

@@ -21,3 +21,7 @@ void import('./Main').catch((error) => {
   reportRendererFailure(error, 'renderer.bootstrap');
   throw error;
 });
+
+// A module, so the Tauri entry (`renderer/tauri/start-main.ts`) can import it
+// once browser storage is ready. Nothing is exported.
+export {};

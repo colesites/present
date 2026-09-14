@@ -20,6 +20,10 @@
     -->
     <script type="module" src="/src/renderer/tauri/boot.ts"></script>
     <script type="module" src="/src/renderer/tauri/boot-probe.ts"></script>
-    <script type="module" src="/src/renderer/main/main-renderer.ts"></script>
+    <!--
+      React starts once browser storage is ready: `start-main.ts` waits for
+      `web-storage.ts` (known-issues §2), never longer than its timeout.
+    -->
+    <script type="module" src="/src/renderer/tauri/start-main.ts"></script>
   </body>
 </html>

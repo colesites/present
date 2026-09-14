@@ -32,5 +32,6 @@ pub mod stage_relay;
 pub mod surface;
 pub mod system_fonts;
 pub mod video;
+pub mod web_storage;
 pub mod window;
 pub mod window_spec;

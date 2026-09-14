@@ -230,6 +230,9 @@ pub fn run() {
             commands::fonts::pick_font_file,
             commands::fonts::install_custom_fonts,
             commands::fonts::get_custom_fonts,
+            commands::web_storage::get_web_storage,
+            commands::web_storage::initialize_web_storage,
+            commands::web_storage::set_web_storage_items,
             commands::stage::send_to_stage,
             commands::stage::get_stage_messages,
             commands::bible::list_bundled_bibles,
@@ -274,6 +277,9 @@ pub fn run() {
             ));
             services::error_log::record_panics(std::sync::Arc::clone(&error_log));
             app.manage(error_log);
+            // The durable copy of the app's browser storage (known-issues §2).
+            // Before any window, which asks for it before React starts.
+            app.manage(state::WebStorageState::load(&config_dir));
             app.manage(state::DisplayState::load(&config_dir));
             // The media folders, and with them the only paths `local-media://`
             // will serve. Registered before any window exists so the operator
