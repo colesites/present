@@ -2,15 +2,16 @@ import { app } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import * as fontList from "font-list";
-import type { CustomFontFace, SystemFontFace } from "../../shared/types/font";
+import type { CustomFontFace } from "../../shared/types/font";
 import {
+  customFontFace,
   dedupeFontFaces,
-  getFontFileMimeType,
-  inferFontMetaFromFileName,
-  normalizeFontStyleMeta,
-  normalizeFontWeightMeta,
-  SUPPORTED_CUSTOM_FONT_EXTENSIONS,
-} from "../../shared/lib/font";
+  finishSystemFontFaces,
+  finishSystemFontFamilies,
+  isSupportedFontFile,
+  plainSystemFontFaces,
+  uniqueFontFileName,
+} from "../../shared/lib/font-catalog.mjs";
 
 const CUSTOM_FONT_DIRECTORY_NAME = "custom-fonts";
 const FONT_LIST_DARWIN_HELPERS = ["fontlist", "fontlist2"] as const;
@@ -44,99 +45,24 @@ async function ensureCustomFontDirectory() {
   return directoryPath;
 }
 
-function isSupportedFontFile(fileName: string) {
-  const extension = path.extname(fileName).toLowerCase();
-  return SUPPORTED_CUSTOM_FONT_EXTENSIONS.includes(
-    extension as (typeof SUPPORTED_CUSTOM_FONT_EXTENSIONS)[number],
-  );
-}
-
-function createUniqueTargetPath(directoryPath: string, originalFileName: string) {
-  const parsed = path.parse(originalFileName);
-  const extension = parsed.ext || ".ttf";
-  const safeStem = parsed.name.trim() || "Custom Font";
-  let candidatePath = path.join(directoryPath, `${safeStem}${extension}`);
-  let counter = 1;
-
-  while (fs.existsSync(candidatePath)) {
-    candidatePath = path.join(
-      directoryPath,
-      `${safeStem} ${counter}${extension}`,
-    );
-    counter += 1;
-  }
-
-  return candidatePath;
-}
-
-function mapSystemFontFace(face: fontList.IFontInfo): SystemFontFace {
-  const weightMeta = normalizeFontWeightMeta(face.weight);
-  const styleMeta = normalizeFontStyleMeta(face.style);
-
-  return {
-    familyName: face.familyName.trim(),
-    postScriptName: face.postScriptName.trim(),
-    weight: weightMeta.weight,
-    weightLabel: weightMeta.weightLabel,
-    style: styleMeta.style,
-    styleLabel: styleMeta.styleLabel,
-    width: face.width?.trim() ?? "",
-    monospace: Boolean(face.monospace),
-    source: "system",
-  };
-}
-
 async function buildCustomFontFace(filePath: string): Promise<CustomFontFace> {
-  const fileName = path.basename(filePath);
   const buffer = await fs.promises.readFile(filePath);
-  const inferred = inferFontMetaFromFileName(fileName);
-
-  return {
-    familyName: inferred.familyName,
-    postScriptName: path.parse(fileName).name,
-    weight: inferred.weight,
-    weightLabel: inferred.weightLabel,
-    style: inferred.style,
-    styleLabel: inferred.styleLabel,
-    width: "",
-    monospace: false,
-    source: "custom",
-    fileName,
-    filePath,
-    dataUrl: `data:${getFontFileMimeType(fileName)};base64,${buffer.toString("base64")}`,
-  };
+  return customFontFace(path.basename(filePath), filePath, buffer.toString("base64"));
 }
 
 export async function getSystemFontFamilies() {
   await ensureFontListHelperPermissions();
   const fonts = await fontList.getFonts({ disableQuoting: true });
-  return Array.from(
-    new Set(fonts.map((font) => font.trim()).filter(Boolean)),
-  ).sort((left, right) => left.localeCompare(right));
+  return finishSystemFontFamilies(fonts);
 }
 
 export async function getSystemFontFaces() {
   await ensureFontListHelperPermissions();
   try {
     const faces = await fontList.getFonts2({ disableQuoting: true });
-    return dedupeFontFaces(
-      faces
-        .map(mapSystemFontFace)
-        .filter((face) => Boolean(face.familyName) && Boolean(face.postScriptName)),
-    );
+    return finishSystemFontFaces(faces);
   } catch {
-    const families = await getSystemFontFamilies();
-    return families.map<SystemFontFace>((familyName) => ({
-      familyName,
-      postScriptName: familyName,
-      weight: "400",
-      weightLabel: "Regular",
-      style: "normal",
-      styleLabel: "Normal",
-      width: "",
-      monospace: false,
-      source: "system",
-    }));
+    return plainSystemFontFaces(await getSystemFontFamilies());
   }
 }
 
@@ -161,11 +87,16 @@ export async function installCustomFonts(filePaths: string[]) {
   const installedPaths: string[] = [];
 
   for (const filePath of filePaths) {
-    if (!isSupportedFontFile(filePath)) {
+    if (!isSupportedFontFile(path.basename(filePath))) {
       continue;
     }
 
-    const targetPath = createUniqueTargetPath(directoryPath, path.basename(filePath));
+    const targetPath = path.join(
+      directoryPath,
+      uniqueFontFileName(path.basename(filePath), (name) =>
+        fs.existsSync(path.join(directoryPath, name)),
+      ),
+    );
     await fs.promises.copyFile(filePath, targetPath);
     installedPaths.push(targetPath);
   }
