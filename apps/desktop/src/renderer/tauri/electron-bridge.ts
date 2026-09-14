@@ -62,6 +62,54 @@ const subscribe = (event: string, handler: (payload: never) => void): (() => voi
   };
 };
 
+type StageTarget = "media-stage" | "worship-stage";
+
+const relayToStage = (target: StageTarget, payload: unknown): void => {
+  void invoke("send_to_stage", { target, payload }).catch((error: unknown) => {
+    console.error(`[Stage] ${target} message rejected by the Rust core`, error);
+  });
+};
+
+/**
+ * Deliver a stage display what it missed, then everything after.
+ *
+ * The listener goes on first so nothing sent while the replay is on its way
+ * is lost; what arrives in that gap is held and applied after the replay, so
+ * an older kept message can never overwrite a newer live one.
+ */
+const subscribeToStage = (
+  target: StageTarget,
+  event: string,
+  callback: (payload: unknown) => void,
+): (() => void) => {
+  let replayed = false;
+  let cancelled = false;
+  const held: unknown[] = [];
+
+  const stop = subscribe(event, (payload: never) => {
+    if (cancelled) return;
+    if (replayed) callback(payload);
+    else held.push(payload);
+  });
+
+  void invoke<unknown[]>("get_stage_messages", { target })
+    .catch((error: unknown) => {
+      console.error(`[Stage] could not read what ${target} missed`, error);
+      return [] as unknown[];
+    })
+    .then((missed) => {
+      if (cancelled) return;
+      for (const message of missed) callback(message);
+      replayed = true;
+      for (const message of held.splice(0)) callback(message);
+    });
+
+  return () => {
+    cancelled = true;
+    stop();
+  };
+};
+
 /**
  * Detach a listener without ever throwing.
  *
@@ -294,21 +342,23 @@ const bridge = {
   openExternalBrowser: (url: string) => invoke<boolean>("open_external_browser", { url }),
 
   // --- Stage 4: the audience scene --------------------------------------
-  // One scene in Rust, not three relayed streams. `sendToStage` and
-  // `sendToWorshipStage` are the same call as `sendToOutput`: under Electron
-  // each window had to be addressed separately because each kept its own
-  // accumulated copy. The names survive so the sending code did not change.
   sendToOutput: (payload: unknown) => {
     void invoke("send_to_output", { payload }).catch((error: unknown) => {
       console.error("[Output] update rejected by the Rust core", error);
     });
   },
-  sendToStage: (payload: unknown) => {
-    void invoke("send_to_output", { payload }).catch(noop);
-  },
-  sendToWorshipStage: (payload: unknown) => {
-    void invoke("send_to_output", { payload }).catch(noop);
-  },
+
+  // --- Stage 7: the two stage displays ----------------------------------
+  // Their own feed, not the audience scene: the confidence monitor shows the
+  // next slide, which no scene carries. Rust keeps the last message of each
+  // type, so a stage display that opens mid-service is sent what it missed
+  // instead of waiting for the `*-ready` handshake below.
+  sendToStage: (payload: unknown) => relayToStage("media-stage", payload),
+  sendToWorshipStage: (payload: unknown) => relayToStage("worship-stage", payload),
+  onStageData: (callback: (payload: unknown) => void) =>
+    subscribeToStage("media-stage", "stage-data", callback),
+  onWorshipStageData: (callback: (payload: unknown) => void) =>
+    subscribeToStage("worship-stage", "worship-stage-data", callback),
 
   // The late-join handshake is gone. A window that opens mid-service asks for
   // the scene rather than asking the operator window to repeat itself, so

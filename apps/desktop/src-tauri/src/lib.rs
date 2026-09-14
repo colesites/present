@@ -139,6 +139,8 @@ pub fn run() {
         // The media transport. In memory: where a video had got to describes
         // the moment, not the operator's setup.
         .manage(state::PlaybackState::new())
+        // What each stage display was last sent, for one that opens mid-service.
+        .manage(state::StageRelayState::new())
         // Open lyric editors and the saves they are waiting on.
         .manage(services::mini_lyrics::MiniLyricsState::new())
         .on_menu_event(services::app_menu::handle)
@@ -222,6 +224,8 @@ pub fn run() {
             commands::ndi::list_ndi_sources,
             commands::ndi::start_ndi_input,
             commands::ndi::stop_ndi_input,
+            commands::stage::send_to_stage,
+            commands::stage::get_stage_messages,
             commands::bible::list_bundled_bibles,
             commands::bible::read_bundled_bible,
             commands::bible::fetch_hosted_bible_catalog,

@@ -26,6 +26,7 @@ pub mod presentation;
 pub mod shortcuts;
 pub mod slide;
 pub mod speech;
+pub mod stage_relay;
 pub mod surface;
 pub mod video;
 pub mod window;
