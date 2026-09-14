@@ -418,6 +418,9 @@ const bridge = {
     }),
   stopNdiInput: (clientId?: string) =>
     invoke<void>("stop_ndi_input", { clientId: clientId ?? null }),
+  // --- Stage 7: the AI Operator's tool definitions ----------------------
+  listAiOperatorTools: () => invoke("list_ai_operator_tools"),
+
   // --- Stage 7: Bibles -------------------------------------------------
   // The payloads of `list-bundled-bibles`, `read-bundled-bible` and
   // `fetch-hosted-bible-catalog`. A Bible's bytes come back as binary, not as

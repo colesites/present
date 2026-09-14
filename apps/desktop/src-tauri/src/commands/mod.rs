@@ -3,6 +3,7 @@
 //! Commands stay thin: deserialise, delegate to a service, map to `AppResult`.
 //! Domain logic belongs in `services/`, never here.
 
+pub mod ai_operator;
 pub mod app;
 pub mod audio;
 pub mod auth;

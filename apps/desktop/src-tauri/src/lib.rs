@@ -224,6 +224,7 @@ pub fn run() {
             commands::ndi::list_ndi_sources,
             commands::ndi::start_ndi_input,
             commands::ndi::stop_ndi_input,
+            commands::ai_operator::list_ai_operator_tools,
             commands::fonts::get_system_fonts,
             commands::fonts::get_system_font_faces,
             commands::fonts::pick_font_file,
