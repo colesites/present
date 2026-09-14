@@ -1,13 +1,15 @@
 # Stage 6 — NDI, and the audience surface swap
 
-**Status:** in progress. NDI output runs from the Rust compositor and has been
-received, at 30 fps, both in-process and from the running app. NDI input,
-discovery in the UI, shipping `libndi`, compositor parity and the surface swap
-are left — see §9.
+**Status:** code complete. NDI output runs from the Rust compositor, which now
+draws what the audience window draws; `libndi` ships inside the bundle; NDI
+props receive through the Rust core; and the audience window can be drawn
+natively, opt-in. What is left is the owner's manual gate — §9.
 
 The audit's gate for this stage is discovery, connect, output and reconnect.
 All four are proven at the library level against the real runtime
-(`tests/ndi_loopback.rs`); none has been exercised through the UI yet.
+(`tests/ndi_loopback.rs`), and discovery, connect and output through the running
+app against a real source. Nothing has been watched in NDI Tools, and no service
+has gone out over it.
 
 ---
 
@@ -158,56 +160,172 @@ Two things worth knowing from that run:
   the window in the background. The stream runs on a Rust thread and did not
   notice, which is the point of drawing it there.
 
-## 6. The compositor is not yet the audience window
+## 6. Drawing what the audience window draws
 
 Reading `OutputWindow.tsx` against the compositor, to see what the stream would
-be missing, found gaps that matter more than any above. Electron's stream is a
-capture of the real window, so **each of these is a regression on the stream
-until it is fixed**:
+be missing, found it drawing a different screen. Electron's stream is a capture
+of the real window, so **each gap was a regression on the Tauri stream**
+(known-issues §14). All are closed (`d6dbc99`):
 
-| React draws | The compositor |
+| The window | The compositor now |
 |---|---|
-| **Scripture** — `scripture:` slides without elements go through `ScriptureTextLayer`: auto-fit between 10 and 500 px, line height 1.625, a shadow, an upper-case footer | **nothing.** Generated scripture is plain text by design, so every Bible verse is missing from the stream |
-| Library slides without authored elements — one centred `fillText`, squeezed to 90% width | nothing |
-| Media with `object-contain`, letterboxed | video and stills with `cover`, cropped; and the decoder scales to the exact frame size, so a 4:3 video would be stretched |
-| The slide background colour **over** the media | under it |
-| `mediaFilterCSS` — brightness, contrast, saturate, blur, grayscale, sepia, hue-rotate | ignored. An operator dimming a busy video behind the lyrics dims the projector and not the stream |
+| **Scripture** — `scripture:` slides without elements go through `ScriptureTextLayer`: `AutoFitText`'s ten-step search between 10 and 500 px, line height 1.625, 48 px padding, two drop shadows, an upper-case footer | the same, in `compositor/slide_text.rs`. Before, every Bible verse was missing |
+| Library slides with no visible elements — `CanvasSlideLayer`'s one centred `fillText`, squeezed to nine tenths of the width | the same, squeezed by rasterising the line at full width and scaling it |
+| Media `object-contain`, letterboxed | letterboxed; the decoder is asked for an aspect-preserving size (`video::open_contained`), so a 4:3 video is not stretched, and a contain draw no longer smears the image's edge across the bars |
+| The slide background colour **over** the media, whatever the mask says | over it, and no full-screen plate under the composer's regions |
+| `mediaFilterCSS` on the `<video>` or `<img>` | the seven functions the UI writes, colour ones as the Filter Effects matrices, blur as running-sum box passes, on the media rectangle alone |
+| Props and the message banner above the timer | the same order |
 
-`src/services/compositor/filters.rs` is in the working tree, **not committed and
-not registered**: the seven filters parsed, the colour ones as the specification's
-matrices with its eleven tests passing, blur as three box passes. It is not wired
-in, and the blur has not been measured — it is O(pixels × radius) as written.
+**A fifth gap turned up on the way: optical size.** Chromium on macOS sets
+Inter's `opsz` axis from the pixel size, in HTML and Canvas. cosmic-text only
+sets weight, so text came out nine percent wider and verses broke on different
+lines. Faces with that axis are instanced with `allsorts` at the size they are
+drawn — 13 ms per instance, and everything at slide sizes shares one per weight.
+`allsorts` needs Rust 1.83, which is why the crate declares it.
 
-## 7. What is verified
+Checked against Chrome rendering the same markup at 1920×1080:
 
-- 575 Rust tests, 127 JS; clippy `-D warnings`, fmt and typecheck clean
+- every line of a four-line verse and its footer within **1–3 px** of Chrome's
+- the plain-text line the same width, and about **5 px lower**
+- kerning is the font's default optical size — `allsorts` copies `GPOS` without
+  applying variations. Advance widths, which decide the line breaks, are right.
+
+**It did not make the compositor slower.** The same slide-rebuild benchmark,
+built at the commit before parity (`cd6754e`) and at the surface commit
+(`ed3c0b1`) on the `perf` profile and run alternately: rebuild median
+48–57 ms before, 37–52 ms after; a cached frame 10–12 ms before, 8–10 ms after.
+
+**The stream's frame rate after parity is not yet measured cleanly.** Right
+after the parity work it received 30.0 fps with no gap over 50 ms. On
+2026-09-14 the release probe gave 18.5, 22.4 and 27.6 fps in three runs, but
+this machine was thermally throttling (`kernel_task` near 100%) and then
+swapping (11.5 of 12 GB) with a browser taking 240% CPU. An alternating run of
+the pre-parity and current probes on the same video got under 2 fps from
+**both**, which is the machine and not the code. Re-run `ndi_stream_probe` on
+a quiet machine before trusting either number.
+
+## 7. Shipping the runtime, and NDI props
+
+**`libndi` is in the bundle** (`39c80fd`). `scripts/stage-tauri-ndi.mjs` copies
+this platform's runtime and its licences from grandi's prebuilt package into
+`src-tauri/ndi/`, which `bundle.resources` includes, and `tauri build` runs it
+first (`tauri:before-build`). Only a README and a `.gitignore` are committed
+there, so the path exists on a machine with no NDI package. The loader prefers
+the bundled copy to an installed one. In the packaged app,
+`Contents/Resources/ndi/libndi.dylib` (6.3.0.3) was the one loaded, with NDI
+Tools' `/usr/local/lib` copy also present; the app is 39 MB, the dmg 10 MB.
+
+**NDI props receive through Rust** (`1c61d7d`), with Electron's payloads, so no
+component changed:
+
+- `list_ndi_sources` — this machine's sources included, 1.2 s, reading order
+- **one shared receiver**, joined and left through `rules::plan_input_start`
+  and `plan_input_stop`, the cases the characterisation suite pins. The last
+  client leaving stops it after 1.2 s unless somebody joins first, so a prop
+  re-rendering does not drop the camera.
+- the lowest-bandwidth stream in BGRX/BGRA, at most one frame per 125 ms, scaled
+  to at most 1280 px wide, a JPEG at quality 72
+- `ndi-frame://` answers 204 until there is a frame, never serves another
+  camera's frame under this one's name, and 400s a name that is not valid
+  percent-encoding
+- `ndi-frame:` added to the CSP's `img-src`, which had been blocking props
+
+Verified in the running app against a real source: listed, started, the prop's
+image loaded at 640×360 through the scheme, a wrong name got no image, a second
+client kept the receiver through the first leaving, and the last leaving stopped
+it after the grace period.
+
+## 8. The audience window, drawn natively — opt-in
+
+ADR-001's surface swap, behind **Settings → Audience screen**, off by default
+(`ed3c0b1`). macOS only; elsewhere the switch is not shown.
+
+```text
+Output window
+  ├─ WKWebView, transparent — YouTube, NDI, capture and video props,
+  │                           composer camera regions
+  └─ NSView below it        — each frame the compositor draws
+```
+
+`services/surface/` draws `OutputState::on_screen()` — the program column is
+already folded into it — at the window's CSS size, 60 times a second at most,
+and only hands a frame over when the scene, the video frame or the size changed.
+Each frame becomes a `CGImage` over the premultiplied pixels, without a copy,
+set as the view layer's contents on the main thread.
+
+**The webview is the fallback, not a second renderer to reconcile:**
+
+- It draws the whole output until the surface reports `presenting`, which is
+  sent **100 ms after the first frame is handed over**, so the page never clears
+  before the native picture has landed.
+- Turned off, or **three failures in a row**, it is told to draw everything
+  again, and the view stays **300 ms** longer while it repaints.
+- A frame is dropped rather than queued while the main thread is still busy
+  with the last one.
+- `drawsBackground` is turned off on this one webview while the view is attached
+  and restored after. Tauri's `macos-private-api` would do it for every window
+  in the app.
+- The worker is never joined from the main thread, because its last acts need
+  the main thread. An attach waits for a view still being removed, and a
+  generation count stops an attach going ahead after a detach.
+- The view and the webview are retained, so a window closed and reopened under
+  the same label cannot leave a pointer to a freed webview.
+
+Verified in the running app, on the debug build: turned on with the Output
+window open, the view attached and reported frames **0.5 s later**. A slide
+drawn on it was screen-captured, then the webview's rendering after turning it
+off — the same text in the same place. On, off and on again within 110 ms made
+one view. Closing the window handed back; reopening it reattached on its own.
+No renderer errors.
+
+**What it costs, and why it stays opt-in:**
+
+- **It is drawn at CSS size.** On a Retina screen, or a 4K screen at a scaled
+  resolution, text is visibly softer than the webview's, which draws at device
+  pixels. The switch says so. A projector at 1:1 is unaffected. Drawing at
+  device pixels means a scale through the whole compositor, and four times the
+  pixels on the CPU.
+- **With NDI on as well, the frame is drawn twice** — once per target, each with
+  its own video decoder, because the two follow different layer columns.
+- **Handing back to the webview is not instant for video**: the page's
+  `<video>` has to load and seek before it shows.
+- Parity was checked against Chrome, the Electron engine. The Tauri webview is
+  WebKit; the comparison above is the only one against it.
+
+## 9. What is verified
+
+- 634 Rust tests, 127 JS; clippy `-D warnings`, fmt and typecheck clean
 - the 34 characterisation cases, each proven to fail under mutation
 - the library loopback against two runtimes, the unwatched clock, and the stream
   probe and in-app run above, with frames looked at
+- the compositor against Chrome for scripture and plain text, §6
+- the packaged build loading its bundled `libndi`
+- NDI input end to end in the running app, against a real source
+- the native surface attaching, presenting, handing back and reattaching in the
+  running app, captured on screen
 - Electron still packages with `ndi-rules.mjs` imported
 
-## 8. Not verified — do not claim otherwise
+## 10. Not verified — do not claim otherwise
 
 - **Nothing with a service loaded.** No lyric, scripture or video has gone from
-  the app to NDI; the probe drew its own scene.
-- **No NDI Tools receiver** — Video Monitor, OBS, a switcher — has been pointed
-  at the stream. Only this code's own receiver has watched it.
-- **The packaged build has no NDI.** `libndi` is not in `bundle.resources` yet.
+  a live service to NDI or to the native surface.
+- **No NDI Tools receiver** — Video Monitor, OBS, a switcher — has watched the
+  stream. Only this code's own receiver has.
+- **The native surface on a second monitor**, over a full service, or with a
+  video playing behind the words.
 - **Not on another machine or network**; everything above is loopback.
-- Nothing on Windows or Linux.
+- **A long stream.** Nothing has run past a probe's 15–20 seconds.
+- **The stream's frame rate after parity**, on a quiet machine — §6.
+- Nothing on Windows or Linux. The surface is macOS-only by construction.
 
-## 9. What is left
+## 11. The owner's gate
 
-1. **Ship `libndi`** in the bundle, and a packaged-build run.
-2. **NDI input**: discovery in the Layers panel, the shared receiver with its
-   client bookkeeping (already pinned by `rules`), and the `ndi-frame://` scheme.
-   The Tauri CSP does not allow `ndi-frame:` yet, so input props are blocked
-   today.
-3. **Compositor parity**, §6, in the order the stream needs it: scripture, the
-   media fit and order, filters, plain text. Each with a pixel test against what
-   `OutputWindow.tsx` does.
-4. **The gate, through the UI**: Settings → NDI on, a service live, watched in
-   NDI Video Monitor; NDI Test Patterns as an input source; a source restarted
-   mid-prop.
-5. **The surface swap**, opt-in, once the stream has been watched with a service
-   on it.
+In [HANDOFF.md §8 E](HANDOFF.md#e-ndi--stage-6-needs-ndi-tools-installed-on-this-machine).
+In short: NDI on in Settings and watched in NDI Video Monitor with a service
+live, scripture included; a freeze; a countdown; 45 minutes; NDI Test Patterns
+as a prop, restarted mid-prop; and the native audience screen on the projector
+through a service, before anyone turns it on for real.
+
+Still open for the owner to decide: **the quick toggles write only the program
+column** (§1), so clearing the words on the projector does not clear them on the
+stream.

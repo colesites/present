@@ -1,16 +1,15 @@
 # Present — Electron → Tauri migration: session handoff
 
-**Read this first.** It is the state of the migration as of 2026-09-13, written
+**Read this first.** It is the state of the migration as of 2026-09-14, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 62 commits ahead of `master`, **nothing pushed**.
+Branch `rust`, 67 commits ahead of `master` — the last is this update — **nothing pushed**.
 
-**Stage 6 is in progress.** NDI output runs from the Rust compositor and has
-been received at 30 fps. The largest open item is not NDI at all: the
-compositor does not yet draw scripture, plain-text slides, media filters or
-letterboxed media the way the audience window does (known-issues §14), and each
-of those is a regression on the stream until it is fixed. Start with
-[stage-6-ndi.md](stage-6-ndi.md) §9.
+**Stage 6 is code complete.** NDI output runs from the Rust compositor, which
+now draws what the audience window draws; `libndi` ships in the bundle; NDI
+props receive through Rust; and the audience window can be drawn natively,
+opt-in. What remains is the owner's manual gate (§8 E). **Stage 7 is next**, at
+the owner's request. Start with §4.
 
 ---
 
@@ -37,7 +36,7 @@ the audience screen is a serious bug, not a rough edge.
 | [stage-0-audit.md](stage-0-audit.md) | The full audit. Architecture map, all 79 IPC channels, media/audio/output pipeline, state model, native deps, build system, 31-row migration matrix, risks. **The reference for anything about how Electron does it today.** |
 | [adr-002-video-decode.md](adr-002-video-decode.md) | Video is decoded by the OS, not a bundled FFmpeg. What that costs in containers, and what their own library says about it. |
 | [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. **Amended**: the surface is a hybrid, with a webview layer above it for YouTube and capture props. |
-| [known-issues.md](known-issues.md) | Twelve bugs found so far, each assigned to the stage that owns the fix. Seven fixed. |
+| [known-issues.md](known-issues.md) | Fifteen bugs found so far, each assigned to the stage that owns the fix. Eleven fixed or partly fixed. |
 | [stage-1-tauri-skeleton.md](stage-1-tauri-skeleton.md) | The Tauri shell beside Electron. |
 | [stage-2-displays.md](stage-2-displays.md) | Display enumeration, identity, persistence, monitor names. |
 | [stage-2-windows.md](stage-2-windows.md) | All eight windows in Rust: specs as data, the output hardening, crash policy, the physical/logical placement trap. |
@@ -45,7 +44,7 @@ the audience screen is a serious bug, not a rough edge.
 | [stage-3-native-apis.md](stage-3-native-apis.md) | The file scope and why it is shaped that way, the media scheme without a stream, dialogs, menu, shortcut, deep links, permissions, and the `electronAPI` bridge. |
 | [stage-4-presentation-core.md](stage-4-presentation-core.md) | The characterisation gate, the output layer flags, the auth session, the audience scene, the presentation position, and what Stage 5 inherits. |
 | [stage-5-media-engine.md](stage-5-media-engine.md) | The full audio inventory, the Rust audio graph, the compositor, video decode, and the frame budget. |
-| [stage-6-ndi.md](stage-6-ndi.md) | **In progress.** The owner's three decisions, NDI loaded at runtime, the send loop, what streaming to a receiver found, the compositor's parity gaps, and what is left. |
+| [stage-6-ndi.md](stage-6-ndi.md) | **Code complete.** The owner's three decisions, NDI loaded at runtime, the send loop, what streaming found, drawing what the window draws, the bundled runtime, NDI props, and the opt-in native audience screen. |
 
 ## 3. Where things stand
 
@@ -117,7 +116,7 @@ state, and moving those would be moving UI into the core for nothing.
 - ✅ Unplayable media flagged in the panel, with advice (ADR-002's UI requirement)
 - ✅ Message, props and timer overlays, and the screen composer, drawn in Rust
 - ✅ The React player moved onto the Rust transport
-- ⬜ **The surface swap — carried to Stage 6**, where NDI is the frames' first consumer
+- ✅ The surface swap — carried to Stage 6, and landed there opt-in
 
 The old guard scanned `<video>` and nothing else, so three other routes to a
 speaker were unguarded: the backing-track `new Audio()`, the audience YouTube
@@ -125,7 +124,7 @@ embed whose silence is a hand-edited `mute=1`, and the speech capture graph,
 which connects the microphone to the audio destination behind a single gain
 node pinned to zero. None were bugs. All were conventions nothing checked.
 
-**Stage 6 — NDI, plus the audience surface swap.** In progress.
+**Stage 6 — NDI, plus the audience surface swap.** Code complete; the owner's gate is open.
 - ✅ Characterisation first: 34 cases pinning Electron's NDI rules, each proven to fail under mutation
 - ✅ NDI reached from Rust, the runtime loaded at run time rather than linked — no SDK on any build machine
 - ✅ Discovery, connect, output and reconnect proven against two real runtimes (library level)
@@ -134,11 +133,11 @@ node pinned to zero. None were bugs. All were conventions nothing checked.
 - ✅ 30.0 fps received, no gap over 50 ms, release profile, lyric slide over a real video
 - ✅ Four compositor costs that stalled a 30 fps stream, found by streaming and fixed (known-issues §15)
 - ✅ The running app's stream received from a separate process, 1920×1080
-- ⬜ **Compositor parity: scripture, media fit and order, filters, plain text** — known-issues §14
-- ⬜ Ship `libndi` in the bundle; run the packaged build
-- ⬜ NDI input: discovery in the UI, the shared receiver, `ndi-frame://`, the CSP
-- ⬜ The gate through the UI, with NDI Tools watching and a service live
-- ⬜ The surface swap, opt-in (owner's call), after the stream has been watched
+- ✅ Compositor parity: scripture, plain text, media fit and order, filters, Inter's optical size — known-issues §14
+- ✅ `libndi` in the bundle; the packaged build loads its own copy
+- ✅ NDI input: discovery, the shared receiver with its grace period, `ndi-frame://`, the CSP — verified against a real source
+- ✅ The audience window drawn natively, opt-in (owner's call), with the webview as fallback — verified in the running app
+- ⬜ **The owner's gate**: NDI Tools watching a live service, 45 minutes, Test Patterns as a prop, the native screen on a projector
 
 ### Stages 7–8, untouched
 
@@ -159,6 +158,11 @@ stays until Stage 8.
 ### Commits on this branch
 
 ```
+ed3c0b1 feat(stage-6): draw the audience window natively, behind a setting
+1c61d7d feat(stage-6): receive NDI sources for props
+39c80fd feat(stage-6): ship the NDI runtime inside the Tauri bundle
+d6dbc99 feat(stage-6): draw what the audience window draws
+cf2928b docs(stage-6): record NDI output, what streaming it found, and what is left
 cd6754e feat(stage-6): send the audience frame over NDI from the Rust compositor
 6f5050c perf(stage-6): stop a ticking countdown stalling the frame once a second
 d44edca fix(stage-6): read a background image once, and never read a video as one
@@ -223,39 +227,41 @@ df6c9a7 docs: add session handoff for the Tauri migration
 
 ## 4. The next task, concretely
 
-**Stage 6 is in progress.** NDI output works; see
-[stage-6-ndi.md](stage-6-ndi.md) for everything below in full.
+**Stage 6 is code complete; Stage 7 is next**, because the owner asked for it to
+follow. Everything about Stage 6 is in [stage-6-ndi.md](stage-6-ndi.md).
 
-**1. Compositor parity — known-issues §14.** Reading `OutputWindow.tsx` against
-the compositor found that it draws no scripture (generated scripture is plain
-text, and the compositor draws only slide elements), no element-less library
-slide, no media filter, and crops media the window letterboxes. Under Electron
-the stream is a capture of the real window, so every one of these is a
-regression on the Tauri stream. In order:
+**1. Stage 7 — the remaining subsystems onto Rust commands.** The audit's list:
+Bible, fonts, the PPTX sidecar, auth, the AI Operator, error reporting,
+settings. Its gate is a parity checklist. Some of it has started already —
+auth's session and refresh are in Rust (Stage 4), and the bridge reports every
+`electronAPI` call it does not have yet into the Rust log, which is the
+quickest inventory: a clean launch today reports `listBundledBibles` and
+`fetchHostedBibleCatalog`. Start by reading `stage-0-audit.md` for each
+subsystem, then characterise before moving, as every stage has. Two known
+issues are already assigned there: §5 (`vosk`) and §10 (no webview crash
+recovery on Windows and Linux).
 
-1. **Scripture**: `ScriptureTextLayer` + `AutoFitText` — a 10-iteration binary
-   search between 10 and 500 px for the largest size whose wrapped text fits,
-   capped at the style's size; line height 1.625; 48 px padding; an upper-case
-   footer at 28% of the size. cosmic-text can lay out and measure this.
-2. **Media fit and order**: `object-contain`, the slide background colour over
-   the media, and the decoder asked for an aspect-preserving size.
-3. **Filters**: `src-tauri/src/services/compositor/filters.rs` is an uncommitted,
-   unregistered draft in the working tree — seven functions parsed, colour
-   matrices tested (11 tests pass when registered), blur unmeasured and O(pixels
-   × radius) as written.
-4. **Plain text**: `CanvasSlideLayer`'s one centred, squeezed `fillText`.
+Two of the audit's open questions (§13) land in Stage 7 and are **still the
+owner's to answer** before their slices start:
 
-**2. Ship `libndi`** into `bundle.resources` under `ndi/` (the loader already
-looks there) and run the packaged build.
+- **PPTX** — ship Python as a sidecar (about 40 MB an installer, and
+  `python-pptx` with it) or port `parse_pptx.py` to Rust. Today a machine
+  without Python cannot import PPTX at all (audit §10.7).
+- **Browser mode** — nine channels on Electron's `BrowserView` (audit §10.2).
+  Tauri's child webviews are behind the `unstable` feature; the alternatives are
+  a separate real window, or deferring the feature past the cutover.
 
-**3. NDI input**: `list_ndi_sources`, the shared receiver whose bookkeeping
-`services/ndi/rules.rs` already pins, the `ndi-frame://` scheme, and `ndi-frame:`
-in the CSP `img-src`.
+**2. The owner's Stage 6 gate**, [§8 E](#e-ndi--stage-6-needs-ndi-tools-installed-on-this-machine).
+Needs a person, NDI Tools and a service. Nothing in Stage 7 depends on it, but
+the native audience screen should not be turned on for a real service until it
+has passed.
 
-**4. The gate through the UI**, then **the surface swap**, opt-in.
+**3. Still the owner's to decide:** the operator's quick toggles write only the
+program column, so clearing the words on the projector does not clear them on
+the NDI stream (stage-6-ndi.md §1).
 
 **Independently, [§8, the manual test list](#8-the-manual-test-list-stages-1-to-5)**
-is still untouched, and Stage 6 adds to it (section E).
+is still untouched.
 
 ## 5. What the Rust core contains today
 
@@ -282,6 +288,7 @@ commands/      thin: deserialise, delegate, map to AppResult
   mini_lyrics.rs get_mini_lyrics_payload · save_mini_lyrics
                  respond_mini_lyrics_save
   ndi.rs         start_ndi_output · stop_ndi_output · get_ndi_status
+                 list_ndi_sources · start_ndi_input · stop_ndi_input
   output.rs      get_output_scene (what is ON SCREEN) · send_to_output
                  set/is_output_frozen
   permissions.rs request/get microphone and camera access
@@ -291,6 +298,7 @@ commands/      thin: deserialise, delegate, map to AppResult
                  set_presentation_deck · go_to_slide · next/previous_slide
                  reconcile_presentation_services
   speech.rs      request_speech_token · report_speech_usage
+  surface.rs     get_output_surface · set_output_surface_native
   window.rs      open_window · close_window · open/close_mini_lyrics_window
                  list_open_windows
 services/      domain logic, most of it runtime-free and tested
@@ -332,11 +340,16 @@ services/      domain logic, most of it runtime-free and tested
     output.rs          the send loop, NdiStatus, OutputWorker. No Tauri.
                        NOTHING ON THIS THREAD MAY PANIC: release aborts on panic.
     stream.rs          what the running app draws into it
+    input.rs           receiving a source for a prop: throttle, scale, JPEG
   permissions.rs     AVFoundation microphone/camera authorisation
   compositor/        THE frame pipeline (ADR-001). Rasterises on the CPU with
                      tiny-skia, not wgpu — see frame.rs for why. Every layer
                      refuses to guess rather than painting over the lyrics.
     color.rs           CSS colours; an unrecognised one paints nothing
+    filters.rs         mediaFilterCSS: the colour matrices and the box blur
+    optical_size.rs    variable fonts instanced at the size they are drawn
+    slide_text.rs      scripture and the plain-text fallback, as the window
+                       lays them out
     frame.rs           the buffer, and to_bgra() for NDI
     geometry.rs        deck units to frame units
     images.rs          decode and object-fit
@@ -360,6 +373,11 @@ services/      domain logic, most of it runtime-free and tested
                      bounds on moving between them. No Tauri types.
   slide.rs           what a slide is made of, typed for the compositor. Unknown
                      types and fields survive rather than blanking the screen.
+  surface/           the opt-in native audience screen. The webview is the
+                     fallback: it draws everything until `presenting`.
+    mod.rs             the loop, the handover delays, SurfaceWorker. No Tauri.
+    macos.rs           the NSView below the WKWebView, and drawsBackground
+    stream.rs          what the running app draws onto it
   shortcuts.rs       Control+Alt+Space
   speech.rs          AssemblyAI token broker transport
   window.rs          building, showing, placing and closing windows
@@ -372,6 +390,8 @@ state/
   file_state.rs         media folders + the live scope they define
   looks_state.rs        the live layer flags, persisted
   ndi_state.rs          the loaded NDI runtime and the running stream. In memory.
+  ndi_input_state.rs    the one shared receiver, its clients, the latest JPEG
+  output_surface_state.rs the native-screen setting, persisted, and its view
   output_state.rs       the operator's scene, what is on screen, and the freeze
                         flag. In memory.
   persist.rs            load-or-default and atomic save, shared
@@ -383,7 +403,7 @@ errors.rs      the single AppError crossing the boundary: { kind, message }
 
 **Events emitted to the frontend.** `display:list-changed`, `looks:changed`,
 `output:scene-changed`, `presentation:changed`, `audio:changed`,
-`playback:changed`, `output-window-closed`,
+`playback:changed`, `output-surface:changed`, `output-window-closed`,
 `media-stage-window-closed`, `worship-stage-window-closed`, `open-import`,
 `ai-operator:toggle-shortcut`, `auth-callback`, `mini-lyrics:save-request`.
 The `*-window-closed` names, `open-import`, `auth-callback` and the mini-lyrics
@@ -391,7 +411,7 @@ one match what Electron sends; the rest are new because what they carry is new.
 
 **Files the Rust core owns**, in one app-config directory:
 `display-preferences.json`, `media-folders.json`, `looks.json`,
-`service-position.json` and `audio.json`. Plus the auth session, which is in the OS keychain and
+`service-position.json`, `audio.json` and `output-surface.json`. Plus the auth session, which is in the OS keychain and
 not a file at all.
 
 **The TypeScript side** is `src/renderer/tauri/`:
@@ -421,7 +441,7 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 575 Rust (plus two ignored NDI loopback tests that need the
+**Test counts.** 634 Rust (plus two ignored NDI loopback tests that need the
 runtime), 127 JS. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
@@ -507,6 +527,18 @@ Verified by running it, not by reasoning:
   showing; the received frame looked at.
 - **The running app's NDI stream** received by a separate process: 1920×1080,
   28.9 fps on the debug build, started and stopped through the bridge.
+- **The compositor against Chrome** rendering the same markup: each line of a
+  four-line verse within 1–3 px, the plain-text fallback the same width and
+  about 5 px lower.
+- **The packaged app loading its bundled `libndi`** (6.3.0.3) rather than NDI
+  Tools' installed copy.
+- **NDI props in the running app** against a real source: listed, received
+  through `ndi-frame://` at 640×360, the shared receiver kept through one client
+  leaving and stopped after the last.
+- **The native audience screen in the running app**: attached and presenting
+  0.5 s after being turned on, a slide on it screen-captured, handed back to
+  the webview and captured again with the text in the same place, one view
+  after a rapid on-off-on, reattached when the window reopened.
 
 **Not verified — do not claim otherwise:**
 
@@ -530,10 +562,13 @@ Verified by running it, not by reasoning:
   a different claim and has not been made.
 - **Nobody has signed in under Tauri.** The session store, the refresh
   transport and the deep-link handler all have tests; the flow has never run.
-- **No service has gone out over NDI.** The app's own stream was received black,
-  because nothing was on screen; the content was proved only by the probe's own
-  scene. No NDI Tools receiver has watched it, the packaged build ships no
-  `libndi`, and the compositor does not yet draw scripture (known-issues §14).
+- **The NDI stream's frame rate since the parity work.** A compositor A/B shows
+  no slowdown, but every stream run since has been on a throttled or swapping
+  machine (stage-6-ndi.md §6).
+- **No service has gone out over NDI or onto the native screen.** The app's own
+  stream was received black, because nothing was on screen; the content was
+  proved by the probe's own scene and a harness slide. No NDI Tools receiver
+  has watched it, and the native screen has not been on a projector.
 
 ## 8. The manual test list, Stages 1 to 5
 
@@ -641,8 +676,8 @@ physical-versus-logical pixel mistake is invisible.
 - [ ] **Go live with a song over a background video** and watch it on the
       monitor. Expect it to follow the Looks window's **NDI** column, not the
       projector's (known-issues §13).
-- [ ] **Put scripture on screen.** Expect it **missing** from the stream until
-      known-issues §14 is fixed — confirming that is worth doing.
+- [ ] **Put scripture on screen**, a long verse and a short one. Expect the
+      stream to break the lines where the projector does.
 - [ ] **Freeze the output**, change slides, unfreeze. The stream should hold and
       catch up exactly as the projector does.
 - [ ] **Run a countdown timer** with the NDI column's Props layer on, and watch
@@ -650,9 +685,17 @@ physical-versus-logical pixel mistake is invisible.
 - [ ] Leave it running for **45 minutes**. Electron has run longer; the Rust
       sender has not.
 - [ ] Open **NDI Test Patterns**, add an NDI prop in the Layers panel, and pick
-      it. Blocked today: input, discovery in the UI and the CSP are not done.
+      it. Put the same source on two props, then remove one: the other should
+      keep its picture.
 - [ ] Quit NDI Test Patterns with the prop on screen and start it again. The
       prop should come back without anyone touching it.
+- [ ] Run the **packaged** app on a machine without NDI Tools and turn NDI on.
+      It should use the runtime inside the app.
+- [ ] **Settings → Audience screen → Draw natively**, with the output on the
+      projector. Go through a service: a song over a video, scripture, a
+      countdown, a YouTube prop, a message. Watch for any black frame when it is
+      turned on and off, and compare the words with it off. Expect softer text
+      only on a Retina or scaled 4K screen.
 
 To watch a stream from a terminal instead:
 `cargo run --release --example ndi_watch -- "Present Main Output" 10 frame.png`
@@ -691,12 +734,8 @@ whole picture without opening it.
 | 11 | Unfreezing the output does not catch the audience screen up | Medium | **Fixed** |
 | 12 | The Looks window and the operator window agree by polling | Medium | **Fixed** |
 | 13 | The Looks window's NDI column does nothing | Medium | **Fixed** under Tauri |
-| 14 | The compositor does not draw scripture, plain text, filters, or media the way the window does | **High** | Open — Stage 6 |
+| 14 | The compositor does not draw scripture, plain text, filters, or media the way the window does | High | **Fixed** |
 | 15 | Four compositor costs that stall a 30 fps stream | High | **Fixed** |
-
-**§14 is the one blocking Stage 6.** Nothing reaches an audience through the
-compositor except NDI today, but on NDI every item in it is a regression against
-Electron's captured window — Bible verses first.
 
 **§2 is the one to understand.** Four of its parts are done: the auth session
 is in the OS keychain, and the media folder list, the output layer flags and
@@ -726,7 +765,7 @@ the short version, for anyone deciding what to trust rather than what to do.
 | No window has been on a second monitor | The outstanding Stage 2 gate |
 | The audience window and both stage displays have never been opened | They render the Rust scene in code only |
 | Nobody has signed in | Session store, refresh transport and deep links are tested, never run |
-| The audience surface is still a webview | Deliberate: carried to Stage 6, where NDI consumes the same frames |
+| The native audience screen is opt-in | Deliberate, the owner's call, until it has run a service on a projector |
 | Nothing has run on Windows or Linux | The URL form, single-instance lock, argv deep links, keychain fallback and **video decode** are all macOS-only |
 
 ## 10. Working agreements
@@ -770,8 +809,10 @@ bun run desktop:tauri:build                     # production bundle
 cargo test --test ndi_loopback -- --ignored --nocapture
 cargo run --release --example ndi_stream_probe -- <video> [seconds] [frame.png|-] [program]
 cargo run --release --example ndi_watch -- "<source name>" [seconds] [frame.png]
+cargo run --release --example slide_text_sample              # scripture as the compositor draws it
+bun run --filter @present/desktop tauri:stage-ndi            # copy libndi in for a bundle
 bun run --filter @present/desktop tauri:check   # fmt + clippy -D warnings + tests
-bun run test                                    # 93 JS tests
+bun run test                                    # 127 JS tests
 bun run typecheck
 bun run lint
 node apps/desktop/scripts/check-tauri-version.mjs [--fix]
@@ -782,7 +823,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **485 Rust tests, 93 JS tests**, clippy/fmt/typecheck clean.
+Current: **634 Rust tests, 127 JS tests**, clippy/fmt/typecheck clean.
 
 ## 12. Installed skills
 
@@ -879,8 +920,35 @@ if asked.
 - **Settings stops NDI on launch when NDI is disabled there** — the Tauri origin
   starts with it disabled (known-issues §2). A stream started by hand dies
   about eight seconds in.
-- **The NDI runtime found first is `/usr/local/lib/libndi.dylib`** on this
-  machine (NDI Tools, 6.2.1), before grandi's 6.3.0.3 in `node_modules`. Set
-  `PRESENT_NDI_LIBRARY` to test a specific one.
+- **The NDI runtime found first** is the bundled copy in a packaged app, then
+  `/usr/local/lib/libndi.dylib` (NDI Tools, 6.2.1 on this machine), then in
+  debug builds grandi's 6.3.0.3 in `node_modules`. Set `PRESENT_NDI_LIBRARY` to
+  test a specific one.
+- **`allsorts` is why the crate declares Rust 1.83.** Downgrading the declared
+  version breaks the build, not a lint.
+- **Chromium sets a variable font's optical size from the pixel size; cosmic-text
+  does not.** Text drawn without `optical_size.rs` is about nine percent wider
+  than the window's, which moves line breaks. A face instanced under its own
+  family name is shadowed by the original — register the instance under an
+  alias.
+- **Parity was measured against Chrome, and Tauri's webview is WebKit.** The
+  Electron audience window is Chromium; the Tauri one is not. Compare against
+  the engine that matters for the question.
+- **`with_webview` runs its closure on the main thread.** Waiting for its answer
+  from the main thread — a synchronous command, a window event handler —
+  deadlocks. `OutputSurfaceState::attach` spawns a thread for that reason, and
+  the surface worker is signalled, never joined.
+- **Do not enable Tauri's `macos-private-api` to make a webview transparent.**
+  It turns wry's `transparent` on for every window. The surface sets
+  `drawsBackground` on the one webview it sits under, and restores it.
+- **The native surface is drawn at CSS size.** On a 2× screen it is upscaled.
+  Drawing at device pixels needs a scale through the whole compositor.
+- **This machine throttles and swaps.** An i7-8750H that has just run a release
+  build shows `kernel_task` near 100% CPU; with the browser open it has also
+  been 11.5 GB into a 12 GB swap. Frame times taken then are not comparable to
+  anything — on 2026-09-14 the pre-parity and current stream probes both got
+  under 2 fps back to back. Check `top`, `sysctl vm.loadavg` and
+  `sysctl vm.swapusage` before trusting a measurement, and A/B against the
+  previous commit rather than against a number in a doc.
 - JavaScript numbers are exact only to 2^53−1. Anything hashed or generated in
   Rust and sent to the UI as a number must respect that.

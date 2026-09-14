@@ -19,7 +19,7 @@ zero-behaviour-change change, per migration rule 4.
 | 11 | Unfreezing the output does not catch the audience screen up | Medium | **Fixed** |
 | 12 | The Looks window and the operator window agree by polling | Medium | **Fixed** |
 | 13 | The Looks window's NDI column does nothing | Medium | **Fixed** under Tauri |
-| 14 | The compositor does not draw scripture, plain text, filters, or media the way the window does | **High** | Open — Stage 6 |
+| 14 | The compositor does not draw scripture, plain text, filters, or media the way the window does | **High** | **Fixed** |
 | 15 | Four compositor costs that stall a 30 fps stream | High | **Fixed** |
 
 ---
@@ -419,7 +419,7 @@ Electron is untouched.
 
 ---
 
-## 14. The compositor does not draw what the audience window draws
+## 14. The compositor does not draw what the audience window draws — FIXED
 
 Found reading `OutputWindow.tsx` against `services/compositor` while wiring NDI,
 which is the compositor's first real consumer. ADR-001 requires the two
@@ -443,9 +443,18 @@ one is a regression on the stream, and it would be one on the projector once the
 surface swap lands. Nothing in Tauri reaches an audience through the compositor
 today except NDI.
 
-**Fix (Stage 6):** parity first for scripture, then media fit and order, then
-filters, then plain text, each pinned by a pixel test against what the window
-does. See stage-6-ndi.md §6 and §9.
+**Fixed** (Stage 6, `d6dbc99`). Scripture is `ScriptureTextLayer` ported, the
+plain fallback is `CanvasSlideLayer`'s squeezed line, media is letterboxed and
+decoded at its own aspect ratio, the slide colour is over the media, and the
+seven filter functions apply to the media alone. A fifth gap turned up on the
+way: **Inter's optical size**. Chromium on macOS sets the `opsz` axis from the
+pixel size and cosmic-text does not, so every line came out about nine percent
+wider and verses broke in different places; faces with that axis are now
+instanced at the size they are drawn.
+
+Checked against Chrome rendering the same markup at 1920×1080: each line of a
+four-line verse within 1–3 px, the plain-text line the same width and about
+5 px lower. What is still different is in stage-6-ndi.md §6.
 
 ---
 
