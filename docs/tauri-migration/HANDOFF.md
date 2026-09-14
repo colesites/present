@@ -36,7 +36,7 @@ the audience screen is a serious bug, not a rough edge.
 | [stage-0-audit.md](stage-0-audit.md) | The full audit. Architecture map, all 79 IPC channels, media/audio/output pipeline, state model, native deps, build system, 31-row migration matrix, risks. **The reference for anything about how Electron does it today.** |
 | [adr-002-video-decode.md](adr-002-video-decode.md) | Video is decoded by the OS, not a bundled FFmpeg. What that costs in containers, and what their own library says about it. |
 | [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. **Amended**: the surface is a hybrid, with a webview layer above it for YouTube and capture props. |
-| [known-issues.md](known-issues.md) | Fifteen bugs found so far, each assigned to the stage that owns the fix. Eleven fixed or partly fixed. |
+| [known-issues.md](known-issues.md) | Sixteen bugs found so far, each assigned to the stage that owns the fix. Twelve fixed or partly fixed. |
 | [stage-1-tauri-skeleton.md](stage-1-tauri-skeleton.md) | The Tauri shell beside Electron. |
 | [stage-2-displays.md](stage-2-displays.md) | Display enumeration, identity, persistence, monitor names. |
 | [stage-2-windows.md](stage-2-windows.md) | All eight windows in Rust: specs as data, the output hardening, crash policy, the physical/logical placement trap. |
@@ -241,15 +241,8 @@ subsystem, then characterise before moving, as every stage has. Two known
 issues are already assigned there: §5 (`vosk`) and §10 (no webview crash
 recovery on Windows and Linux).
 
-Two of the audit's open questions (§13) land in Stage 7 and are **still the
-owner's to answer** before their slices start:
-
-- **PPTX** — ship Python as a sidecar (about 40 MB an installer, and
-  `python-pptx` with it) or port `parse_pptx.py` to Rust. Today a machine
-  without Python cannot import PPTX at all (audit §10.7).
-- **Browser mode** — nine channels on Electron's `BrowserView` (audit §10.2).
-  Tauri's child webviews are behind the `unstable` feature; the alternatives are
-  a separate real window, or deferring the feature past the cutover.
+The audit's two remaining open questions (§13) land in Stage 7. **The owner
+answered both on 2026-09-14** — see §6.
 
 **2. The owner's Stage 6 gate**, [§8 E](#e-ndi--stage-6-needs-ndi-tools-installed-on-this-machine).
 Needs a person, NDI Tools and a service. Nothing in Stage 7 depends on it, but
@@ -461,6 +454,16 @@ call. Exception: zero-behaviour-change fixes are fine to make now.
 
 **The web app stays the AssemblyAI token broker.** The desktop must never carry
 an AssemblyAI key. Only the transport moved to Rust.
+
+**PPTX import is ported to Rust** (owner, 2026-09-14), not shipped as a Python
+sidecar. No machine needs Python, and no installer grows by 40 MB. It needs
+characterisation against real PPTX files so the imported slides match what
+`parse_pptx.py` produces.
+
+**Browser mode uses Tauri's unstable child webviews** (owner, 2026-09-14), so it
+stays inside the operator window as `BrowserView` has it. The cost, accepted: a
+feature Tauri marks unstable, which can change between versions — pin the Tauri
+version and re-test browser mode on every upgrade.
 
 **Vite for Tauri, Webpack stays for Electron.** Forge's Webpack plugin is bound
 to Forge. Two bundlers coexist; neither touches the other's inputs.
@@ -736,6 +739,7 @@ whole picture without opening it.
 | 13 | The Looks window's NDI column does nothing | Medium | **Fixed** under Tauri |
 | 14 | The compositor does not draw scripture, plain text, filters, or media the way the window does | High | **Fixed** |
 | 15 | Four compositor costs that stall a 30 fps stream | High | **Fixed** |
+| 16 | Both stage displays were blank under Tauri | High | **Fixed** |
 
 **§2 is the one to understand.** Four of its parts are done: the auth session
 is in the OS keychain, and the media folder list, the output layer flags and
@@ -763,7 +767,7 @@ the short version, for anyone deciding what to trust rather than what to do.
 | **No service has been run end to end under Tauri** | The largest gap in the whole migration |
 | **No audio has come out of a speaker** | The single audio path is proven by tests and a startup gate, not by hearing it |
 | No window has been on a second monitor | The outstanding Stage 2 gate |
-| The audience window and both stage displays have never been opened | They render the Rust scene in code only |
+| No stage display has been used in a service | Both were blank under Tauri until Stage 7 (known-issues §16); fixed and checked by harness, never by a person |
 | Nobody has signed in | Session store, refresh transport and deep links are tested, never run |
 | The native audience screen is opt-in | Deliberate, the owner's call, until it has run a service on a projector |
 | Nothing has run on Windows or Linux | The URL form, single-instance lock, argv deep links, keychain fallback and **video decode** are all macOS-only |

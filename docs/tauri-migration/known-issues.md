@@ -21,6 +21,7 @@ zero-behaviour-change change, per migration rule 4.
 | 13 | The Looks window's NDI column does nothing | Medium | **Fixed** under Tauri |
 | 14 | The compositor does not draw scripture, plain text, filters, or media the way the window does | **High** | **Fixed** |
 | 15 | Four compositor costs that stall a 30 fps stream | High | **Fixed** |
+| 16 | Both stage displays were blank under Tauri | High | **Fixed** |
 
 ---
 
@@ -476,3 +477,21 @@ second. Each cause was affordable for Stage 5's one-off renders:
 
 **Fixed** (Stage 6). After: 30.0 fps received, no gap over 50 ms, with and
 without the timer showing. Details in stage-6-ndi.md §5.
+
+---
+
+## 16. Both stage displays were blank under Tauri — FIXED
+
+A Tauri regression, not an Electron bug. Stage 4's bridge sent `sendToStage`
+and `sendToWorshipStage` to `send_to_output`, on the reasoning that the stage
+displays would render the one Rust scene. They do not: the confidence monitor
+shows the **next** slide, which no scene carries, and both windows still
+listened on `onStageData` and `onWorshipStageData`, which nothing delivered.
+`send_to_output` has no `stage-content` variant, so those updates were refused,
+and the bridge swallowed the error. No test covered it and no window had been
+opened under Tauri, which is how it survived two stages.
+
+**Fixed** (Stage 7, `a6458c6`): the stage displays have their own feed again,
+kept per type in Rust so a display opened mid-service is sent what it missed.
+Verified with each window reporting its own rendered text. Details in
+stage-7-subsystems.md §4.
