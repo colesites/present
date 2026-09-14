@@ -12,6 +12,8 @@
     "tauri:build": "tauri build",
     "tauri:vite:dev": "vite",
     "tauri:vite:build": "vite build --mode production",
+    "tauri:stage-ndi": "node scripts/stage-tauri-ndi.mjs",
+    "tauri:before-build": "node scripts/stage-tauri-ndi.mjs && bun run tauri:vite:build",
     "tauri:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml",
     "package": "electron-forge package",
     "make": "electron-forge make",

@@ -5,7 +5,7 @@
   "identifier": "space.multivrs.present",
   "build": {
     "beforeDevCommand": "bun run tauri:vite:dev",
-    "beforeBuildCommand": "bun run tauri:vite:build",
+    "beforeBuildCommand": "bun run tauri:before-build",
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../dist-tauri"
   },
@@ -29,6 +29,9 @@
     "shortDescription": "Church presentation software",
     "longDescription": "Present — church presentation software for worship services.",
     "copyright": "Present",
+    "resources": {
+      "ndi/": "ndi/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
