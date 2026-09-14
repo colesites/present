@@ -1,6 +1,6 @@
 # Stage 7 — the remaining subsystems
 
-**Status:** in progress. Bibles are on Rust, and the stage displays have a feed again. Fonts are next.
+**Status:** in progress. Bibles, fonts, the AI Operator's tool list and the error log are on Rust, and the stage displays have a feed again. Next: the remaining browser-storage settings, `vosk`, and crash recovery off macOS; then the PPTX parser and browser mode.
 
 The audit's content for this stage is Bible, fonts, the PPTX importer, auth,
 the AI Operator, error reporting and settings; its gate is a parity checklist.
@@ -23,17 +23,16 @@ The bridge reports every `electronAPI` call it does not have. Against
 | Subsystem | Methods | Slice |
 |---|---|---|
 | Bible | `listBundledBibles` · `readBundledBible` · `fetchHostedBibleCatalog` | **done**, §3 |
-| Fonts | `getSystemFonts` · `getSystemFontFaces` · `pickFontFile` · `installCustomFonts` · `getCustomFonts` — on `window.fontAPI`, which Tauri does not install at all | next |
-| AI Operator | `listAiOperatorTools` | |
-| Speech | `requestAssemblyAiToken` | check: Stage 3 moved the transport as `request_speech_token` |
+| Fonts | `getSystemFonts` · `getSystemFontFaces` · `pickFontFile` · `installCustomFonts` · `getCustomFonts` — on `window.fontAPI`, which Tauri did not install at all | **done**, §5 |
+| AI Operator | `listAiOperatorTools` | **done**, §6 |
+| Speech | `requestAssemblyAiToken` | **not needed**, §6 — nothing calls it |
 | PPTX | `openFile` · `parseFile` — on `window.pptxAPI`, likewise not installed | the Rust parser |
 | Browser mode | `setBrowserModeEnabled` · `setBrowserModeBounds` · `browserNavigate` · `browserBack` · `browserForward` · `browserReload` · `setBrowserProjectionTarget` · `getBrowserModeState` · `fetchBrowserSuggestions` · `onBrowserModeStateChanged` · `onBrowserFocusAddress` | child webviews |
 | Stage displays | `onStageData` · `onWorshipStageData` (`onOutputData` is unused under Tauri) | **done**, §4 — they were blank |
 
 Plus two known issues assigned here: §5 (`vosk`, never imported) and §10 (no
-webview crash recovery on Windows and Linux), and error reporting, whose
-renderer half is bridged into the Rust log but whose redacting ndjson log is
-still Electron's.
+webview crash recovery on Windows and Linux), and error reporting — **done**,
+§7.
 
 ## 3. Bibles
 
@@ -109,3 +108,83 @@ scripture slide, which it draws as text.
 
 **Not verified:** a person watching either display through a service; the
 worship stage's background media.
+
+## 5. Fonts
+
+**Characterised first**, against the real thing. `src/shared/lib/font-catalog.mjs`
+holds the rules from `shared/lib/font.ts` and `font.service.ts` — which import it
+now — plus a port of the JavaScript half of `font-list` 2.0.2 and the guesses its
+macOS helper makes from a PostScript name. `tests/font-catalog.test.mjs` pins
+them, each assertion checked against a mutation, and on a Mac with font-list
+installed one test runs the helper binaries and the library and requires the
+port to match exactly: all 186 families on this machine do.
+
+Quirks kept: `"Extra Bold"` is 700 (the earlier hint, `bold`, is a whole word
+there) while `"ExtraBold"` is 800; `Montserrat-SemiBoldItalic.ttf` is 400 with its
+whole name as its label; only ASCII letters start a title-cased word; faces
+sort by one comma-joined string by UTF-16 code unit.
+
+**What moved** (`3038b6e`):
+
+- the system list comes from `NSFontManager` on the main thread, as the helpers
+  read it: every family, and each family's first member's PostScript name
+- `services/fonts.rs` reproduces the JavaScript regular expressions by hand;
+  the `regex` crate's `\b` is Unicode-aware and would disagree
+- installed fonts copy into `custom-fonts` in the app's data folder
+- **only picked fonts install**: the picker grants each file to the scope and
+  `install_custom_fonts` resolves through it, where Electron copied any path
+- `window.fontAPI` is installed by the bridge; Tauri had never had it, so the
+  pickers showed their seven-family fallback
+
+**Verified:** `examples/font_catalog_probe` prints exactly what Electron's
+pipeline prints on this Mac — 186 families and 186 faces, identical JSON (the
+command to produce Electron's side is in the example's header). In the running
+app `window.fontAPI` listed both, and refused to install a file not picked.
+
+**Costs and gaps.** The first system-font call takes about 450 ms on the main
+thread (24 ms after); Electron spent a second in a child process instead. The
+Windows and Linux lists come from fontdb and have not been compared with
+Electron. Fonts installed under Electron live in its own data folder and are not
+seen here — known-issues §2. Installing through the picker has not been clicked
+through by a person.
+
+## 6. The AI Operator's tool list, and the speech token
+
+**Tool list** (`e23e0f1`): the 46 definitions moved from `operator-tools.ts`
+into `src/shared/ai-operator/present-tools.json`, checked deep-equal to the
+TypeScript before it was removed. Electron imports the JSON; Rust compiles it in
+with `include_str!`, so the two cannot drift. `tests/ai-operator-tools.test.mjs`
+pins its shape. Nothing in the renderer calls `listAiOperatorTools` — the
+operator runs in the operator window with its own tool provider — so this keeps
+the channel answering rather than fixing anything visible.
+
+**Speech token: not ported, on purpose.** Nothing calls
+`electronAPI.requestAssemblyAiToken`. Under Tauri, voice search already gets its
+token through `request_speech_token` (Stage 3). Electron's handler also falls back
+to a direct AssemblyAI token, which the desktop is not meant to hold; bridging it
+would reintroduce that path.
+
+## 7. The error log
+
+**Characterised first** (`7915d7a`): the entry shape, rotation and renderer
+mapping moved into `src/main/lib/error-log.mjs`; `tests/error-log.test.mjs` pins
+them and the redaction as exact output — `bearer` in any case becomes
+`Bearer [REDACTED]`, a token value runs to whitespace (a no-break space counts)
+or `&`, 80+ credential characters go between ASCII word boundaries, the text is
+cut to 20 000 UTF-16 units.
+
+**What moved** (`d6b34ba`): `services/error_log.rs` writes
+`logs/present-errors.ndjson` in the app's data folder, one redacted line an
+error, rotated to `.1` at 2 MiB, mode 0600.
+
+| Electron records | Tauri records |
+|---|---|
+| `report-renderer-error` | `report_renderer_error`, any payload, as Electron accepts |
+| main-process `uncaughtException` / `unhandledRejection` | a Rust panic, from a panic hook that runs before the release build aborts |
+| `render-process-gone` | a webview content process terminating (macOS only) |
+| `did-fail-load`, `child-process-gone` | nothing — Tauri reports neither |
+
+**Verified in the running app:** a real uncaught error and a real unhandled
+rejection went through the renderer's own handlers into the file, redacted, mode
+0600; a non-object report was dropped. The panic hook is tested in its own test
+binary (`tests/panic_hook.rs`), because a hook is process-wide.
