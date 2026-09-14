@@ -2,17 +2,16 @@ import fs from "fs/promises";
 import path from "path";
 import { app, crashReporter, type WebContents } from "electron";
 import { redactDiagnosticText } from "../lib/diagnostic-redaction.mjs";
+import {
+  ERROR_LOG_DIRECTORY,
+  ERROR_LOG_FILE_NAME,
+  errorLogLine,
+  rendererErrorEvent,
+  shouldRotateErrorLog,
+  type PresentErrorEvent,
+} from "../lib/error-log.mjs";
 
-const ERROR_LOG_FILE_NAME = "present-errors.ndjson";
-const ERROR_LOG_MAX_BYTES = 2 * 1024 * 1024;
-
-export type PresentErrorEvent = {
-  category: "main" | "renderer" | "child-process";
-  message: string;
-  name?: string;
-  stack?: string;
-  context?: Record<string, unknown>;
-};
+export type { PresentErrorEvent };
 
 let initialized = false;
 let writeQueue: Promise<void> = Promise.resolve();
@@ -32,12 +31,12 @@ const normalizeUnknownError = (error: unknown): Pick<PresentErrorEvent, "message
 };
 
 const getErrorLogPath = (): string =>
-  path.join(app.getPath("userData"), "logs", ERROR_LOG_FILE_NAME);
+  path.join(app.getPath("userData"), ERROR_LOG_DIRECTORY, ERROR_LOG_FILE_NAME);
 
 const rotateLogIfNeeded = async (filePath: string): Promise<void> => {
   try {
     const stats = await fs.stat(filePath);
-    if (stats.size < ERROR_LOG_MAX_BYTES) {
+    if (!shouldRotateErrorLog(stats.size)) {
       return;
     }
     await fs.rename(filePath, `${filePath}.1`).catch(async () => {
@@ -55,17 +54,12 @@ export const recordPresentError = (event: PresentErrorEvent): void => {
       const filePath = getErrorLogPath();
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await rotateLogIfNeeded(filePath);
-      const entry = {
+      const line = errorLogLine(event, {
         appVersion: app.getVersion(),
-        category: event.category,
-        context: event.context ?? {},
-        message: redactDiagnosticText(event.message),
-        name: event.name ? redactDiagnosticText(event.name) : undefined,
-        occurredAt: new Date().toISOString(),
         platform: process.platform,
-        stack: event.stack ? redactDiagnosticText(event.stack) : undefined,
-      };
-      await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, {
+        occurredAt: new Date(),
+      });
+      await fs.appendFile(filePath, `${line}\n`, {
         encoding: "utf8",
         mode: 0o600,
       });
@@ -145,18 +139,8 @@ export const initializeErrorReporting = (): void => {
 };
 
 export const recordRendererError = (payload: unknown): void => {
-  if (!payload || typeof payload !== "object") {
-    return;
+  const event = rendererErrorEvent(payload);
+  if (event) {
+    recordPresentError(event);
   }
-  const candidate = payload as Record<string, unknown>;
-  const message = typeof candidate.message === "string" ? candidate.message : "Renderer error";
-  recordPresentError({
-    category: "renderer",
-    message,
-    name: typeof candidate.name === "string" ? candidate.name : undefined,
-    stack: typeof candidate.stack === "string" ? candidate.stack : undefined,
-    context: {
-      source: typeof candidate.source === "string" ? candidate.source : "renderer",
-    },
-  });
 };
