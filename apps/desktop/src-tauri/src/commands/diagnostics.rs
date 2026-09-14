@@ -8,9 +8,13 @@
 //!
 //! Temporary: delete once the subsystems it informs have migrated.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
+use tauri::State;
 
 use crate::errors::AppResult;
+use crate::services::error_log::{self, ErrorLog};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,38 +62,32 @@ pub fn report_diagnostic(message: String) -> AppResult<()> {
 
 /// One error caught by the renderer's global handlers.
 ///
-/// Matches what `main-renderer.ts` sends on `window.error` and
-/// `unhandledrejection`. Under Electron this reaches
-/// `error-reporting.service.ts`, which redacts it and appends to an ndjson log;
-/// that whole service is Stage 7. Until then it goes to the Rust log, which is
-/// the difference between a diagnosable blank window and an undiagnosable one:
-/// the renderer's own console cannot be read from a terminal, and the call site
-/// is optional-chained, so under Tauri these errors were being dropped in
-/// silence.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RendererError {
-    pub message: String,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub stack: Option<String>,
-    #[serde(default)]
-    pub source: Option<String>,
-}
-
+/// What `main-renderer.ts` sends on `window.error` and `unhandledrejection`.
+/// Goes to the redacted local error log, as `recordRendererError` does under
+/// Electron, and to the Rust log, where a terminal can see it. Any payload is
+/// accepted, as Electron accepts any: one that is not an object is dropped, and
+/// what an object leaves out is filled in (`services/error_log.rs`).
 #[tauri::command]
-pub fn report_renderer_error(error: RendererError) -> AppResult<()> {
+pub async fn report_renderer_error(
+    log: State<'_, Arc<ErrorLog>>,
+    error: serde_json::Value,
+) -> AppResult<()> {
+    let Some(event) = error_log::renderer_event(&error) else {
+        return Ok(());
+    };
     tracing::error!(
-        source = error.source.as_deref().unwrap_or("unknown"),
-        name = error.name.as_deref().unwrap_or("Error"),
-        message = %error.message,
+        source = event.context.get("source").and_then(|value| value.as_str()).unwrap_or("renderer"),
+        name = event.name.as_deref().unwrap_or("Error"),
+        message = %error_log::redact(&event.message),
         "renderer error"
     );
-    if let Some(stack) = error.stack.as_deref() {
-        tracing::error!(%stack, "renderer error stack");
+    if let Some(stack) = event.stack.as_deref() {
+        tracing::error!(stack = %error_log::redact(stack), "renderer error stack");
     }
-    Ok(())
+    let log = Arc::clone(&log);
+    tauri::async_runtime::spawn_blocking(move || log.record(&event))
+        .await
+        .map_err(|join| crate::errors::AppError::Invalid(join.to_string()))
 }
 
 /// Records what the webview can do. Logged rather than stored: this exists to

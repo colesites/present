@@ -262,6 +262,18 @@ pub fn run() {
                 .path()
                 .app_config_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            // The redacted local error log, first, so a panic in anything set up
+            // after it is written down before the release build aborts.
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| config_dir.clone());
+            let error_log = std::sync::Arc::new(services::error_log::ErrorLog::new(
+                &data_dir,
+                env!("CARGO_PKG_VERSION"),
+            ));
+            services::error_log::record_panics(std::sync::Arc::clone(&error_log));
+            app.manage(error_log);
             app.manage(state::DisplayState::load(&config_dir));
             // The media folders, and with them the only paths `local-media://`
             // will serve. Registered before any window exists so the operator
@@ -393,6 +405,22 @@ fn recover_from_webview_crash<R: tauri::Runtime>(webview: &tauri::webview::Webvi
 
     let label = webview.label().to_owned();
     let app = webview.app_handle().clone();
+
+    if let Some(log) = app.try_state::<std::sync::Arc<services::error_log::ErrorLog>>() {
+        let mut context = serde_json::Map::new();
+        context.insert("label".to_owned(), serde_json::Value::String(label.clone()));
+        context.insert(
+            "reason".to_owned(),
+            serde_json::Value::String("web-content-process-terminated".to_owned()),
+        );
+        log.record(&services::error_log::ErrorEvent {
+            category: services::error_log::Category::Renderer,
+            message: "Renderer process exited: web-content-process-terminated".to_owned(),
+            name: None,
+            stack: None,
+            context,
+        });
+    }
 
     let Some(policy) = services::window_spec::crash_policy_for_label(&label) else {
         tracing::error!(%label, "webview content process died in an unrecognised window");

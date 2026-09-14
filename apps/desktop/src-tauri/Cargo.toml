@@ -56,6 +56,9 @@ libloading = "0.8"
 # features: flate2's pure-Rust backend rather than a system zlib. Its 1.83 is
 # why this crate declares 1.83.
 allsorts = { version = "0.17", default-features = false, features = ["flate2_rust"] }
+# The error log's redaction patterns (`services/error_log.rs`). Already in the
+# tree through several dependencies.
+regex = "1"
 
 # Desktop-only plugins. The crate keeps a mobile entry point (see `[lib]`), and
 # neither of these builds for iOS or Android.

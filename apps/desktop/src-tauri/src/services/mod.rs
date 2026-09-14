@@ -12,6 +12,7 @@ pub mod display;
 pub mod display_identity;
 pub mod display_names;
 pub mod display_watch;
+pub mod error_log;
 pub mod file_scope;
 pub mod filesystem;
 pub mod fonts;
