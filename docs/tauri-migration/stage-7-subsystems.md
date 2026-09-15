@@ -1,6 +1,6 @@
 # Stage 7 — the remaining subsystems
 
-**Status:** in progress. Done: Bibles, fonts, the AI Operator's tool list, the error log, the stage displays' feed, browser-storage settings in Rust, `vosk` removed, crash recovery on Windows and Linux. Left: the PPTX parser and browser mode.
+**Status:** in progress. Done: Bibles, fonts, the AI Operator's tool list, the error log, the stage displays' feed, browser-storage settings in Rust, `vosk` removed, crash recovery on Windows and Linux, the PPTX importer in Rust. Left: browser mode.
 
 The audit's content for this stage is Bible, fonts, the PPTX importer, auth,
 the AI Operator, error reporting and settings; its gate is a parity checklist.
@@ -26,7 +26,7 @@ The bridge reports every `electronAPI` call it does not have. Against
 | Fonts | `getSystemFonts` · `getSystemFontFaces` · `pickFontFile` · `installCustomFonts` · `getCustomFonts` — on `window.fontAPI`, which Tauri did not install at all | **done**, §5 |
 | AI Operator | `listAiOperatorTools` | **done**, §6 |
 | Speech | `requestAssemblyAiToken` | **not needed**, §6 — nothing calls it |
-| PPTX | `openFile` · `parseFile` — on `window.pptxAPI`, likewise not installed | the Rust parser |
+| PPTX | `openFile` · `parseFile` — on `window.pptxAPI`, likewise not installed | **done**, §9 |
 | Browser mode | `setBrowserModeEnabled` · `setBrowserModeBounds` · `browserNavigate` · `browserBack` · `browserForward` · `browserReload` · `setBrowserProjectionTarget` · `getBrowserModeState` · `fetchBrowserSuggestions` · `onBrowserModeStateChanged` · `onBrowserFocusAddress` | child webviews |
 | Stage displays | `onStageData` · `onWorshipStageData` (`onOutputData` is unused under Tauri) | **done**, §4 — they were blank |
 
@@ -259,3 +259,63 @@ check. The recipe, for whoever needs it again (all outside the repository):
 
 That run also found **known-issues §17**: two keychain constants that CI's Linux
 clippy would fail on. Fixed in `498b9c5`.
+
+## 9. PowerPoint import, without Python
+
+Under Electron, `parse-pptx` ran `parse_pptx.py` with the machine's own
+`python3` and `python-pptx`, then converted its payload in JavaScript. A machine
+without both could not import a PPTX. The owner chose a Rust port over shipping
+Python (§1).
+
+**Characterised first** (`1dc0f9d`): the conversion moved verbatim into
+`src/main/lib/pptx-payload.mjs`; `scripts/make-pptx-fixtures.py` builds four
+decks covering placeholders inheriting from their layout, theme colours with
+`lumMod`/`lumOff`, spacing in points and as a multiple, groups, a merged table,
+PNG/JPEG/GIF pictures, solid, themed and picture backgrounds, a picture
+placeholder and an empty deck; `tests/fixtures/pptx/*.expected.json` are what
+the Electron importer made of them.
+
+**What moved** (`32e1999`): `services/pptx` — `package.rs` the zip and its
+relationships, `payload.rs` the Python, `convert.rs` the JavaScript,
+`numbers.rs` Python's arithmetic, `image.rs` Pillow's format detection.
+`open_pptx` and `parse_pptx` serve `window.pptxAPI`, which Tauri had not
+installed; `parse_pptx` reads only a file the operator picked, through the
+presentation picker or `open_pptx`.
+
+The output has to be the Electron importer's exactly, so the port reproduces
+python-pptx rather than the file format. The places that decide a slide:
+
+- every `p:sp` is text, whatever its geometry; one with no text body gets an
+  empty paragraph
+- a picture in a picture placeholder is dropped, as are charts, OLE objects
+  and movies
+- a placeholder without its own position takes its layout's (by `idx`), which
+  takes its master's (by type)
+- a group adds its position to its children's own coordinates, without its
+  child transform
+- a run's colour comes from python-pptx's `ColorFormat`: transforms on an RGB
+  colour are ignored, and anything but RGB or a theme colour is black
+- line spacing in points arrives as an EMU count (30 pt is 571 500)
+- `round(x, 4)` rounds the exact binary value, ties to even; a JPEG with a
+  multi-picture index is `MPO` to Pillow and exported as an empty PNG
+
+`serde_json`'s `float_roundtrip` is on: the default parser can read a float
+one bit away, which made an exact comparison fail on identical output.
+
+**Verified:**
+
+- the four fixtures, exactly, in `cargo test`
+- 26 real decks from the owner's machine, compared locally against
+  `parse_pptx.py` and the conversion: all 26 identical. Not committed, and not
+  copied anywhere
+- the running app: the fixtures through `window.pptxAPI.parseFile` came back
+  equal to the recordings; a file outside the picked scope and a missing file
+  were refused (`denied`, `not-found`); a real 28 MB, seven-slide deck imported
+  through `importServicePresentationFile` into 7 slides and 75 elements
+
+**Speed**, the same 28 MB deck: 0.15 s in an optimised build (1.2 s the first
+time, from a cold disk cache), 2 s in a debug build; the Electron importer took
+2.7 to 3.7 s.
+
+**Not verified:** picking a file with the dialog by hand — the harness granted
+the fixtures' folder instead.
