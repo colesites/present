@@ -2759,6 +2759,7 @@ dependencies = [
  "block2",
  "objc2",
  "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation",
  "objc2-quartz-core",
 ]
@@ -3329,6 +3330,7 @@ dependencies = [
  "block2",
  "core-graphics",
  "cosmic-text",
+ "gtk",
  "image",
  "keyring",
  "libloading 0.8.9",
@@ -3341,6 +3343,8 @@ dependencies = [
  "objc2-core-video",
  "objc2-foundation",
  "objc2-quartz-core",
+ "objc2-web-kit",
+ "raw-window-handle",
  "regex",
  "reqwest 0.12.28",
  "roxmltree",
@@ -3361,6 +3365,8 @@ dependencies = [
  "tracing-subscriber",
  "webkit2gtk",
  "webview2-com",
+ "windows",
+ "wry",
  "zip",
 ]
 

@@ -70,6 +70,11 @@ rusty-leveldb = "4.0.1"
 # deflate, is needed.
 zip = { version = "2.4", default-features = false, features = ["deflate-flate2", "flate2"] }
 roxmltree = "0.20"
+# Browser mode's two webviews (`services/browser_mode/view.rs`), built directly
+# rather than as Tauri child webviews (stage-7-subsystems.md §10). Pinned to
+# the version Tauri resolves: a second wry would be a second webview runtime in
+# one process. Move it with Tauri.
+wry = { version = "=0.55.1", default-features = false, features = ["os-webview"] }
 
 # Desktop-only plugins. The crate keeps a mobile entry point (see `[lib]`), and
 # neither of these builds for iOS or Android.
@@ -98,16 +103,39 @@ keyring = { version = "3.6", default-features = false, features = ["windows-nati
 # The render process dying (`services/webview_crash.rs`). The version wry
 # uses, so the interfaces Tauri hands back are these crates' types.
 webview2-com = "0.38.2"
+# Browser mode's preview capture reads WebView2's PNG from a COM stream. The
+# version webview2-com uses.
+windows = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_Shell"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # The web process dying (`services/webview_crash.rs`). wry's version.
 webkit2gtk = "2.0.2"
+# Browser mode lays its webview over the window's own (`browser_mode/view`).
+# Tauri's and wry's version.
+gtk = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
 objc2 = "0.6"
+# Browser mode: WKWebView's history state and snapshots, and the view wry
+# attaches a child webview to (`browser_mode/view/native.rs`).
+objc2-web-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-app-kit",
+    "objc2-core-foundation",
+    "WKWebView",
+    "WKNavigation",
+    "WKSnapshotConfiguration",
+] }
+raw-window-handle = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",
+    # Browser mode's snapshot arrives as an NSImage.
+    "NSImage",
+    "NSImageRep",
+    "NSGraphicsContext",
+    "objc2-core-graphics",
     "NSScreen",
     # The natively drawn audience screen: a layer-backed view below the
     # webview (`services/surface/macos.rs`).
@@ -127,6 +155,9 @@ objc2-quartz-core = { version = "0.3", default-features = false, features = [
 ] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "std",
+    # Browser mode draws its snapshot into plain RGBA.
+    "CGContext",
+    "CGBitmapContext",
     "CGImage",
     "CGDataProvider",
     "CGColorSpace",

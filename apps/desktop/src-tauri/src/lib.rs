@@ -229,6 +229,15 @@ pub fn run() {
             commands::ndi::start_ndi_input,
             commands::ndi::stop_ndi_input,
             commands::ai_operator::list_ai_operator_tools,
+            commands::browser_mode::set_browser_mode_enabled,
+            commands::browser_mode::set_browser_mode_bounds,
+            commands::browser_mode::browser_navigate,
+            commands::browser_mode::browser_back,
+            commands::browser_mode::browser_forward,
+            commands::browser_mode::browser_reload,
+            commands::browser_mode::set_browser_projection_target,
+            commands::browser_mode::get_browser_mode_state,
+            commands::browser_mode::fetch_browser_suggestions,
             commands::pptx::open_pptx,
             commands::pptx::parse_pptx,
             commands::fonts::get_system_fonts,
@@ -291,6 +300,19 @@ pub fn run() {
             // will serve. Registered before any window exists so the operator
             // window's first media request already has a scope to check.
             app.manage(state::FileState::load(&config_dir));
+            // Browser mode (Stage 7). Its views report through `signals`, and
+            // are answered here, off the main thread they live on.
+            {
+                use services::browser_mode::{view::WryHost, BrowserMode};
+                let (signals, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+                let browser = BrowserMode::new(WryHost::new(app.handle().clone(), signals));
+                app.manage(std::sync::Arc::clone(&browser));
+                tauri::async_runtime::spawn(async move {
+                    while let Some(signal) = receiver.recv().await {
+                        browser.on_signal(signal).await;
+                    }
+                });
+            }
             // The output layer flags. Stage 4's first slice: what the
             // congregation sees is now owned here rather than in React, and
             // reaches the other windows as an event instead of a 400ms poll.

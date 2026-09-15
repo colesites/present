@@ -421,6 +421,27 @@ const bridge = {
   // --- Stage 7: the AI Operator's tool definitions ----------------------
   listAiOperatorTools: () => invoke("list_ai_operator_tools"),
 
+  // --- Stage 7: browser mode ---------------------------------------------
+  // Two wry webviews over the operator and audience windows
+  // (`services/browser_mode`). The state and address-bar events arrive as
+  // Tauri events instead of IPC messages.
+  setBrowserModeEnabled: (enabled: boolean) =>
+    invoke("set_browser_mode_enabled", { enabled: Boolean(enabled) }),
+  setBrowserModeBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+    invoke("set_browser_mode_bounds", { bounds }),
+  browserNavigate: (input: string) => invoke("browser_navigate", { input }),
+  browserBack: () => invoke("browser_back"),
+  browserForward: () => invoke("browser_forward"),
+  browserReload: () => invoke("browser_reload"),
+  setBrowserProjectionTarget: (target: "preview" | "main-output") =>
+    invoke("set_browser_projection_target", { target }),
+  getBrowserModeState: () => invoke("get_browser_mode_state"),
+  fetchBrowserSuggestions: (query: string) =>
+    invoke("fetch_browser_suggestions", { query, webAppBaseUrl: webAppBaseUrl() }),
+  onBrowserModeStateChanged: (callback: (state: unknown) => void) =>
+    subscribe("browser-state-changed", callback as (payload: never) => void),
+  onBrowserFocusAddress: (callback: () => void) => subscribe("browser-focus-address", callback),
+
   // --- Stage 7: Bibles -------------------------------------------------
   // The payloads of `list-bundled-bibles`, `read-bundled-bible` and
   // `fetch-hosted-bible-catalog`. A Bible's bytes come back as binary, not as
@@ -495,12 +516,6 @@ const reportMissing = (name: string) => {
 };
 
 /**
- * Install the bridge. Safe to call more than once; only the first takes effect.
- *
- * Six of the eight windows load the same HTML entry, so this runs once per open
- * window — hence the idempotence rather than an assertion.
- */
-/**
  * `window.fontAPI`, the preload's second global (`preload.ts:250-257`). The
  * font pickers read it directly, so under Tauri they had only their
  * seven-family fallback list until this existed.
@@ -523,6 +538,12 @@ const pptxApi = {
   parseFile: (filePath: string) => invoke("parse_pptx", { filePath }),
 };
 
+/**
+ * Install the bridge. Safe to call more than once; only the first takes effect.
+ *
+ * Six of the eight windows load the same HTML entry, so this runs once per open
+ * window — hence the idempotence rather than an assertion.
+ */
 export const installElectronBridge = (): void => {
   if (!isTauri()) return;
   if (!("pptxAPI" in window)) {
