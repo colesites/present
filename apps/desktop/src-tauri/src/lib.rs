@@ -14,20 +14,44 @@ use tauri::Manager;
 use services::window_spec::{spec_for, WindowRole};
 use state::{AppState, WindowState};
 
-/// Installs tracing. Verbosity comes from `RUST_LOG`, defaulting to `info` for
-/// our own crate and `warn` for dependencies so a release run is quiet.
+/// Installs tracing, to the terminal and to a daily log file
+/// (`services/log_files.rs`). Verbosity comes from `RUST_LOG`, defaulting to
+/// `info` for our own crate and `warn` for dependencies so a release run is
+/// quiet.
 fn init_tracing() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("warn,present_lib=info"));
 
+    // No file is not a reason to start without logging to the terminal.
+    let file = services::log_files::log_dir()
+        .ok_or_else(|| "no log folder on this system".to_owned())
+        .and_then(|dir| services::log_files::appender(&dir));
+    let (file_layer, file_error) = match file {
+        Ok(appender) => (
+            Some(
+                fmt::layer()
+                    .with_target(true)
+                    .with_ansi(false)
+                    .with_writer(appender),
+            ),
+            None,
+        ),
+        Err(error) => (None, Some(error)),
+    };
+
     // A second call would panic on the global-subscriber slot; ignore it so
     // tests and repeated entry points stay safe.
     let _ = tracing_subscriber::registry()
         .with(filter)
         .with(fmt::layer().with_target(true))
+        .with(file_layer)
         .try_init();
+
+    if let Some(error) = file_error {
+        tracing::warn!(%error, "logging to the terminal only");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

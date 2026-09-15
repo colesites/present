@@ -27,6 +27,10 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# The log as a file per day, kept a fortnight (`services/log_files.rs`).
+tracing-appender = "0.2"
+# Where that file goes, before Tauri's path resolver exists. Tauri's version.
+dirs = "6"
 # rustls rather than the system TLS stack, so the same code path is exercised on
 # macOS, Windows and Linux. No default features: we need neither blocking nor
 # cookies nor the compression codecs.
@@ -255,3 +259,10 @@ strip = false
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
+# Frame-time benchmarks (`benches/frame_time.rs`). No plotting: the numbers are
+# read in the terminal.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "frame_time"
+harness = false

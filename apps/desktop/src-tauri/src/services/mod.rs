@@ -17,6 +17,7 @@ pub mod error_log;
 pub mod file_scope;
 pub mod filesystem;
 pub mod fonts;
+pub mod log_files;
 pub mod looks;
 pub mod media_protocol;
 pub mod mini_lyrics;
