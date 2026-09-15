@@ -59,13 +59,17 @@ pub fn run() {
     }
 
     // The only hook Tauri offers for a dead webview content process, and it is
-    // macOS/iOS-only. Windows and Linux therefore have no crash recovery at
-    // all yet — recorded in docs/tauri-migration/stage-2-windows.md rather than
-    // papered over, because the Electron build recovers on all three.
+    // macOS/iOS-only. Windows and Linux register the platform webviews' own
+    // events per window instead (`services/webview_crash.rs`), because the
+    // Electron build recovers on all three (known-issues §10).
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
         builder = builder.on_web_content_process_terminate(|webview| {
-            recover_from_webview_crash(webview);
+            recover_from_webview_crash(
+                webview.app_handle(),
+                webview.label(),
+                "web-content-process-terminated",
+            );
         });
     }
 
@@ -402,26 +406,25 @@ fn handle_run_event(
 /// crash policy.
 ///
 /// Ports `render-process-gone` from `output.window.ts:83-92` and
-/// `main.window.ts:196-227`. Electron can tell a clean exit from a crash and
-/// ignores the former; this hook only ever fires on an abnormal termination, so
-/// there is no clean-exit case to skip.
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-fn recover_from_webview_crash<R: tauri::Runtime>(webview: &tauri::webview::Webview<R>) {
+/// `main.window.ts:196-227`, on every platform: Tauri's hook on macOS, and on
+/// Windows and Linux the platform webviews' own events, registered per window in
+/// `services/webview_crash.rs`. Each caller passes only abnormal terminations,
+/// so there is no clean-exit case to skip here.
+pub(crate) fn recover_from_webview_crash(app: &tauri::AppHandle, label: &str, reason: &str) {
     use services::window_spec::CrashAction;
 
-    let label = webview.label().to_owned();
-    let app = webview.app_handle().clone();
+    let label = label.to_owned();
 
     if let Some(log) = app.try_state::<std::sync::Arc<services::error_log::ErrorLog>>() {
         let mut context = serde_json::Map::new();
         context.insert("label".to_owned(), serde_json::Value::String(label.clone()));
         context.insert(
             "reason".to_owned(),
-            serde_json::Value::String("web-content-process-terminated".to_owned()),
+            serde_json::Value::String(reason.to_owned()),
         );
         log.record(&services::error_log::ErrorEvent {
             category: services::error_log::Category::Renderer,
-            message: "Renderer process exited: web-content-process-terminated".to_owned(),
+            message: format!("Renderer process exited: {reason}"),
             name: None,
             stack: None,
             context,
@@ -440,7 +443,7 @@ fn recover_from_webview_crash<R: tauri::Runtime>(webview: &tauri::webview::Webvi
 
     match state.on_crash(&label, policy) {
         CrashAction::Reload => {
-            tracing::error!(%label, "webview content process died; reloading");
+            tracing::error!(%label, %reason, "webview content process died; reloading");
             if let Some(window) = app.get_webview_window(&label) {
                 if let Err(error) = window.reload() {
                     tracing::error!(%label, %error, "reload after crash failed");

@@ -87,6 +87,13 @@ tauri-plugin-single-instance = { version = "2.4.4", features = ["deep-link"] }
 # declares.
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+# The render process dying (`services/webview_crash.rs`). The version wry
+# uses, so the interfaces Tauri hands back are these crates' types.
+webview2-com = "0.38.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The web process dying (`services/webview_crash.rs`). wry's version.
+webkit2gtk = "2.0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }

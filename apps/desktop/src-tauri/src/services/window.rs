@@ -279,6 +279,8 @@ pub fn open(
 
     spawn_show_watchdog(app, spec, Arc::clone(&shown));
     register_close_handler(app, &window, spec);
+    // Windows and Linux only; Tauri's own hook covers macOS (known-issues §10).
+    crate::services::webview_crash::watch(&window);
 
     // The operator's opt-in to the natively drawn audience screen. A no-op
     // when it is off, which it is by default.

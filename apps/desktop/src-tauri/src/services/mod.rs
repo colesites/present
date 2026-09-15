@@ -33,5 +33,6 @@ pub mod surface;
 pub mod system_fonts;
 pub mod video;
 pub mod web_storage;
+pub mod webview_crash;
 pub mod window;
 pub mod window_spec;
