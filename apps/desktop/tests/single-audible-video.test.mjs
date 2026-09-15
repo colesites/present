@@ -53,7 +53,9 @@ const videoElements = () =>
 test("every video element is accounted for", () => {
   const elements = videoElements();
   assert.ok(
-    elements.length >= 15,
+    // 13 since the media panel and Layers thumbnails became images
+    // (`VideoThumbnail.tsx`); a scanner that breaks finds far fewer.
+    elements.length >= 13,
     `found only ${elements.length} video elements; the scanner is probably broken`,
   );
 });

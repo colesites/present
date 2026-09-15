@@ -32,6 +32,7 @@ pub mod slide;
 pub mod speech;
 pub mod stage_relay;
 pub mod surface;
+pub mod thumbnails;
 pub mod system_fonts;
 pub mod video;
 pub mod web_storage;

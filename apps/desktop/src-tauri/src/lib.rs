@@ -238,6 +238,7 @@ pub fn run() {
             commands::browser_mode::set_browser_projection_target,
             commands::browser_mode::get_browser_mode_state,
             commands::browser_mode::fetch_browser_suggestions,
+            commands::thumbnails::get_media_thumbnail,
             commands::pptx::open_pptx,
             commands::pptx::parse_pptx,
             commands::fonts::get_system_fonts,
@@ -300,6 +301,7 @@ pub fn run() {
             // will serve. Registered before any window exists so the operator
             // window's first media request already has a scope to check.
             app.manage(state::FileState::load(&config_dir));
+            app.manage(commands::thumbnails::ThumbnailQueue::default());
             // Browser mode (Stage 7). Its views report through `signals`, and
             // are answered here, off the main thread they live on.
             {

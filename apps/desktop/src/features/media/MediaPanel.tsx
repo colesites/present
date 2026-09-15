@@ -65,6 +65,7 @@ import {
   ResizableHandle,
 } from "../../renderer/shared/components/ui/resizable";
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
+import { VideoThumbnail } from "./components/VideoThumbnail";
 
 type MediaFilter = "all" | "images" | "videos";
 
@@ -146,24 +147,11 @@ const MediaItemCard = memo(function MediaItemCard({
                 loading="lazy"
               />
             ) : (
-              <video
-                src={item.url}
-                aria-label={`${item.name} preview`}
-                className="h-full w-full object-contain"
-                muted
-                preload={isInView ? "metadata" : "none"}
-                playsInline
-                onLoadedMetadata={(e) => {
-                  if (!isInView) {
-                    return;
-                  }
-                  try {
-                    e.currentTarget.currentTime = 0.01;
-                    e.currentTarget.pause();
-                  } catch {
-                    // Ignore seek errors for unsupported formats.
-                  }
-                }}
+              <VideoThumbnail
+                path={item.path}
+                lastModified={item.lastModified}
+                name={item.name}
+                enabled={isInView}
               />
             )}
           </div>
