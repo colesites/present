@@ -181,6 +181,27 @@ pub fn select_media_file(
     Ok(Some(described(&path)))
 }
 
+/// A PowerPoint file to import (`pptx.ipc.ts:6-24`): its path, granted to the
+/// scope so `parse_pptx` may read it, or `None` when cancelled.
+pub fn select_pptx_file(
+    app: &AppHandle,
+    state: &FileState,
+    requester: Option<&WebviewWindow>,
+) -> AppResult<Option<String>> {
+    let Some(picked) = builder(app, requester)
+        .add_filter("PowerPoint Files", &["pptx"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    Ok(Some(
+        state
+            .grant_picked_file(&to_path(picked)?)?
+            .display()
+            .to_string(),
+    ))
+}
+
 /// Fonts to install. Multi-select; `None` when cancelled, as Electron returns
 /// `null` rather than an empty list.
 pub fn select_font_files(

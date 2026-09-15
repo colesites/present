@@ -514,8 +514,25 @@ const fontApi = {
   getCustomFonts: () => invoke("get_custom_fonts"),
 };
 
+/**
+ * `window.pptxAPI`, the preload's third global (`preload.ts:259-262`). The
+ * PowerPoint importer reads it; under Tauri the parse is Rust, with no Python.
+ */
+const pptxApi = {
+  openFile: () => invoke<string | null>("open_pptx"),
+  parseFile: (filePath: string) => invoke("parse_pptx", { filePath }),
+};
+
 export const installElectronBridge = (): void => {
   if (!isTauri()) return;
+  if (!("pptxAPI" in window)) {
+    Object.defineProperty(window, "pptxAPI", {
+      value: Object.freeze(pptxApi),
+      configurable: false,
+      enumerable: true,
+      writable: false,
+    });
+  }
   if (!("fontAPI" in window)) {
     Object.defineProperty(window, "fontAPI", {
       value: Object.freeze(fontApi),

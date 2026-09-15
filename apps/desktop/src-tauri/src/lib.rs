@@ -229,6 +229,8 @@ pub fn run() {
             commands::ndi::start_ndi_input,
             commands::ndi::stop_ndi_input,
             commands::ai_operator::list_ai_operator_tools,
+            commands::pptx::open_pptx,
+            commands::pptx::parse_pptx,
             commands::fonts::get_system_fonts,
             commands::fonts::get_system_font_faces,
             commands::fonts::pick_font_file,

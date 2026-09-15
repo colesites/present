@@ -21,6 +21,7 @@ pub mod ndi;
 pub mod output;
 pub mod permissions;
 pub mod playback;
+pub mod pptx;
 pub mod presentation;
 pub mod speech;
 pub mod stage;
