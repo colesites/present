@@ -21,7 +21,11 @@ use crate::errors::{AppError, AppResult};
 use crate::services::auth::{self, StoredSession};
 
 /// Keychain service and account. Stable: changing either signs everyone out.
+/// Only the platforms with a keychain backend use them; on Linux an unused
+/// constant fails CI's `clippy -D warnings`.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 const KEYCHAIN_SERVICE: &str = "space.multivrs.present";
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 const KEYCHAIN_ACCOUNT: &str = "desktop-auth-session";
 /// The Linux fallback, and the migration source on every platform.
 const SESSION_FILE: &str = "desktop-auth-session.json";
