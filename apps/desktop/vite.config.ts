@@ -60,6 +60,7 @@ export default defineConfig(({ mode }) => {
         input: {
           main: path.resolve(__dirname, "index.html"),
           output: path.resolve(__dirname, "output.html"),
+          splash: path.resolve(__dirname, "splash.html"),
         },
       },
     },

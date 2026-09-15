@@ -7,6 +7,7 @@ import ConvexClientProvider from "../shared/providers/ConvexClientProvider";
 import { QueryProvider } from "../shared/providers/QueryProvider";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "../shared/components/ui/sonner";
+import { WindowReadySignal } from "../tauri/window-ready";
 
 const rootElement = document.getElementById('root');
 
@@ -25,6 +26,7 @@ root.render(
         </ConvexClientProvider>
       </QueryProvider>
       <Toaster />
+      <WindowReadySignal />
     </ThemeProvider>
   </React.StrictMode>
 );

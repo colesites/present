@@ -1,19 +1,26 @@
-//! Crash bookkeeping for the windows the Rust core owns.
+//! Crash bookkeeping, and first paints still to come, for the windows the Rust
+//! core owns.
 //!
 //! Deliberately small. Which windows exist is Tauri's own question — asked with
 //! `get_webview_window(label)` — so duplicating that here would just create two
 //! answers that can disagree. What Tauri does not track is how often a window's
 //! content process has died, which is the input to the loop guard ported from
-//! `main.window.ts:196-227`.
+//! `main.window.ts:196-227`, nor what showing a hidden window takes once its
+//! page has drawn.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::services::window_spec::{decide_crash_recovery, CrashAction, CrashHistory, CrashPolicy};
+use crate::services::window_spec::{
+    decide_crash_recovery, CrashAction, CrashHistory, CrashPolicy, WindowSpec,
+};
 
 pub struct WindowState {
     crashes: Mutex<HashMap<String, CrashHistory>>,
+    /// Windows created hidden: their spec, and whether they have been shown.
+    reveals: Mutex<HashMap<String, (WindowSpec, Arc<AtomicBool>)>>,
     /// Monotonic origin for crash timestamps. `Instant` rather than wall clock
     /// so a clock adjustment mid-service cannot make the loop guard misfire.
     started_at: Instant,
@@ -23,6 +30,7 @@ impl WindowState {
     pub fn new() -> Self {
         Self {
             crashes: Mutex::new(HashMap::new()),
+            reveals: Mutex::new(HashMap::new()),
             started_at: Instant::now(),
         }
     }
@@ -53,6 +61,27 @@ impl WindowState {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(label);
+        self.reveals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(label);
+    }
+
+    /// Remember how to show a window created hidden, for when its page says it
+    /// has drawn.
+    pub fn await_reveal(&self, spec: &WindowSpec, shown: Arc<AtomicBool>) {
+        self.reveals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(spec.label.clone(), (spec.clone(), shown));
+    }
+
+    pub fn pending_reveal(&self, label: &str) -> Option<(WindowSpec, Arc<AtomicBool>)> {
+        self.reveals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(label)
+            .cloned()
     }
 
     #[cfg(test)]

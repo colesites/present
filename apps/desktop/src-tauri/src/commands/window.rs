@@ -292,3 +292,28 @@ mod tests {
         assert_eq!(payload.title, "");
     }
 }
+
+/// The page in the calling window has drawn; show the window.
+///
+/// Windows are created hidden and shown on this rather than when their document
+/// loads, which is before React has painted anything but white.
+#[tauri::command]
+pub async fn window_ready(window: tauri::WebviewWindow) -> AppResult<()> {
+    window::reveal_when_drawn(&window);
+    Ok(())
+}
+
+/// What the splash window says now.
+#[tauri::command]
+pub async fn get_splash_status(
+    state: State<'_, crate::services::splash::SplashState>,
+) -> AppResult<String> {
+    Ok(state.get())
+}
+
+/// Say what the app is doing while it starts.
+#[tauri::command]
+pub async fn set_splash_status(app: AppHandle, status: String) -> AppResult<()> {
+    crate::services::splash::set_status(&app, &status);
+    Ok(())
+}

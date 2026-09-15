@@ -24,7 +24,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::utils::config::{BackgroundThrottlingPolicy, Color};
-use tauri::webview::PageLoadEvent;
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
     WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
@@ -172,6 +171,7 @@ fn reveal(window: &WebviewWindow, spec: &WindowSpec, shown: &AtomicBool) {
         tracing::error!(label = %spec.label, %error, "failed to show window");
         return;
     }
+    tracing::info!(label = %spec.label, "window shown");
 
     if spec.placement.is_fullscreen() {
         // `is_fullscreen` can fail on a window that is being torn down; treat
@@ -186,6 +186,23 @@ fn reveal(window: &WebviewWindow, spec: &WindowSpec, shown: &AtomicBool) {
     if spec.focus_on_show {
         if let Err(error) = window.set_focus() {
             tracing::warn!(label = %spec.label, %error, "failed to focus window");
+        }
+    }
+
+    if spec.role == WindowRole::Main {
+        crate::services::splash::close(window.app_handle());
+    }
+}
+
+/// The page in `window` has drawn: show it, once.
+pub fn reveal_when_drawn(window: &WebviewWindow) {
+    let Some(state) = window.app_handle().try_state::<WindowState>() else {
+        return;
+    };
+    match state.pending_reveal(window.label()) {
+        Some((spec, shown)) => reveal(window, &spec, &shown),
+        None => {
+            tracing::debug!(label = %window.label(), "window_ready from a window with no pending reveal")
         }
     }
 }
@@ -256,17 +273,14 @@ pub fn open(
 
     let shown = Arc::new(AtomicBool::new(false));
 
-    {
-        let spec = spec.clone();
-        let shown = Arc::clone(&shown);
-        builder = builder.on_page_load(move |window, payload| {
-            if payload.event() == PageLoadEvent::Finished {
-                reveal(&window, &spec, &shown);
-            }
-        });
-    }
-
     let window = builder.build()?;
+
+    // Shown when its page has drawn (`window_ready`), not when the document
+    // has loaded: between the two a webview is white, which is what an operator
+    // saw opening the app and a congregation saw when the output opened.
+    if let Some(state) = app.try_state::<WindowState>() {
+        state.await_reveal(spec, Arc::clone(&shown));
+    }
 
     // The builder took logical units; assert the physical truth now that the
     // window exists, so a scale factor read a moment ago cannot leave the

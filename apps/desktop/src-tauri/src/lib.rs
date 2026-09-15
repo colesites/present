@@ -166,6 +166,9 @@ pub fn run() {
             commands::window::open_mini_lyrics_window,
             commands::window::close_mini_lyrics_window,
             commands::window::list_open_windows,
+            commands::window::window_ready,
+            commands::window::get_splash_status,
+            commands::window::set_splash_status,
             commands::file::select_folder,
             commands::file::select_library_export_destination,
             commands::file::select_library_import_source,
@@ -348,6 +351,8 @@ pub fn run() {
             // code path and one set of specs. A window declared in JSON cannot
             // carry the deferred first paint or the crash policy, and would
             // drift from its Rust twin the first time either changed.
+            app.manage(services::splash::SplashState::default());
+            services::splash::open(app.handle());
             services::window::open(app.handle(), &spec_for(WindowRole::Main), None)?;
 
             // Tauri emits no monitor-change event on any platform, so the

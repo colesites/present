@@ -3,5 +3,10 @@
  * Not a top-level `await`, so nothing depends on how the bundle is targeted.
  */
 import { webStorageReady } from "./web-storage";
+import { setSplashStatus } from "./window-ready";
 
-void webStorageReady.then(() => import("../main/main-renderer"));
+setSplashStatus("Loading your settings");
+void webStorageReady.then(() => {
+  setSplashStatus("Opening the workspace");
+  return import("../main/main-renderer");
+});

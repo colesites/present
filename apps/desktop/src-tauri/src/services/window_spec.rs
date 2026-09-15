@@ -163,6 +163,10 @@ pub struct WindowSpec {
 /// past a normal load and well short of an operator deciding the app is broken.
 const SHOW_WATCHDOG_MS: u64 = 4_000;
 
+/// The operator window waits longer: the splash is on screen saying what is
+/// happening, and a cold start of the whole UI can take more than four seconds.
+const MAIN_SHOW_WATCHDOG_MS: u64 = 15_000;
+
 /// The spec for a single-instance role.
 ///
 /// # Panics
@@ -189,7 +193,7 @@ pub fn spec_for(role: WindowRole) -> WindowSpec {
                 within_ms: 10_000,
             },
             focus_on_show: false,
-            show_watchdog_ms: SHOW_WATCHDOG_MS,
+            show_watchdog_ms: MAIN_SHOW_WATCHDOG_MS,
         },
 
         // output.window.ts:52-74. Every field here is load-bearing; see the
