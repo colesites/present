@@ -3,15 +3,15 @@
 **Read this first.** It is the state of the migration as of 2026-09-15, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 89 commits ahead of `master` — the last is this update — **nothing pushed**.
+Branch `rust`, 97 commits ahead of `master` — the last is this update — **nothing pushed**.
 
-**Stages 6 and 7 are code complete.** Stage 7 put the last Electron subsystems
-on Rust commands: Bibles, fonts, the AI Operator's tool list, the error log, the
-stage displays' feed, the app's settings out of browser storage, PowerPoint
-import without Python, crash recovery on Windows and Linux, and browser mode.
-Nothing the React tree calls is still missing from the bridge. What remains
-before Stage 8 is by hand: the Stage 6 NDI gate (§8 E) and the Stage 7 parity
-checklist (§8 F). Start with §4.
+**Electron is gone.** Stages 6 and 7 are code complete, and on 2026-09-15 the
+owner had the Electron build removed (its last commit is tagged
+`electron-final`). Present is a Tauri app: React for the interface, Rust for
+everything else. The same day the owner's first hands-on run found five bugs,
+all fixed (known-issues §18–21), and decided three directions: FFmpeg as the
+video decoder on every platform, SQLite in Rust for offline data, and React
+kept for the interface (§6). Start with §4.
 
 ---
 
@@ -155,13 +155,11 @@ node pinned to zero. None were bugs. All were conventions nothing checked.
 - ✅ Browser mode on two wry views over the operator and audience windows — not Tauri's `unstable` child webviews (owner, 2026-09-15; §6)
 - ⬜ **The parity checklist by hand**, §8 F
 
-### Stage 8, untouched
-
-From the audit's §12, inlined so this file stands alone.
-
-| Stage | Content | Gate |
-|---|---|---|
-| **8** | Measure against the Electron baseline, then remove Electron. | Definition of done |
+**Stage 8 — remove Electron.** Done without the measurement, at the owner's call.
+- ✅ The last Electron commit tagged `electron-final`
+- ✅ The Electron main process, preload, Forge, Webpack, their workflows and dependencies removed
+- ✅ The React tree's Electron fallbacks removed; every hook talks to Rust
+- ⬜ The Electron-versus-Tauri performance comparison the migration plan asked for — skipped; the tag can still be built for it
 
 **The single-audible-video guard exists now** (`tests/single-audible-video.test.mjs`)
 and is proven to fail when a second audible element appears. It is what stops
@@ -262,23 +260,38 @@ df6c9a7 docs: add session handoff for the Tauri migration
 
 ## 4. The next task, concretely
 
-**Stages 6 and 7 are code complete.** Stage 8 — measure against Electron, then
-remove it — should not start until a person has used the Tauri build.
+**1. FFmpeg as the video decoder on every platform** (owner, 2026-09-15). It
+replaces the AVFoundation decoder (ADR-002) behind `services::video`, which the
+compositor, NDI, the native audience screen and the thumbnails use, and gives
+Windows and Linux a decoder they do not have. Needs an LGPL-only build shipped
+with the app, and FFmpeg installed on the build machine — ask before installing
+anything. The windows themselves still play video through WebKit, so MKV/AVI
+there needs conversion on import, which FFmpeg can also do.
 
-**1. The manual gates, §8.** Section A (a service on one machine) is still the
-hour that will find the most, and nobody has done it. Section F is Stage 7's
-parity checklist: Bibles, fonts, a PowerPoint import, settings surviving a
-restart, the error log, browser mode. Section E is the Stage 6 NDI gate. Each
-subsystem's own "Not verified" list is in its stage doc.
+**2. The owner's crate list, as features** (owner, 2026-09-15), in this order:
+rolling log files (`tracing-appender`) and frame-time benchmarks (`criterion`);
+media folders that update live (`notify`); OpenLyrics import (`quick-xml`) and
+scripture references (`nom`); MIDI and OSC control (`midir`, `rosc`); a phone
+remote on the local network (`axum`, `tokio-tungstenite`, `mdns-sd`,
+`qrcode`); then the offline store.
 
-**2. Windows and Linux.** Crash recovery and browser mode have platform code for
+**3. SQLite in Rust for offline data** (owner, 2026-09-15): `rusqlite` bundled,
+migrations, WAL, `ulid` ids, `blake3` media hashes, and Convex sync from Rust
+with backoff. It replaces the IndexedDB work in the owner's uncommitted
+`localData.ts` and `useOfflineSyncEngine.ts` — agree with the owner what happens
+to those edits before touching them.
+
+**4. The manual gates, §8**, still unrun: a service on one machine (A), the
+second monitor (B), an account (C), NDI (E), the Stage 7 checklist (F).
+
+**5. Windows and Linux.** Crash recovery and browser mode have platform code for
 both, type-checked by cross-compiling (stage-7-subsystems.md §8 has the recipe)
-and never run. CI builds the bundles; nobody has launched one.
+and never run.
 
-**3. Stage 8** when the above has passed: the performance comparison the
-migration plan asks for, then removing Electron — the Webpack build, `main/`,
-the preload, the `overrides` pin (§13), and the bridge entries as each call
-site moves to a typed client.
+**Also owed:** a check that an expired sign-in can never stop the app working
+offline — the owner's point, not yet looked at. And `ServicesSidebar.tsx`, one of
+the owner's in-progress files, still draws video thumbnails as live video
+elements (known-issues §18).
 
 **Still the owner's to decide:** the operator's quick toggles write only the
 program column, so clearing the words on the projector does not clear them on
@@ -505,9 +518,10 @@ Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 728 Rust — 727 in the library and the panic hook's own binary
-— plus two ignored NDI loopback tests that need the runtime; 182 JS, one of them
-skipped without `python-pptx`. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 733 Rust — 732 in the library and the panic hook's own binary
+— plus two ignored NDI loopback tests that need the runtime; 128 JS. The JS
+tests for code that only Electron ran went with it; the Rust ports carry their
+cases. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -541,8 +555,21 @@ Tauri does not manage: the same place on screen, nothing else changed. Do not
 turn `unstable` on. wry is pinned to Tauri's version (stage-7-subsystems.md
 §10).
 
-**Vite for Tauri, Webpack stays for Electron.** Forge's Webpack plugin is bound
-to Forge. Two bundlers coexist; neither touches the other's inputs.
+**Electron is removed** (owner, 2026-09-15), without the performance comparison.
+The last Electron commit is tagged `electron-final`.
+
+**FFmpeg decodes video on every platform** (owner, 2026-09-15), replacing the
+platform decoders ADR-002 chose. Not built yet — §4.
+
+**The interface stays React** (owner, 2026-09-15). winit + egui would rewrite
+every screen; wgpu may take over the audience-output drawing when 4K,
+transitions or several outputs need it.
+
+**Offline data moves to SQLite in Rust** (owner, 2026-09-15), replacing the
+IndexedDB approach. Not built yet — §4.
+
+**A video chosen again starts from the beginning** (owner, 2026-09-15). The
+transport used to keep a resume point per video.
 
 ## 7. What is verified vs. assumed
 
@@ -596,7 +623,6 @@ Verified by running it, not by reasoning:
   `safelyUnlisten` fix, with zero renderer errors.
 - Slide navigation refusing to run with no deck loaded rather than guessing
   (`navigateWithoutDeck=refused`).
-- Electron still packaging cleanly with every shared file this branch touched.
 - **NDI against the real runtime** (NDI Tools 6.2.1 and grandi's 6.3.0.3):
   discovery in under a second, a frame arriving with channel order and
   orientation intact, the sender clocked at 30 fps watched and unwatched, and
@@ -907,7 +933,6 @@ anywhere in the tree:
 
 ```bash
 bun run desktop:tauri          # Tauri + Vite — the app being built
-bun run desktop:electron       # Electron, unchanged, still the shipping app
 bun run web                    # Next.js web app
 bun run convex                 # Convex CLI
 ```
@@ -927,7 +952,7 @@ cargo run --example web_storage_probe                        # what an Electron 
 cargo run --example pptx_import_probe -- deck.pptx           # a deck as the importer reads it, JSON
 bun run --filter @present/desktop tauri:stage-ndi            # copy libndi in for a bundle
 bun run --filter @present/desktop tauri:check   # fmt + clippy -D warnings + tests
-bun run test                                    # 182 JS tests
+bun run test                                    # 128 JS tests
 bun run typecheck
 bun run lint
 node apps/desktop/scripts/check-tauri-version.mjs [--fix]
@@ -938,8 +963,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **728 Rust tests, 182 JS tests** (one skipped without `python-pptx`),
-clippy/fmt/typecheck clean.
+Current: **733 Rust tests, 128 JS tests**, clippy/fmt/typecheck clean.
 
 ## 12. Installed skills
 
@@ -1000,12 +1024,6 @@ if asked.
   Electron app ships with no NDI backend — silently, because the script reports
   nothing staged rather than failing. The removed `.npmrc` asked pnpm for the
   same layout.
-- **`overrides` in the root `package.json` pins `@electron/node-gyp`.**
-  `@electron/rebuild` depends on it by GitHub commit. Bun resolves that as a
-  git dependency and fails to link it (`clonefileat` ENOENT), which aborts the
-  whole install. The override points at the codeload tarball for the same
-  commit, which is what pnpm resolved it to, so it changes the transport and
-  not the code. Remove it when Electron goes.
 - Commands the frontend can reach need registering in `generate_handler!`, or
   they fail silently.
 - **Any command that builds a window must be `async`.** A synchronous one
@@ -1092,3 +1110,15 @@ if asked.
 - **The editor tool decodes `\uXXXX` escapes** in file content it writes into
   literal, often invisible, characters. Write such source through a quoted
   heredoc, or scan for Zs/Cc/Cf characters afterwards.
+- **WebKit pauses a video in a hidden window by itself** — covered by the output
+  window, minimised, behind another app — and resumes it when the window is
+  seen. A `pause` event while `document.visibilityState` is `hidden` is not the
+  operator. Treating it as one stopped the transport whenever the output opened.
+- **WebKit runs no animation frames in a hidden window.** Anything that waits for
+  `requestAnimationFrame` before showing a window never shows it.
+- **A mirror compared against a position that crossed IPC is always behind.**
+  Aim at the position plus the time since it was sampled
+  (`mirror-video-sync.mjs`), and never seek a playing mirror for a small gap.
+- **`grandi` is still a dependency after Electron.** Its prebuilt package is
+  where the bundled `libndi` is copied from (`scripts/stage-tauri-ndi.mjs`), and
+  `bunfig.toml`'s hoisted linker is what lets that script find it.
