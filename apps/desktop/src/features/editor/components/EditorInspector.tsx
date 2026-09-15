@@ -607,7 +607,7 @@ export const EditorInspector = memo(function EditorInspector({
 
                 <PresentationInspectorField label="Artist">
                   <input
-                    value={presentation.artist ?? ""}
+                    value={draft.content?.presentation?.artist ?? ""}
                     onChange={(event) =>
                       updatePresentation((current) => ({
                         ...current,
@@ -620,7 +620,7 @@ export const EditorInspector = memo(function EditorInspector({
 
                 <PresentationInspectorField label="Author">
                   <input
-                    value={presentation.author ?? ""}
+                    value={draft.content?.presentation?.author ?? ""}
                     onChange={(event) =>
                       updatePresentation((current) => ({
                         ...current,
