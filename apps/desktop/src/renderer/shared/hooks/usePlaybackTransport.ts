@@ -3,12 +3,8 @@
 /**
  * The media transport, as React sees it.
  *
- * The adapter for `services::playback`, shaped like every other slice: the hook
- * keeps its signature, no component learns which shell it is running in, and
- * the Electron path is untouched.
- *
- * Under Tauri the answer comes from Rust, which owns where the video is. Under
- * Electron the caller keeps its own state, which is what it did before.
+ * The adapter for `services::playback`: Rust owns whether the video runs and
+ * where it is, and the caller's own state is shown only until Rust has answered.
  *
  * Two things are deliberately separate here, because collapsing them is how a
  * playhead ends up being dragged backwards mid-service:
@@ -21,10 +17,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-const isTauriShell = (): boolean =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-/** Dynamic, so the Electron bundle never pulls in `@tauri-apps/api`. */
 const rustCore = () => import("../../tauri/playback");
 
 export type PlaybackView = {
@@ -36,7 +28,7 @@ export type PlaybackView = {
 };
 
 export type PlaybackTransport = PlaybackView & {
-  /** True when Rust owns this, so a caller knows whether to keep its own state. */
+  /** True once Rust has answered. */
   isRustOwned: boolean;
   play: () => void;
   pause: () => void;
@@ -50,19 +42,13 @@ export type PlaybackTransport = PlaybackView & {
 };
 
 /**
- * Follow the Rust transport, or report that it is not in charge.
- *
- * `electronView` is what the caller already has: its own playing flag and
- * position. It is returned unchanged under Electron, and replaced by Rust's
- * answer under Tauri.
+ * Follow the Rust transport. `initialView` is what the caller already has, shown
+ * until Rust answers.
  */
-export function usePlaybackTransport(electronView: PlaybackView): PlaybackTransport {
-  const onRust = isTauriShell();
+export function usePlaybackTransport(initialView: PlaybackView): PlaybackTransport {
   const [rustView, setRustView] = useState<PlaybackView | null>(null);
 
   useEffect(() => {
-    if (!onRust) return;
-
     let cancelled = false;
     let detach: (() => void) | null = null;
 
@@ -101,11 +87,10 @@ export function usePlaybackTransport(electronView: PlaybackView): PlaybackTransp
       cancelled = true;
       detach?.();
     };
-  }, [onRust]);
+  }, []);
 
   const call = useCallback(
     (action: (core: Awaited<ReturnType<typeof rustCore>>) => Promise<unknown>) => {
-      if (!onRust) return;
       void rustCore()
         .then(action)
         .catch((error: unknown) => {
@@ -114,14 +99,14 @@ export function usePlaybackTransport(electronView: PlaybackView): PlaybackTransp
           console.error("[Playback] transport call failed", error);
         });
     },
-    [onRust]
+    []
   );
 
-  const view = (onRust ? rustView : null) ?? electronView;
+  const view = rustView ?? initialView;
 
   return {
     ...view,
-    isRustOwned: onRust && rustView !== null,
+    isRustOwned: rustView !== null,
     play: useCallback(() => call((core) => core.play()), [call]),
     pause: useCallback(() => call((core) => core.pause()), [call]),
     toggle: useCallback(() => call((core) => core.toggle()), [call]),

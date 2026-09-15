@@ -151,15 +151,13 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
   // `setSinkId`, so the audio-output-device setting reached the presentation
   // video and left this playing out of the laptop (known-issues §1).
   //
-  // Under Tauri it now reads the same Rust sink the video does, so one device
-  // choice moves both. Under Electron the value below is what this effect set
-  // before, `deviceId: null` included — the shipping shell keeps today's
-  // behaviour, which is the standing call recorded in handoff §6.
-  const electronRouting = useMemo<SourceRouting>(
+  // It now reads the same Rust sink the video does, so one device choice moves
+  // both. The value below stands in until the sink answers.
+  const initialRouting = useMemo<SourceRouting>(
     () => ({ audible: true, muted: false, volume, deviceId: null }),
     [volume],
   );
-  const routing = useAudioRouting("backing-track", "operator", electronRouting);
+  const routing = useAudioRouting("backing-track", "operator", initialRouting);
 
   useEffect(() => {
     applyAudioRouting(audio, routing);
@@ -476,9 +474,8 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
               onChange={(event) => {
                 const next = Number(event.target.value);
                 setVolume(next);
-                // Under Tauri the sink owns the level, so the slider writes
-                // there and the change comes back as an event. Under Electron
-                // this is a no-op and `volume` above is the only state.
+                // The sink owns the level, so the slider writes there and the
+                // change comes back as an event.
                 void setBackingTrackGain(next);
               }}
               className="flex-1 accent-primary"

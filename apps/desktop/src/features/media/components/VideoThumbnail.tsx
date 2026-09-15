@@ -17,9 +17,6 @@ import { cn } from "../../../renderer/shared/lib/utils";
 const loaded = new Map<string, string>();
 const pending = new Map<string, Promise<string>>();
 
-const isTauriShell = (): boolean =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
 async function fetchThumbnail(path: string, key: string): Promise<string> {
   const existing = pending.get(key);
   if (existing) return existing;
@@ -59,7 +56,7 @@ export function VideoThumbnail({
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!enabled || !isTauriShell() || loaded.has(key)) {
+    if (!enabled || loaded.has(key)) {
       return;
     }
     let cancelled = false;

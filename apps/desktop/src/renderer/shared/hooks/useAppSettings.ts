@@ -378,10 +378,9 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     }
   }, []);
 
-  // Under Tauri the audio-output device belongs to the Rust sink, because both
-  // audible sources read it from there rather than each applying it to their
-  // own element (known-issues §1). This keeps the picker and the sink in step;
-  // under Electron it does nothing and `localStorage` stays the only owner.
+  // The audio-output device belongs to the Rust sink, because both audible
+  // sources read it from there rather than each applying it to their own
+  // element (known-issues §1). This keeps the picker and the sink in step.
   const seedAudioDeviceFromRust = useCallback(
     (deviceId: string | null, deviceLabel: string) => {
       setSettingsAudioOutputDeviceId(deviceId);

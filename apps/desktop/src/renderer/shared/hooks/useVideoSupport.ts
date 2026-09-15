@@ -9,21 +9,12 @@
  * volunteer dropping an unsupported file into a media folder needs to be told
  * before the service, not shown a black rectangle during it.
  *
- * **Tauri only.** Under Electron the media goes through Chromium, which opens
- * more, so flagging files there would warn about a problem that shell does not
- * have. That matches the standing call to fix in the rewrite rather than in the
- * shipping build.
- *
  * The check asks Rust once per folder load and gets back only the problems, so
  * a library of MP4s costs one round trip and an empty array.
  */
 
 import { useEffect, useState } from "react";
 
-const isTauriShell = (): boolean =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-/** Dynamic, so the Electron bundle never pulls in `@tauri-apps/api`. */
 const runtime = () => import("@tauri-apps/api/core");
 
 export type UnplayableMedia = { path: string; advice: string };
@@ -31,7 +22,7 @@ export type UnplayableMedia = { path: string; advice: string };
 /**
  * Paths mapped to advice, for the media the decoder cannot open.
  *
- * Empty under Electron, and empty under Tauri until the check resolves - a
+ * Empty until the check resolves - a
  * warning that flashes on during load and off again is worse than one that
  * arrives a moment late.
  */
@@ -44,7 +35,7 @@ export function useVideoSupport(paths: string[]): Map<string, string> {
   const key = paths.join(" ");
 
   useEffect(() => {
-    if (!isTauriShell() || paths.length === 0) {
+    if (paths.length === 0) {
       setUnplayable((previous) => (previous.size === 0 ? previous : new Map()));
       return;
     }

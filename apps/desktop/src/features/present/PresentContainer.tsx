@@ -670,8 +670,6 @@ export function PresentContainer({
   // React stays the sender here; the reverse direction lands with the slide
   // rendering in Stage 5.
   useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
-
     let cancelled = false;
     const libraryId = selected?.libraryId ?? null;
     const slideIndex = selected?.index ?? null;

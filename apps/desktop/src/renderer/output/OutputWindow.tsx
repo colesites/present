@@ -3,11 +3,7 @@
 import { createElement, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, HTMLAttributes } from "react";
 import { Camera } from "lucide-react";
-import type {
-  VideoSettings,
-  LibraryStyle,
-  OutputState,
-} from "../../shared/types/output-window";
+import type { OutputState } from "../../shared/types/output-window";
 import type {
   ScreenComposerLayout,
   ScreenComposerRegion,
@@ -57,143 +53,6 @@ const DEFAULT_SCREEN_LAYOUT: ScreenComposerLayout = {
 
 const YOUTUBE_EMBED_REFERRER = "https://present.app/";
 const YOUTUBE_EMBED_ORIGIN = "https://present.app";
-
-function parseScreenComposerLayout(
-  incoming: unknown
-): ScreenComposerLayout | null {
-  if (!incoming || typeof incoming !== "object") {
-    return null;
-  }
-
-  const candidate = incoming as Partial<ScreenComposerLayout>;
-  if (!Array.isArray(candidate.regions) || candidate.regions.length === 0) {
-    return null;
-  }
-
-  const regions = candidate.regions
-    .filter((region): region is ScreenComposerRegion => {
-      return (
-        region &&
-        typeof region.id === "string" &&
-        typeof region.name === "string" &&
-        typeof region.x === "number" &&
-        typeof region.y === "number" &&
-        typeof region.width === "number" &&
-        typeof region.height === "number" &&
-        typeof region.source === "string"
-      );
-    })
-    .map(
-      (region): ScreenComposerRegion => ({
-        id: region.id,
-        name: region.name,
-        x: region.x,
-        y: region.y,
-        width: region.width,
-        height: region.height,
-        source: region.source,
-        fitMode:
-          region.fitMode === "contain" ||
-          region.fitMode === "fill" ||
-          region.fitMode === "scale-down"
-            ? region.fitMode
-            : "cover",
-        backgroundColor:
-          typeof region.backgroundColor === "string"
-            ? region.backgroundColor
-            : "rgba(10, 13, 28, 0.7)",
-        padding: Number.isFinite(region.padding) ? region.padding : 0,
-        borderRadius: Number.isFinite(region.borderRadius)
-          ? region.borderRadius
-          : 0,
-        textContent:
-          typeof region.textContent === "string" ? region.textContent : "",
-        footerText:
-          typeof region.footerText === "string" ? region.footerText : "",
-        mediaUrl:
-          typeof region.mediaUrl === "string" &&
-          region.mediaUrl.trim().length > 0
-            ? region.mediaUrl
-            : null,
-        mediaType:
-          region.mediaType === "video" || region.mediaType === "image"
-            ? region.mediaType
-            : null,
-        mediaLabel:
-          typeof region.mediaLabel === "string" &&
-          region.mediaLabel.trim().length > 0
-            ? region.mediaLabel
-            : null,
-        backgroundMediaUrl:
-          typeof region.backgroundMediaUrl === "string" &&
-          region.backgroundMediaUrl.trim().length > 0
-            ? region.backgroundMediaUrl
-            : null,
-        backgroundMediaType:
-          region.backgroundMediaType === "video" ||
-          region.backgroundMediaType === "image"
-            ? region.backgroundMediaType
-            : null,
-        backgroundMediaLabel:
-          typeof region.backgroundMediaLabel === "string" &&
-          region.backgroundMediaLabel.trim().length > 0
-            ? region.backgroundMediaLabel
-            : null,
-        showTextLayer:
-          typeof region.showTextLayer === "boolean"
-            ? region.showTextLayer
-            : true,
-        showMediaLayer:
-          typeof region.showMediaLayer === "boolean"
-            ? region.showMediaLayer
-            : false,
-        slideId: typeof region.slideId === "string" ? region.slideId : null,
-        slideText:
-          typeof region.slideText === "string" ? region.slideText : null,
-        slideFooter:
-          typeof region.slideFooter === "string" ? region.slideFooter : null,
-        slideElements:
-          Array.isArray(region.slideElements) && region.slideElements.length > 0
-            ? region.slideElements
-            : null,
-        slideCanvasSize:
-          typeof region.slideCanvasSize === "string"
-            ? region.slideCanvasSize
-            : null,
-        slideBackgroundColor:
-          typeof region.slideBackgroundColor === "string"
-            ? region.slideBackgroundColor
-            : null,
-      })
-    );
-
-  if (regions.length === 0) {
-    return null;
-  }
-
-  return {
-    id: typeof candidate.id === "string" ? candidate.id : "live-default",
-    name:
-      typeof candidate.name === "string" && candidate.name.trim().length > 0
-        ? candidate.name
-        : "Main Output",
-    allowOverlap: Boolean(candidate.allowOverlap),
-    updatedAt:
-      typeof candidate.updatedAt === "number"
-        ? candidate.updatedAt
-        : Date.now(),
-    regions,
-  };
-}
-
-const hasSlideContent = (input: {
-  slideText?: string | null;
-  slideElements?: OutputState["slideElements"] | null;
-  slideBackgroundColor?: string | null;
-}) =>
-  Boolean(input.slideText?.trim()) ||
-  Boolean(input.slideElements?.length) ||
-  Boolean(input.slideBackgroundColor);
 
 export function OutputWindow() {
   const [state, setState] = useState<OutputState>({
@@ -259,12 +118,9 @@ export function OutputWindow() {
     screenComposerLayout: DEFAULT_SCREEN_LAYOUT,
   });
 
-  // Under Tauri the whole scene comes from Rust and this window renders it
-  // rather than reconstructing it from partial payloads. The merge below only
-  // exists to keep the styles this window seeds its own defaults with.
+  // The whole scene comes from Rust and this window renders it. The merge
+  // below only exists to keep the styles this window seeds its own defaults with.
   useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
-
     let cancelled = false;
     let detach: (() => void) | null = null;
 
@@ -294,14 +150,12 @@ export function OutputWindow() {
     };
   }, []);
 
-  // Under Tauri, with the operator's opt-in, the compositor draws this window
+  // With the operator's opt-in, the compositor draws this window
   // onto a native view below the page. Only while it reports frames on screen
   // does this page step back to the props it cannot draw; any other moment,
   // including a native view that failed, this page draws everything as usual.
   const [nativeSurface, setNativeSurface] = useState(false);
   useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
-
     let cancelled = false;
     let detach: (() => void) | null = null;
 
@@ -342,135 +196,6 @@ export function OutputWindow() {
       body.style.backgroundColor = previous[1];
     };
   }, [nativeSurface]);
-
-  useEffect(() => {
-    if ("__TAURI_INTERNALS__" in window) return;
-    if (!window.electronAPI) return;
-
-    const cleanup = window.electronAPI.onOutputData((data: unknown) => {
-      const msg = data as Record<string, unknown>;
-
-      if (msg.type === "media-update") {
-        setState((prev) => ({
-          ...prev,
-          mediaUrl:
-            msg.mediaUrl !== undefined
-              ? (msg.mediaUrl as string | null)
-              : prev.mediaUrl,
-          mediaType:
-            msg.mediaType !== undefined
-              ? (msg.mediaType as "image" | "video" | null)
-              : prev.mediaType,
-          mediaId:
-            msg.mediaId !== undefined
-              ? (msg.mediaId as string | null)
-              : prev.mediaId,
-          showText: msg.showText as boolean,
-          showMedia: msg.showMedia as boolean,
-          hideBackground:
-            typeof msg.hideBackground === "boolean"
-              ? msg.hideBackground
-              : prev.hideBackground,
-          textPosition: msg.textPosition
-            ? (msg.textPosition as OutputState["textPosition"])
-            : prev.textPosition,
-          videoSettings: msg.videoSettings as VideoSettings,
-          mediaFilterCSS: msg.mediaFilterCSS as string,
-          isVideoPlaying: msg.isVideoPlaying as boolean,
-          videoCurrentTime: msg.videoCurrentTime as number,
-          videoTimeSampledAtMs:
-            typeof msg.videoTimeSampledAtMs === "number" ? msg.videoTimeSampledAtMs : null,
-          shouldSyncTime: msg.shouldSyncTime as boolean,
-          scriptureStyle: msg.scriptureStyle as OutputState["scriptureStyle"],
-          libraryStyle: msg.libraryStyle
-            ? (msg.libraryStyle as LibraryStyle)
-            : prev.libraryStyle,
-          timerLayout: msg.timerLayout
-            ? (msg.timerLayout as NonNullable<OutputState["timerLayout"]>)
-            : prev.timerLayout,
-          screenComposerEnabled:
-            typeof msg.screenComposerEnabled === "boolean"
-              ? msg.screenComposerEnabled
-              : (prev.screenComposerEnabled ?? false),
-          screenComposerLayout:
-            parseScreenComposerLayout(msg.screenComposerLayout) ??
-            prev.screenComposerLayout ??
-            DEFAULT_SCREEN_LAYOUT,
-        }));
-      } else if (msg.type === "active-slide") {
-        setState((prev) => ({
-          ...prev,
-          ...(() => {
-            const nextSlide = {
-              activeSlideId:
-                typeof msg.slideId === "string" ? msg.slideId : null,
-              slideText:
-                typeof msg.slideText === "string" ? msg.slideText : null,
-              slideFooter:
-                typeof msg.slideFooter === "string" ? msg.slideFooter : null,
-              slideElements: Array.isArray(msg.slideElements)
-                ? (msg.slideElements as OutputState["slideElements"])
-                : null,
-              slideCanvasSize:
-                typeof msg.slideCanvasSize === "string"
-                  ? (msg.slideCanvasSize as OutputState["slideCanvasSize"])
-                  : null,
-              slideBackgroundColor:
-                typeof msg.slideBackgroundColor === "string"
-                  ? msg.slideBackgroundColor
-                  : null,
-            };
-            if (
-              prev.showText &&
-              !hasSlideContent(nextSlide) &&
-              hasSlideContent(prev)
-            ) {
-              return {};
-            }
-            return nextSlide;
-          })(),
-        }));
-      } else if (msg.type === "timer-update") {
-        setState((prev) => ({
-          ...prev,
-          timerLabel: (msg.timerLabel as string) || null,
-          timerText: (msg.timerText as string) || null,
-          timerRunning: Boolean(msg.timerRunning),
-          timerVisible:
-            typeof msg.timerVisible === "boolean"
-              ? msg.timerVisible
-              : prev.timerVisible,
-        }));
-      } else if (msg.type === "message-overlay") {
-        const overlay = msg.overlay as OutputState["messageOverlay"];
-        setState((prev) => ({
-          ...prev,
-          messageOverlay: overlay ?? null,
-        }));
-      } else if (msg.type === "props-overlay") {
-        const props = msg.props as OutputState["propsOverlay"];
-        setState((prev) => ({
-          ...prev,
-          propsOverlay: Array.isArray(props) ? props : null,
-        }));
-      } else if (msg.type === "clear") {
-        setState((prev) => ({
-          ...prev,
-          activeSlideId: null,
-          slideText: null,
-          slideFooter: null,
-          slideElements: null,
-          slideCanvasSize: null,
-          mediaUrl: null,
-          mediaType: null,
-          mediaId: null,
-        }));
-      }
-    });
-
-    window.electronAPI.notifyOutputReady();
-    return cleanup;
-  }, []);
 
   useEffect(() => {
     void ensureFontCatalogLoaded(document, { force: true });

@@ -25,7 +25,6 @@ import {
   upsertService,
 } from "../../../renderer/shared/offline/localData";
 
-const SERVICE_STATE_KEY = "present-service-state";
 const LEGACY_SERVICE_TEMPLATE_KEY = "present-service-template-groups-v1";
 const SERVICE_TEMPLATES_KEY = "present-service-templates-v1";
 const DEFAULT_SERVICE_TEMPLATE_ID_KEY = "present-default-service-template-id-v1";
@@ -446,37 +445,14 @@ function normalizeServiceGroups(service: Service): Service {
   };
 }
 
-/**
- * True inside the Tauri shell, where the Rust core owns this position.
- *
- * Read from the global Tauri injects before any app code runs, so the choice is
- * settled before the first render.
- */
-const isTauriShell = (): boolean =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-/** Loaded only under Tauri, so the Electron bundle stays free of it. */
 const rustCore = () => import("../../../renderer/tauri/presentation");
-
-// Load service state from localStorage
-function loadServiceState() {
-  if (typeof window === "undefined") return null;
-  try {
-    const stored = localStorage.getItem(SERVICE_STATE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Persist where the operator is in the running order.
  *
- * Under Tauri this goes to the Rust core, which owns it and writes
- * `service-position.json`; under Electron it stays in `localStorage`. The
- * difference matters beyond tidiness: the Rust copy is one file for the app
- * rather than one per renderer origin, so a packaged build and a dev build no
- * longer disagree about which service is open (known-issues §2).
+ * The Rust core owns it and writes `service-position.json`: one file for the
+ * app rather than one per renderer origin, so a packaged build and a dev build
+ * agree about which service is open (known-issues §2).
  */
 function saveServiceState(state: {
   selectedServiceId: string | null;
@@ -484,26 +460,15 @@ function saveServiceState(state: {
   serviceItemIndex: number | null;
   selectedServiceGroupId: string | null;
 }) {
-  if (typeof window === "undefined") return;
-
-  if (isTauriShell()) {
-    void rustCore()
-      .then(async (core) => {
-        await core.setService(state.selectedServiceId, state.isInsideService);
-        await core.setServiceItem(state.serviceItemIndex);
-        await core.setServiceGroup(state.selectedServiceGroupId);
-      })
-      .catch((error: unknown) => {
-        console.error("Failed to save service state to the Rust core:", error);
-      });
-    return;
-  }
-
-  try {
-    localStorage.setItem(SERVICE_STATE_KEY, JSON.stringify(state));
-  } catch (e) {
-    console.error("Failed to save service state:", e);
-  }
+  void rustCore()
+    .then(async (core) => {
+      await core.setService(state.selectedServiceId, state.isInsideService);
+      await core.setServiceItem(state.serviceItemIndex);
+      await core.setServiceGroup(state.selectedServiceGroupId);
+    })
+    .catch((error: unknown) => {
+      console.error("Failed to save service state to the Rust core:", error);
+    });
 }
 
 export function useServices(
@@ -523,20 +488,11 @@ export function useServices(
   const [selectedServiceTemplateId, setSelectedServiceTemplateIdState] =
     useState<string | null>(() => loadDefaultTemplateId(initialServiceTemplates));
 
-  const [initialState] = useState(() => loadServiceState());
-
-  const [selectedServiceId, setSelectedServiceId] = useState<Id<"services"> | null>(
-    () => (initialState?.selectedServiceId as Id<"services">) || null
-  );
-  const [isInsideService, setIsInsideService] = useState(
-    () => initialState?.isInsideService || false
-  );
-  const [serviceItemIndex, setServiceItemIndex] = useState<number | null>(
-    () => initialState?.serviceItemIndex ?? null
-  );
-  const [selectedServiceGroupId, setSelectedServiceGroupId] = useState<string | null>(
-    () => initialState?.selectedServiceGroupId ?? null,
-  );
+  // Restored from the Rust core below.
+  const [selectedServiceId, setSelectedServiceId] = useState<Id<"services"> | null>(null);
+  const [isInsideService, setIsInsideService] = useState(false);
+  const [serviceItemIndex, setServiceItemIndex] = useState<number | null>(null);
+  const [selectedServiceGroupId, setSelectedServiceGroupId] = useState<string | null>(null);
 
   useEffect(() => {
     const refresh = () => {
@@ -549,10 +505,9 @@ export function useServices(
     };
   }, [workspaceId]);
 
-  // Under Tauri the position is restored from the Rust core rather than from
-  // this origin's `localStorage`, which starts empty. Runs once, before the
-  // persist effect below can write the empty initial state back over it.
-  const hydratedFromRustRef = useRef(!isTauriShell());
+  // The position is restored from the Rust core. Runs once, before the persist
+  // effect below can write the empty initial state back over it.
+  const hydratedFromRustRef = useRef(false);
   useEffect(() => {
     if (hydratedFromRustRef.current) {
       return;

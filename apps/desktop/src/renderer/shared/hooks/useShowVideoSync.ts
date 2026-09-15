@@ -74,11 +74,8 @@ export function useShowVideoSync(params: {
     onAutoPlayConsumed();
   }, [activeMediaItem?.type, onAutoPlayConsumed, shouldAutoPlay]);
 
-  // The Rust transport, where there is one. It owns whether the video is
-  // running and where it has got to.
-  //
-  // Under Electron this returns the values passed in, so the shipping shell
-  // keeps its own state and nothing about its timing changes.
+  // The Rust transport owns whether the video is running and where it has got
+  // to; the local values stand in until it answers.
   const transport = usePlaybackTransport({
     playing: isVideoPlaying,
     positionSeconds: videoCurrentTime,
@@ -101,14 +98,10 @@ export function useShowVideoSync(params: {
   }, [currentVideoItem?.id, currentVideoItem?.type, selectPlaybackMedia, shouldAutoPlay]);
 
   // The presenter Show View is the application's only audible video player.
-  // All external display windows are muted mirrors, so video audio works even
-  // before a projector is opened.
-  //
-  // Under Tauri that sentence is no longer a convention this hook maintains:
-  // the routing comes from the Rust audio graph, which refuses every surface
-  // but the operator's and owns the one output device. Under Electron the
-  // values below are exactly what this effect set inline before.
-  const electronRouting = useMemo(
+  // The routing comes from the Rust audio graph, which refuses every surface
+  // but the operator's and owns the one output device; the values below stand
+  // in until it answers.
+  const initialRouting = useMemo(
     () => ({
       audible: true,
       muted: videoSettings.muted,
@@ -117,7 +110,7 @@ export function useShowVideoSync(params: {
     }),
     [videoSettings.muted, videoSettings.volume, audioOutputDeviceId],
   );
-  const routing = useAudioRouting("presentation-video", "operator", electronRouting);
+  const routing = useAudioRouting("presentation-video", "operator", initialRouting);
 
   useEffect(() => {
     const video = showVideoRef.current;
