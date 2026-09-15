@@ -18,7 +18,7 @@ import {
 
 test("a bearer token goes, whatever case 'bearer' was in and whatever precedes it", () => {
   assert.equal(redact("Authorization: bearer abc.DEF_~-123 rest"), "Authorization: Bearer [REDACTED] rest");
-  assert.equal(redact("xBearer tok more"), "xBearer [REDACTED] more", "a no-break space counts as a space");
+  assert.equal(redact("xBearer\u00a0tok more"), "xBearer [REDACTED] more", "a no-break space counts as a space");
   assert.equal(redact(`Bearer ${"x".repeat(90)}`), "Bearer [REDACTED]", "the bearer rule runs before the long-credential one");
 });
 
@@ -29,7 +29,7 @@ test("an email address goes; one without a two-letter top-level domain stays", (
 
 test("a token parameter's value goes up to whitespace or an ampersand, and its name keeps its case", () => {
   assert.equal(
-    redact("url?sessionToken=abc&accessToken=def;x TOKEN=zz refreshToken=q tail mytoken=keep"),
+    redact("url?sessionToken=abc&accessToken=def;x TOKEN=zz refreshToken=q\u00a0tail mytoken=keep"),
     "url?sessionToken=[REDACTED]&accessToken=[REDACTED] TOKEN=[REDACTED] refreshToken=[REDACTED]\u00a0tail mytoken=keep",
   );
 });
