@@ -1,6 +1,6 @@
 # Stage 7 — the remaining subsystems
 
-**Status:** in progress. Done: Bibles, fonts, the AI Operator's tool list, the error log, the stage displays' feed, browser-storage settings in Rust, `vosk` removed, crash recovery on Windows and Linux, the PPTX importer in Rust. Left: browser mode.
+**Status:** code complete. Done: Bibles, fonts, the AI Operator's tool list, the error log, the stage displays' feed, browser-storage settings in Rust, `vosk` removed, crash recovery on Windows and Linux, the PPTX importer in Rust, browser mode. Left: the parity checklist by hand (HANDOFF §8 F).
 
 The audit's content for this stage is Bible, fonts, the PPTX importer, auth,
 the AI Operator, error reporting and settings; its gate is a parity checklist.
@@ -13,7 +13,7 @@ Auth's session and refresh moved in Stage 4.
 | Question (audit §13) | Answer |
 |---|---|
 | PPTX: ship Python as a sidecar, or port the parser? | **Port `parse_pptx.py` to Rust.** No machine needs Python; no installer grows by 40 MB. |
-| Browser mode: unstable child webviews, a separate window, or defer? | **Tauri's unstable child webviews**, so browser mode stays inside the operator window. Pin the Tauri version and re-test browser mode on every upgrade. |
+| Browser mode: unstable child webviews, a separate window, or defer? | **Tauri's unstable child webviews**, so browser mode stays inside the operator window. Pin the Tauri version and re-test browser mode on every upgrade. **Changed by the owner on 2026-09-15** to wry views built directly on the windows — same place on screen — once the cost of `unstable` was found (§10). |
 
 ## 2. What is still on Electron
 
@@ -27,7 +27,7 @@ The bridge reports every `electronAPI` call it does not have. Against
 | AI Operator | `listAiOperatorTools` | **done**, §6 |
 | Speech | `requestAssemblyAiToken` | **not needed**, §6 — nothing calls it |
 | PPTX | `openFile` · `parseFile` — on `window.pptxAPI`, likewise not installed | **done**, §9 |
-| Browser mode | `setBrowserModeEnabled` · `setBrowserModeBounds` · `browserNavigate` · `browserBack` · `browserForward` · `browserReload` · `setBrowserProjectionTarget` · `getBrowserModeState` · `fetchBrowserSuggestions` · `onBrowserModeStateChanged` · `onBrowserFocusAddress` | child webviews |
+| Browser mode | `setBrowserModeEnabled` · `setBrowserModeBounds` · `browserNavigate` · `browserBack` · `browserForward` · `browserReload` · `setBrowserProjectionTarget` · `getBrowserModeState` · `fetchBrowserSuggestions` · `onBrowserModeStateChanged` · `onBrowserFocusAddress` | **done**, §10 |
 | Stage displays | `onStageData` · `onWorshipStageData` (`onOutputData` is unused under Tauri) | **done**, §4 — they were blank |
 
 Plus two known issues assigned here: §5 (`vosk`, never imported) and §10 (no
@@ -319,3 +319,119 @@ time, from a cold disk cache), 2 s in a debug build; the Electron importer took
 
 **Not verified:** picking a file with the dialog by hand — the harness granted
 the fixtures' folder instead.
+
+## 10. Browser mode
+
+Under Electron, `browser-view.service.ts` laid a `BrowserView` over the operator
+window's viewport and, when projecting, a second over the audience window, then
+polled the first every 180 ms: its scroll position, mirrored onto the second,
+and a 360-wide capture for the preview sidebar.
+
+**Characterised first** (`e192d82`): what that service and the suggestions
+handler decide moved verbatim into `src/main/lib/browser-mode.mjs` — what the
+address bar's input loads, which page a view restores, the viewport rounding,
+the preview's crop, the suggestions URL, the starting state. Identical to the
+originals on 100 000 generated inputs before those were removed.
+`tests/browser-mode.test.mjs` pins it, quirks included: `ftp://files.example.com`
+loads `https://ftp://files.example.com`, a tab does not rule an address out,
+NEL is not trimmed. 21 mutations, one surviving — the `127.0.0.1:` prefix
+check, which the dot check already covers.
+
+### Why not Tauri's child webviews
+
+The owner first chose Tauri's `unstable` child webviews. Building it found two
+costs that decision had not been told about:
+
+- **`unstable` is global.** With the feature on, `tauri-runtime-wry` builds
+  *every* window's webview as a child view with proportional bounds instead of
+  as the window's content — the operator window, the audience window, both
+  stage displays. All would need re-testing, the native audience screen
+  (Stage 6) included.
+- **A window holding a second webview stops being a webview window.** Tauri's
+  `is_webview_window` is "every webview has the window's label". With a browser
+  child in `main`, `get_webview_window("main")` returns `None` and every command
+  taking `WebviewWindow` from the operator window fails with "current webview is
+  not a WebviewWindow" — 10 commands (every file dialog, the PPTX picker) and
+  19 lookups by label (events to the operator window, close handlers, the
+  native surface) for as long as browser mode is open.
+
+Asked with those facts, the owner chose **wry views built directly on the
+windows' native views**: the same place on screen, no `unstable`, no change to
+any existing window. A page browsed there also gets no Tauri IPC script at all,
+where a Tauri child webview gets `__TAURI_INTERNALS__` and relies on the ACL
+refusing remote origins.
+
+### What moved (`fb91402`)
+
+- `services/browser_mode/rules.rs` — the pinned rules, with the JavaScript
+  tests' cases
+- `services/browser_mode/mod.rs` — `BrowserMode`: the service's steps in its
+  order, against a `Host` trait standing for what a `BrowserView` did. Tested
+  step by step against a fake host (enable, bounds, navigate, history, the
+  projection, the poll, the preview, the views' own requests)
+- `services/browser_mode/view.rs` — `WryHost`. The views live in a main-thread
+  thread-local; every operation is posted there, and every wry callback only
+  sends a `Signal`, answered off the main thread, so nothing re-enters them
+- `services/browser_mode/view/native.rs` — per platform: building on the
+  window's view, the history buttons' state, the snapshot
+- `commands/browser_mode.rs` and the eleven bridge entries
+
+| Electron | Here |
+|---|---|
+| `mainWindow.setBrowserView` | wry `build_as_child` on the operator window's content view (macOS: the parent of Tauri's WKWebView, because the window handle names a view wry has already replaced); a `gtk::Fixed` in an overlay over the window's webview (Linux); the window's HWND (Windows) |
+| `partition: 'persist:present-browser-mode'` | a WebKit data store of its own on macOS 14+, the shared default store before that; a data directory of its own on Windows and Linux |
+| `executeJavaScript` for the scroll position | `evaluate_script_with_callback`, with a script built from operators only, reading a non-finite value as 0 — the page can redefine `scrollX`, and wry's macOS bridge aborts on a value JSON cannot hold |
+| `capturePage` | `takeSnapshotWithConfiguration` (WebKit crops and scales, so only a preview-sized image crosses); `CapturePreview` (WebView2); `webkit_web_view_get_snapshot` (WebKitGTK). Scaled and encoded off the main thread |
+| `getURL`, `getTitle`, `canGoBack`, `isLoading` | read from the native view. Not wry's `url()`: it unwraps WKWebView's URL, which is nil until a page commits, and panicked the app the first time it ran |
+| `did-navigate-in-page` | wry has no such event; each poll compares the URL |
+| `will-navigate` refusing anything but http(s) | a navigation handler refusing the same — except that wry asks about frames too without saying which, so a frame's own `about:`, `data:` and `blob:` stay allowed |
+| `before-input-event` for ⌘L / Ctrl+L | a capture-phase listener in the page, trusted events only, over wry's IPC |
+| `setWindowOpenHandler` | a web address loads in the same view, as before |
+| `outputWindow.on('resize' \| 'closed')` | the audience window's `Resized` and `Destroyed` |
+
+**Deliberately different:**
+
+- an identical preview is not sent again; Electron sent one every 180 ms
+- a `window.open` of anything but a web address is refused. Electron handed it
+  to the system, which lets any page open any URL scheme; the app's own
+  `open_external_browser` already opens only http and https
+- `browserNavigate` answers once the page stops loading or after 30 s, with the
+  state. Electron's `await loadURL` threw on a failed load, which the panel does
+  not catch
+- a snapshot that has not finished in 3 s is abandoned, so a hidden window
+  cannot stop the preview for good
+- the audience view is not background-throttled, as for the audience window
+
+**wry is pinned to `=0.55.1`**, the version Tauri resolves; a test fails if the
+lockfile ever holds a second wry.
+
+**Verified in the running app (macOS)**, against a local test server:
+
+- the operator window stayed a webview window with browser mode open:
+  `list_open_windows` listed `main`, then `main` and `output`
+- a page loaded, titled, and answered in 309 ms; back, forward and reload
+  reported the right page, title and history state
+- a page scrolling itself to 400 was mirrored into the state; the preview
+  arrived at 360×225 — the 800×500 viewport's shape — and showed that part of
+  the page
+- in the page: `window.__TAURI_INTERNALS__` undefined; `location.href =
+  "file:///etc/hosts"` refused; a synthetic ⌘L ignored; `window.ipc`'s
+  focus-address message delivered once; `window.open("mailto:…")` refused;
+  `window.open` of a web address loaded it in the same view
+- a search went to Google, which answered with its consent page
+- projecting opened the audience window with the page at 1920 wide, scrolled to
+  400 to match; back to the preview removed the view and left the window open,
+  as Electron does
+- disabled, no state events arrived; suggestions with no local web app came
+  back empty, as Electron's did
+- the first run's panic in wry's `url()` was written to the error log by the
+  panic hook (§7), stack and all
+
+**Checked, not run:** the Windows and Linux modules pass
+`clippy --all-targets -D warnings` cross-compiled with §8's recipe, and a planted
+error in each fails its check.
+
+**Not verified:** a real keypress of ⌘L in a page; anyone using the panel by
+hand; the preview while the operator window is hidden; a page that never
+finishes loading; either platform other than macOS; macOS before 14, where the
+data store is shared with the app.

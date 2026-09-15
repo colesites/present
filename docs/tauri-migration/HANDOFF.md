@@ -1,15 +1,17 @@
 # Present — Electron → Tauri migration: session handoff
 
-**Read this first.** It is the state of the migration as of 2026-09-14, written
+**Read this first.** It is the state of the migration as of 2026-09-15, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 67 commits ahead of `master` — the last is this update — **nothing pushed**.
+Branch `rust`, 89 commits ahead of `master` — the last is this update — **nothing pushed**.
 
-**Stage 6 is code complete.** NDI output runs from the Rust compositor, which
-now draws what the audience window draws; `libndi` ships in the bundle; NDI
-props receive through Rust; and the audience window can be drawn natively,
-opt-in. What remains is the owner's manual gate (§8 E). **Stage 7 is next**, at
-the owner's request. Start with §4.
+**Stages 6 and 7 are code complete.** Stage 7 put the last Electron subsystems
+on Rust commands: Bibles, fonts, the AI Operator's tool list, the error log, the
+stage displays' feed, the app's settings out of browser storage, PowerPoint
+import without Python, crash recovery on Windows and Linux, and browser mode.
+Nothing the React tree calls is still missing from the bridge. What remains
+before Stage 8 is by hand: the Stage 6 NDI gate (§8 E) and the Stage 7 parity
+checklist (§8 F). Start with §4.
 
 ---
 
@@ -36,7 +38,7 @@ the audience screen is a serious bug, not a rough edge.
 | [stage-0-audit.md](stage-0-audit.md) | The full audit. Architecture map, all 79 IPC channels, media/audio/output pipeline, state model, native deps, build system, 31-row migration matrix, risks. **The reference for anything about how Electron does it today.** |
 | [adr-002-video-decode.md](adr-002-video-decode.md) | Video is decoded by the OS, not a bundled FFmpeg. What that costs in containers, and what their own library says about it. |
 | [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. **Amended**: the surface is a hybrid, with a webview layer above it for YouTube and capture props. |
-| [known-issues.md](known-issues.md) | Sixteen bugs found so far, each assigned to the stage that owns the fix. Twelve fixed or partly fixed. |
+| [known-issues.md](known-issues.md) | Seventeen bugs found so far, each assigned to the stage that owns the fix. Fifteen fixed or mostly fixed; the other two open on purpose. |
 | [stage-1-tauri-skeleton.md](stage-1-tauri-skeleton.md) | The Tauri shell beside Electron. |
 | [stage-2-displays.md](stage-2-displays.md) | Display enumeration, identity, persistence, monitor names. |
 | [stage-2-windows.md](stage-2-windows.md) | All eight windows in Rust: specs as data, the output hardening, crash policy, the physical/logical placement trap. |
@@ -45,6 +47,7 @@ the audience screen is a serious bug, not a rough edge.
 | [stage-4-presentation-core.md](stage-4-presentation-core.md) | The characterisation gate, the output layer flags, the auth session, the audience scene, the presentation position, and what Stage 5 inherits. |
 | [stage-5-media-engine.md](stage-5-media-engine.md) | The full audio inventory, the Rust audio graph, the compositor, video decode, and the frame budget. |
 | [stage-6-ndi.md](stage-6-ndi.md) | **Code complete.** The owner's three decisions, NDI loaded at runtime, the send loop, what streaming found, drawing what the window draws, the bundled runtime, NDI props, and the opt-in native audience screen. |
+| [stage-7-subsystems.md](stage-7-subsystems.md) | **Code complete.** The owner's decisions (one changed), Bibles, the blank stage displays, fonts, the tool list and speech token, the error log, settings out of browser storage, `vosk`, crash recovery off macOS, PowerPoint import in Rust, and browser mode on wry views. |
 
 ## 3. Where things stand
 
@@ -139,16 +142,26 @@ node pinned to zero. None were bugs. All were conventions nothing checked.
 - ✅ The audience window drawn natively, opt-in (owner's call), with the webview as fallback — verified in the running app
 - ⬜ **The owner's gate**: NDI Tools watching a live service, 45 minutes, Test Patterns as a prop, the native screen on a projector
 
-### Stages 7–8, untouched
+**Stage 7 — the remaining subsystems.** Code complete; the parity checklist is open.
+- ✅ Bibles: the bundled list and reader, and the hosted catalog, from Rust — characterised first
+- ✅ Both stage displays were blank under Tauri (a Stage 4 bridge gap) — fed by a Rust relay now, known-issues §16
+- ✅ Fonts: the system list read as `font-list` reads it, installs refused outside the picked files
+- ✅ The AI Operator's 46 tool definitions in one JSON file both shells read
+- ✅ The redacted local error log, from Rust, including panics and dead webview processes
+- ✅ Settings out of origin-bound browser storage into `web-storage.json`, with a one-time import of the Electron build's — known-issues §2 mostly fixed
+- ✅ `vosk` removed — known-issues §5
+- ✅ Webview crash recovery on Windows and Linux — known-issues §10, checked by cross-compiling, not run
+- ✅ PowerPoint import ported from `parse_pptx.py` to Rust: the recorded fixtures exactly, and 26 of the owner's decks identical
+- ✅ Browser mode on two wry views over the operator and audience windows — not Tauri's `unstable` child webviews (owner, 2026-09-15; §6)
+- ⬜ **The parity checklist by hand**, §8 F
 
-Content and gates from the audit's §12, inlined so this file stands alone.
+### Stage 8, untouched
+
+From the audit's §12, inlined so this file stands alone.
 
 | Stage | Content | Gate |
 |---|---|---|
-| **7** | Bible, fonts, PPTX sidecar, auth, AI Operator on Rust commands, error reporting, settings. | Parity checklist |
 | **8** | Measure against the Electron baseline, then remove Electron. | Definition of done |
-
-The owner has asked for Stage 7 to follow Stage 6.
 
 **The single-audible-video guard exists now** (`tests/single-audible-video.test.mjs`)
 and is proven to fail when a second audible element appears. It is what stops
@@ -158,6 +171,28 @@ stays until Stage 8.
 ### Commits on this branch
 
 ```
+fb91402 feat(stage-7): browser mode inside the operator window, on wry views
+e192d82 test(stage-7): pin browser mode's rules before moving it to child webviews
+3e84e0c test(stage-7): spell the error log test's no-break spaces as escapes
+d3909a1 docs(stage-7): record the PowerPoint importer's port to Rust
+32e1999 feat(stage-7): import PowerPoint files in Rust, without Python
+1dc0f9d test(stage-7): pin the PPTX importer's output before porting it to Rust
+579759a docs(stage-7): record browser storage, vosk, crash recovery off macOS, and the CI clippy fix
+a60dfbe feat(stage-7): recover a crashed webview on Windows and Linux too
+498b9c5 fix(tauri): stop two keychain constants failing CI's Linux clippy
+cf167c1 feat(stage-7): keep the app's browser storage in Rust, and bring Electron's over
+3015193 chore(stage-7): drop vosk, which nothing imports
+8ef7252 docs(stage-7): record fonts, the tool list, the speech token and the error log
+d6b34ba feat(stage-7): keep the redacted local error log from Rust
+7915d7a test(stage-7): pin the local error log exactly before porting it
+e23e0f1 feat(stage-7): serve the AI Operator's tool list from one shared file
+3038b6e feat(stage-7): list and install fonts from Rust
+9142cf9 test(stage-7): pin the font catalog rules against font-list itself
+7149f79 docs(stage-7): record the owner's two decisions, Bibles, and the blank stage displays
+a6458c6 fix(stage-7): feed the two stage displays under Tauri
+d1e1bab feat(stage-7): serve the bundled Bibles and the hosted catalog from Rust
+e334d67 test(stage-7): pin the bundled Bible catalog rules before porting them
+9e8e81c docs(stage-6): close Stage 6's code, and hand over to Stage 7
 ed3c0b1 feat(stage-6): draw the audience window natively, behind a setting
 1c61d7d feat(stage-6): receive NDI sources for props
 39c80fd feat(stage-6): ship the NDI runtime inside the Tauri bundle
@@ -227,55 +262,55 @@ df6c9a7 docs: add session handoff for the Tauri migration
 
 ## 4. The next task, concretely
 
-**Stage 6 is code complete; Stage 7 is next**, because the owner asked for it to
-follow. Everything about Stage 6 is in [stage-6-ndi.md](stage-6-ndi.md).
+**Stages 6 and 7 are code complete.** Stage 8 — measure against Electron, then
+remove it — should not start until a person has used the Tauri build.
 
-**1. Stage 7 — the remaining subsystems onto Rust commands.** The audit's list:
-Bible, fonts, the PPTX sidecar, auth, the AI Operator, error reporting,
-settings. Its gate is a parity checklist. Some of it has started already —
-auth's session and refresh are in Rust (Stage 4), and the bridge reports every
-`electronAPI` call it does not have yet into the Rust log, which is the
-quickest inventory: a clean launch today reports `listBundledBibles` and
-`fetchHostedBibleCatalog`. Start by reading `stage-0-audit.md` for each
-subsystem, then characterise before moving, as every stage has. Two known
-issues are already assigned there: §5 (`vosk`) and §10 (no webview crash
-recovery on Windows and Linux).
+**1. The manual gates, §8.** Section A (a service on one machine) is still the
+hour that will find the most, and nobody has done it. Section F is Stage 7's
+parity checklist: Bibles, fonts, a PowerPoint import, settings surviving a
+restart, the error log, browser mode. Section E is the Stage 6 NDI gate. Each
+subsystem's own "Not verified" list is in its stage doc.
 
-The audit's two remaining open questions (§13) land in Stage 7. **The owner
-answered both on 2026-09-14** — see §6.
+**2. Windows and Linux.** Crash recovery and browser mode have platform code for
+both, type-checked by cross-compiling (stage-7-subsystems.md §8 has the recipe)
+and never run. CI builds the bundles; nobody has launched one.
 
-**2. The owner's Stage 6 gate**, [§8 E](#e-ndi--stage-6-needs-ndi-tools-installed-on-this-machine).
-Needs a person, NDI Tools and a service. Nothing in Stage 7 depends on it, but
-the native audience screen should not be turned on for a real service until it
-has passed.
+**3. Stage 8** when the above has passed: the performance comparison the
+migration plan asks for, then removing Electron — the Webpack build, `main/`,
+the preload, the `overrides` pin (§13), and the bridge entries as each call
+site moves to a typed client.
 
-**3. Still the owner's to decide:** the operator's quick toggles write only the
+**Still the owner's to decide:** the operator's quick toggles write only the
 program column, so clearing the words on the projector does not clear them on
 the NDI stream (stage-6-ndi.md §1).
 
-**Independently, [§8, the manual test list](#8-the-manual-test-list-stages-1-to-5)**
-is still untouched.
-
 ## 5. What the Rust core contains today
 
-About 26 000 lines, tests included, across `apps/desktop/src-tauri/src`, mirroring the Electron main
+About 38 500 lines, tests included, across `apps/desktop/src-tauri/src`, mirroring the Electron main
 process's own structure as the audit asked. Nothing here is a stub.
 
 ```
 commands/      thin: deserialise, delegate, map to AppResult
+  ai_operator.rs list_ai_operator_tools
   app.rs         get_app_info
+  bible.rs       list_bundled_bibles · read_bundled_bible · fetch_hosted_bible_catalog
+  browser_mode.rs set_browser_mode_enabled/_bounds · browser_navigate/_back/_forward/_reload
+                 set_browser_projection_target · get_browser_mode_state
+                 fetch_browser_suggestions
   compositor.rs  render_output_frame — renders the live scene, optionally to PNG
   media.rs       check_video_support — which files the decoder cannot open
   audio.rs       get_audio_graph · get_source_routing · set_audio_device
                  set_audio_source_gain/_muted · set_audio_master_gain/_muted
   deep_link.rs   take_pending_deep_link
-  diagnostics.rs report_webview_capabilities · report_diagnostic
+  diagnostics.rs report_webview_capabilities · report_diagnostic · report_renderer_error
   display.rs     get_displays · get/set_preferred_display
                  get/set_preferred_resolution · reconcile_displays
   auth.rs        get/set/clear_stored_auth_session · consume_pending_auth_token
                  begin_auth_flow · open_external_browser · refresh_desktop_session
   file.rs        the eight dialogs · the six file operations · the two
                  library-bundle calls · list/remove_media_folder
+  fonts.rs       get_system_fonts · get_system_font_faces · pick_font_file
+                 install_custom_fonts · get_custom_fonts
   looks.rs       get_looks_config · set_looks_target · set_selected_look
                  add_look · set_look_name · set_look_layer · set_look_text_position
   mini_lyrics.rs get_mini_lyrics_payload · save_mini_lyrics
@@ -285,13 +320,16 @@ commands/      thin: deserialise, delegate, map to AppResult
   output.rs      get_output_scene (what is ON SCREEN) · send_to_output
                  set/is_output_frozen
   permissions.rs request/get microphone and camera access
+  pptx.rs        open_pptx · parse_pptx
   playback.rs    get_playback · select_playback_media · play/pause/toggle/stop
                  seek · report_playback_position · set_playback_duration · ended
   presentation.rs get_presentation_position · set_presentation_service/_item/_group
                  set_presentation_deck · go_to_slide · next/previous_slide
                  reconcile_presentation_services
   speech.rs      request_speech_token · report_speech_usage
+  stage.rs       send_to_stage · get_stage_messages
   surface.rs     get_output_surface · set_output_surface_native
+  web_storage.rs get_web_storage · initialize_web_storage · set_web_storage_items
   window.rs      open_window · close_window · open/close_mini_lyrics_window
                  list_open_windows
 services/      domain logic, most of it runtime-free and tested
@@ -301,9 +339,20 @@ services/      domain logic, most of it runtime-free and tested
                      match rather than a convention. No Tauri types.
   auth.rs            session read-back rules, the refresh transport, the
                      sign-in URL. No Tauri types.
+  bible.rs           the bundled Bibles' names and codes, the hosted catalog
+  browser_mode/      browser mode (Stage 7), on wry views Tauri does not manage
+    rules.rs           the address bar, restore, crop and suggestion rules,
+                       case for case with src/main/lib/browser-mode.mjs
+    mod.rs             BrowserMode: Electron's steps against a Host trait. No wry.
+    view.rs            THE wry host. Views live on the main thread; callbacks
+                       only send Signals. Never call wry's url() on macOS.
+    view/native.rs     attach, history state and snapshot, per platform
+    suggestions.rs     the web app's search suggestions
+  collation.rs       localeCompare, closely enough for sorting names
   deep_link.rs       present:// parsing and the pending-link buffer. Parser
                      has no Tauri types.
   dialog.rs          the eight native dialogs; every pick grants scope
+  error_log.rs       the redacted ndjson error log, rotation, the panic hook
   display.rs         the role→monitor selection rule, ported from
                      src/shared/lib/display-selection.mjs. No Tauri types.
   display_identity.rs (name, ordinal) identity + the FNV-1a 53-bit id
@@ -312,6 +361,8 @@ services/      domain logic, most of it runtime-free and tested
   file_scope.rs      THE containment rule. No Tauri types. Read this before
                      touching anything that takes a path.
   filesystem.rs      the file operations, all scope-checked
+  fonts.rs           font-list's catalog rules, custom font install
+  system_fonts.rs    NSFontManager on the main thread, as font-list's helper reads it
   looks.rs           THE output layer flag reducer. No Tauri types. Twin of
                      shared/lib/looks-config.mjs, case for case.
   media_protocol.rs  the local-media:// handler: URL parsing, range planning,
@@ -360,6 +411,12 @@ services/      domain logic, most of it runtime-free and tested
                      so far. The support check is separate and answers by
                      extension, so an unplayable file is caught in the panel
                      rather than on the audience screen.
+  pptx/              PowerPoint import (Stage 7), python-pptx's behaviour exactly
+    package.rs         the zip, content types and relationships
+    payload.rs         parse_pptx.py
+    convert.rs         src/main/lib/pptx-payload.mjs
+    numbers.rs         Python's round, %, int(), float() and colorsys
+    image.rs           Pillow's format detection, MPO included
   playback.rs        THE media transport: resume points, and the two drift
                      tolerances the audit recorded as one. No Tauri types.
   presentation.rs    where the operator is: service, item, deck, slide, and the
@@ -373,7 +430,10 @@ services/      domain logic, most of it runtime-free and tested
     stream.rs          what the running app draws onto it
   shortcuts.rs       Control+Alt+Space
   speech.rs          AssemblyAI token broker transport
+  stage_relay.rs     the last message per type for each stage display, replayed
   window.rs          building, showing, placing and closing windows
+  web_storage.rs     which keys are mirrored, the store, the Electron LevelDB import
+  webview_crash.rs   WebView2 ProcessFailed and WebKitGTK web-process-terminated
   window_spec.rs     all eight windows as serialisable structs. No Tauri.
 state/
   app_state.rs          uptime only
@@ -390,6 +450,8 @@ state/
   persist.rs            load-or-default and atomic save, shared
   playback_state.rs     the live transport. In memory.
   presentation_state.rs the position; the service half persists
+  stage_relay_state.rs  the stage displays' replay. In memory.
+  web_storage_state.rs  web-storage.json, persisted atomically
   window_state.rs       per-window crash history for the loop guard
 errors.rs      the single AppError crossing the boundary: { kind, message }
 ```
@@ -398,14 +460,19 @@ errors.rs      the single AppError crossing the boundary: { kind, message }
 `output:scene-changed`, `presentation:changed`, `audio:changed`,
 `playback:changed`, `output-surface:changed`, `output-window-closed`,
 `media-stage-window-closed`, `worship-stage-window-closed`, `open-import`,
-`ai-operator:toggle-shortcut`, `auth-callback`, `mini-lyrics:save-request`.
-The `*-window-closed` names, `open-import`, `auth-callback` and the mini-lyrics
-one match what Electron sends; the rest are new because what they carry is new.
+`ai-operator:toggle-shortcut`, `auth-callback`, `mini-lyrics:save-request`,
+`stage-data`, `worship-stage-data`, `browser-state-changed`,
+`browser-focus-address`.
+The `*-window-closed` names, `open-import`, `auth-callback`, the mini-lyrics,
+stage and browser ones match what Electron sends; the rest are new because what they carry is new.
 
 **Files the Rust core owns**, in one app-config directory:
 `display-preferences.json`, `media-folders.json`, `looks.json`,
-`service-position.json`, `audio.json` and `output-surface.json`. Plus the auth session, which is in the OS keychain and
-not a file at all.
+`service-position.json`, `audio.json`, `output-surface.json` and
+`web-storage.json`. Plus the auth session, which is in the OS keychain and not
+a file at all. In the app-data directory: `logs/present-errors.ndjson`,
+`custom-fonts/`, and browser mode's own session data (`browser-mode/` on
+Windows and Linux; a WebKit data store on macOS 14+).
 
 **The TypeScript side** is `src/renderer/tauri/`:
 
@@ -429,13 +496,18 @@ not a file at all.
   `__presentPlayback` and `__presentNdi` so the parts that need a human can be
   driven by hand.
 - `capability-probe.ts` — the WKWebView feature report
+- `web-storage.ts`, `start-main.ts`, `start-output.ts` — bring localStorage up
+  to `web-storage.json` before React starts, and mirror writes back
+- the bridge also installs `window.fontAPI` and `window.pptxAPI`, the preload's
+  other two globals
 
 Outside that directory, exactly three files know both shells exist:
 `src/shared/lib/local-media-url.ts` (which imports nothing from either) and the
 two callers that use it.
 
-**Test counts.** 634 Rust (plus two ignored NDI loopback tests that need the
-runtime), 127 JS. `bun run --filter @present/desktop tauri:check`
+**Test counts.** 728 Rust — 727 in the library and the panic hook's own binary
+— plus two ignored NDI loopback tests that need the runtime; 182 JS, one of them
+skipped without `python-pptx`. `bun run --filter @present/desktop tauri:check`
 runs fmt, clippy with `-D warnings`, and the Rust tests.
 
 ## 6. Decisions already made — do not relitigate
@@ -456,14 +528,18 @@ call. Exception: zero-behaviour-change fixes are fine to make now.
 an AssemblyAI key. Only the transport moved to Rust.
 
 **PPTX import is ported to Rust** (owner, 2026-09-14), not shipped as a Python
-sidecar. No machine needs Python, and no installer grows by 40 MB. It needs
-characterisation against real PPTX files so the imported slides match what
-`parse_pptx.py` produces.
+sidecar. No machine needs Python, and no installer grows by 40 MB. Done; its
+output is the Electron importer's exactly (stage-7-subsystems.md §9).
 
-**Browser mode uses Tauri's unstable child webviews** (owner, 2026-09-14), so it
-stays inside the operator window as `BrowserView` has it. The cost, accepted: a
-feature Tauri marks unstable, which can change between versions — pin the Tauri
-version and re-test browser mode on every upgrade.
+**Browser mode is built on wry views directly, inside the operator window**
+(owner, 2026-09-15). The first answer, 2026-09-14, was Tauri's `unstable` child
+webviews. Building it showed that feature rebuilds every window's webview as a
+child view, and that a window holding a second Tauri webview stops being a
+webview window — every command taking the operator window and every lookup by
+label fails while browser mode is open. Given that, the owner chose wry views
+Tauri does not manage: the same place on screen, nothing else changed. Do not
+turn `unstable` on. wry is pinned to Tauri's version (stage-7-subsystems.md
+§10).
 
 **Vite for Tauri, Webpack stays for Electron.** Forge's Webpack plugin is bound
 to Forge. Two bundlers coexist; neither touches the other's inputs.
@@ -542,15 +618,26 @@ Verified by running it, not by reasoning:
   0.5 s after being turned on, a slide on it screen-captured, handed back to
   the webview and captured again with the text in the same place, one view
   after a rapid on-off-on, reattached when the window reopened.
+- **Stage 7, each through the bridge in the running app** by a harness removed
+  before committing: 13 bundled Bibles listed and KJV read in 39 ms; both stage
+  displays replaying and following live messages; 186 font families; an
+  uncaught error and an unhandled rejection redacted into the error log at mode
+  0600, and later a real panic with its stack; settings written, removed and
+  restored across launches, and a true first launch importing 23 of the
+  Electron build's keys; the PowerPoint fixtures through `parseFile` equal to
+  the recordings and a 28 MB deck imported; browser mode loading, navigating,
+  mirroring scroll, previewing and projecting, with browsed pages seeing no
+  Tauri IPC. Details in stage-7-subsystems.md.
+- **PowerPoint import against 26 of the owner's decks**, compared locally with
+  `parse_pptx.py`: all identical. The decks are not in the repository.
 
 **Not verified — do not claim otherwise:**
 
 - No live AssemblyAI transcription end-to-end. Needs the owner signed in.
 - Display id across an **OS reboot**. App restarts only. (Lower risk than first
   thought: the name is a hardware model number, not a display id.)
-- Nothing on Windows or Linux. macOS only so far. In particular there is **no
-  webview crash recovery at all** on those two platforms — Tauri's only hook is
-  macOS/iOS-gated. known-issues §10.
+- Nothing on Windows or Linux. macOS only so far. Crash recovery and browser
+  mode have code for both, type-checked by cross-compiling and never run.
 - **Nothing on a second monitor.** This machine has one screen. Window
   placement is exercised only at the origin, which is exactly where a
   physical-vs-logical pixel mistake is invisible, and no window has been moved
@@ -573,9 +660,9 @@ Verified by running it, not by reasoning:
   proved by the probe's own scene and a harness slide. No NDI Tools receiver
   has watched it, and the native screen has not been on a projector.
 
-## 8. The manual test list, Stages 1 to 5
+## 8. The manual test list
 
-Everything below Stage 6 has code, tests and startup probes. **Almost none of it
+Everything here has code, tests and startup probes. **Almost none of it
 has been used.** This is the whole of what needs a person, gathered in one place
 so it can be worked through rather than rediscovered.
 
@@ -700,6 +787,27 @@ physical-versus-logical pixel mistake is invisible.
       turned on and off, and compare the words with it off. Expect softer text
       only on a Retina or scaled 4K screen.
 
+### F. Stage 7 — the parity checklist
+
+- [ ] **Open the Bible panel**, pick a translation, read a chapter, put a verse
+      on screen. The bundled Bibles have been listed and read only by harness.
+- [ ] **Put a song on screen and look at both stage displays.** They were blank
+      under Tauri before Stage 7 (known-issues §16).
+- [ ] **Open a font picker**, choose a system font, then **install a custom
+      font** through the picker and use it on a slide.
+- [ ] **Change some settings** — a layout, a timer, a media filter — quit, and
+      reopen. They should survive, and a packaged build should show the same.
+- [ ] **Launch the packaged app for the first time** on a machine that has run
+      the Electron build: its settings should come across, once.
+- [ ] **Import a PowerPoint file** through the import dialog (File → Import, or
+      the library). Only the dialog has not been driven; the parse has.
+- [ ] **Open browser mode**, search, follow links, go back and forward, press
+      ⌘L inside a page, and watch the preview sidebar. Then **project to the
+      main output** and scroll: the audience screen should follow. Close the
+      output window while projecting, and project again.
+- [ ] Break something on purpose and find it in
+      `~/Library/Application Support/space.multivrs.present/logs/present-errors.ndjson`.
+
 To watch a stream from a terminal instead:
 `cargo run --release --example ndi_watch -- "Present Main Output" 10 frame.png`
 in `apps/desktop/src-tauri`. From the operator window's console,
@@ -725,31 +833,30 @@ whole picture without opening it.
 | # | Issue | Severity | State |
 |---|---|---|---|
 | 1 | Backing tracks ignore the audio-output-device setting | High | **Fixed** under Tauri |
-| 2 | Dev and packaged builds keep entirely separate state | High | **Partly fixed** — see below |
+| 2 | Dev and packaged builds keep entirely separate state | High | **Mostly fixed** — see below |
 | 3 | `local-media://` can read any file on disk | Medium | **Fixed** |
 | 4 | Media panel hidden behind a dead File System Access check | Medium | **Fixed** |
-| 5 | `vosk` is a dependency that is never imported | Low | Open — Stage 7 |
+| 5 | `vosk` is a dependency that is never imported | Low | **Fixed** |
 | 6 | Build workflows trigger on a branch that does not exist | Low | Open — deliberately |
 | 7 | Ten pre-existing ESLint errors | Low | Open — deliberately |
 | 8 | Speech-to-search blocked by a CORS preflight | Medium | **Fixed** |
 | 9 | Monitor hot-plug never moved the output window | High | **Fixed** |
-| 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | Open — Stage 7 |
+| 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | **Fixed**, not run on either |
 | 11 | Unfreezing the output does not catch the audience screen up | Medium | **Fixed** |
 | 12 | The Looks window and the operator window agree by polling | Medium | **Fixed** |
 | 13 | The Looks window's NDI column does nothing | Medium | **Fixed** under Tauri |
 | 14 | The compositor does not draw scripture, plain text, filters, or media the way the window does | High | **Fixed** |
 | 15 | Four compositor costs that stall a 30 fps stream | High | **Fixed** |
 | 16 | Both stage displays were blank under Tauri | High | **Fixed** |
+| 17 | CI's Linux clippy would fail on two keychain constants | Medium | **Fixed** |
 
-**§2 is the one to understand.** Four of its parts are done: the auth session
-is in the OS keychain, and the media folder list, the output layer flags and
-the service position are in Rust files owned by the app rather than by a
-renderer origin. What is still in origin-partitioned web storage is the rest of
-the `present-*` localStorage keys — UI state, timers, service templates, the
-screen composer layout, local audio, media filters, browser history — plus the
-offline IndexedDB blob and its sync queue, and the Dexie Bible cache. Those
-belong to the subsystems that own them; moving them ahead of those stages means
-writing the same migration twice.
+**§2 is the one to understand.** Most of it is done: the auth session is in
+the OS keychain; the media folders, output layer flags and service position are
+Rust files; and since Stage 7 the rest of the `present-*` localStorage keys are
+mirrored into `web-storage.json`, so every build shares them. What is still
+origin-bound is the offline library — being moved to IndexedDB in the owner's
+in-progress `localData.ts` — its sync queue, the Dexie Bible cache, and fonts
+installed under Electron.
 
 **Issues 6 and 7 are open on purpose.** Release triggers are not a migration
 decision, and the ten lint errors are pre-existing on `master` — eight of them
@@ -759,7 +866,7 @@ commit.
 ### Gaps that are not bugs
 
 Things that are missing rather than wrong. **All of them are in
-[§8, the manual test list](#8-the-manual-test-list-stages-1-to-5)** — this is
+[§8, the manual test list](#8-the-manual-test-list)** — this is
 the short version, for anyone deciding what to trust rather than what to do.
 
 | Gap | Where it bites |
@@ -770,7 +877,8 @@ the short version, for anyone deciding what to trust rather than what to do.
 | No stage display has been used in a service | Both were blank under Tauri until Stage 7 (known-issues §16); fixed and checked by harness, never by a person |
 | Nobody has signed in | Session store, refresh transport and deep links are tested, never run |
 | The native audience screen is opt-in | Deliberate, the owner's call, until it has run a service on a projector |
-| Nothing has run on Windows or Linux | The URL form, single-instance lock, argv deep links, keychain fallback and **video decode** are all macOS-only |
+| Nothing has run on Windows or Linux | The URL form, single-instance lock, argv deep links, keychain fallback and **video decode** are all macOS-only; crash recovery and browser mode have code for both, never run |
+| No Stage 7 subsystem has been used by hand | Each was driven through the bridge by a harness; §8 F |
 
 ## 10. Working agreements
 
@@ -814,9 +922,12 @@ cargo test --test ndi_loopback -- --ignored --nocapture
 cargo run --release --example ndi_stream_probe -- <video> [seconds] [frame.png|-] [program]
 cargo run --release --example ndi_watch -- "<source name>" [seconds] [frame.png]
 cargo run --release --example slide_text_sample              # scripture as the compositor draws it
+cargo run --example font_catalog_probe                       # the font list as Rust reads it
+cargo run --example web_storage_probe                        # what an Electron import would bring, no values
+cargo run --example pptx_import_probe -- deck.pptx           # a deck as the importer reads it, JSON
 bun run --filter @present/desktop tauri:stage-ndi            # copy libndi in for a bundle
 bun run --filter @present/desktop tauri:check   # fmt + clippy -D warnings + tests
-bun run test                                    # 127 JS tests
+bun run test                                    # 182 JS tests
 bun run typecheck
 bun run lint
 node apps/desktop/scripts/check-tauri-version.mjs [--fix]
@@ -827,7 +938,8 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **634 Rust tests, 127 JS tests**, clippy/fmt/typecheck clean.
+Current: **728 Rust tests, 182 JS tests** (one skipped without `python-pptx`),
+clippy/fmt/typecheck clean.
 
 ## 12. Installed skills
 
@@ -956,3 +1068,27 @@ if asked.
   previous commit rather than against a number in a doc.
 - JavaScript numbers are exact only to 2^53−1. Anything hashed or generated in
   Rust and sent to the UI as a number must respect that.
+- **Do not turn on Tauri's `unstable` feature.** It rebuilds every window's
+  webview as a child view, and a window with a second Tauri webview is no
+  longer a webview window: `get_webview_window` returns `None` and commands
+  taking `WebviewWindow` fail for as long as it exists. Browser mode's views
+  are wry's, outside Tauri's manager, for exactly this reason.
+- **wry's `WebView::url()` panics on macOS** for a view that has not committed a
+  page — it unwraps WKWebView's nil URL. Read the URL natively
+  (`browser_mode/view/native.rs`). A panic in a wry callback on the main thread
+  ends the app.
+- **wry is pinned to `=0.55.1`, Tauri's version.** When Tauri moves to another
+  wry, move the pin with it; a test fails if the lockfile holds two.
+- **wry's navigation handler is asked about frames too**, without saying which.
+  Refusing everything but http(s) there breaks `about:blank` and `data:`
+  iframes.
+- **The Tauri dev binary and the packaged app keep separate WebKit data**
+  (`~/Library/WebKit/present` vs `~/Library/WebKit/space.multivrs.present`).
+  `web-storage.json` is what they share.
+- **Python's arithmetic is not Rust's.** `round(x, 4)` rounds the exact binary
+  value ties-to-even (`format!("{x:.4}")` agrees), float `%` takes the divisor's
+  sign, and `serde_json` without `float_roundtrip` can read a float one bit
+  away — which made identical PowerPoint output compare unequal.
+- **The editor tool decodes `\uXXXX` escapes** in file content it writes into
+  literal, often invisible, characters. Write such source through a quoted
+  heredoc, or scan for Zs/Cc/Cf characters afterwards.
