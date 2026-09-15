@@ -152,6 +152,7 @@ mod tests {
             media_filter_css: "none".to_owned(),
             is_video_playing: playing,
             video_current_time: time,
+            video_time_sampled_at_ms: None,
             should_sync_time: sync,
             scripture_style: None,
             library_style: None,

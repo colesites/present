@@ -186,6 +186,10 @@ pub struct OutputScene {
     pub media_filter_css: String,
     pub is_video_playing: bool,
     pub video_current_time: f64,
+    /// When the operator's video was at `video_current_time`, in milliseconds
+    /// since the Unix epoch; `MediaPlayback::position_sampled_at_ms`.
+    #[serde(default)]
+    pub video_time_sampled_at_ms: Option<f64>,
     /// Whether the mirrors should seek to `video_current_time`.
     ///
     /// Deliberately excluded from change detection — see [`OutputScene::differs`].
@@ -231,6 +235,7 @@ impl Default for OutputScene {
             media_filter_css: "none".to_owned(),
             is_video_playing: false,
             video_current_time: 0.0,
+            video_time_sampled_at_ms: None,
             should_sync_time: false,
             active_slide_id: None,
             slide_text: None,
@@ -398,6 +403,8 @@ pub struct MediaUpdate {
     pub media_filter_css: String,
     pub is_video_playing: bool,
     pub video_current_time: f64,
+    #[serde(default)]
+    pub video_time_sampled_at_ms: Option<f64>,
     pub should_sync_time: bool,
     #[serde(default)]
     pub scripture_style: Option<ScriptureStyle>,
@@ -430,6 +437,7 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
                 media_filter_css,
                 is_video_playing,
                 video_current_time,
+                video_time_sampled_at_ms,
                 should_sync_time,
                 scripture_style,
                 library_style,
@@ -452,6 +460,7 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
             scene.media_filter_css = media_filter_css;
             scene.is_video_playing = is_video_playing;
             scene.video_current_time = video_current_time;
+            scene.video_time_sampled_at_ms = video_time_sampled_at_ms;
             scene.should_sync_time = should_sync_time;
             if scripture_style.is_some() {
                 scene.scripture_style = scripture_style;
@@ -841,6 +850,7 @@ mod tests {
                 media_filter_css: "none".to_owned(),
                 is_video_playing: false,
                 video_current_time: 0.0,
+                video_time_sampled_at_ms: None,
                 should_sync_time: false,
                 scripture_style: None,
                 library_style: None,

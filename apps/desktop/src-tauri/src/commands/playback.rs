@@ -91,8 +91,9 @@ pub async fn seek_playback(
     app: AppHandle,
     state: State<'_, PlaybackState>,
     position_seconds: f64,
+    sampled_at_ms: Option<f64>,
 ) -> AppResult<MediaPlayback> {
-    let changed = state.update(|playback| playback.seek(position_seconds));
+    let changed = state.update(|playback| playback.seek(position_seconds, sampled_at_ms));
     broadcast(&app, &state, changed)
 }
 
@@ -102,8 +103,10 @@ pub async fn report_playback_position(
     app: AppHandle,
     state: State<'_, PlaybackState>,
     position_seconds: f64,
+    sampled_at_ms: Option<f64>,
 ) -> AppResult<MediaPlayback> {
-    let changed = state.update(|playback| playback.report_position(position_seconds));
+    let changed =
+        state.update(|playback| playback.report_position(position_seconds, sampled_at_ms));
     broadcast(&app, &state, changed)
 }
 

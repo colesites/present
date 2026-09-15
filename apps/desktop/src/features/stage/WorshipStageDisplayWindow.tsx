@@ -13,6 +13,7 @@ import type {
   ScriptureStyle,
   VideoSettings,
 } from "../../shared/types/output-window";
+import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
 
 type WorshipStageState = {
   mediaUrl: string | null;
@@ -25,6 +26,7 @@ type WorshipStageState = {
   mediaFilterCSS: string;
   isVideoPlaying: boolean;
   videoCurrentTime: number;
+  videoTimeSampledAtMs: number | null;
   shouldSyncTime: boolean;
   activeSlideId: string | null;
   slideText: string | null;
@@ -57,6 +59,7 @@ const initialState: WorshipStageState = {
   mediaFilterCSS: "none",
   isVideoPlaying: false,
   videoCurrentTime: 0,
+  videoTimeSampledAtMs: null,
   shouldSyncTime: false,
   activeSlideId: null,
   slideText: null,
@@ -145,6 +148,10 @@ export function WorshipStageDisplayWindow() {
             typeof message.videoCurrentTime === "number"
               ? message.videoCurrentTime
               : previous.videoCurrentTime,
+          videoTimeSampledAtMs:
+            typeof message.videoTimeSampledAtMs === "number"
+              ? message.videoTimeSampledAtMs
+              : null,
           shouldSyncTime:
             typeof message.shouldSyncTime === "boolean"
               ? message.shouldSyncTime
@@ -214,12 +221,11 @@ export function WorshipStageDisplayWindow() {
       return;
     }
 
-    if (
-      state.shouldSyncTime &&
-      Math.abs(video.currentTime - state.videoCurrentTime) > 0.12
-    ) {
-      video.currentTime = state.videoCurrentTime;
-    }
+    syncMirrorVideo(video, {
+      positionSeconds: state.videoCurrentTime,
+      sampledAtMs: state.videoTimeSampledAtMs,
+      playing: state.isVideoPlaying,
+    });
 
     if (state.isVideoPlaying) {
       void video.play().catch((): void => undefined);
@@ -229,8 +235,8 @@ export function WorshipStageDisplayWindow() {
   }, [
     state.isVideoPlaying,
     state.mediaType,
-    state.shouldSyncTime,
     state.videoCurrentTime,
+    state.videoTimeSampledAtMs,
   ]);
 
   const renderableElements =

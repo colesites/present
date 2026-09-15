@@ -51,6 +51,7 @@ import type {
   ScriptureTextAlign,
   ScriptureVerticalAlign,
 } from "../../shared/types/output-window";
+import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
 
 interface SlideGroup {
   label: string;
@@ -102,6 +103,7 @@ interface OutputPreviewProps {
   onResetFilters: () => void;
   isVideoPlaying: boolean;
   videoCurrentTime: number;
+  videoTimeSampledAtMs?: number | null;
   isFrozen?: boolean;
   onToggleFreeze?: () => void;
   isTimerLayerEnabled: boolean;
@@ -299,6 +301,7 @@ export const OutputPreview = memo(function OutputPreview({
   onResetFilters,
   isVideoPlaying,
   videoCurrentTime,
+  videoTimeSampledAtMs,
   isFrozen,
   onToggleFreeze,
   isTimerLayerEnabled,
@@ -463,11 +466,17 @@ export const OutputPreview = memo(function OutputPreview({
 
   useEffect(() => {
     if (videoRef.current && activeMediaItem?.type === "video") {
-      if (Math.abs(videoRef.current.currentTime - videoCurrentTime) > 0.12) {
-        videoRef.current.currentTime = videoCurrentTime;
+      syncMirrorVideo(videoRef.current, {
+        positionSeconds: videoCurrentTime,
+        sampledAtMs: videoTimeSampledAtMs,
+        playing: isVideoPlaying,
+      });
+      // A mirror WebKit paused while the window was hidden runs again.
+      if (isVideoPlaying && videoRef.current.paused) {
+        videoRef.current.play().catch((): void => undefined);
       }
     }
-  }, [videoCurrentTime, activeMediaItem, showMedia]);
+  }, [videoCurrentTime, videoTimeSampledAtMs, isVideoPlaying, activeMediaItem, showMedia]);
 
 
   const filterStyle = filtersToCSS(mediaFilters);

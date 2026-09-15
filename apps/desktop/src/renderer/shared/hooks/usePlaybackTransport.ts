@@ -7,9 +7,8 @@
  * keeps its signature, no component learns which shell it is running in, and
  * the Electron path is untouched.
  *
- * Under Tauri the answer comes from Rust, which owns where the video is and
- * remembers where each item was left. Under Electron the caller keeps its own
- * state, which is what it did before.
+ * Under Tauri the answer comes from Rust, which owns where the video is. Under
+ * Electron the caller keeps its own state, which is what it did before.
  *
  * Two things are deliberately separate here, because collapsing them is how a
  * playhead ends up being dragged backwards mid-service:
@@ -32,6 +31,8 @@ export type PlaybackView = {
   playing: boolean;
   positionSeconds: number;
   durationSeconds: number | null;
+  /** When the element was at `positionSeconds`, epoch ms; `null` when unknown. */
+  positionSampledAtMs: number | null;
 };
 
 export type PlaybackTransport = PlaybackView & {
@@ -44,7 +45,7 @@ export type PlaybackTransport = PlaybackView & {
   reportPosition: (positionSeconds: number) => void;
   setDuration: (durationSeconds: number | null) => void;
   ended: (looping: boolean) => void;
-  /** Move to a media item, restoring where it was left. */
+  /** Move to a media item: a different one starts from its beginning. */
   selectMedia: (mediaId: string | null, autoPlay: boolean) => void;
 };
 
@@ -72,12 +73,14 @@ export function usePlaybackTransport(electronView: PlaybackView): PlaybackTransp
         playing: boolean;
         positionSeconds: number;
         durationSeconds: number | null;
+        positionSampledAtMs?: number | null;
       }) => {
         if (cancelled) return;
         setRustView({
           playing: playback.playing,
           positionSeconds: playback.positionSeconds,
           durationSeconds: playback.durationSeconds,
+          positionSampledAtMs: playback.positionSampledAtMs ?? null,
         });
       };
 
@@ -123,11 +126,18 @@ export function usePlaybackTransport(electronView: PlaybackView): PlaybackTransp
     pause: useCallback(() => call((core) => core.pause()), [call]),
     toggle: useCallback(() => call((core) => core.toggle()), [call]),
     seek: useCallback(
-      (positionSeconds: number) => call((core) => core.seek(positionSeconds)),
+      (positionSeconds: number) => {
+        const sampledAtMs = Date.now();
+        call((core) => core.seek(positionSeconds, sampledAtMs));
+      },
       [call]
     ),
     reportPosition: useCallback(
-      (positionSeconds: number) => call((core) => core.reportPosition(positionSeconds)),
+      (positionSeconds: number) => {
+        // Stamped here, where the element was read, not where Rust receives it.
+        const sampledAtMs = Date.now();
+        call((core) => core.reportPosition(positionSeconds, sampledAtMs));
+      },
       [call]
     ),
     setDuration: useCallback(

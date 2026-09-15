@@ -6,9 +6,6 @@
 //! the same reasoning that keeps `OutputState` in memory while `LooksState`
 //! persists: this describes the moment, not the setup.
 //!
-//! The resume points inside it are per-session for the same reason. They exist
-//! so stepping away from an item and back does not restart it, which is a
-//! within-service concern.
 
 use std::sync::RwLock;
 

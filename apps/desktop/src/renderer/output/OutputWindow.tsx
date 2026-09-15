@@ -15,6 +15,7 @@ import type {
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { CanvasSlideLayer } from "../shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../shared/components/ScriptureTextLayer";
+import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
 
 const DEFAULT_SCREEN_LAYOUT: ScreenComposerLayout = {
   id: "live-default",
@@ -377,6 +378,8 @@ export function OutputWindow() {
           mediaFilterCSS: msg.mediaFilterCSS as string,
           isVideoPlaying: msg.isVideoPlaying as boolean,
           videoCurrentTime: msg.videoCurrentTime as number,
+          videoTimeSampledAtMs:
+            typeof msg.videoTimeSampledAtMs === "number" ? msg.videoTimeSampledAtMs : null,
           shouldSyncTime: msg.shouldSyncTime as boolean,
           scriptureStyle: msg.scriptureStyle as OutputState["scriptureStyle"],
           libraryStyle: msg.libraryStyle
@@ -481,17 +484,11 @@ export function OutputWindow() {
       return;
     }
 
-    if (
-      state.shouldSyncTime &&
-      Number.isFinite(state.videoCurrentTime) &&
-      Math.abs(video.currentTime - state.videoCurrentTime) > 0.12
-    ) {
-      try {
-        video.currentTime = state.videoCurrentTime;
-      } catch {
-        // Ignore seek errors.
-      }
-    }
+    syncMirrorVideo(video, {
+      positionSeconds: state.videoCurrentTime,
+      sampledAtMs: state.videoTimeSampledAtMs,
+      playing: state.isVideoPlaying,
+    });
 
     if (state.isVideoPlaying) {
       const playPromise = video.play();
@@ -504,8 +501,8 @@ export function OutputWindow() {
   }, [
     state.mediaType,
     state.mediaUrl,
-    state.shouldSyncTime,
     state.videoCurrentTime,
+    state.videoTimeSampledAtMs,
     state.isVideoPlaying,
   ]);
 

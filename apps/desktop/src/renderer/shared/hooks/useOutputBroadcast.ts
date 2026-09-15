@@ -50,6 +50,7 @@ type Params = {
 
   isVideoPlaying: boolean;
   videoCurrentTime: number;
+  videoTimeSampledAtMs?: number | null;
   isFrozen?: boolean;
   scriptureStyle: ScriptureStyle;
   libraryStyle: {
@@ -99,6 +100,7 @@ export function useOutputBroadcast({
   mediaFilterCSS,
   isVideoPlaying,
   videoCurrentTime,
+  videoTimeSampledAtMs = null,
   isFrozen,
   scriptureStyle,
   libraryStyle,
@@ -238,6 +240,7 @@ export function useOutputBroadcast({
       mediaFilterCSS,
       isVideoPlaying,
       videoCurrentTime,
+      videoTimeSampledAtMs,
       shouldSyncTime,
       scriptureStyle: {
         fontSize: scriptureFontSize,
@@ -382,6 +385,7 @@ export function useOutputBroadcast({
     mediaFilterCSS,
     isVideoPlaying,
     videoCurrentTime,
+    videoTimeSampledAtMs,
     isFrozen,
     scriptureFontSize,
     scriptureFooterFontSize,

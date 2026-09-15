@@ -20,15 +20,14 @@ import { safelyUnlisten } from "./electron-bridge";
 /** `PLAYBACK_CHANGED_EVENT`. */
 export const PLAYBACK_CHANGED = "playback:changed";
 
-export type ResumePoint = { positionSeconds: number; wasPlaying: boolean };
-
 export type MediaPlayback = {
   mediaId: string | null;
   playing: boolean;
   positionSeconds: number;
   /** `null` until the element reports it. A video without one is still playable. */
   durationSeconds: number | null;
-  resume: Record<string, ResumePoint>;
+  /** When the element was at `positionSeconds`, epoch ms. `null` when set, not observed. */
+  positionSampledAtMs: number | null;
 };
 
 export const getPlayback = (): Promise<MediaPlayback> => invoke("get_playback");
@@ -43,11 +42,14 @@ export const pause = (): Promise<MediaPlayback> => invoke("pause_playback");
 export const toggle = (): Promise<MediaPlayback> => invoke("toggle_playback");
 export const stop = (): Promise<MediaPlayback> => invoke("stop_playback");
 
-export const seek = (positionSeconds: number): Promise<MediaPlayback> =>
-  invoke("seek_playback", { positionSeconds });
+export const seek = (positionSeconds: number, sampledAtMs: number): Promise<MediaPlayback> =>
+  invoke("seek_playback", { positionSeconds, sampledAtMs });
 
-export const reportPosition = (positionSeconds: number): Promise<MediaPlayback> =>
-  invoke("report_playback_position", { positionSeconds });
+export const reportPosition = (
+  positionSeconds: number,
+  sampledAtMs: number,
+): Promise<MediaPlayback> =>
+  invoke("report_playback_position", { positionSeconds, sampledAtMs });
 
 export const setDuration = (durationSeconds: number | null): Promise<MediaPlayback> =>
   invoke("set_playback_duration", { durationSeconds });

@@ -128,6 +128,7 @@ export interface MainViewMediaState {
   onResetFilters: () => void;
   isVideoPlaying: boolean;
   videoCurrentTime: number;
+  videoTimeSampledAtMs: number | null;
 }
 
 export interface MainViewLibraryState {
@@ -419,6 +420,7 @@ export function MainView({
     onResetFilters,
     isVideoPlaying,
     videoCurrentTime,
+    videoTimeSampledAtMs,
   } = mediaState;
 
   const {
@@ -766,6 +768,7 @@ export function MainView({
       onResetFilters,
       isVideoPlaying,
       videoCurrentTime,
+      videoTimeSampledAtMs,
       isFrozen: isOutputFrozen,
       onToggleFreeze,
       isTimerLayerEnabled,
@@ -838,6 +841,7 @@ export function MainView({
       updateMediaFilters,
       updateVideoSettings,
       videoCurrentTime,
+      videoTimeSampledAtMs,
       videoSettings,
     ],
   );

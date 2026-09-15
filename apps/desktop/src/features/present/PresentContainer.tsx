@@ -1476,6 +1476,7 @@ export function PresentContainer({
     showVideoRef,
     isVideoPlaying,
     videoCurrentTime,
+    videoTimeSampledAtMs,
     handleVideoPlay,
     handleVideoPause,
     handleVideoEnded,
@@ -1752,6 +1753,7 @@ export function PresentContainer({
         ? true
         : isVideoPlaying,
     videoCurrentTime,
+    videoTimeSampledAtMs,
     isFrozen: isOutputFrozen,
     scriptureStyle: {
       fontSize: settingsScriptureFontSize,
@@ -2107,6 +2109,7 @@ export function PresentContainer({
           onResetFilters: handleResetEffectiveMediaFilters,
           isVideoPlaying,
           videoCurrentTime,
+          videoTimeSampledAtMs,
         }}
         libraryState={{
           libraryItems,

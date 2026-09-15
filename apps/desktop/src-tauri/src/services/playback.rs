@@ -1,13 +1,12 @@
 //! Where a video is up to, and whether it is running.
 //!
-//! Today this lives in React refs inside `useShowVideoSync.ts`, and the shape
-//! of the problem is visible in the two of them that matter:
-//! `showPlaybackByMediaIdRef` and `showTimeByMediaIdRef`. They remember, per
-//! media item, whether it was playing and where it had got to, so that an
-//! operator who steps away to another item and comes back resumes instead of
-//! restarting. That is domain behaviour — an operator mid-service relies on it
-//! — held in a ref that dies with the component and is invisible to every other
-//! window.
+//! **A video chosen again starts from the beginning** (owner, 2026-09-15).
+//! Electron's `useShowVideoSync.ts` kept a resume point per media item in two
+//! refs, and this transport first carried them over — for the whole service
+//! rather than until the component remounted, which made it resume far more
+//! often. Choosing a video in the media panel should play it from the start.
+//! What still holds its place is the video already selected: selecting it
+//! again, or a window reloading, does not rewind it.
 //!
 //! The position itself is sampled from the `<video>` element at roughly 10 Hz
 //! and pushed through the scene, which makes the *element* the source of truth
@@ -27,8 +26,6 @@
 //! `services::audio`: splitting one stream across two runtimes would mean
 //! re-synchronising them.
 
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
 /// How far the operator's own player may drift before it is corrected.
@@ -37,14 +34,6 @@ pub const OPERATOR_DRIFT_TOLERANCE: f64 = 0.5;
 
 /// How far a mirror may drift. `OutputWindow.tsx:437`.
 pub const MIRROR_DRIFT_TOLERANCE: f64 = 0.12;
-
-/// What is remembered about one media item between visits.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ResumePoint {
-    pub position_seconds: f64,
-    pub was_playing: bool,
-}
 
 /// The transport.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -57,58 +46,38 @@ pub struct MediaPlayback {
     /// `None` until the element reports it. Nothing may be inferred from its
     /// absence — a video whose duration is unknown is still playable.
     pub duration_seconds: Option<f64>,
-
-    /// Per-item resume points, replacing the two React refs.
-    ///
-    /// Keyed by media id and bounded only by how many videos one service
-    /// touches, which is dozens. Cleared with the deck rather than pruned.
+    /// When the element was at `position_seconds`, in milliseconds since the
+    /// Unix epoch — the same clock in every window. A mirror adds the time
+    /// since then while the video runs, rather than chasing a position that
+    /// was already behind by the time it arrived. `None` when the position was
+    /// set rather than observed (a new item, a stop, play or pause).
     #[serde(default)]
-    pub resume: HashMap<String, ResumePoint>,
+    pub position_sampled_at_ms: Option<f64>,
 }
 
 impl MediaPlayback {
-    /// Move to a media item, restoring where it was left.
+    /// Move to a media item, from its beginning.
     ///
-    /// `auto_play` is the operator's "advance and play" gesture and wins over a
-    /// remembered pause: they asked for it to run now.
+    /// `auto_play` is the operator's "advance and play" gesture: the item
+    /// starts running. The item already selected keeps its place — `auto_play`
+    /// on it only starts it.
     ///
     /// Returns whether anything changed.
     pub fn select_media(&mut self, media_id: Option<&str>, auto_play: bool) -> bool {
-        let previous = self.snapshot_current();
-
         let next_id = media_id.map(str::to_owned);
-        if self.media_id == next_id && !auto_play {
+        if self.media_id == next_id {
+            if auto_play && self.media_id.is_some() {
+                return self.set_playing(true);
+            }
             return false;
-        }
-
-        // Remember where the outgoing item was before leaving it.
-        if let Some(point) = previous {
-            self.resume.insert(point.0, point.1);
         }
 
         self.media_id = next_id;
         self.duration_seconds = None;
-
-        let resumed = self
-            .media_id
-            .as_ref()
-            .and_then(|id| self.resume.get(id).copied())
-            .unwrap_or_default();
-
-        self.position_seconds = resumed.position_seconds;
-        self.playing = auto_play || resumed.was_playing;
+        self.position_seconds = 0.0;
+        self.position_sampled_at_ms = None;
+        self.playing = auto_play && self.media_id.is_some();
         true
-    }
-
-    fn snapshot_current(&self) -> Option<(String, ResumePoint)> {
-        let id = self.media_id.clone()?;
-        Some((
-            id,
-            ResumePoint {
-                position_seconds: self.position_seconds,
-                was_playing: self.playing,
-            },
-        ))
     }
 
     pub fn play(&mut self) -> bool {
@@ -126,6 +95,7 @@ impl MediaPlayback {
             return false;
         }
         self.playing = !self.playing;
+        self.position_sampled_at_ms = None;
         true
     }
 
@@ -134,24 +104,25 @@ impl MediaPlayback {
             return false;
         }
         self.playing = playing;
+        // The last sample was taken while the state was the other one; carried
+        // across a pause it would have a mirror jump ahead by the pause.
+        self.position_sampled_at_ms = None;
         true
     }
 
-    /// Stop and return to the start, forgetting where this item was.
+    /// Stop and return to the start.
     pub fn stop(&mut self) -> bool {
         if self.media_id.is_none() {
             return false;
         }
-        if let Some(id) = &self.media_id {
-            self.resume.remove(id);
-        }
         self.playing = false;
         self.position_seconds = 0.0;
+        self.position_sampled_at_ms = None;
         true
     }
 
     /// Move to a position. The operator's gesture, so it is authoritative.
-    pub fn seek(&mut self, position_seconds: f64) -> bool {
+    pub fn seek(&mut self, position_seconds: f64, sampled_at_ms: Option<f64>) -> bool {
         if self.media_id.is_none() {
             return false;
         }
@@ -160,6 +131,7 @@ impl MediaPlayback {
             return false;
         }
         self.position_seconds = clamped;
+        self.position_sampled_at_ms = sampled_at_ms.filter(|value| value.is_finite());
         true
     }
 
@@ -169,7 +141,7 @@ impl MediaPlayback {
     /// observation and a seek is an instruction. Collapsing them is how a
     /// stale sample from a mirror ends up dragging the operator's playhead
     /// backwards.
-    pub fn report_position(&mut self, position_seconds: f64) -> bool {
+    pub fn report_position(&mut self, position_seconds: f64, sampled_at_ms: Option<f64>) -> bool {
         if self.media_id.is_none() || !position_seconds.is_finite() {
             return false;
         }
@@ -178,6 +150,7 @@ impl MediaPlayback {
             return false;
         }
         self.position_seconds = clamped;
+        self.position_sampled_at_ms = sampled_at_ms.filter(|value| value.is_finite());
         true
     }
 
@@ -197,6 +170,7 @@ impl MediaPlayback {
             return false;
         }
         self.position_seconds = 0.0;
+        self.position_sampled_at_ms = None;
         self.playing = looping;
         true
     }
@@ -246,52 +220,54 @@ mod tests {
     }
 
     #[test]
-    fn coming_back_to_an_item_resumes_where_it_was_left() {
-        // The behaviour the two React refs exist for, and the reason this is
-        // worth moving: an operator who steps to another item mid-video and
-        // comes back must not restart it in front of the congregation.
+    fn a_video_chosen_again_starts_from_the_beginning() {
+        // The owner's call: choosing a video plays it from the start, however
+        // far it got last time and whether or not it was running.
         let mut playback = on_video("bumper");
         playback.play();
-        playback.report_position(42.0);
+        playback.report_position(42.0, None);
 
         playback.select_media(Some("countdown"), false);
-        assert_eq!(
-            playback.position_seconds, 0.0,
-            "the new item starts at its own place"
-        );
+        assert_eq!(playback.position_seconds, 0.0);
+        assert!(!playback.playing, "a new item waits to be played");
 
         playback.select_media(Some("bumper"), false);
-        assert_eq!(playback.position_seconds, 42.0);
-        assert!(playback.playing, "it was running when it was left");
-    }
-
-    #[test]
-    fn a_paused_item_comes_back_paused() {
-        let mut playback = on_video("bumper");
-        playback.play();
-        playback.report_position(10.0);
-        playback.pause();
-
-        playback.select_media(Some("countdown"), false);
-        playback.select_media(Some("bumper"), false);
-
-        assert_eq!(playback.position_seconds, 10.0);
+        assert_eq!(playback.position_seconds, 0.0);
         assert!(!playback.playing);
     }
 
     #[test]
-    fn advance_and_play_beats_a_remembered_pause() {
-        // `shouldAutoPlay` is the operator asking for it to run *now*.
+    fn advance_and_play_starts_the_new_item_running_from_the_start() {
         let mut playback = on_video("bumper");
-        playback.report_position(10.0);
-        playback.pause();
-        playback.select_media(Some("countdown"), false);
+        playback.report_position(10.0, None);
 
-        playback.select_media(Some("bumper"), true);
+        assert!(playback.select_media(Some("countdown"), true));
         assert!(playback.playing);
-        assert_eq!(
-            playback.position_seconds, 10.0,
-            "auto-play resumes, it does not rewind"
+        assert_eq!(playback.position_seconds, 0.0);
+    }
+
+    #[test]
+    fn the_item_already_selected_keeps_its_place() {
+        // A window reloading or the panel re-rendering selects the same item
+        // again; that must not rewind it in front of the congregation.
+        let mut playback = on_video("bumper");
+        playback.play();
+        playback.report_position(42.0, None);
+
+        assert!(!playback.select_media(Some("bumper"), false));
+        assert_eq!(playback.position_seconds, 42.0);
+        assert!(playback.playing);
+
+        playback.pause();
+        assert!(
+            playback.select_media(Some("bumper"), true),
+            "play starts it"
+        );
+        assert_eq!(playback.position_seconds, 42.0, "without rewinding");
+        assert!(!playback.select_media(Some("bumper"), true));
+        assert!(
+            !MediaPlayback::default().select_media(None, true),
+            "nothing to start"
         );
     }
 
@@ -304,26 +280,46 @@ mod tests {
         assert!(!playback.pause());
         assert!(!playback.toggle());
         assert!(!playback.stop());
-        assert!(!playback.seek(10.0));
-        assert!(!playback.report_position(10.0));
+        assert!(!playback.seek(10.0, None));
+        assert!(!playback.report_position(10.0, None));
         assert!(!playback.ended(true));
         assert_eq!(playback, MediaPlayback::default());
     }
 
     #[test]
-    fn stopping_forgets_the_resume_point() {
+    fn an_observed_position_keeps_when_it_was_seen_and_a_set_one_does_not() {
+        let mut playback = on_video("bumper");
+        playback.play();
+        assert!(playback.report_position(4.0, Some(1_000.0)));
+        assert_eq!(playback.position_sampled_at_ms, Some(1_000.0));
+
+        playback.pause();
+        assert_eq!(
+            playback.position_sampled_at_ms, None,
+            "carried across a pause it would jump a mirror ahead"
+        );
+        playback.seek(9.0, Some(2_000.0));
+        assert_eq!(playback.position_sampled_at_ms, Some(2_000.0));
+        playback.report_position(9.5, Some(f64::NAN));
+        assert_eq!(
+            playback.position_sampled_at_ms, None,
+            "a nonsense time is not kept"
+        );
+
+        playback.select_media(Some("countdown"), false);
+        assert_eq!(playback.position_sampled_at_ms, None);
+    }
+
+    #[test]
+    fn stopping_returns_to_the_start() {
         // Stop is "start this again", which is different from pause.
         let mut playback = on_video("bumper");
         playback.play();
-        playback.report_position(42.0);
+        playback.report_position(42.0, None);
 
         assert!(playback.stop());
         assert_eq!(playback.position_seconds, 0.0);
         assert!(!playback.playing);
-
-        playback.select_media(Some("countdown"), false);
-        playback.select_media(Some("bumper"), false);
-        assert_eq!(playback.position_seconds, 0.0, "stop cleared the memory");
     }
 
     #[test]
@@ -331,10 +327,10 @@ mod tests {
         let mut playback = on_video("bumper");
         playback.set_duration(Some(30.0));
 
-        playback.seek(45.0);
+        playback.seek(45.0, None);
         assert_eq!(playback.position_seconds, 30.0);
 
-        playback.seek(-5.0);
+        playback.seek(-5.0, None);
         assert_eq!(playback.position_seconds, 0.0);
     }
 
@@ -343,7 +339,7 @@ mod tests {
         // A stream, or an element that has not reported yet. Capping at zero
         // here would pin the playhead to the start of every such video.
         let mut playback = on_video("stream");
-        assert!(playback.seek(45.0));
+        assert!(playback.seek(45.0, None));
         assert_eq!(playback.position_seconds, 45.0);
     }
 
@@ -367,9 +363,9 @@ mod tests {
         // An element that has not loaded reports NaN. Taking it would move the
         // playhead to zero and drag every mirror with it.
         let mut playback = on_video("bumper");
-        playback.report_position(20.0);
+        playback.report_position(20.0, None);
 
-        assert!(!playback.report_position(f64::NAN));
+        assert!(!playback.report_position(f64::NAN, None));
         assert_eq!(playback.position_seconds, 20.0);
     }
 
@@ -377,13 +373,13 @@ mod tests {
     fn ending_loops_or_stops_according_to_the_setting() {
         let mut playback = on_video("bumper");
         playback.play();
-        playback.report_position(29.0);
+        playback.report_position(29.0, None);
 
         assert!(playback.ended(true));
         assert_eq!(playback.position_seconds, 0.0);
         assert!(playback.playing, "a looping video keeps running");
 
-        playback.report_position(29.0);
+        playback.report_position(29.0, None);
         assert!(playback.ended(false));
         assert!(!playback.playing);
     }
@@ -434,9 +430,8 @@ mod tests {
     fn the_transport_round_trips_through_serde() {
         let mut playback = on_video("bumper");
         playback.play();
-        playback.report_position(12.5);
+        playback.report_position(12.5, None);
         playback.set_duration(Some(30.0));
-        playback.select_media(Some("countdown"), false);
 
         let json = serde_json::to_string(&playback).expect("serialise");
         assert!(json.contains("\"mediaId\""), "{json}");
@@ -445,9 +440,5 @@ mod tests {
 
         let parsed: MediaPlayback = serde_json::from_str(&json).expect("deserialise");
         assert_eq!(parsed, playback);
-        assert_eq!(
-            parsed.resume.get("bumper").map(|r| r.position_seconds),
-            Some(12.5)
-        );
     }
 }
