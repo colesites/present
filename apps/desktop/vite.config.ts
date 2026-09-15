@@ -4,21 +4,18 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 /**
- * Vite config for the Tauri build of Present.
+ * Vite config for Present's frontend, served to the Tauri shell.
  *
- * Electron continues to build the same `src/` tree through Webpack + Forge
- * (`webpack.renderer.config.ts`). Both bundlers coexist during the migration;
- * neither is allowed to change the other's inputs. Anything defined here must
- * mirror the Webpack behaviour it replaces — see the notes on each block.
+ * It replaced the Electron build's Webpack config, which is gone with Electron
+ * (tag `electron-final`); the notes on each block say what it kept.
  */
 
 const DEFAULT_CONVEX_URL = "https://wary-iguana-735.convex.cloud";
 const DEFAULT_WEB_APP_URL = "https://present.multivrs.space";
 
 export default defineConfig(({ mode }) => {
-  // Webpack loads `.env.local` for `start` and `.env.production` otherwise
-  // (webpack.plugins.ts). Vite's own convention resolves the same two files
-  // from `mode`, so `--mode production` picks up `.env.production`.
+  // `.env.local` in development and `.env.production` for a build, as the
+  // Webpack config loaded them. Vite resolves both from `mode`.
   const env = loadEnv(mode, __dirname, "");
   const convexUrl = env.CONVEX_URL?.trim() || DEFAULT_CONVEX_URL;
   const webAppUrl = env.WEB_APP_URL?.trim() || DEFAULT_WEB_APP_URL;
@@ -50,8 +47,6 @@ export default defineConfig(({ mode }) => {
     },
 
     build: {
-      // Kept separate from `.webpack/` and `out/` so an Electron build and a
-      // Tauri build can sit side by side without clobbering each other.
       outDir: "dist-tauri",
       emptyOutDir: true,
       target: "es2022",
@@ -73,7 +68,7 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       host: "127.0.0.1",
       watch: {
-        ignored: ["**/src-tauri/**", "**/.webpack/**", "**/out/**"],
+        ignored: ["**/src-tauri/**"],
       },
     },
 

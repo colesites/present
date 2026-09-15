@@ -6,18 +6,12 @@
     "packages/*"
   ],
   "trustedDependencies": [
-    "electron",
-    "electron-winstaller",
     "esbuild"
   ],
-  "overrides": {
-    "@electron/node-gyp": "https://codeload.github.com/electron/node-gyp/tar.gz/06b29aafb7708acef8b3669835c8a7857ebc92d2"
-  },
   "scripts": {
     "dev": "bun run --filter '*' dev",
     "desktop:tauri": "bun run --filter @present/desktop tauri:dev",
     "desktop:tauri:build": "bun run --filter @present/desktop tauri:build",
-    "desktop:electron": "bun run --filter @present/desktop start",
     "web": "bun run --filter @present/web dev",
     "convex": "bun run --filter @present/backend convex",
     "test": "bun run --filter @present/desktop test",

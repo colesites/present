@@ -1,11 +1,10 @@
 // Stages the NDI runtime for the Tauri bundle.
 //
-// The Electron build ships `libndi` inside grandi's prebuilt package
-// (scripts/stage-ndi.cjs). The Tauri build does not load grandi — it opens the
-// runtime itself (src-tauri/src/services/ndi/library.rs) — but it ships the
-// same library from the same place, so both builds carry the runtime a service
-// was rehearsed on. The loader looks for it in the bundle's `ndi/` resource
-// directory before any runtime installed on the machine.
+// The app does not load grandi — it opens the runtime itself
+// (src-tauri/src/services/ndi/library.rs) — but grandi's prebuilt package is
+// where the redistributable `libndi` comes from, the one the Electron build
+// shipped. The loader looks for it in the bundle's `ndi/` resource directory
+// before any runtime installed on the machine.
 //
 // Copies this platform's library and its licence files from
 // `@grandi/<platform>-<arch>` into `src-tauri/ndi/`, which tauri.conf.json

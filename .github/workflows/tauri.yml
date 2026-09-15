@@ -1,8 +1,7 @@
 name: Tauri Desktop
 
-# The Tauri shell builds alongside the Electron app during the migration. This
-# workflow never touches the Electron build or its release artifacts — see
-# docs/tauri-migration/stage-0-audit.md.
+# The desktop app: Rust quality checks and the macOS, Windows and Linux
+# bundles. The Electron build it replaced was removed (tag `electron-final`).
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
