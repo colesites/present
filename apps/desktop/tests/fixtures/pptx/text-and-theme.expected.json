@@ -1,0 +1,464 @@
+{
+  "title": "text-and-theme",
+  "slideWidthPx": 1920,
+  "slideHeightPx": 1080,
+  "slides": [
+    {
+      "id": "pptx:1",
+      "title": "Slide 1",
+      "backgroundColor": "#FFFFFF",
+      "elements": [
+        {
+          "id": "pptx_1_2",
+          "type": "text",
+          "x": 144,
+          "y": 335.50005,
+          "width": 1632,
+          "height": 231.49995,
+          "content": "Amazing Grace",
+          "style": {
+            "rotation": 0,
+            "fontFamily": "Calibri",
+            "fontSize": 24,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textDecoration": "none",
+            "color": "#000000",
+            "textAlign": "center",
+            "verticalAlign": "middle",
+            "paddingLeft": 0,
+            "paddingRight": 0,
+            "paddingTop": 0,
+            "paddingBottom": 0
+          },
+          "textBody": {
+            "insetLeft": 0,
+            "insetRight": 0,
+            "insetTop": 0,
+            "insetBottom": 0,
+            "verticalAlign": "middle",
+            "wrap": true,
+            "autoFit": "none",
+            "paragraphs": [
+              {
+                "alignment": "center",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "Amazing Grace",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "pptx_1_3",
+          "type": "text",
+          "x": 288,
+          "y": 612,
+          "width": 1344,
+          "height": 276,
+          "content": "How sweet the sound\nThat saved a wretch like me",
+          "style": {
+            "rotation": 0,
+            "fontFamily": "Calibri",
+            "fontSize": 24,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textDecoration": "none",
+            "color": "#000000",
+            "textAlign": "center",
+            "verticalAlign": "middle",
+            "paddingLeft": 0,
+            "paddingRight": 0,
+            "paddingTop": 0,
+            "paddingBottom": 0
+          },
+          "textBody": {
+            "insetLeft": 0,
+            "insetRight": 0,
+            "insetTop": 0,
+            "insetBottom": 0,
+            "verticalAlign": "middle",
+            "wrap": true,
+            "autoFit": "none",
+            "paragraphs": [
+              {
+                "alignment": "center",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "How sweet the sound",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              },
+              {
+                "alignment": "center",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "That saved a wretch like me",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "textContent": "Amazing Grace\nHow sweet the sound\nThat saved a wretch like me"
+    },
+    {
+      "id": "pptx:2",
+      "title": "Slide 2",
+      "backgroundColor": "#FFFFFF",
+      "elements": [
+        {
+          "id": "pptx_2_2",
+          "type": "text",
+          "x": 96,
+          "y": 72,
+          "width": 1536,
+          "height": 720,
+          "content": "Bold italic underlined\naccent, darkened text, lightened spaced double underline\ndistributed\n\nbeforeafter",
+          "style": {
+            "rotation": 0,
+            "fontFamily": "Georgia",
+            "fontSize": 79.99995,
+            "fontWeight": "700",
+            "fontStyle": "normal",
+            "textDecoration": "none",
+            "color": "#000000",
+            "textAlign": "center",
+            "verticalAlign": "bottom",
+            "paddingLeft": 38.4,
+            "paddingRight": 0,
+            "paddingTop": 0,
+            "paddingBottom": 0
+          },
+          "textBody": {
+            "insetLeft": 38.4,
+            "insetRight": 0,
+            "insetTop": 0,
+            "insetBottom": 0,
+            "verticalAlign": "bottom",
+            "wrap": false,
+            "autoFit": "shape_to_fit_text",
+            "paragraphs": [
+              {
+                "alignment": "center",
+                "lineHeight": 1.5,
+                "spaceBefore": 24,
+                "spaceAfter": 12,
+                "runs": [
+                  {
+                    "text": "Bold ",
+                    "fontFamily": "Georgia",
+                    "fontSize": 79.99995,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  },
+                  {
+                    "text": "italic ",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "italic",
+                    "color": "#C00000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  },
+                  {
+                    "text": "underlined",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": true,
+                    "letterSpacing": 0
+                  }
+                ]
+              },
+              {
+                "alignment": "right",
+                "lineHeight": 571500,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "accent, darkened ",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#376092",
+                    "underline": false,
+                    "letterSpacing": 0
+                  },
+                  {
+                    "text": "text, lightened",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#808080",
+                    "underline": false,
+                    "letterSpacing": 0
+                  },
+                  {
+                    "text": " spaced",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 8
+                  },
+                  {
+                    "text": " double underline",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": true,
+                    "letterSpacing": 0
+                  }
+                ]
+              },
+              {
+                "alignment": "justify",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "distributed",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              },
+              {
+                "alignment": "left",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "",
+                    "fontFamily": "Calibri",
+                    "fontSize": 55.99995,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#00B050",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              },
+              {
+                "alignment": "left",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "before",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  },
+                  {
+                    "text": "after",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "textContent": "Bold italic underlined\naccent, darkened text, lightened spaced double underline\ndistributed\n\nbeforeafter"
+    },
+    {
+      "id": "pptx:3",
+      "title": "Slide 3",
+      "backgroundColor": "#FFFFFF",
+      "elements": [
+        {
+          "id": "pptx_3_2",
+          "type": "text",
+          "x": 96,
+          "y": 43.2501,
+          "width": 1728,
+          "height": 180,
+          "content": "Verse 1",
+          "style": {
+            "rotation": 0,
+            "fontFamily": "Calibri",
+            "fontSize": 24,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textDecoration": "none",
+            "color": "#000000",
+            "textAlign": "left",
+            "verticalAlign": "middle",
+            "paddingLeft": 0,
+            "paddingRight": 0,
+            "paddingTop": 0,
+            "paddingBottom": 0
+          },
+          "textBody": {
+            "insetLeft": 0,
+            "insetRight": 0,
+            "insetTop": 0,
+            "insetBottom": 0,
+            "verticalAlign": "middle",
+            "wrap": true,
+            "autoFit": "none",
+            "paragraphs": [
+              {
+                "alignment": "left",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "Verse 1",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "pptx_3_3",
+          "type": "text",
+          "x": 96,
+          "y": 252,
+          "width": 1728,
+          "height": 712.75005,
+          "content": "Through many dangers, toils and snares\nI have already come",
+          "style": {
+            "rotation": 0,
+            "fontFamily": "Calibri",
+            "fontSize": 24,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textDecoration": "none",
+            "color": "#000000",
+            "textAlign": "left",
+            "verticalAlign": "middle",
+            "paddingLeft": 0,
+            "paddingRight": 0,
+            "paddingTop": 0,
+            "paddingBottom": 0
+          },
+          "textBody": {
+            "insetLeft": 0,
+            "insetRight": 0,
+            "insetTop": 0,
+            "insetBottom": 0,
+            "verticalAlign": "middle",
+            "wrap": true,
+            "autoFit": "none",
+            "paragraphs": [
+              {
+                "alignment": "left",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "Through many dangers, toils and snares",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              },
+              {
+                "alignment": "left",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "I have already come",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "textContent": "Verse 1\nThrough many dangers, toils and snares\nI have already come"
+    }
+  ]
+}
