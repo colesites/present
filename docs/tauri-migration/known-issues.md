@@ -23,6 +23,10 @@ zero-behaviour-change change, per migration rule 4.
 | 15 | Four compositor costs that stall a 30 fps stream | High | **Fixed** |
 | 16 | Both stage displays were blank under Tauri | High | **Fixed** |
 | 17 | CI's Linux clippy would fail on two keychain constants | Medium | **Fixed** |
+| 18 | Media blanked and stuttered after leaving the app, and a pause did not hold | High | **Fixed** |
+| 19 | The preview and the output dropped frames of a playing video | High | **Fixed** |
+| 20 | Windows showed white until the UI painted | Medium | **Fixed** |
+| 21 | The editor's Artist and Author fields would not take a space | Medium | **Fixed** |
 
 ---
 
@@ -537,3 +541,71 @@ bundle was built. Nothing had run CI on this branch to show it.
 **Fixed** (`498b9c5`): gated to the platforms that use them. Found by running
 CI's clippy against the Linux target from macOS (stage-7-subsystems.md §8 has
 the recipe); it now passes for Linux, Windows and macOS.
+
+## 18. Media blanked and stuttered after leaving the app, and a pause did not hold — FIXED
+
+Found by the owner on the first hands-on run: minimising the operator window,
+switching to another app, or opening the output blanked the media panel, the
+show grid and the preview, and they reloaded; pausing a video did not pause it.
+Measured with a harness in the running app, three causes:
+
+- **Forty-two paused `video` elements.** The media panel and the Layers panel
+  drew every video file as a video element — forty-two decoders for 4K sources
+  that never move. After a restore every one redrew its first frame and the
+  playing video fell to 4–8 frames a second while they did.
+- **WebKit pauses a video when its window is hidden** (covered by the output
+  window, minimised, behind another app) and resumes it when the window is seen
+  again. Under Tauri the players follow the Rust transport, and nothing told the
+  transport about the video element's own play and pause — so the operator's
+  pause from the native controls stayed local, and the transport and the
+  players disagreed.
+- Once element pauses were passed on, WebKit's own hidden-window pause looked
+  like the operator pressing pause, and opening the output stopped the video.
+
+**Fixed:** videos in the panels are still pictures, decoded once in Rust and
+cached (`services/thumbnails.rs`, `VideoThumbnail.tsx`); the element's play and
+pause reach the transport, except a pause while the page is hidden; coming back
+to the window jumps the operator's video to where it would have got to, so the
+output does not follow it backwards; a mirror that is paused while it should play
+starts again. Verified in the running app: no video elements at idle, opening
+the output leaves the transport playing, a pause from the element pauses every
+player.
+
+## 19. The preview and the output dropped frames of a playing video — FIXED
+
+The show grid played smoothly; the preview and the audience window did not. Each
+mirror seeked whenever it was more than 0.12 s from the operator's reported
+position. Under Tauri that position reaches them after a trip through Rust, so
+it was already late on arrival, and a playing mirror seeked backwards several
+times a second: 9 seeks in 4 s, about 20 frames a second against the operator's
+27, in the running app.
+
+**Fixed:** the transport and the output scene carry when the position was
+sampled; a mirror aims at the position plus the time since, plays at normal
+speed within a frame of it, closes a small gap by adjusting its rate by up to
+10%, and seeks only beyond a second or while paused
+(`src/shared/lib/mirror-video-sync.mjs`, pinned by
+`tests/mirror-video-sync.test.mjs`). After: no seeks in the preview through
+playing, minimising, restoring and changing focus; the audience window caught up
+by rate alone.
+
+## 20. Windows showed white until the UI painted — FIXED
+
+Windows were created hidden and shown when their document finished loading,
+which is before React has drawn anything: an operator opening the app saw white
+for seconds, and so did a congregation when the output opened.
+
+**Fixed:** each window is shown when its React tree has committed
+(`window_ready`), with the existing timeout as the fallback — fifteen seconds for
+the operator window, which has a splash. The splash (`services/splash.rs`,
+`splash.html`) shows the icon, name, version and what the app is doing until the
+operator window appears. `index.html` paints the app's background colour from
+the first frame. Waiting for an animation frame did not work: WebKit runs none in
+a hidden window, so the first version only ever showed on the timeout.
+
+## 21. The editor's Artist and Author fields would not take a space — FIXED
+
+Every keystroke passed the presentation settings through their normaliser, which
+trims text, so a trailing space vanished as it was typed. **Fixed:** the draft
+keeps the fields as typed; they are trimmed when the item is saved. The same bug
+was in the Electron build, which shares the component.
