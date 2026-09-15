@@ -1,89 +1,31 @@
 import { BrowserView, shell, nativeImage, type Rectangle } from 'electron';
 import { createOutputWindow, getOutputWindow } from '../windows/output.window';
 import { getMainWindow } from '../windows/main.window';
+import {
+  SCROLL_SYNC_INTERVAL_MS,
+  clampBrowserBounds,
+  initialBrowserState,
+  isValidHttpUrl,
+  normalizeNavigationInput,
+  previewCrop,
+  restoreUrl,
+  type BrowserState,
+} from '../lib/browser-mode.mjs';
 
 type BrowserProjectionTarget = 'preview' | 'main-output';
 type ManagedBrowserViewRole = 'main' | 'output';
-
-type BrowserState = {
-  url: string;
-  title: string;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  isLoading: boolean;
-  projectionTarget: BrowserProjectionTarget;
-  scrollX: number;
-  scrollY: number;
-  previewDataUrl: string | null;
-};
 
 let mainBrowserView: BrowserView | null = null;
 let outputBrowserView: BrowserView | null = null;
 let isBrowserModeEnabled = false;
 let mainBrowserBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
 let projectionTarget: BrowserProjectionTarget = 'preview';
-let browserState: BrowserState = {
-  url: 'about:blank',
-  title: '',
-  canGoBack: false,
-  canGoForward: false,
-  isLoading: false,
-  projectionTarget: 'preview',
-  scrollX: 0,
-  scrollY: 0,
-  previewDataUrl: null,
-};
+let browserState: BrowserState = initialBrowserState();
 
-const searchEngineBaseUrl = 'https://www.google.com/search?q=';
 const ignorePromiseError = (): null => null;
 let scrollSyncTimer: NodeJS.Timeout | null = null;
 let isCapturingPreview = false;
 const browserSessionPartition = 'persist:present-browser-mode';
-
-const isValidHttpUrl = (value: string): boolean => {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-};
-
-const isLikelyUrl = (value: string): boolean => {
-  const normalized = value.trim().toLowerCase();
-  if (normalized.length === 0 || normalized.includes(' ')) {
-    return false;
-  }
-  return (
-    normalized.includes('.') ||
-    normalized.startsWith('localhost:') ||
-    normalized.startsWith('127.0.0.1:') ||
-    normalized.startsWith('http://') ||
-    normalized.startsWith('https://')
-  );
-};
-
-const normalizeNavigationInput = (input: string): string => {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    return 'https://www.google.com';
-  }
-
-  if (isValidHttpUrl(trimmed)) {
-    return trimmed;
-  }
-
-  if (isLikelyUrl(trimmed)) {
-    const withProtocol = trimmed.startsWith('http://') || trimmed.startsWith('https://')
-      ? trimmed
-      : `https://${trimmed}`;
-    if (isValidHttpUrl(withProtocol)) {
-      return withProtocol;
-    }
-  }
-
-  return `${searchEngineBaseUrl}${encodeURIComponent(trimmed)}`;
-};
 
 const emitBrowserState = (): void => {
   const mainWindow = getMainWindow();
@@ -170,25 +112,10 @@ const capturePreviewFromMainView = (): void => {
         return;
       }
 
-      const expectedAspect =
-        mainBrowserBounds.width > 0 && mainBrowserBounds.height > 0
-          ? mainBrowserBounds.width / mainBrowserBounds.height
-          : sourceSize.width / sourceSize.height;
-      const sourceAspect = sourceSize.width / sourceSize.height;
-      const shouldCropByWidth = sourceAspect > expectedAspect;
-      const cropWidth = shouldCropByWidth
-        ? Math.round(sourceSize.height * expectedAspect)
-        : sourceSize.width;
-      const cropHeight = shouldCropByWidth
-        ? sourceSize.height
-        : Math.round(sourceSize.width / expectedAspect);
-      const cropX = Math.max(0, Math.round((sourceSize.width - cropWidth) / 2));
-      const cropY = Math.max(0, Math.round((sourceSize.height - cropHeight) / 2));
-      const cropped =
-        cropWidth > 0 && cropHeight > 0
-          ? image.crop({ x: cropX, y: cropY, width: cropWidth, height: cropHeight })
-          : image;
-      const previewWidth = Math.min(360, cropped.getSize().width);
+      // The crop lies inside the capture, so the cropped image is as wide as
+      // `crop` says and `previewWidth` is what `cropped.getSize()` gave.
+      const { crop, previewWidth } = previewCrop(sourceSize, mainBrowserBounds);
+      const cropped = crop ? image.crop(crop) : image;
       const previewImage =
         previewWidth > 0 ? cropped.resize({ width: previewWidth }) : nativeImage.createEmpty();
       if (previewImage.isEmpty()) {
@@ -247,7 +174,7 @@ const startScrollSync = (): void => {
       .catch(ignorePromiseError);
 
     capturePreviewFromMainView();
-  }, 180);
+  }, SCROLL_SYNC_INTERVAL_MS);
 };
 
 const attachMainView = (): void => {
@@ -410,11 +337,7 @@ export const setBrowserMode = (enabled: boolean): BrowserState => {
   const currentUrl = view.webContents.getURL();
   const hasRestorableCurrentUrl = Boolean(currentUrl && currentUrl !== 'about:blank');
   if (!hasRestorableCurrentUrl) {
-    const restoreUrl =
-      browserState.url && browserState.url !== 'about:blank'
-        ? browserState.url
-        : 'https://www.google.com';
-    view.webContents.loadURL(restoreUrl).catch(ignorePromiseError);
+    view.webContents.loadURL(restoreUrl(null, browserState.url)).catch(ignorePromiseError);
   } else {
     updateStateFromMainView();
     syncOutputViewToMain();
@@ -426,12 +349,7 @@ export const setBrowserMode = (enabled: boolean): BrowserState => {
 };
 
 export const setBrowserBounds = (bounds: Rectangle): BrowserState => {
-  mainBrowserBounds = {
-    x: Math.max(0, Math.round(bounds.x)),
-    y: Math.max(0, Math.round(bounds.y)),
-    width: Math.max(0, Math.round(bounds.width)),
-    height: Math.max(0, Math.round(bounds.height)),
-  };
+  mainBrowserBounds = clampBrowserBounds(bounds);
   if (!isBrowserModeEnabled || !mainBrowserView) {
     return browserState;
   }
@@ -508,13 +426,7 @@ export const setBrowserProjection = (target: BrowserProjectionTarget): BrowserSt
     return browserState;
   }
 
-  const currentUrl = mainBrowserView.webContents.getURL();
-  const targetUrl =
-    currentUrl && currentUrl !== 'about:blank'
-      ? currentUrl
-      : browserState.url && browserState.url !== 'about:blank'
-        ? browserState.url
-        : 'https://www.google.com';
+  const targetUrl = restoreUrl(mainBrowserView.webContents.getURL(), browserState.url);
 
   if (outputView.webContents.getURL() !== targetUrl) {
     outputView.webContents.loadURL(targetUrl).catch(ignorePromiseError);

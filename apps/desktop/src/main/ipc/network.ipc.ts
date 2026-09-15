@@ -3,6 +3,7 @@ import path from 'node:path';
 import { app, ipcMain, net, session } from 'electron';
 import * as dotenv from 'dotenv';
 import { getWebAppBaseUrl, getWebAppBaseUrlCandidates } from '../utils/app.utils';
+import { browserSuggestionsUrl } from '../lib/browser-mode.mjs';
 
 interface AssemblyAiTokenPayload {
   token: string;
@@ -199,9 +200,8 @@ const fetchDirectAssemblyAiToken = async (): Promise<AssemblyAiTokenPayload | nu
   };
 };
 
-async function fetchBrowserSuggestions(query: string, maxRedirects = 5): Promise<unknown> {
-  let currentUrl = new URL('/api/browser/suggestions', getWebAppBaseUrl()).toString();
-  currentUrl = `${currentUrl}?q=${encodeURIComponent(query)}`;
+async function fetchBrowserSuggestions(url: string, maxRedirects = 5): Promise<unknown> {
+  let currentUrl = url;
 
   for (let i = 0; i <= maxRedirects; i += 1) {
     const response = await net.fetch(currentUrl, {
@@ -278,11 +278,12 @@ export const registerNetworkIPC = (): void => {
 
   ipcMain.handle('fetch-browser-suggestions', async (_, query: string) => {
     try {
-      if (typeof query !== 'string' || query.trim().length === 0) {
+      const url = browserSuggestionsUrl(getWebAppBaseUrl(), query);
+      if (!url) {
         return { suggestions: [] };
       }
 
-      return await fetchBrowserSuggestions(query.trim());
+      return await fetchBrowserSuggestions(url);
     } catch (error) {
       console.error('Failed to fetch browser suggestions', error);
       return { suggestions: [] };
