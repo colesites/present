@@ -26,7 +26,18 @@ pub async fn select_folder(
     window: WebviewWindow,
     state: State<'_, FileState>,
 ) -> AppResult<Option<MediaFolder>> {
-    dialog::select_folder(&app, &state, Some(&window))
+    let folder = dialog::select_folder(&app, &state, Some(&window))?;
+    watch_media_folders(&app, &state);
+    Ok(folder)
+}
+
+/// Keep the live watch on the folders the scope now holds.
+fn watch_media_folders(app: &AppHandle, state: &FileState) {
+    use tauri::Manager;
+    if let Some(watch) = app.try_state::<std::sync::Arc<crate::services::media_watch::MediaWatch>>()
+    {
+        watch.sync_with(state);
+    }
 }
 
 #[tauri::command]
@@ -116,9 +127,36 @@ pub async fn list_media_folders(state: State<'_, FileState>) -> AppResult<Vec<Me
 }
 
 /// Forget a media folder, closing the access it granted.
+/// Make a folder the app already may read — one it just created inside a media
+/// folder, or renamed there — a media folder of its own. Never widens the scope:
+/// a path outside it is refused.
 #[tauri::command]
-pub async fn remove_media_folder(state: State<'_, FileState>, id: String) -> AppResult<bool> {
-    state.remove_folder(&id)
+pub async fn add_media_folder(
+    app: AppHandle,
+    state: State<'_, FileState>,
+    path: String,
+) -> AppResult<MediaFolder> {
+    let resolved = state.resolve_existing(&path)?;
+    if !resolved.is_dir() {
+        return Err(crate::errors::AppError::Invalid(format!(
+            "{} is not a folder",
+            resolved.display()
+        )));
+    }
+    let folder = state.add_folder(&resolved)?;
+    watch_media_folders(&app, &state);
+    Ok(folder)
+}
+
+#[tauri::command]
+pub async fn remove_media_folder(
+    app: AppHandle,
+    state: State<'_, FileState>,
+    id: String,
+) -> AppResult<bool> {
+    let removed = state.remove_folder(&id)?;
+    watch_media_folders(&app, &state);
+    Ok(removed)
 }
 
 // --- file operations -----------------------------------------------------

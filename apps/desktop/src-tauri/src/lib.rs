@@ -202,6 +202,7 @@ pub fn run() {
             commands::file::select_prop_media,
             commands::file::select_presentation_files,
             commands::file::list_media_folders,
+            commands::file::add_media_folder,
             commands::file::remove_media_folder,
             commands::file::read_folder,
             commands::file::copy_media_file,
@@ -328,6 +329,12 @@ pub fn run() {
             // will serve. Registered before any window exists so the operator
             // window's first media request already has a scope to check.
             app.manage(state::FileState::load(&config_dir));
+            {
+                // Media folders that update live.
+                let watch = services::media_watch::MediaWatch::start(app.handle().clone());
+                watch.sync_with(&app.state::<state::FileState>());
+                app.manage(watch);
+            }
             app.manage(commands::thumbnails::ThumbnailQueue::default());
             // Browser mode (Stage 7). Its views report through `signals`, and
             // are answered here, off the main thread they live on.

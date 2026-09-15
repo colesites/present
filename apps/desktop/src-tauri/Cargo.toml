@@ -76,6 +76,8 @@ zip = { version = "2.4", default-features = false, features = ["deflate-flate2",
 roxmltree = "0.20"
 # Cache keys for media thumbnails (`services/thumbnails.rs`).
 blake3 = "1"
+# Media folders that update live (`services/media_watch.rs`).
+notify = "8"
 # Browser mode's two webviews (`services/browser_mode/view.rs`), built directly
 # rather than as Tauri child webviews (stage-7-subsystems.md §10). Pinned to
 # the version Tauri resolves: a second wry would be a second webview runtime in

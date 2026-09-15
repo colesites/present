@@ -20,6 +20,7 @@ pub mod fonts;
 pub mod log_files;
 pub mod looks;
 pub mod media_protocol;
+pub mod media_watch;
 pub mod mini_lyrics;
 pub mod monitors;
 pub mod ndi;

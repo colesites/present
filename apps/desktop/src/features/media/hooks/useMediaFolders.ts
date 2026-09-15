@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 import { createLocalMediaUrl } from "../../../shared/lib/local-media-url.mjs";
+import { safelyUnlisten } from "../../../renderer/tauri/electron-bridge";
 
 // Types for media items
 export type MediaItem = {
@@ -49,87 +51,13 @@ export const DEFAULT_FILTERS: MediaFilters = {
 
 export type MediaState = ReturnType<typeof useMediaFolders>;
 
-// IndexedDB helpers for storing folders
-const DB_NAME = "present-media-db";
-const STORE_NAME = "folder-handles"; // Keeping name for backward compatibility
-
-async function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "id" });
-      }
-    };
-  });
-}
-
-async function saveFolderDB(
-  id: string,
-  name: string,
-  path: string
-): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite");
-    const store = tx.objectStore(STORE_NAME);
-    store.put({ id, name, path });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function loadFoldersDB(): Promise<
-  { id: string; name: string; path?: string; handle?: unknown }[]
-> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readonly");
-    const store = tx.objectStore(STORE_NAME);
-    const request = store.getAll();
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function removeFolderDB(id: string): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite");
-    const store = tx.objectStore(STORE_NAME);
-    store.delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-// Clean up duplicate folders in IndexedDB
-async function cleanupDuplicateFolders(): Promise<void> {
-  const folders = await loadFoldersDB();
-  const seenPaths = new Set<string>();
-  const toDelete: string[] = [];
-
-  for (const folder of folders) {
-    if (!folder.path) {
-      // Legacy browser handle - delete it since we moved to Electron paths
-      toDelete.push(folder.id);
-      continue;
-    }
-    
-    if (seenPaths.has(folder.path)) {
-      toDelete.push(folder.id);
-    } else {
-      seenPaths.add(folder.path);
-    }
-  }
-
-  for (const id of toDelete) {
-    await removeFolderDB(id);
-  }
-}
+// The folder list is Rust's (`state/file_state.rs`, `media-folders.json`): the
+// same list that decides which files the app may read, and the one the live
+// watch follows (`services/media_watch.rs`). The panel kept its own copy in
+// IndexedDB before, which a removal never reached and each build had apart.
+const listMediaFolders = () => invoke<MediaFolder[]>("list_media_folders");
+const removeMediaFolder = (id: string) => invoke<boolean>("remove_media_folder", { id });
+const addMediaFolder = (path: string) => invoke<MediaFolder>("add_media_folder", { path });
 
 // Supported file extensions
 const IMAGE_EXTENSIONS = [
@@ -200,34 +128,21 @@ export function useMediaFolders() {
   const [folders, setFolders] = useState<MediaFolder[]>([]);
   const [allMediaItems, setAllMediaItems] = useState<MediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // A re-read after a folder changed keeps showing what is there until the new
+  // list is ready; only the first load shows the loading state.
+  const hasLoadedMediaRef = useRef(false);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
 
   // Load saved folders on mount
   useEffect(() => {
     let isMounted = true;
-
-    async function loadSavedFolders() {
-      try {
-        await cleanupDuplicateFolders();
-        const saved = await loadFoldersDB();
-        const validFolders: MediaFolder[] = [];
-        
-        for (const f of saved) {
-          if (f.path) {
-            validFolders.push({ id: f.id, name: f.name, path: f.path });
-          }
-        }
-
-        if (isMounted) {
-          setFolders(validFolders);
-        }
-      } catch (error) {
+    listMediaFolders()
+      .then((saved) => {
+        if (isMounted) setFolders(saved);
+      })
+      .catch((error: unknown) => {
         console.error("Failed to load saved folders:", error);
-      }
-    }
-
-    loadSavedFolders();
-
+      });
     return () => {
       isMounted = false;
     };
@@ -242,7 +157,9 @@ export function useMediaFolders() {
         return;
       }
 
-      setIsLoading(true);
+      if (!hasLoadedMediaRef.current) {
+        setIsLoading(true);
+      }
       const items: MediaItem[] = [];
 
       for (const folder of folders) {
@@ -270,6 +187,7 @@ export function useMediaFolders() {
 
       items.sort((a, b) => a.name.localeCompare(b.name));
       setAllMediaItems(items);
+      hasLoadedMediaRef.current = true;
       setIsLoading(false);
     }
 
@@ -297,8 +215,6 @@ export function useMediaFolders() {
         return existingInState;
       }
 
-      await saveFolderDB(id, name, path);
-
       const newFolder: MediaFolder = { id, name, path };
       setFolders((prev) => [...prev, newFolder]);
       setSelectedFolderId(id);
@@ -312,7 +228,7 @@ export function useMediaFolders() {
 
   const removeFolder = useCallback(
     async (folderId: string) => {
-      await removeFolderDB(folderId);
+      await removeMediaFolder(folderId);
       setAllMediaItems((prev) => prev.filter((item) => item.folderId !== folderId));
       setFolders((prev) => prev.filter((f) => f.id !== folderId));
       if (selectedFolderId === folderId) {
@@ -325,6 +241,29 @@ export function useMediaFolders() {
   const refreshMedia = useCallback(async () => {
     setFolders((prev) => [...prev]);
   }, []);
+
+  // A file added, removed or renamed in a media folder — by this app or any
+  // other — re-reads the folders (`services/media_watch.rs`).
+  useEffect(() => {
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("media:folders-changed", () => void refreshMedia()))
+      .then((unlisten) => {
+        if (cancelled) {
+          safelyUnlisten(unlisten);
+          return;
+        }
+        detach = () => safelyUnlisten(unlisten);
+      })
+      .catch((error: unknown) => {
+        console.error("[media] could not watch the media folders", error);
+      });
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, [refreshMedia]);
 
   const images = useMemo(() => mediaItems.filter((item) => item.type === "image"), [mediaItems]);
   const videos = useMemo(() => mediaItems.filter((item) => item.type === "video"), [mediaItems]);
@@ -447,18 +386,12 @@ export function useMediaFolders() {
       }
 
       const newPath = await window.electronAPI.createDirectory(targetParent, name);
-      
+
       // Auto-add the folder to the app
-      const folderId = `folder-${Date.now()}`;
-      // Basic path manipulation for Electron paths (works for both / and \)
-      const folderName = newPath.replace(/\\/g, '/').split('/').pop() || name;
-      
-      await saveFolderDB(folderId, folderName, newPath);
-      
-      const newFolder: MediaFolder = { id: folderId, name: folderName, path: newPath };
-      setFolders(prev => [...prev, newFolder]);
-      setSelectedFolderId(folderId);
-      
+      const newFolder = await addMediaFolder(newPath);
+      setFolders(await listMediaFolders());
+      setSelectedFolderId(newFolder.id);
+
       return newFolder;
     } catch (error) {
       console.error("Failed to create folder:", error);
@@ -480,19 +413,21 @@ export function useMediaFolders() {
       if (folder.path === newPath) return true; // No change
 
       await window.electronAPI.renameDirectory(folder.path, newPath);
-      
-      // Update DB
-      await saveFolderDB(id, newName, newPath);
-      
-      // Update state
-      setFolders(prev => prev.map(f => f.id === id ? { ...f, name: newName, path: newPath } : f));
-      
+
+      // The renamed folder is a new media folder to Rust; the old one is gone.
+      const renamed = await addMediaFolder(newPath);
+      await removeMediaFolder(id);
+      setFolders(await listMediaFolders());
+      if (selectedFolderId === id) {
+        setSelectedFolderId(renamed.id);
+      }
+
       return true;
     } catch (error) {
       console.error("Failed to rename folder:", error);
       throw error;
     }
-  }, [folders]);
+  }, [folders, selectedFolderId]);
 
   const renameMediaItem = useCallback(
     async (item: MediaItem, newName: string) => {
