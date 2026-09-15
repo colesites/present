@@ -1,6 +1,6 @@
 # Stage 7 — the remaining subsystems
 
-**Status:** in progress. Bibles, fonts, the AI Operator's tool list and the error log are on Rust, and the stage displays have a feed again. Next: the remaining browser-storage settings, `vosk`, and crash recovery off macOS; then the PPTX parser and browser mode.
+**Status:** in progress. Done: Bibles, fonts, the AI Operator's tool list, the error log, the stage displays' feed, browser-storage settings in Rust, `vosk` removed, crash recovery on Windows and Linux. Left: the PPTX parser and browser mode.
 
 The audit's content for this stage is Bible, fonts, the PPTX importer, auth,
 the AI Operator, error reporting and settings; its gate is a parity checklist.
@@ -188,3 +188,74 @@ error, rotated to `.1` at 2 MiB, mode 0600.
 rejection went through the renderer's own handlers into the file, redacted, mode
 0600; a non-object report was dropped. The panic hook is tested in its own test
 binary (`tests/panic_hook.rs`), because a hook is process-wide.
+
+## 8. Settings out of browser storage, `vosk`, and crash recovery everywhere
+
+### Browser storage (known-issues §2)
+
+**The rules** — which keys, and what a window does at start — are
+`src/shared/lib/web-storage.mjs`, pinned by `tests/web-storage.test.mjs`.
+Mirrored: every `present-*` and `present:*` key except the slices Rust already
+owns (looks, service position, the auth session) and the offline library and
+sync queue.
+
+**What moved** (`cf167c1`):
+
+- `web-storage.json` in the app's config folder is the durable copy; the
+  components still read localStorage, synchronously, and did not change
+- `index.html` and `output.html` start React through `start-main.ts` and
+  `start-output.ts`, which wait for `web-storage.ts`: the first window of a run
+  brings localStorage up to the store, later windows share it
+- every window's writes to a mirrored key go to Rust, batched per task, patched
+  on `Storage.prototype`
+- first run: the store is created from this build's localStorage if it has any,
+  otherwise once from the packaged Electron build's (`app://app` in
+  `Present/Local Storage/leveldb`), read with `rusty-leveldb` from a copy
+- a normal start gives up after 2 s; the one-time import after 20 s, and if it
+  outlives that, the session's writes are not mirrored, so React's defaults
+  cannot overwrite the imported settings
+
+**Found by testing it:** the import took 2.5 s in a debug build — past the single
+2 s timeout the first version had — and React's defaults would then have been
+mirrored over the settings just imported. Hence the separate timeout and rule.
+Also found: WebKit accepted a 5 000 000-character value, so the quota I had
+assumed is not a constraint; and the Tauri dev binary and the packaged app keep
+separate WebKit data (`~/Library/WebKit/present` vs `…/space.multivrs.present`).
+
+**Verified in the running app**, across launches: created from the dev build's
+own localStorage; a write and a removal reached the file, a non-mirrored key did
+not; a value changed in the file while the app was stopped won on the next
+launch, and opening the audience window did not undo it; with the dev WebKit data
+moved aside (and restored afterwards), a true first launch put all 23 of the
+Electron build's keys into localStorage before React read it.
+`examples/web_storage_probe` lists what an import would bring, without values.
+
+**Not verified:** the packaged app's first launch; two windows starting at the
+same instant.
+
+### `vosk` (known-issues §5) — `3015193`
+
+Removed, with the nine packages only it used. Electron packages.
+
+### Crash recovery on Windows and Linux (known-issues §10) — `a60dfbe`
+
+`services/webview_crash.rs` registers WebView2's `ProcessFailed` and WebKitGTK's
+`web-process-terminated` on every window; both reach the crash policy macOS uses.
+
+**Checked from macOS, run on neither.** The crate type-checks and passes
+`clippy --all-targets -D warnings` for `x86_64-pc-windows-msvc` and
+`x86_64-unknown-linux-gnu`, and a planted error in each platform module fails the
+check. The recipe, for whoever needs it again (all outside the repository):
+
+- Linux: `PKG_CONFIG_ALLOW_CROSS=1`, `PKG_CONFIG` pointing at a script that
+  answers `--modversion` with `99.0` and everything else with nothing;
+  `CC_x86_64_unknown_linux_gnu=clang` with
+  `CFLAGS_…="--target=x86_64-linux-gnu -DRING_CORE_NOSTDLIBINC=1 -isystem <dir>"`,
+  where `<dir>` holds a `stdlib.h` declaring `malloc`, `free`, `posix_memalign`
+- Windows: the same compiler flags with `--target=x86_64-pc-windows-msvc`, the
+  `_byteswap_*` functions declared too, `AR_…` a script turning `lib.exe`'s
+  `-out:` into `ar crs`, and an `llvm-rc` on `PATH` that writes an empty file
+  where `/fo` says
+
+That run also found **known-issues §17**: two keychain constants that CI's Linux
+clippy would fail on. Fixed in `498b9c5`.

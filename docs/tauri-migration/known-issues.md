@@ -7,21 +7,22 @@ zero-behaviour-change change, per migration rule 4.
 | # | Issue | Severity | Status |
 |---|---|---|---|
 | 1 | Backing tracks ignore the audio-output-device setting | High | **Fixed** under Tauri; unchanged under Electron |
-| 2 | Dev and packaged builds keep entirely separate state | High | Stage 3 |
+| 2 | Dev and packaged builds keep entirely separate state | High | **Mostly fixed** under Tauri — the offline library remains |
 | 3 | `local-media://` can read any file on disk | Medium | **Fixed** |
 | 4 | Media panel hidden behind a dead File System Access check | Medium | **Fixed** |
-| 5 | `vosk` is a dependency that is never imported | Low | Stage 7 |
+| 5 | `vosk` is a dependency that is never imported | Low | **Fixed** |
 | 6 | Build workflows trigger on a branch that does not exist | Low | Open |
 | 7 | Ten pre-existing ESLint errors | Low | Deferred — see below |
 | 8 | Speech-to-search blocked by a CORS preflight, not by Electron | Medium | **Fixed** |
 | 9 | Monitor hot-plug never moved the output window | High | **Fixed** |
-| 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | Stage 7 |
+| 10 | No webview crash recovery on Windows or Linux under Tauri | Medium | **Fixed**, not run on either platform |
 | 11 | Unfreezing the output does not catch the audience screen up | Medium | **Fixed** |
 | 12 | The Looks window and the operator window agree by polling | Medium | **Fixed** |
 | 13 | The Looks window's NDI column does nothing | Medium | **Fixed** under Tauri |
 | 14 | The compositor does not draw scripture, plain text, filters, or media the way the window does | **High** | **Fixed** |
 | 15 | Four compositor costs that stall a 30 fps stream | High | **Fixed** |
 | 16 | Both stage displays were blank under Tauri | High | **Fixed** |
+| 17 | CI's Linux clippy would fail on two keychain constants | Medium | **Fixed** |
 
 ---
 
@@ -109,6 +110,25 @@ session is Stage 7 — and moving them ahead of those stages would mean writing
 the same migration twice. The remaining work is a Rust-owned key/value store
 plus a one-time import, and it is not done.
 
+**Mostly fixed** (Stage 7, `cf167c1`). The remaining `present-*` and
+`present:*` localStorage keys — settings, layouts, timers, templates, media
+filters, local audio, browser history — now live in `web-storage.json` in the
+app's config folder, shared by every build. localStorage stays the synchronous
+cache the components read: the first window of a run brings it up to the store
+before React starts, and every window's writes go to Rust. On a first run the
+store is created from that build's localStorage, or once from the packaged
+Electron build's, read from a copy of its LevelDB.
+
+Found on the way: the Tauri dev binary and the packaged app are separate WebKit
+data stores too (`~/Library/WebKit/present` and
+`~/Library/WebKit/space.multivrs.present`), so under Tauri alone there were two
+more partitions. Both now share the Rust store.
+
+**Still partitioned:** the offline library, its sync queue and ID map (being
+moved to IndexedDB in the owner's in-progress `localData.ts`), the Dexie Bible
+cache, and fonts installed under Electron, which live in Electron's own data
+folder.
+
 ---
 
 ## 3. `local-media://` can read any file on disk — FIXED
@@ -174,7 +194,8 @@ only removes a misleading message that was hiding the real state of things.
 Speech recognition actually runs through AssemblyAI over a WebSocket
 (`useSpeechRecognition.ts:134`).
 
-**Fix (Stage 7):** drop it with the rest of the Electron dependency set.
+**Fixed** (Stage 7, `3015193`): removed, with the nine packages only it pulled in,
+among them the `ffi-napi` and `ref-napi` native modules. Electron still packages.
 
 ---
 
@@ -345,6 +366,13 @@ event and the WebKitGTK `web-process-terminated` signal, or a liveness check
 driven from Rust. Both need the Tauri build actually run on those platforms
 first; CI produces Windows and Linux bundles today but nobody has launched one.
 
+**Fixed, unrun** (Stage 7, `a60dfbe`). Each window registers its platform
+webview's own event — WebView2 `ProcessFailed`, WebKitGTK
+`web-process-terminated` — and both reach the same crash policy as macOS. Checked
+from macOS only: the crate type-checks and passes `clippy -D warnings` for both
+targets, and a planted error in each platform module fails that check. Nobody has
+crashed a webview on either platform.
+
 
 ---
 
@@ -495,3 +523,17 @@ opened under Tauri, which is how it survived two stages.
 kept per type in Rust so a display opened mid-service is sent what it missed.
 Verified with each window reporting its own rendered text. Details in
 stage-7-subsystems.md §4.
+
+---
+
+## 17. CI's Linux clippy would fail on two keychain constants — FIXED
+
+The Rust quality job in `tauri.yml` runs `cargo clippy --all-targets -- -D
+warnings` on `ubuntu-22.04`. Since the auth session moved to the keychain in
+Stage 4, `KEYCHAIN_SERVICE` and `KEYCHAIN_ACCOUNT` were used only by the macOS
+and Windows backends — dead code on Linux, so that job would fail before any
+bundle was built. Nothing had run CI on this branch to show it.
+
+**Fixed** (`498b9c5`): gated to the platforms that use them. Found by running
+CI's clippy against the Linux target from macOS (stage-7-subsystems.md §8 has
+the recipe); it now passes for Linux, Windows and macOS.
