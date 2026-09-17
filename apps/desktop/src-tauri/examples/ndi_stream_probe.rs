@@ -26,10 +26,10 @@ use present_lib::services::ndi::look::scene_for_ndi;
 use present_lib::services::ndi::output::{FrameSource, NdiStatus, OutputWorker};
 use present_lib::services::ndi::receiver::{Capture, Receiver};
 use present_lib::services::ndi::sender::Sender;
-use present_lib::services::ndi::video_feed::VideoFeed;
+use present_lib::services::ndi::video_feed::{Opener, VideoFeed};
 use present_lib::services::ndi::{library, rules};
 use present_lib::services::output::{MediaKind, OutputScene, VideoSettings};
-use present_lib::services::video::{self, VideoDecoder};
+use present_lib::services::video;
 
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
@@ -100,9 +100,9 @@ impl FrameSource for ProbeSource {
         let scene = scene_for_ndi(&self.scene(started), &look);
 
         let path = self.video_path.clone();
-        let open = move |_url: &str, size: (u32, u32)| -> Result<Box<dyn VideoDecoder>, String> {
+        let open: Opener = std::sync::Arc::new(move |_url: &str, size: (u32, u32)| {
             video::open_contained(&path, size).map_err(|error| error.to_string())
-        };
+        });
         let Self {
             compositor, feed, ..
         } = self;

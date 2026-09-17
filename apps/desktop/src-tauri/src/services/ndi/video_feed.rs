@@ -16,6 +16,8 @@
 //! rate. Waiting instead stalled the whole stream, and the catching up that
 //! followed stalled it again, down to two frames a second.
 
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::services::output::{MediaKind, OutputScene};
@@ -101,7 +103,19 @@ pub fn next_step(current: Option<f64>, target: f64) -> Step {
 }
 
 /// Opens a video for a URL at a size. Where the file scope is checked.
-pub type Opener<'a> = dyn Fn(&str, (u32, u32)) -> Result<Box<dyn VideoDecoder>, String> + 'a;
+///
+/// Owned and shareable, because opening happens on a thread of its own: a
+/// video's first frame is decoded as it opens, and the stream cannot wait for
+/// that inside its 33 ms.
+pub type Opener =
+    Arc<dyn Fn(&str, (u32, u32)) -> Result<Box<dyn VideoDecoder>, String> + Send + Sync>;
+
+/// A video being opened, which the stream does not wait for.
+struct Opening {
+    url: String,
+    size: (u32, u32),
+    decoder: Receiver<Result<Box<dyn VideoDecoder>, String>>,
+}
 
 struct Playing {
     url: String,
@@ -123,6 +137,8 @@ struct Playing {
 #[derive(Default)]
 pub struct VideoFeed {
     playing: Option<Playing>,
+    /// Being opened on another thread; there is no frame until it arrives.
+    opening: Option<Opening>,
     /// A video that would not open, so it is not re-opened every frame.
     refused: Option<(String, (u32, u32))>,
 }
@@ -130,6 +146,84 @@ pub struct VideoFeed {
 impl VideoFeed {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Whether a video is being opened: there is no frame yet, and that is
+    /// not a failure.
+    pub fn is_opening(&self) -> bool {
+        self.opening.is_some()
+    }
+
+    /// Open a video on a thread of its own. The stream draws on meanwhile.
+    fn start_opening(&mut self, url: &str, size: (u32, u32), open: &Opener) {
+        let (sender, receiver) = mpsc::channel();
+        let open = Arc::clone(open);
+        let path = url.to_owned();
+        let started = std::thread::Builder::new()
+            .name("video-open".to_owned())
+            .spawn(move || {
+                // Nobody is left to tell if the feed moved on; that is fine.
+                let _ = sender.send(open(&path, size));
+            });
+        match started {
+            Ok(_) => {
+                self.opening = Some(Opening {
+                    url: url.to_owned(),
+                    size,
+                    decoder: receiver,
+                })
+            }
+            Err(error) => {
+                tracing::warn!(%error, url, "could not start opening a background video");
+                self.refused = Some((url.to_owned(), size));
+            }
+        }
+    }
+
+    /// Take the opened video if it is ready. `None` while it is not.
+    fn take_opened(
+        &mut self,
+        url: &str,
+        size: (u32, u32),
+        scene: &OutputScene,
+        now: Instant,
+    ) -> Option<()> {
+        let opened = match self.opening.as_ref()?.decoder.try_recv() {
+            Ok(opened) => opened,
+            Err(TryRecvError::Empty) => return None,
+            // The thread went away without an answer.
+            Err(TryRecvError::Disconnected) => {
+                self.opening = None;
+                self.refused = Some((url.to_owned(), size));
+                return None;
+            }
+        };
+        self.opening = None;
+        match opened {
+            Ok(decoder) => {
+                self.refused = None;
+                self.playing = Some(Playing {
+                    url: url.to_owned(),
+                    size,
+                    decoder,
+                    frame: None,
+                    anchor: Anchor {
+                        seconds: scene.video_current_time,
+                        playing: scene.is_video_playing,
+                        at: now,
+                    },
+                    last_reported: scene.video_current_time,
+                    awaiting_seek: false,
+                    broken: false,
+                });
+                Some(())
+            }
+            Err(error) => {
+                tracing::warn!(%error, url, "the NDI stream could not open its background video");
+                self.refused = Some((url.to_owned(), size));
+                None
+            }
+        }
     }
 
     /// The video frame for `scene` at `now`, if the scene shows a video.
@@ -141,7 +235,7 @@ impl VideoFeed {
         scene: &OutputScene,
         now: Instant,
         size: (u32, u32),
-        open: &Opener<'_>,
+        open: &Opener,
     ) -> Option<&VideoFrame> {
         let url = scene
             .media_url
@@ -153,6 +247,7 @@ impl VideoFeed {
         let Some(url) = url else {
             // Nothing to show: let the decoder and its file go.
             self.playing = None;
+            self.opening = None;
             return None;
         };
 
@@ -169,29 +264,18 @@ impl VideoFeed {
             if refused {
                 return None;
             }
-            match open(url, size) {
-                Ok(decoder) => {
-                    self.refused = None;
-                    self.playing = Some(Playing {
-                        url: url.to_owned(),
-                        size,
-                        decoder,
-                        frame: None,
-                        anchor: Anchor {
-                            seconds: scene.video_current_time,
-                            playing: scene.is_video_playing,
-                            at: now,
-                        },
-                        last_reported: scene.video_current_time,
-                        awaiting_seek: false,
-                        broken: false,
-                    });
-                }
-                Err(error) => {
-                    tracing::warn!(%error, url, "the NDI stream could not open its background video");
-                    self.refused = Some((url.to_owned(), size));
-                    return None;
-                }
+            let opening = self
+                .opening
+                .as_ref()
+                .is_some_and(|opening| opening.url == url && opening.size == size);
+            if !opening {
+                self.start_opening(url, size, open);
+                return None;
+            }
+            match self.take_opened(url, size, scene, now) {
+                Some(()) => {}
+                // Still opening: the slide keeps going out without it.
+                None => return None,
             }
         }
 
@@ -317,18 +401,16 @@ fn restart(playing: &mut Playing) -> Result<(), String> {
 
 /// Take the decoder's next frame into `playing` if it is ready.
 ///
-/// With nothing on screen yet it waits: an empty background for a frame or
-/// two would flash on the stream as a video starts.
+/// Never waits, not even for a video's first frame. The background is empty
+/// for the frame or two before it arrives — at 4K, where the first frame after
+/// a seek is decoded from the key frame before it, that wait was a third of a
+/// second of frozen stream, lyrics and all.
 fn take_one(playing: &mut Playing) -> Result<Took, String> {
-    let polled = if playing.frame.is_none() {
-        playing.decoder.next_frame().map(|frame| match frame {
-            Some(frame) => Polled::Frame(frame),
-            None => Polled::Ended,
-        })
-    } else {
-        playing.decoder.poll_frame()
-    };
-    match polled.map_err(|error| error.to_string())? {
+    match playing
+        .decoder
+        .poll_frame()
+        .map_err(|error| error.to_string())?
+    {
         Polled::Frame(frame) if frame.is_well_formed() => {
             playing.frame = Some(frame);
             playing.awaiting_seek = false;
@@ -345,7 +427,7 @@ fn take_one(playing: &mut Playing) -> Result<Took, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -551,7 +633,7 @@ mod tests {
                 self.knows_duration,
                 self.ready.clone(),
             );
-            let open =
+            let open: Opener = Arc::new(
                 move |_url: &str, _size: (u32, u32)| -> Result<Box<dyn VideoDecoder>, String> {
                     *opens.lock().unwrap() += 1;
                     Ok(Box::new(FakeDecoder {
@@ -561,10 +643,21 @@ mod tests {
                         log: log.clone(),
                         ready: ready.clone(),
                     }))
-                };
-            self.feed
-                .frame_for(scene, now, (2, 2), &open)
-                .map(|frame| (frame.presentation_seconds * 30.0).round() as usize)
+                },
+            );
+            // Opening happens on a thread; this one returns instantly, so the
+            // tests written before it did read as they did.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let shown = self
+                    .feed
+                    .frame_for(scene, now, (2, 2), &open)
+                    .map(|frame| (frame.presentation_seconds * 30.0).round() as usize);
+                if !self.feed.is_opening() || Instant::now() > deadline {
+                    return shown;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
 
         fn log(&self) -> Vec<String> {
@@ -717,7 +810,9 @@ mod tests {
         let (mut harness, ready) = Harness::working_ahead(300);
         let start = Instant::now();
         let scene = video_scene(0.0, true, false);
-        // The first frame is waited for, so the background never flashes empty.
+        // Not even the first frame is waited for; it appears when it is ready.
+        assert_eq!(harness.shown(&scene, start), None, "nothing ready yet");
+        ready.store(1, Ordering::SeqCst);
         assert_eq!(harness.shown(&scene, start), Some(0));
 
         for tick in 1..6u32 {
@@ -741,6 +836,7 @@ mod tests {
     fn a_seek_waits_for_its_frame_rather_than_seeking_again() {
         let (mut harness, ready) = Harness::working_ahead(3000);
         let start = Instant::now();
+        ready.store(1, Ordering::SeqCst);
         assert_eq!(
             harness.shown(&video_scene(0.0, true, false), start),
             Some(0)
@@ -781,19 +877,76 @@ mod tests {
     }
 
     #[test]
+    fn the_stream_draws_on_while_a_video_opens() {
+        // A file that takes its time: opening decodes its first frame.
+        let opened = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(AtomicBool::new(false));
+        let (opened_in_thread, release_in_thread) = (opened.clone(), release.clone());
+        let open: Opener = Arc::new(move |_url: &str, _size: (u32, u32)| {
+            while !release_in_thread.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            opened_in_thread.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(FakeDecoder {
+                next: 0,
+                frames: 90,
+                knows_duration: true,
+                log: Arc::default(),
+                ready: None,
+            }) as Box<dyn VideoDecoder>)
+        });
+
+        let mut feed = VideoFeed::new();
+        let scene = video_scene(0.0, true, false);
+        let started = Instant::now();
+        for _ in 0..5 {
+            assert!(
+                feed.frame_for(&scene, Instant::now(), (2, 2), &open)
+                    .is_none(),
+                "no frame until the file is open"
+            );
+            assert!(feed.is_opening());
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "the stream waited {:?} for the file to open",
+            started.elapsed()
+        );
+        assert_eq!(opened.load(Ordering::SeqCst), 0, "still opening");
+
+        release.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let frame = feed.frame_for(&scene, Instant::now(), (2, 2), &open);
+            if frame.is_some() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the video never arrived");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(opened.load(Ordering::SeqCst), 1, "opened once");
+    }
+
+    #[test]
     fn a_video_that_will_not_open_is_not_retried_every_frame() {
         let attempts = Arc::new(Mutex::new(0));
         let counter = attempts.clone();
-        let open = move |_url: &str, _size: (u32, u32)| -> Result<Box<dyn VideoDecoder>, String> {
+        let open: Opener = Arc::new(move |_url: &str, _size: (u32, u32)| {
             *counter.lock().unwrap() += 1;
             Err("refused by the file scope".to_owned())
-        };
+        });
         let mut feed = VideoFeed::new();
         let scene = video_scene(0.0, true, false);
         let now = Instant::now();
 
+        let deadline = Instant::now() + Duration::from_secs(2);
         for _ in 0..10 {
             assert!(feed.frame_for(&scene, now, (2, 2), &open).is_none());
+            // The refusal comes back from the opening thread.
+            while feed.is_opening() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+                assert!(feed.frame_for(&scene, now, (2, 2), &open).is_none());
+            }
         }
         assert_eq!(*attempts.lock().unwrap(), 1);
     }

@@ -6,6 +6,7 @@
 //! here. The size is the window's own, in CSS pixels, which is what the
 //! compositor's text layers take a pixel to be.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use tauri::{AppHandle, Manager};
@@ -17,12 +18,14 @@ use crate::services::video::{self, VideoDecoder};
 use crate::state::{FileState, OutputState};
 
 use super::SurfaceSource;
-use crate::services::ndi::video_feed::VideoFeed;
+use crate::services::ndi::video_feed::{Opener, VideoFeed};
 
 pub struct AppSurfaceSource {
     app: AppHandle,
     compositor: SceneCompositor,
     video: VideoFeed,
+    /// Opening a video, on its own thread (`video_feed.rs`).
+    open: Opener,
     /// What the last presented frame was drawn from, so an unchanged slide is
     /// not handed to the view again.
     last: Option<(OutputScene, Option<f64>, (u32, u32))>,
@@ -30,10 +33,12 @@ pub struct AppSurfaceSource {
 
 impl AppSurfaceSource {
     pub fn new(app: AppHandle) -> Self {
+        let app_for_opening = app.clone();
         Self {
             app,
             compositor: SceneCompositor::new(1920, 1080),
             video: VideoFeed::new(),
+            open: scoped_opener(app_for_opening),
             last: None,
         }
     }
@@ -45,6 +50,7 @@ impl SurfaceSource for AppSurfaceSource {
             app,
             compositor,
             video,
+            open,
             last,
         } = self;
         let (Some(output), Some(files)) =
@@ -55,9 +61,7 @@ impl SurfaceSource for AppSurfaceSource {
 
         let scene = output.on_screen();
         compositor.resize(size.0, size.1);
-        let files: &FileState = &files;
-        let open = |url: &str, bounds: (u32, u32)| open_scoped(files, url, bounds);
-        let frame = video.frame_for(&scene, Instant::now(), size, &open);
+        let frame = video.frame_for(&scene, Instant::now(), size, open);
         let shown = frame.map(|frame| frame.presentation_seconds);
 
         let unchanged =
@@ -71,7 +75,7 @@ impl SurfaceSource for AppSurfaceSource {
             return Ok(false);
         }
 
-        let loader = ScopedMediaLoader::new(files);
+        let loader = ScopedMediaLoader::new(&files);
         let (rendered, _) = compositor.render(&scene, frame, &loader).ok_or_else(|| {
             format!(
                 "the compositor could not draw a {}x{} frame",
@@ -82,6 +86,19 @@ impl SurfaceSource for AppSurfaceSource {
         *last = Some((scene, shown, size));
         Ok(true)
     }
+}
+
+/// An opener that resolves a URL through the file scope, wherever it runs.
+///
+/// It holds an `AppHandle` and looks the state up again inside, because a
+/// `State<'_, T>` cannot cross to the thread the video is opened on.
+fn scoped_opener(app: AppHandle) -> Opener {
+    Arc::new(move |url: &str, size: (u32, u32)| {
+        let files = app
+            .try_state::<FileState>()
+            .ok_or_else(|| "the app is still starting".to_owned())?;
+        open_scoped(&files, url, size)
+    })
 }
 
 fn open_scoped(

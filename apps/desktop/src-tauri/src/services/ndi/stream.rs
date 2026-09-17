@@ -7,6 +7,7 @@
 //! These frames come from the scene, so the stream shows the service whether
 //! or not a projector window is open.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use tauri::{AppHandle, Manager};
@@ -19,21 +20,25 @@ use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
 use super::look::scene_for_ndi;
 use super::output::{FrameSource, FALLBACK_SIZE};
-use super::video_feed::VideoFeed;
+use super::video_feed::{Opener, VideoFeed};
 
 pub struct AppFrameSource {
     app: AppHandle,
     compositor: SceneCompositor,
     video: VideoFeed,
+    /// Opening a video, on its own thread (`video_feed.rs`).
+    open: Opener,
 }
 
 impl AppFrameSource {
     pub fn new(app: AppHandle) -> Self {
+        let app_for_opening = app.clone();
         let (width, height) = FALLBACK_SIZE;
         Self {
             app,
             compositor: SceneCompositor::new(width, height),
             video: VideoFeed::new(),
+            open: scoped_opener(app_for_opening),
         }
     }
 }
@@ -44,6 +49,7 @@ impl FrameSource for AppFrameSource {
             app,
             compositor,
             video,
+            open,
         } = self;
 
         // `try_state`, never `state`: the latter panics when the state is not
@@ -66,11 +72,9 @@ impl FrameSource for AppFrameSource {
         let looks = looks.snapshot();
         let scene = scene_for_ndi(&output.on_screen(), &looks.live_look().targets.ndi);
 
-        let files: &FileState = &files;
-        let open = |url: &str, size: (u32, u32)| open_scoped(files, url, size);
-        let frame = video.frame_for(&scene, Instant::now(), size, &open);
+        let frame = video.frame_for(&scene, Instant::now(), size, open);
 
-        let loader = ScopedMediaLoader::new(files);
+        let loader = ScopedMediaLoader::new(&files);
         let (rendered, _) = compositor.render(&scene, frame, &loader).ok_or_else(|| {
             format!(
                 "the compositor could not draw a {}x{} frame",
@@ -80,6 +84,19 @@ impl FrameSource for AppFrameSource {
         rendered.write_bgra(out);
         Ok(size)
     }
+}
+
+/// An opener that resolves a URL through the file scope, wherever it runs.
+///
+/// It holds an `AppHandle` and looks the state up again inside, because a
+/// `State<'_, T>` cannot cross to the opening thread.
+fn scoped_opener(app: AppHandle) -> Opener {
+    Arc::new(move |url: &str, size: (u32, u32)| {
+        let files = app
+            .try_state::<FileState>()
+            .ok_or_else(|| "the app is still starting".to_owned())?;
+        open_scoped(&files, url, size)
+    })
 }
 
 /// Open a scene's video through the file scope. Every URL in a scene came from
