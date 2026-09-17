@@ -178,6 +178,11 @@ cp "${BUILD}/COPYING.LGPLv2.1" "${BUILD}/LICENSE.md" "${PREFIX}/share/licenses/"
   echo "Unmodified. Configured with:"
   echo "  ${FLAGS[*]}"
   echo
+  echo "That exact source is published with Present, as"
+  echo "ffmpeg-${VERSION}.tar.xz beside the download this copy came from. If you"
+  echo "have Present without it, ask whoever gave you this copy, or the contact"
+  echo "at https://present.multivrs.space, and it will be provided."
+  echo
   echo "The libraries are separate files and can be replaced with a compatible"
   echo "build of your own."
 } >"${PREFIX}/share/licenses/FFMPEG-SOURCE.txt"

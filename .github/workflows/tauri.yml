@@ -213,11 +213,18 @@ jobs:
           WEB_APP_URL: https://present.multivrs.space
         run: bun run --filter @present/desktop tauri:build
 
+      # The LGPL asks that whoever gets the app can get FFmpeg's source, so it
+      # travels with every bundle (after-stage-7.md §5).
+      - name: Check FFmpeg's source is the pinned one
+        shell: bash
+        run: node apps/desktop/scripts/check-ffmpeg-source.mjs
+
       - name: Upload bundles
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: |
+            apps/desktop/src-tauri/ffmpeg/cache/ffmpeg-*.tar.xz
             apps/desktop/src-tauri/target/release/bundle/**/*.dmg
             apps/desktop/src-tauri/target/release/bundle/**/*.app.tar.gz
             apps/desktop/src-tauri/target/release/bundle/**/*.msi

@@ -203,9 +203,11 @@ is what CI sets.
 with the app (`COPYING.LGPLv2.1`, FFmpeg's `LICENSE.md`, and a
 `FFMPEG-SOURCE.txt` naming the exact source and configure line), the
 libraries stay replaceable — they are separate files, not linked in — and
-**the owner must be able to supply that source to anyone who asks**. The
-tarball is not in the bundle; keeping the exact pinned tarball available
-where the app is published is the owner's to arrange.
+whoever receives the app can receive FFmpeg's source. **The source travels
+with every build**: CI uploads `ffmpeg-9.0.1.tar.xz` beside the bundles, and
+`scripts/check-ffmpeg-source.mjs` fails the build if it is missing or is not
+the pinned release. The notices say so and name where else to ask for it, so
+publishing the bundles anywhere else means publishing that file with them.
 
 **Verified on macOS**, with a bundle built by `bun run desktop:tauri:build`
 (`--bundles app`, and with `PRESENT_FFMPEG_NO_ASM=1` because this machine has

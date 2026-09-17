@@ -293,13 +293,14 @@ inside the NDI stream on this Mac (after-stage-7.md §4).
   FFmpeg in MSYS2 from an MSVC developer environment and Linux builds it
   against VA-API; neither step has run, here or in CI, because nothing has
   been pushed.
-- **`nasm` is not installed on this machine**, so a local
-  `bun run desktop:tauri:build` stops unless `PRESENT_FFMPEG_NO_ASM=1` is set,
-  which makes a build that must not ship. `brew install nasm` fixes it.
-- **The source offer.** The LGPL means anyone given the app can ask for
-  FFmpeg's source. The bundle carries the notices and the exact version and
-  configure line, not the tarball; keeping that tarball available where the
-  app is published is the owner's to arrange.
+- **Nothing has run CI.** The workflow builds FFmpeg on each runner, on
+  Windows through MSYS2 beside MSVC, and uploads FFmpeg's source with the
+  bundles.
+- **The source offer is handled for CI's artifacts** — the tarball is
+  uploaded beside every bundle and checked. Publishing a build anywhere else
+  means putting that file beside it, and the notices point at
+  present.multivrs.space for anyone who asks; that page has to be able to
+  answer.
 
 **Then converting MKV/AVI/WebM on import**, since the operator's windows play
 video in WebKit and cannot open them.
