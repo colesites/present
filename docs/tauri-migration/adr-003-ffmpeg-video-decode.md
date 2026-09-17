@@ -99,14 +99,18 @@ varied between runs, so the timings below are ranges.
 
 - **The app must ship FFmpeg, and only an LGPL build of it**: shared
   libraries, no `--enable-gpl`, and no non-free parts. Homebrew's FFmpeg is a
-  GPL build and must never be bundled. Until the bundles carry their own build
-  (HANDOFF §4), a machine without FFmpeg installed cannot decode video in a
-  bundle built by CI.
-- **CI builds against FFmpeg on all three platforms**: Homebrew on macOS,
-  vcpkg (LGPL features) on Windows, and Ubuntu 24.04's FFmpeg 6.1. 22.04 has
-  4.4, and the decoder needs 5.0 or later for sliced scaling. This raises the
-  Linux bundle's glibc floor until FFmpeg is bundled.
-- **Some installer size**, a few tens of megabytes of libraries.
+  GPL build and must never be bundled. So the bundles carry a build made from
+  the pinned upstream source (`scripts/build-ffmpeg.sh`, after-stage-7.md §5),
+  and with it the licence obligations: the notices travel with the app, the
+  libraries stay replaceable, and the source must be available to anyone who
+  asks for it.
+- **Every machine that builds a bundle builds FFmpeg first** — about ten
+  minutes, cached in CI, and on Windows it needs MSYS2 beside MSVC.
+  Development builds still link whatever FFmpeg the machine has.
+- **Ubuntu 24.04 in CI**, because the decoder needs FFmpeg 5.0 or later for
+  sliced scaling and 22.04's dependencies are older; this raises the Linux
+  bundle's glibc floor.
+- **16 MB of libraries** in each installer, on this Mac.
 
 ### Gained
 

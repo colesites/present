@@ -135,18 +135,10 @@ headers for the bindings, too:
   `va_list`) and `-include` of a header that typedefs `ssize_t` as `long long`
   (Darwin's `long` is 4 bytes under Windows' type sizes)
 
-**CI** installs FFmpeg on all three platforms (ADR-003). **Not run yet:**
-Ubuntu 24.04's FFmpeg 6.1 build, and vcpkg's FFmpeg on Windows. Nothing has
-been pushed.
+**Where FFmpeg comes from** is §5: the bundles carry their own.
 
 **Not done:**
 
-- **The bundles do not carry FFmpeg.** A bundle only decodes video on a
-  machine with FFmpeg installed where the build found it. The app needs an
-  LGPL-only shared build in each installer: in the app bundle's `Frameworks`
-  with an `@rpath` on macOS, beside the executable on Windows, and in the
-  AppImage or as `.deb` dependencies on Linux. Homebrew's FFmpeg is GPL and
-  must not be shipped.
 - **4K on a slow machine.** FFmpeg's GPU decode waits for each frame and
   runs in turn with the copy and colour conversion. Running decoding and
   conversion on separate threads would help, and wgpu would remove the copy
@@ -156,3 +148,84 @@ been pushed.
   with AVFoundation.
 - **MKV, AVI and WebM** are still refused, because the operator's windows play
   video in WebKit. Converting on import would lift that.
+
+## 5. The FFmpeg the bundles carry
+
+Present ships FFmpeg, so it must ship one it is allowed to: **LGPL 2.1, as
+separate shared libraries, built from the pinned upstream source**. A
+distribution's FFmpeg will not do — Homebrew's and Ubuntu's are GPL builds.
+
+`scripts/build-ffmpeg.sh` builds it, into `src-tauri/ffmpeg/` (git-ignored,
+with a README):
+
+- FFmpeg **9.0.1**, downloaded from ffmpeg.org and checked against a pinned
+  SHA-256 — the same one Homebrew's formula records for that release.
+- `--disable-autodetect --disable-gpl --disable-nonfree --disable-version3`,
+  shared libraries only. Nothing outside FFmpeg is linked, so no external
+  library can bring a licence in unnoticed. The script reads FFmpeg's own
+  `config.h` afterwards and stops unless it says `LGPL version 2.1 or later`.
+- Only what the app uses: every decoder, demuxer and parser; the platform's
+  GPU decoder (VideoToolbox, D3D11 and DXVA2, or VA-API); swscale; `scale_vt`
+  and its filter graph on macOS. A few encoders and one muxer stay because
+  the decoder's tests write their own clips. 16 MB on this Mac.
+- The libraries are named so they can be found next to the app:
+  `@rpath/…` on macOS, `$ORIGIN` on Linux. `build.rs` adds the matching search
+  path — `Contents/Frameworks` and `lib/present-ffmpeg` — and a build that
+  bundles never records the build machine's own path.
+- x86 needs `nasm` for FFmpeg's assembly. Without it the script stops, unless
+  `PRESENT_FFMPEG_NO_ASM=1` asks for a slower build for trying the packaging
+  out. That build must never ship: swscale's fast conversion rounds a level
+  further down without assembly, and software decoding is much slower.
+
+`scripts/stage-tauri-ffmpeg.mjs` copies the libraries into
+`src-tauri/ffmpeg/runtime/` and the licence notices into
+`src-tauri/ffmpeg/licenses/`, and refuses a build that does not describe
+itself as LGPL. It also checks that the platform's bundle config still names
+what it staged, so a new FFmpeg major version cannot quietly leave a library
+behind. `tauri.macos.conf.json` lists the five libraries as frameworks,
+`tauri.windows.conf.json` puts them beside the executable, and
+`tauri.linux.conf.json` puts them in `/usr/lib/present-ffmpeg` in the `.deb`,
+the `.rpm` and the AppImage, with `libva` as a dependency.
+
+`scripts/tauri-build.mjs` is what `bun run desktop:tauri:build` now runs: build
+FFmpeg if the pinned build is not there, stage it, then `tauri build` with
+`FFMPEG_DIR` pointing at it. Development still builds against whatever FFmpeg
+the machine has, so a first run needs no FFmpeg build; `tauri:ffmpeg` builds
+and stages without bundling, and `FFMPEG_DIR=…/ffmpeg/prefix cargo test` runs
+the tests against the build that ships.
+
+**The app says which FFmpeg it loaded**: version and licence, the first time
+it decodes anything. A release build that somehow loaded a GPL one logs an
+error. `PRESENT_EXPECT_LGPL_FFMPEG=1` makes a test fail on it instead, which
+is what CI sets.
+
+**What the licence obliges**, beyond the build being LGPL: the notices travel
+with the app (`COPYING.LGPLv2.1`, FFmpeg's `LICENSE.md`, and a
+`FFMPEG-SOURCE.txt` naming the exact source and configure line), the
+libraries stay replaceable — they are separate files, not linked in — and
+**the owner must be able to supply that source to anyone who asks**. The
+tarball is not in the bundle; keeping the exact pinned tarball available
+where the app is published is the owner's to arrange.
+
+**Verified on macOS**, with a bundle built by `bun run desktop:tauri:build`
+(`--bundles app`, and with `PRESENT_FFMPEG_NO_ASM=1` because this machine has
+no `nasm`):
+
+- `Contents/Frameworks` holds the five libraries, 16 MB.
+- The executable asks for them as `@rpath/libavcodec.63.dylib` and friends,
+  and its only search path is `@executable_path/../Frameworks`. No Homebrew
+  path, and no path from the machine that built it, appears anywhere in the
+  app.
+- Launched, it loads all five from inside itself and none from anywhere else
+  (`DYLD_PRINT_LIBRARIES`).
+- A binary built the same way, in the same layout with those staged
+  libraries and nothing else, opens the owner's 4K file, decodes 60 frames
+  and seeks.
+- `Contents/Resources/ffmpeg` carries `COPYING.LGPLv2.1`, FFmpeg's
+  `LICENSE.md`, `FFMPEG-SOURCE.txt` and the notice README.
+- The 770 Rust tests pass against this FFmpeg
+  (`FFMPEG_DIR=…/ffmpeg/prefix`), as well as against Homebrew's 8.1.1.
+
+**Not run:** the Windows and Linux bundles, and CI, which nothing has pushed
+yet. Windows builds FFmpeg in MSYS2 from an MSVC developer environment; that
+step, and Linux's VA-API build, have never executed.

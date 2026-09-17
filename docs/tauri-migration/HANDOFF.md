@@ -280,19 +280,29 @@ df6c9a7 docs: add session handoff for the Tauri migration
 
 ## 4. The next task, concretely
 
-**1. Ship FFmpeg inside the bundles.** FFmpeg decodes video on every platform
-now (ADR-003, after-stage-7.md §4), but the installers do not carry it: a
-bundle decodes video only where FFmpeg is installed. Each needs an LGPL-only
-shared build: in `Frameworks` with an `@rpath` on macOS, beside the executable
-on Windows, and in the AppImage or as `.deb` dependencies on Linux. Homebrew's
-FFmpeg (installed on this machine, 8.1.1) is GPL and must never be shipped.
-Building one means downloading FFmpeg's source — ask first. After that,
-converting MKV/AVI/WebM on import, since the operator's windows play video in
-WebKit.
+**1. The GPU compositor** (owner, 2026-09-17): wgpu draws every output, not
+only 4K ones, with the CPU compositor as the fallback and pixel-parity tests
+between the two. It also removes the decoder's copy off the GPU and its CPU
+colour conversion, which is what still keeps a 4K video from holding 30 fps
+inside the NDI stream on this Mac (after-stage-7.md §4).
 
-**Then the GPU compositor** (owner, 2026-09-17): wgpu draws every output, with
-the CPU compositor as the fallback and pixel-parity tests between the two. It
-also removes the decoder's copy off the GPU and its CPU scaling.
+**Before that, three things the bundled FFmpeg leaves open** (after-stage-7.md
+§5, which the bundles now carry):
+
+- **The Windows and Linux bundles have never been built.** Windows builds
+  FFmpeg in MSYS2 from an MSVC developer environment and Linux builds it
+  against VA-API; neither step has run, here or in CI, because nothing has
+  been pushed.
+- **`nasm` is not installed on this machine**, so a local
+  `bun run desktop:tauri:build` stops unless `PRESENT_FFMPEG_NO_ASM=1` is set,
+  which makes a build that must not ship. `brew install nasm` fixes it.
+- **The source offer.** The LGPL means anyone given the app can ask for
+  FFmpeg's source. The bundle carries the notices and the exact version and
+  configure line, not the tarball; keeping that tarball available where the
+  app is published is the owner's to arrange.
+
+**Then converting MKV/AVI/WebM on import**, since the operator's windows play
+video in WebKit and cannot open them.
 
 **2. The owner's crate list, as features** (owner, 2026-09-15), in this order:
 rolling log files (`tracing-appender`) and frame-time benchmarks (`criterion`);
@@ -973,7 +983,11 @@ bun run convex                 # Convex CLI
 Everything else:
 
 ```bash
-bun run desktop:tauri:build                     # production bundle
+bun run desktop:tauri:build                     # production bundle, FFmpeg and all
+
+# The FFmpeg the bundle carries (ADR-003), from apps/desktop.
+bun run --filter @present/desktop tauri:ffmpeg   # build and stage it, no bundle
+FFMPEG_DIR=$PWD/src-tauri/ffmpeg/prefix cargo test --manifest-path src-tauri/Cargo.toml
 
 # NDI, from apps/desktop/src-tauri. The first two need the NDI runtime.
 cargo test --test ndi_loopback -- --ignored --nocapture
@@ -997,7 +1011,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **768 Rust tests, 128 JS tests**, clippy/fmt/typecheck clean.
+Current: **770 Rust tests, 128 JS tests**, clippy/fmt/typecheck clean.
 
 ## 12. Installed skills
 
@@ -1154,7 +1168,12 @@ if asked.
   Aim at the position plus the time since it was sampled
   (`mirror-video-sync.mjs`), and never seek a playing mirror for a small gap.
 - **Homebrew's FFmpeg is a GPL build.** Build and test against it, never ship
-  it. The decoder needs FFmpeg 5.0 or later (sliced scaling); Ubuntu 22.04's
+  it: the bundles carry their own LGPL build (`scripts/build-ffmpeg.sh`), and
+  a release that loaded a system one logs an error at the first decode.
+- **An FFmpeg built without `nasm` must not ship.** x86 assembly is most of
+  swscale's and the software decoder's speed, and without it the fast colour
+  conversion rounds a further level down — enough that a test reading grey
+  levels three apart misread them. The decoder needs FFmpeg 5.0 or later (sliced scaling); Ubuntu 22.04's
   4.4 will not do.
 - **FFmpeg's own messages are silenced** (`Level::Fatal` in `ffmpeg.rs`),
   because the GPU decoder prints a "failed setup" line for every file it turns
