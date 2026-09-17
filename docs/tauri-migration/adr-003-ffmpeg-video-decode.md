@@ -46,7 +46,8 @@ decision does not change.
 
 On the owner's machine: a 2018 15-inch MacBook Pro (i7-8750H, UHD 630 and
 Radeon Pro 555X), five files from the owner's own library, decoded at 1920×1080
-by both decoders (`examples/decoder_compare.rs`). Load from other apps
+by both decoders (`examples/decoder_compare.rs`, removed with the
+AVFoundation decoder; it is in `4678b77`). Load from other apps
 varied between runs, so the timings below are ranges.
 
 | File | AVFoundation | FFmpeg |
@@ -132,7 +133,7 @@ varied between runs, so the timings below are ranges.
 **Keeping AVFoundation on macOS and FFmpeg elsewhere.** It is two pipelines
 with two sets of colour rules, and AVFoundation already fails on files FFmpeg
 opens. It was kept only while the two were compared, behind
-`PRESENT_VIDEO_DECODER=avfoundation`, and is being removed.
+`PRESENT_VIDEO_DECODER=avfoundation`, and removed in `bf486f6`.
 
 **Software decoding only.** A 4K frame costs 30–80 ms on this machine, over
 the 33 ms a 30 fps output has.

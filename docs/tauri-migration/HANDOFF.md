@@ -1,9 +1,9 @@
 # Present — Electron → Tauri migration: session handoff
 
-**Read this first.** It is the state of the migration as of 2026-09-15, written
+**Read this first.** It is the state of the migration as of 2026-09-17, written
 so a new session can continue without re-deriving anything.
 
-Branch `rust`, 97 commits ahead of `master` — the last is this update — **nothing pushed**.
+Branch `rust`, 104 commits ahead of `master` — the last is this update — **nothing pushed**.
 
 **Electron is gone.** Stages 6 and 7 are code complete, and on 2026-09-15 the
 owner had the Electron build removed (its last commit is tagged
@@ -11,7 +11,10 @@ owner had the Electron build removed (its last commit is tagged
 everything else. The same day the owner's first hands-on run found five bugs,
 all fixed (known-issues §18–21), and decided three directions: FFmpeg as the
 video decoder on every platform, SQLite in Rust for offline data, and React
-kept for the interface (§6). Start with §4.
+kept for the interface (§6). Since then (after-stage-7.md): daily log files,
+frame-time benchmarks, live media folders, OpenLyrics import, and FFmpeg
+decoding video on every platform (ADR-003), which also fixed the NDI stream
+stalling when decoding fell behind (known-issues §22). Start with §4.
 
 ---
 
@@ -36,7 +39,8 @@ the audience screen is a serious bug, not a rough edge.
 | Doc | What it holds |
 |---|---|
 | [stage-0-audit.md](stage-0-audit.md) | The full audit. Architecture map, all 79 IPC channels, media/audio/output pipeline, state model, native deps, build system, 31-row migration matrix, risks. **The reference for anything about how Electron does it today.** |
-| [adr-002-video-decode.md](adr-002-video-decode.md) | Video is decoded by the OS, not a bundled FFmpeg. What that costs in containers, and what their own library says about it. |
+| [adr-003-ffmpeg-video-decode.md](adr-003-ffmpeg-video-decode.md) | Video is decoded by FFmpeg on every platform, on the GPU where it can be. Measured against AVFoundation; what shipping it obliges. |
+| [adr-002-video-decode.md](adr-002-video-decode.md) | **Superseded by ADR-003.** The platform decoders, and the transport-owns-the-clock reasoning ADR-003 keeps. |
 | [adr-001-output-compositor.md](adr-001-output-compositor.md) | The load-bearing decision: the audience output gets composited in Rust with wgpu. **Amended**: the surface is a hybrid, with a webview layer above it for YouTube and capture props. |
 | [known-issues.md](known-issues.md) | Seventeen bugs found so far, each assigned to the stage that owns the fix. Fifteen fixed or mostly fixed; the other two open on purpose. |
 | [stage-1-tauri-skeleton.md](stage-1-tauri-skeleton.md) | The Tauri shell beside Electron. |
@@ -47,6 +51,7 @@ the audience screen is a serious bug, not a rough edge.
 | [stage-4-presentation-core.md](stage-4-presentation-core.md) | The characterisation gate, the output layer flags, the auth session, the audience scene, the presentation position, and what Stage 5 inherits. |
 | [stage-5-media-engine.md](stage-5-media-engine.md) | The full audio inventory, the Rust audio graph, the compositor, video decode, and the frame budget. |
 | [stage-6-ndi.md](stage-6-ndi.md) | **Code complete.** The owner's three decisions, NDI loaded at runtime, the send loop, what streaming found, drawing what the window draws, the bundled runtime, NDI props, and the opt-in native audience screen. |
+| [after-stage-7.md](after-stage-7.md) | The owner's crate list as it lands: log files and benchmarks, live media folders, OpenLyrics, FFmpeg. |
 | [stage-7-subsystems.md](stage-7-subsystems.md) | **Code complete.** The owner's decisions (one changed), Bibles, the blank stage displays, fonts, the tool list and speech token, the error log, settings out of browser storage, `vosk`, crash recovery off macOS, PowerPoint import in Rust, and browser mode on wry views. |
 
 ## 3. Where things stand
@@ -114,7 +119,7 @@ state, and moving those would be moving UI into the core for nothing.
 - ✅ The compositor draws slides: background, shapes, text, images, scope-checked media
 - ✅ Frame time measured: **29.5 ms** at 1920×1080, inside NDI's 33 ms budget
 - ⬜ Cache the composited frame — a static slide is recomposed 30x a second for nothing
-- ✅ Video decode via the platform decoder (ADR-002), verified on their own library
+- ✅ Video decode via the platform decoder (ADR-002), verified on their own library — replaced by FFmpeg (ADR-003)
 - ✅ The frame budget met with room: 9-12 ms against NDI's 33.3 ms, both resolutions
 - ✅ Unplayable media flagged in the panel, with advice (ADR-002's UI requirement)
 - ✅ Message, props and timer overlays, and the screen composer, drawn in Rust
@@ -169,6 +174,21 @@ stays until Stage 8.
 ### Commits on this branch
 
 ```
+bf486f6 refactor(video): remove the AVFoundation decoder
+4678b77 perf(video): keep the stream at 30 fps when decoding falls behind
+f18c37c feat(video): decode with FFmpeg on every platform, on the GPU where it can
+41e657b feat(library): import OpenLyrics songs
+8bc25a9 feat(media): media folders update while the app is open
+d702389 feat(core): keep the log in daily files, and benchmark the frame time
+c838ebe docs: Electron removed, the owner's decisions, and what comes next
+385ed2c refactor: drop the React tree's Electron fallbacks
+7a137a2 chore: remove the Electron build
+a8fd16d docs: record issues 18 to 21 from the owner's first hands-on run
+00bb21e feat(windows): a splash while the app starts, and no white windows
+82cf67c fix(media): show videos in the panels as still pictures
+11b42ba fix(media): smooth mirrors, a pause that holds, and videos from the start
+8ec0caf fix(editor): let Artist and Author take a space
+b90eddd docs(stage-7): record browser mode, close Stage 7's code, and bring the handoff up to date
 fb91402 feat(stage-7): browser mode inside the operator window, on wry views
 e192d82 test(stage-7): pin browser mode's rules before moving it to child webviews
 3e84e0c test(stage-7): spell the error log test's no-break spaces as escapes
@@ -260,13 +280,19 @@ df6c9a7 docs: add session handoff for the Tauri migration
 
 ## 4. The next task, concretely
 
-**1. FFmpeg as the video decoder on every platform** (owner, 2026-09-15). It
-replaces the AVFoundation decoder (ADR-002) behind `services::video`, which the
-compositor, NDI, the native audience screen and the thumbnails use, and gives
-Windows and Linux a decoder they do not have. Needs an LGPL-only build shipped
-with the app, and FFmpeg installed on the build machine — ask before installing
-anything. The windows themselves still play video through WebKit, so MKV/AVI
-there needs conversion on import, which FFmpeg can also do.
+**1. Ship FFmpeg inside the bundles.** FFmpeg decodes video on every platform
+now (ADR-003, after-stage-7.md §4), but the installers do not carry it: a
+bundle decodes video only where FFmpeg is installed. Each needs an LGPL-only
+shared build: in `Frameworks` with an `@rpath` on macOS, beside the executable
+on Windows, and in the AppImage or as `.deb` dependencies on Linux. Homebrew's
+FFmpeg (installed on this machine, 8.1.1) is GPL and must never be shipped.
+Building one means downloading FFmpeg's source — ask first. After that,
+converting MKV/AVI/WebM on import, since the operator's windows play video in
+WebKit.
+
+**Then the GPU compositor** (owner, 2026-09-17): wgpu draws every output, with
+the CPU compositor as the fallback and pixel-parity tests between the two. It
+also removes the decoder's copy off the GPU and its CPU scaling.
 
 **2. The owner's crate list, as features** (owner, 2026-09-15), in this order:
 rolling log files (`tracing-appender`) and frame-time benchmarks (`criterion`);
@@ -420,10 +446,13 @@ services/      domain logic, most of it runtime-free and tested
                        layer and the background still; composites video
     text.rs            cosmic-text layout; upright text is blitted directly,
                        never through draw_pixmap (37 ms a full frame)
-  video/             THE video decoder (ADR-002). Platform decoders, macOS only
-                     so far. The support check is separate and answers by
-                     extension, so an unplayable file is caught in the panel
-                     rather than on the audience screen.
+  video/             THE video decoder (ADR-003). The support check is separate
+                     and answers by extension, so an unplayable file is caught
+                     in the panel rather than on the audience screen.
+    ffmpeg.rs          FFmpeg on the GPU, software when the GPU turns a file
+                       down; colour rules; NV12 split for the fast path
+    gpu_scale.rs       macOS: a larger GPU frame shrunk with scale_vt first
+    read_ahead.rs      decoding ahead on a thread; poll_frame never waits
   pptx/              PowerPoint import (Stage 7), python-pptx's behaviour exactly
     package.rs         the zip, content types and relationships
     payload.rs         parse_pptx.py
@@ -559,11 +588,15 @@ turn `unstable` on. wry is pinned to Tauri's version (stage-7-subsystems.md
 The last Electron commit is tagged `electron-final`.
 
 **FFmpeg decodes video on every platform** (owner, 2026-09-15), replacing the
-platform decoders ADR-002 chose. Not built yet — §4.
+platform decoders ADR-002 chose. Built (ADR-003), against Homebrew's FFmpeg,
+which the owner agreed to on 2026-09-17 and was already installed. Shipping it
+is §4.
 
 **The interface stays React** (owner, 2026-09-15). winit + egui would rewrite
-every screen; wgpu may take over the audience-output drawing when 4K,
-transitions or several outputs need it.
+every screen.
+
+**wgpu draws every audience output, after FFmpeg** (owner, 2026-09-17), not
+only 4K ones, with the CPU compositor kept as the fallback.
 
 **Offline data moves to SQLite in Rust** (owner, 2026-09-15), replacing the
 IndexedDB approach. Not built yet — §4.
@@ -944,7 +977,8 @@ bun run desktop:tauri:build                     # production bundle
 
 # NDI, from apps/desktop/src-tauri. The first two need the NDI runtime.
 cargo test --test ndi_loopback -- --ignored --nocapture
-cargo run --release --example ndi_stream_probe -- <video> [seconds] [frame.png|-] [program]
+cargo run --profile perf --example ndi_stream_probe -- <video> [seconds] [frame.png|-] [program]
+cargo run --profile perf --example decode_probe -- <video> [frame.png]   # FFmpeg on a real file
 cargo run --release --example ndi_watch -- "<source name>" [seconds] [frame.png]
 cargo run --release --example slide_text_sample              # scripture as the compositor draws it
 cargo run --example font_catalog_probe                       # the font list as Rust reads it
@@ -963,7 +997,7 @@ not work: the Tauri CLI finds `src-tauri` by scanning the workspace but runs
 `beforeDevCommand` from the invocation directory, where `tauri:vite:dev` is not
 a script. Run it from `apps/desktop` or use the alias.
 
-Current: **733 Rust tests, 128 JS tests**, clippy/fmt/typecheck clean.
+Current: **768 Rust tests, 128 JS tests**, clippy/fmt/typecheck clean.
 
 ## 12. Installed skills
 
@@ -1119,6 +1153,14 @@ if asked.
 - **A mirror compared against a position that crossed IPC is always behind.**
   Aim at the position plus the time since it was sampled
   (`mirror-video-sync.mjs`), and never seek a playing mirror for a small gap.
+- **Homebrew's FFmpeg is a GPL build.** Build and test against it, never ship
+  it. The decoder needs FFmpeg 5.0 or later (sliced scaling); Ubuntu 22.04's
+  4.4 will not do.
+- **FFmpeg's own messages are silenced** (`Level::Fatal` in `ffmpeg.rs`),
+  because the GPU decoder prints a "failed setup" line for every file it turns
+  down. Raise the level there to see FFmpeg's view of a bad file.
+- **"Copying a frame off the GPU" includes waiting for the GPU to decode it.**
+  The 10–17 ms that step measured at 4K is mostly decode, not memcpy.
 - **`grandi` is still a dependency after Electron.** Its prebuilt package is
   where the bundled `libndi` is copied from (`scripts/stage-tauri-ndi.mjs`), and
   `bunfig.toml`'s hoisted linker is what lets that script find it.
