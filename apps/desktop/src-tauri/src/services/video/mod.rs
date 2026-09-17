@@ -20,10 +20,6 @@ pub mod ffmpeg;
 mod gpu_scale;
 mod read_ahead;
 pub use read_ahead::ReadAhead;
-/// The decoder FFmpeg replaced; public only so `examples/decoder_compare` can
-/// hold the two side by side until it goes.
-#[cfg(target_os = "macos")]
-pub mod macos;
 
 /// One decoded frame, in the compositor's own terms.
 ///
@@ -62,8 +58,6 @@ pub enum VideoError {
     NotFound(String),
     /// The decoder opened it and then failed.
     Decode(String),
-    /// No decoder on this platform yet.
-    NoBackend,
 }
 
 impl std::fmt::Display for VideoError {
@@ -72,7 +66,6 @@ impl std::fmt::Display for VideoError {
             Self::Unsupported(detail) => write!(formatter, "unsupported video: {detail}"),
             Self::NotFound(detail) => write!(formatter, "video not found: {detail}"),
             Self::Decode(detail) => write!(formatter, "could not decode video: {detail}"),
-            Self::NoBackend => write!(formatter, "no video decoder on this platform yet"),
         }
     }
 }
@@ -262,32 +255,9 @@ fn open_sized(
         return Err(VideoError::NotFound(path.display().to_string()));
     }
 
-    match backend() {
-        #[cfg(target_os = "macos")]
-        Backend::AvFoundation => macos::MacVideoDecoder::open_sized(path, size)
-            .map(|decoder| Box::new(decoder) as Box<dyn VideoDecoder>),
-        // Decoding ahead: FFmpeg decodes only when asked (`read_ahead.rs`).
-        _ => ffmpeg::FfmpegVideoDecoder::open_sized(path, size)
-            .map(|decoder| Box::new(ReadAhead::new(Box::new(decoder))) as Box<dyn VideoDecoder>),
-    }
-}
-
-/// Which decoder `open` uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
-    Ffmpeg,
-    /// The macOS decoder FFmpeg replaced, kept while the two are compared.
-    #[cfg(target_os = "macos")]
-    AvFoundation,
-}
-
-/// FFmpeg, unless `PRESENT_VIDEO_DECODER=avfoundation` asks for the old one.
-pub fn backend() -> Backend {
-    #[cfg(target_os = "macos")]
-    if std::env::var("PRESENT_VIDEO_DECODER").is_ok_and(|value| value == "avfoundation") {
-        return Backend::AvFoundation;
-    }
-    Backend::Ffmpeg
+    // Decoding ahead: FFmpeg decodes only when asked (`read_ahead.rs`).
+    ffmpeg::FfmpegVideoDecoder::open_sized(path, size)
+        .map(|decoder| Box::new(ReadAhead::new(Box::new(decoder))) as Box<dyn VideoDecoder>)
 }
 
 #[cfg(test)]
@@ -338,8 +308,8 @@ mod tests {
 
     #[test]
     fn the_containers_the_panel_accepts_but_the_os_cannot_open_are_named() {
-        // ADR-002's cost. `useMediaFolders.ts` offers all three, so each one is
-        // a file somebody can already add today and expect to work.
+        // WebKit's cost (ADR-003). `useMediaFolders.ts` offers all three, so
+        // each one is a file somebody can already add today and expect to work.
         for name in ["service.mkv", "old-clip.avi", "loop.webm"] {
             assert_eq!(
                 support_for(&PathBuf::from(name)),

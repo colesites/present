@@ -1,7 +1,6 @@
-//! Decoding video with FFmpeg, on every platform (the owner's call over
-//! ADR-002's platform decoders).
+//! Decoding video with FFmpeg, on every platform (ADR-003).
 //!
-//! **Colour is the load-bearing part**, as it was for AVFoundation. The scaler
+//! **Colour is the load-bearing part.** The scaler
 //! converts YUV to RGB, and left to itself it uses the SD (BT.601) matrix and
 //! assumes limited range — washed-out blacks and shifted skin tones on HD
 //! material. So each frame's declared matrix and range are passed to it, and a
@@ -655,7 +654,7 @@ impl FfmpegVideoDecoder {
 }
 
 // The FFmpeg objects are only touched behind `&mut self`, and the decoder is
-// owned by one caller at a time, as `MacVideoDecoder` is.
+// owned by one caller at a time: moved to the read-ahead thread, not shared.
 unsafe impl Send for FfmpegVideoDecoder {}
 
 /// `ENOENT`, which FFmpeg reports as a negated errno.

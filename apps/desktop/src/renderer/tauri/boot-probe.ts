@@ -422,7 +422,7 @@ if (shouldProbe) {
 }
 
 if (shouldProbe) {
-  // ADR-002's UI requirement: a file the platform decoder cannot open has to be
+  // ADR-002's UI requirement: a file the app cannot play has to be
   // flagged in the media panel while there is still time to convert it, not
   // discovered as a black rectangle during a service. What is proved here is
   // that the check says yes to what plays and no to what does not — a check

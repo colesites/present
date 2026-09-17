@@ -1,11 +1,11 @@
 //! Telling the operator which media will not play.
 //!
-//! ADR-002 chose the platform decoder, and named the cost: AVFoundation does
-//! not open `.mkv` or `.avi`, and `.webm` only sometimes. The ADR also says
-//! what has to happen about it — "a volunteer dropping an unsupported file into
-//! a media folder needs to be told before the service, not shown a black
-//! rectangle during it. That is a UI requirement this decision creates, not an
-//! implementation detail."
+//! The operator's windows play video in WebKit, which does not open `.mkv` or
+//! `.avi`, and `.webm` only sometimes — FFmpeg would, for the outputs, but a
+//! video the preview cannot show is not one to put on screen (ADR-003).
+//! ADR-002 said what has to happen about files like that: "a volunteer
+//! dropping an unsupported file into a media folder needs to be told before
+//! the service, not shown a black rectangle during it."
 //!
 //! This is that requirement. The media panel asks once per folder load and gets
 //! back **only the files that will not play**, so the normal answer is an empty

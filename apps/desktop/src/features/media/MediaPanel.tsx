@@ -89,7 +89,7 @@ const MediaItemCard = memo(function MediaItemCard({
   onDelete: (item: MediaItem) => void;
   isInsideService: boolean;
   isGridView?: boolean;
-  /** Set when the platform decoder cannot open this file (ADR-002). */
+  /** Set when this file will not play in the app (ADR-003). */
   unplayableReason?: string;
 }) {
   const cardRef = useRef<HTMLButtonElement | null>(null);
@@ -168,8 +168,8 @@ const MediaItemCard = memo(function MediaItemCard({
             </div>
           )}
           {/* Type indicator, or a warning when the file will not play.
-              ADR-002: a volunteer needs to find this out while there is still
-              time to convert the file, not when it reaches the screen. */}
+              A volunteer needs to find this out while there is still time to
+              convert the file, not when it reaches the screen (ADR-002). */}
           <div
             className={cn(
               "absolute right-1 top-1 rounded p-1",
@@ -355,7 +355,7 @@ export const MediaPanel = memo(
       return filteredItems;
     }, [filter, filteredItems]);
 
-    // Which of the visible videos the platform decoder cannot open (ADR-002).
+    // Which of the visible videos will not play in the app (ADR-003).
     // Asked about what is on screen rather than the whole library, so a folder
     // of a thousand files does not check nine hundred it is not showing.
     const visibleVideoPaths = useMemo(

@@ -202,43 +202,8 @@ objc2-av-foundation = { version = "0.3.2", default-features = false, features = 
     "block2",
     "AVCaptureDevice",
     "AVMediaFormat",
-    # Video decode (ADR-002). `AVAssetReader` rather than `AVPlayer` because the
-    # Rust transport already owns play, pause and position — an AVPlayer would
-    # bring its own clock to argue with.
-    "AVAsset",
-    "AVAssetReader",
-    "AVAssetReaderOutput",
-    "AVAssetTrack",
-    # Interop features, not the frameworks themselves: these are what make
-    # `AVAsset::duration` return a CMTime and `AVAssetTrack::naturalSize` a
-    # CGSize, rather than those methods simply not existing.
-    "objc2-core-media",
-    "objc2-core-foundation",
 ] }
 block2 = "0.6.2"
-# The frame the reader hands back: a CMSampleBuffer wrapping a CVPixelBuffer.
-# Requested as BGRA so VideoToolbox does the YUV to RGB conversion in hardware —
-# which is the half of "quality" that is easy to get wrong by hand (BT.601 vs
-# BT.709, full vs limited range).
-objc2-core-media = { version = "0.3.2", default-features = false, features = [
-    "std",
-    "CMBase",
-    "CMSampleBuffer",
-    "CMTime",
-    "CMTimeRange",
-    "CMFormatDescription",
-    # Gates `CMSampleBufferGetImageBuffer`, which is the whole point: it is how
-    # a decoded sample becomes a pixel buffer.
-    "objc2-core-video",
-] }
-objc2-core-video = { version = "0.3.2", default-features = false, features = [
-    "std",
-    "CVBase",
-    "CVBuffer",
-    "CVImageBuffer",
-    "CVPixelBuffer",
-    "CVReturn",
-] }
 
 [features]
 # Enabled by `tauri dev`/`tauri build` in debug so devtools are available.

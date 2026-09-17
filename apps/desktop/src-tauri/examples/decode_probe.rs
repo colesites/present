@@ -2,11 +2,9 @@
 //!
 //! `cargo run --example decode_probe -- /path/to/file.mp4 [frame.png]`
 //!
-//! The unit tests cover the support check, which needs no file. They cannot
-//! cover the decoder, because a decoder test needs a video and this repository
-//! does not carry one. This is how the AVFoundation path gets exercised against
-//! something real, including the two things most likely to be silently wrong:
-//! the row padding in a pixel buffer, and the BGRA channel order.
+//! The unit tests decode clips they make themselves. This runs the decoder on
+//! a real file from someone's library, which is where the surprises are: an
+//! undeclared colour matrix, a codec the GPU turns down, an odd size.
 
 use present_lib::services::video;
 

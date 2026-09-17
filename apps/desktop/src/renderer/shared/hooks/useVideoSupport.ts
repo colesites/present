@@ -3,11 +3,11 @@
 /**
  * Which media files will not play, and what to do about them.
  *
- * ADR-002 chose the platform decoder and named the cost: AVFoundation opens
- * neither `.mkv` nor `.avi`, and `.webm` only sometimes. The ADR is explicit
- * that this creates a UI requirement rather than an implementation detail - a
- * volunteer dropping an unsupported file into a media folder needs to be told
- * before the service, not shown a black rectangle during it.
+ * The app's windows play video in WebKit, which opens neither `.mkv` nor
+ * `.avi`, and `.webm` only sometimes (ADR-003). That creates a UI requirement
+ * rather than an implementation detail (ADR-002) - a volunteer dropping an
+ * unsupported file into a media folder needs to be told before the service,
+ * not shown a black rectangle during it.
  *
  * The check asks Rust once per folder load and gets back only the problems, so
  * a library of MP4s costs one round trip and an empty array.
