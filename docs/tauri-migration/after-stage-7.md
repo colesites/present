@@ -143,9 +143,7 @@ headers for the bindings, too:
   runs in turn with the copy and colour conversion. Running decoding and
   conversion on separate threads would help, and wgpu would remove the copy
   and conversion.
-- **Opening a video still waits**, inside the stream's frame: the file is
-  opened and its first frame decoded before the stream moves on, as it was
-  with AVFoundation.
+- ~~Opening a video still waits~~ — fixed in `7cb78fc` (§6).
 - **MKV, AVI and WebM** are still refused, because the operator's windows play
   video in WebKit. Converting on import would lift that.
 
@@ -231,3 +229,82 @@ no `nasm`):
 **Not run:** the Windows and Linux bundles, and CI, which nothing has pushed
 yet. Windows builds FFmpeg in MSYS2 from an MSVC developer environment; that
 step, and Linux's VA-API build, have never executed.
+
+## 6. The stream no longer stalls when a video starts — `7cb78fc`
+
+Starting a video paused the NDI stream and the native audience screen. The
+file was opened inside the stream's frame — and opening decodes the first
+frame — and then the feed waited for the frame at the operator's position,
+which after a seek is decoded from the key frame before it. A quarter of a
+second at 1080p, a third of one at 4K, with the lyrics frozen too.
+
+`video_feed.rs` now opens on a thread of its own and takes the decoder when it
+is ready, and waits for nothing, not even a video's first frame: the
+background is empty for the frame or two before it arrives. The opener became
+owned and shareable, built once by each stream source from an `AppHandle`,
+because a `State<'_, T>` cannot cross to that thread.
+
+**Measured** (`examples/ndi_stream_probe`, 8 s, load average under 8, twice
+each): not one frame over the 33.3 ms budget after the first, at 1080p or 4K,
+where before there were 248, 105 and 60 ms frames at the start and 391 ms at
+4K. The stream holds 29.8–30.1 fps; the video inside it runs 23–29 fps, 42 to
+144 ms behind the clock.
+
+## 7. Scripture references in Rust — `1e20ba7`
+
+The panel has read "Genesis 1:2", "gen 1 2" and "turn to first John one two"
+since the Electron build. `services/scripture.rs` reads them the same way, so
+what does not come from the React tree can resolve a reference for itself — a
+service item and the AI operator today, the pedals and the phone remote next.
+
+`tests/fixtures/scripture-references.json` is the table both parsers answer to:
+56 references over eight books, generated from the panel's parser so it pins
+what the app does today, quirks and all (a chapter `0` reported as a missing
+chapter, `1:2-2` as a range that does not go forwards, a version code taken
+from trailing words). `nom` parses the chapter and verse grammar; the
+normalising before it — ordinals, spoken numbers, "chapter" and "verse" — is
+token replacement.
+
+The one call that can wait a round trip, a service item's reference, reads it
+in Rust. The panel still parses as the operator types, where an answer is
+wanted on the keystroke; the shared table is what keeps the two agreeing.
+
+## 8. Pedals, MIDI and OSC — `903d6d2`
+
+One table of actions, two ways in, and the phone remote will be the third.
+MIDI is what a booth's hardware speaks over a cable; OSC is what software and
+newer consoles speak over the network.
+
+- `services/control` holds the actions (next and previous slide, go to slide,
+  next and previous item, the words, the media, the background, freeze, clear
+  the media, go to a scripture reference), the bindings and the settings file.
+  The core does what it owns — the slide position — and announces the rest as
+  `control:action`, which `useControlActions` turns into the same handler a
+  click reaches.
+- **MIDI** reads notes, control changes and program changes. A note off does
+  nothing, or a pedal would fire twice; a control change fires on the way down.
+  Every port is opened unless one is named.
+- **OSC** listens on a socket of its own. A button sending 0 on release does
+  nothing. A slide number or a scripture reference is read from the message.
+- Both are **off until set up**, in Settings → Connections. A MIDI binding is
+  made by pressing the button, not by naming the note.
+
+**Verified in the running app**, with real OSC packets from another process:
+next slide, go to slide 12, the words, the media, freeze, clear, next item and
+`"John 3:16"` all arrived and were acted on; a released button and an unbound
+address did nothing. A temporary probe in the operator window (removed
+afterwards) showed each action reaching it with the payload the hook expects.
+**Not tried on hardware:** no MIDI device was plugged into this machine, so
+`midir`'s port opening is covered by its tests and not by a pedal.
+
+## 9. The stream's frame rate — `ceebe66`
+
+Settings → Connections now offers 24, 25, 30, 50 and 60 fps for the NDI
+stream, beside the source and group names. The rate travels to the sender,
+which declares it on every frame, and to the send loop's pacing. Anything else
+is refused rather than sent: a stream that declares what it cannot hold is
+worse than one that runs slower than asked. The audience screen still follows
+the monitor.
+
+On this Mac a 4K background will not hold 50 or 60 — the GPU decode alone is
+17–24 ms a frame — which the setting says next to the picker.

@@ -302,15 +302,21 @@ inside the NDI stream on this Mac (after-stage-7.md §4).
   present.multivrs.space for anyone who asks; that page has to be able to
   answer.
 
-**Then converting MKV/AVI/WebM on import**, since the operator's windows play
-video in WebKit and cannot open them.
+**Then converting MKV/AVI/WebM on import** (owner asked why they will not
+play, 2026-09-17): FFmpeg decodes them, so the audience output could show
+them, but the operator's preview, show grid and media panel play video in
+WebKit, which cannot — a file that looks right to the congregation and black
+to the operator is worse than one refused. Converting on import is usually a
+container change, not a re-encode. Feeding the operator's preview from Rust
+frames instead is the other way, and is natural after wgpu.
 
-**2. The owner's crate list, as features** (owner, 2026-09-15), in this order:
-rolling log files (`tracing-appender`) and frame-time benchmarks (`criterion`);
-media folders that update live (`notify`); OpenLyrics import (`quick-xml`) and
-scripture references (`nom`); MIDI and OSC control (`midir`, `rosc`); a phone
-remote on the local network (`axum`, `tokio-tungstenite`, `mdns-sd`,
-`qrcode`); then the offline store.
+**2. The owner's crate list, as features** (owner, 2026-09-15). Done: rolling
+log files (`tracing-appender`), frame-time benchmarks (`criterion`), media
+folders that update live (`notify`), OpenLyrics import (`quick-xml`), scripture
+references (`nom`), and MIDI and OSC control (`midir`, `rosc`) —
+after-stage-7.md. Left: **a phone remote on the local network** (`axum`,
+`tokio-tungstenite`, `mdns-sd`, `qrcode`), which rides the same action table
+the pedals do; then the offline store.
 
 **3. SQLite in Rust for offline data** (owner, 2026-09-15): `rusqlite` bundled,
 migrations, WAL, `ulid` ids, `blake3` media hashes, and Convex sync from Rust
