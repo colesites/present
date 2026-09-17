@@ -8,7 +8,9 @@
 //!
 //! Measures what the stream costs and what arrives: render time per frame, the
 //! rate frames reach a receiver, and the longest gap between two of them — a
-//! stutter a livestream viewer would see. The operator's player is simulated
+//! stutter a livestream viewer would see. And the video inside it: how many
+//! of its frames made it into the stream, and how far behind the clock they
+//! were, since the stream shows the last frame it has rather than wait. The operator's player is simulated
 //! the way it really behaves: position reports ten times a second, each 40 ms
 //! stale, and a timer that changes once a second.
 
@@ -33,12 +35,16 @@ const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
 const BANDWIDTH_HIGHEST: i32 = 100;
 
+/// Per render: seconds since the start, and the video frame drawn.
+type VideoLog = Arc<Mutex<Vec<(f64, Option<f64>)>>>;
+
 struct ProbeSource {
     video_path: std::path::PathBuf,
     compositor: SceneCompositor,
     feed: VideoFeed,
     started: Instant,
     render_ms: Arc<Mutex<Vec<f64>>>,
+    video: VideoLog,
     program: bool,
 }
 
@@ -101,6 +107,10 @@ impl FrameSource for ProbeSource {
             compositor, feed, ..
         } = self;
         let frame = feed.frame_for(&scene, started, (WIDTH, HEIGHT), &open);
+        self.video.lock().map_err(|_| "poisoned")?.push((
+            started.duration_since(self.started).as_secs_f64(),
+            frame.map(|frame| frame.presentation_seconds),
+        ));
         let (rendered, _) = compositor
             .render(&scene, frame, &NoMedia)
             .ok_or("the compositor refused the frame")?;
@@ -142,12 +152,17 @@ fn main() {
     let sender = Sender::new(runtime.lib.clone(), &name, rules::DEFAULT_GROUP_NAME)
         .expect("create the sender");
     let render_ms = Arc::new(Mutex::new(Vec::new()));
+    let video_shown = Arc::new(Mutex::new(Vec::new()));
+    let duration = video::open(std::path::Path::new(&video_path))
+        .ok()
+        .and_then(|decoder| decoder.duration_seconds());
     let source = ProbeSource {
         video_path: video_path.into(),
         compositor: SceneCompositor::new(WIDTH, HEIGHT),
         feed: VideoFeed::new(),
         started: Instant::now(),
         render_ms: render_ms.clone(),
+        video: video_shown.clone(),
         program,
     };
     let status = Arc::new(Mutex::new(NdiStatus::default()));
@@ -258,6 +273,41 @@ fn main() {
         slow
     );
 
+    // The video inside the stream. The probe's clock starts the video at 0,
+    // so where it should be is the time since the start, wrapped at its length.
+    let shown = video_shown.lock().expect("video").clone();
+    let changes = shown
+        .windows(2)
+        .filter(|pair| pair[1].1.is_some() && pair[1].1 != pair[0].1)
+        .count();
+    let span = shown
+        .last()
+        .zip(shown.first())
+        .map(|(last, first)| last.0 - first.0)
+        .unwrap_or(0.0);
+    let mut lags: Vec<f64> = shown
+        .iter()
+        .filter_map(|(at, frame)| {
+            let frame = (*frame)?;
+            let mut lag = at - frame;
+            if let Some(length) = duration.filter(|length| *length > 0.0) {
+                lag = lag.rem_euclid(length);
+                if lag > length / 2.0 {
+                    lag -= length;
+                }
+            }
+            Some(lag * 1000.0)
+        })
+        .collect();
+    lags.sort_by(f64::total_cmp);
+    println!(
+        "video    {changes} new frames in {span:.1} s = {:.1} fps; behind the clock median {:.0} ms p95 {:.0} ms; {} renders without one",
+        changes as f64 / span.max(f64::EPSILON),
+        if lags.is_empty() { 0.0 } else { percentile(&lags, 0.5) },
+        if lags.is_empty() { 0.0 } else { percentile(&lags, 0.95) },
+        shown.iter().filter(|(_, frame)| frame.is_none()).count()
+    );
+
     // What one slide-layer rebuild costs on its own, without video: the price
     // of a scene change, paid once per change.
     let scene = ProbeSource {
@@ -266,6 +316,7 @@ fn main() {
         feed: VideoFeed::new(),
         started: Instant::now(),
         render_ms: Arc::default(),
+        video: Arc::default(),
         program,
     }
     .scene(Instant::now());

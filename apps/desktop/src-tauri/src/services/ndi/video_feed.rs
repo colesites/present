@@ -10,13 +10,17 @@
 //! playing freely, does not have.
 //!
 //! The decoder is pulled, never pushed (ADR-002): this decides which frame is
-//! due and asks for exactly that.
+//! due and asks for exactly that. **It never waits for one** once a frame is
+//! on screen: a decoder that cannot keep up (4K on a slow machine) leaves the
+//! video showing its latest frame while the slide and the stream keep their
+//! rate. Waiting instead stalled the whole stream, and the catching up that
+//! followed stalled it again, down to two frames a second.
 
 use std::time::Instant;
 
 use crate::services::output::{MediaKind, OutputScene};
 use crate::services::playback::MIRROR_DRIFT_TOLERANCE;
-use crate::services::video::{VideoDecoder, VideoFrame};
+use crate::services::video::{Polled, VideoDecoder, VideoFrame};
 
 /// Decode forward while the frame on hand is more than this far behind.
 ///
@@ -107,6 +111,9 @@ struct Playing {
     anchor: Anchor,
     /// The last position report seen, to tell a fresh report from a repeat.
     last_reported: f64,
+    /// A seek was asked for and its first frame has not arrived: the frame on
+    /// hand is from before it, and is no reason to seek again.
+    awaiting_seek: bool,
     /// Decoding failed. Holds whatever frame was on hand rather than retrying
     /// thirty times a second; a different video starts afresh.
     broken: bool,
@@ -176,6 +183,7 @@ impl VideoFeed {
                             at: now,
                         },
                         last_reported: scene.video_current_time,
+                        awaiting_seek: false,
                         broken: false,
                     });
                 }
@@ -208,6 +216,8 @@ impl VideoFeed {
                     playing: scene.is_video_playing,
                     at: now,
                 };
+                // A seek still on its way is for the old place.
+                playing.awaiting_seek = false;
             }
             playing.last_reported = scene.video_current_time;
         }
@@ -246,8 +256,24 @@ enum Advanced {
     Ended,
 }
 
-/// Bring the frame on hand up to `target`.
+/// What asking the decoder for a frame came to.
+enum Took {
+    Frame,
+    /// Not decoded yet; the frame on hand stays up.
+    Pending,
+    Ended,
+}
+
+/// Bring the frame on hand up to `target`, as far as the decoder has frames
+/// ready.
 fn advance(playing: &mut Playing, target: f64) -> Result<Advanced, String> {
+    if playing.awaiting_seek {
+        match take_one(playing)? {
+            Took::Frame => {}
+            Took::Pending => return Ok(Advanced::UpToDate),
+            Took::Ended => return Ok(Advanced::Ended),
+        }
+    }
     let mut decodes = 0;
     loop {
         let shown = playing
@@ -256,55 +282,70 @@ fn advance(playing: &mut Playing, target: f64) -> Result<Advanced, String> {
             .map(|frame| frame.presentation_seconds);
         match next_step(shown, target) {
             Step::Hold => return Ok(Advanced::UpToDate),
-            Step::Seek(seconds) => return seek_and_decode(playing, seconds),
+            Step::Seek(seconds) => return seek_and_take(playing, seconds),
             Step::Advance if decodes == MAX_DECODES_PER_FRAME => {
-                return seek_and_decode(playing, target)
+                return seek_and_take(playing, target)
             }
             Step::Advance => {
                 decodes += 1;
-                if !decode_one(playing)? {
-                    return Ok(Advanced::Ended);
+                match take_one(playing)? {
+                    Took::Frame => {}
+                    Took::Pending => return Ok(Advanced::UpToDate),
+                    Took::Ended => return Ok(Advanced::Ended),
                 }
             }
         }
     }
 }
 
-fn seek_and_decode(playing: &mut Playing, seconds: f64) -> Result<Advanced, String> {
+fn seek_and_take(playing: &mut Playing, seconds: f64) -> Result<Advanced, String> {
     playing
         .decoder
         .seek(seconds)
         .map_err(|error| error.to_string())?;
+    playing.awaiting_seek = true;
     // Whatever is on hand stays up until the new position's frame arrives.
-    Ok(if decode_one(playing)? {
-        Advanced::UpToDate
-    } else {
-        Advanced::Ended
+    Ok(match take_one(playing)? {
+        Took::Ended => Advanced::Ended,
+        Took::Frame | Took::Pending => Advanced::UpToDate,
     })
 }
 
 fn restart(playing: &mut Playing) -> Result<(), String> {
-    seek_and_decode(playing, 0.0).map(|_| ())
+    seek_and_take(playing, 0.0).map(|_| ())
 }
 
-/// Decode the next frame into `playing`. `false` at the end of the video.
-fn decode_one(playing: &mut Playing) -> Result<bool, String> {
-    match playing
-        .decoder
-        .next_frame()
-        .map_err(|error| error.to_string())?
-    {
-        Some(frame) if frame.is_well_formed() => {
+/// Take the decoder's next frame into `playing` if it is ready.
+///
+/// With nothing on screen yet it waits: an empty background for a frame or
+/// two would flash on the stream as a video starts.
+fn take_one(playing: &mut Playing) -> Result<Took, String> {
+    let polled = if playing.frame.is_none() {
+        playing.decoder.next_frame().map(|frame| match frame {
+            Some(frame) => Polled::Frame(frame),
+            None => Polled::Ended,
+        })
+    } else {
+        playing.decoder.poll_frame()
+    };
+    match polled.map_err(|error| error.to_string())? {
+        Polled::Frame(frame) if frame.is_well_formed() => {
             playing.frame = Some(frame);
-            Ok(true)
+            playing.awaiting_seek = false;
+            Ok(Took::Frame)
         }
-        Some(_) => Err("the decoder produced a malformed frame".to_owned()),
-        None => Ok(false),
+        Polled::Frame(_) => Err("the decoder produced a malformed frame".to_owned()),
+        Polled::Pending => Ok(Took::Pending),
+        Polled::Ended => {
+            playing.awaiting_seek = false;
+            Ok(Took::Ended)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -412,6 +453,9 @@ mod tests {
         frames: usize,
         knows_duration: bool,
         log: Log,
+        /// Frames a poll finds ready, like a decoder working ahead. `None`
+        /// decodes on every poll.
+        ready: Option<Arc<AtomicUsize>>,
     }
 
     impl VideoDecoder for FakeDecoder {
@@ -445,6 +489,21 @@ mod tests {
         fn dimensions(&self) -> (u32, u32) {
             (2, 2)
         }
+
+        fn poll_frame(&mut self) -> Result<Polled, VideoError> {
+            if let Some(ready) = &self.ready {
+                let taken = ready.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                    count.checked_sub(1)
+                });
+                if taken.is_err() {
+                    return Ok(Polled::Pending);
+                }
+            }
+            Ok(match self.next_frame()? {
+                Some(frame) => Polled::Frame(frame),
+                None => Polled::Ended,
+            })
+        }
     }
 
     struct Harness {
@@ -453,6 +512,7 @@ mod tests {
         opens: Arc<Mutex<usize>>,
         frames: usize,
         knows_duration: bool,
+        ready: Option<Arc<AtomicUsize>>,
     }
 
     impl Harness {
@@ -463,16 +523,33 @@ mod tests {
                 opens: Arc::default(),
                 frames,
                 knows_duration: true,
+                ready: None,
             }
+        }
+
+        /// A harness whose decoder has only `ready` frames ready at a time.
+        fn working_ahead(frames: usize) -> (Self, Arc<AtomicUsize>) {
+            let ready = Arc::new(AtomicUsize::new(0));
+            let mut harness = Self::new(frames);
+            harness.ready = Some(Arc::clone(&ready));
+            (harness, ready)
+        }
+
+        fn seeks(&self) -> usize {
+            self.log()
+                .iter()
+                .filter(|entry| entry.starts_with("seek"))
+                .count()
         }
 
         /// The frame number shown for `scene` at `now`.
         fn shown(&mut self, scene: &OutputScene, now: Instant) -> Option<usize> {
-            let (log, opens, frames, knows_duration) = (
+            let (log, opens, frames, knows_duration, ready) = (
                 self.log.clone(),
                 self.opens.clone(),
                 self.frames,
                 self.knows_duration,
+                self.ready.clone(),
             );
             let open =
                 move |_url: &str, _size: (u32, u32)| -> Result<Box<dyn VideoDecoder>, String> {
@@ -482,6 +559,7 @@ mod tests {
                         frames,
                         knows_duration,
                         log: log.clone(),
+                        ready: ready.clone(),
                     }))
                 };
             self.feed
@@ -632,6 +710,74 @@ mod tests {
             .collect();
 
         assert!(shown[44] < 20, "it went round again: {shown:?}");
+    }
+
+    #[test]
+    fn a_decoder_that_falls_behind_leaves_its_last_frame_up_without_waiting() {
+        let (mut harness, ready) = Harness::working_ahead(300);
+        let start = Instant::now();
+        let scene = video_scene(0.0, true, false);
+        // The first frame is waited for, so the background never flashes empty.
+        assert_eq!(harness.shown(&scene, start), Some(0));
+
+        for tick in 1..6u32 {
+            assert_eq!(
+                harness.shown(&scene, start + STREAM_FRAME * tick),
+                Some(0),
+                "nothing ready at tick {tick}: the frame on hand stays"
+            );
+        }
+        assert_eq!(harness.seeks(), 0, "a few frames behind is not a seek");
+
+        ready.store(10, Ordering::SeqCst);
+        assert_eq!(
+            harness.shown(&scene, start + STREAM_FRAME * 6),
+            Some(6),
+            "caught up from what was ready"
+        );
+    }
+
+    #[test]
+    fn a_seek_waits_for_its_frame_rather_than_seeking_again() {
+        let (mut harness, ready) = Harness::working_ahead(3000);
+        let start = Instant::now();
+        assert_eq!(
+            harness.shown(&video_scene(0.0, true, false), start),
+            Some(0)
+        );
+
+        let sought = video_scene(40.0, true, false);
+        for tick in 1..40u32 {
+            assert_eq!(
+                harness.shown(&sought, start + STREAM_FRAME * tick),
+                Some(0),
+                "the old frame stays up while the seek is on its way"
+            );
+        }
+        assert_eq!(harness.seeks(), 1, "{:?}", harness.log());
+
+        ready.store(1, Ordering::SeqCst);
+        assert_eq!(
+            harness.shown(&sought, start + STREAM_FRAME * 40),
+            Some(1200),
+            "the seek's own frame, 40 s in"
+        );
+    }
+
+    #[test]
+    fn a_new_seek_replaces_one_still_on_its_way() {
+        let (mut harness, ready) = Harness::working_ahead(3000);
+        let start = Instant::now();
+        harness.shown(&video_scene(0.0, true, false), start);
+        harness.shown(&video_scene(40.0, true, false), start + STREAM_FRAME);
+        harness.shown(&video_scene(80.0, true, false), start + STREAM_FRAME * 2);
+        assert!(harness.log().iter().any(|entry| entry == "seek 80.00"));
+
+        ready.store(1, Ordering::SeqCst);
+        assert_eq!(
+            harness.shown(&video_scene(80.0, true, false), start + STREAM_FRAME * 3),
+            Some(2400)
+        );
     }
 
     #[test]

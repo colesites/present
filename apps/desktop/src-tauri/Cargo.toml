@@ -131,6 +131,9 @@ webkit2gtk = "2.0.2"
 gtk = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# FFmpeg's filters, for `scale_vt`: a 4K frame is scaled on the GPU before it is
+# copied off it (`services/video/ffmpeg.rs`). Adds libavfilter on macOS only.
+ffmpeg-next = { version = "9", default-features = false, features = ["filter"] }
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
 objc2 = "0.6"
 # Browser mode: WKWebView's history state and snapshots, and the view wry

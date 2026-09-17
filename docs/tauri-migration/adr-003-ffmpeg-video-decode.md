@@ -31,9 +31,16 @@ decision does not change.
   BT.709 from 720 lines up, BT.601 below it, and limited range unless the file
   says otherwise or the pixel format is a full-range `yuvj` one. Most of the
   owner's library declares nothing.
-- **Frames come out as BGRA at the size the caller asked for.** They are
-  scaled with swscale's bilinear filter, sliced across every core.
-  `PRESENT_VIDEO_SOFTWARE=1` turns GPU decoding off, for diagnosis.
+- **Frames come out as BGRA at the size the caller asked for.** On macOS a
+  GPU frame larger than that is shrunk on the GPU first (`scale_vt`), so only
+  the shown size is copied off it. What the CPU still resizes goes through
+  swscale's bilinear filter, sliced across every core. A GPU frame already at
+  the right size is split into planar YUV, which takes swscale's fast path
+  to BGRA.
+- **Decoding runs ahead on its own thread** (`read_ahead.rs`), two frames
+  deep, as AVFoundation's reader did. The stream takes whatever frame is
+  ready and never waits once one is on screen (known-issues §22).
+- `PRESENT_VIDEO_SOFTWARE=1` turns GPU decoding off, for diagnosis.
 
 ## Measured
 
@@ -46,26 +53,44 @@ varied between runs, so the timings below are ranges.
 |---|---|---|
 | 720p H.264, BT.709 | decodes | GPU; mean difference ≤ 0.4 levels |
 | 1080p H.264, colour undeclared | decodes | GPU; mean difference ≤ 0.3, largest single 2 |
-| 4K H.264, BT.709 | decodes | GPU; mean difference ≤ 1.7 |
+| 4K H.264, BT.709 | decodes | GPU; mean difference ≤ 1.9 |
 | 1080p H.264 4:2:2, full range | **"Cannot Decode"** | software |
 | 1080p H.264 4:2:2 10-bit | **"Cannot Decode"** | software |
 
 - **Colour matches.** The largest single-pixel differences on the 4K file
-  (up to about 190) are thin saturated lines. AVFoundation blurs their colour
+  (109 shrunk on the GPU, up to 190 when the CPU shrank it) are thin
+  saturated lines. AVFoundation blurs their colour
   into the background, and FFmpeg keeps it. That is detail, not a matrix
   mistake.
 - **Seeks land on the frame asked for**, on both decoders. FFmpeg reports the
   frame's own time (3.003 s at 29.97 fps), where AVFoundation reports the time
   asked for.
-- **Where the time goes at 4K:** the GPU decode itself sets the pace. FFmpeg's
-  command-line tool manages about 70–100 fps on this machine however the frames
-  are handled afterwards. Copying a decoded 4K frame off the GPU took 10–17 ms
-  and scaling it 9–12 ms, against 30–40 ms for a software decode. Slicing the
-  scaler across cores cut its time to about a quarter. More decoder threads
-  made no difference on the GPU path.
-- **Scaling on the GPU** (FFmpeg's `scale_vt`) halved the CPU time of the 4K
-  path but not the wall time, so it was not added. The wgpu compositor will
-  take frames on the GPU directly, which removes this step altogether.
+- **Where the time goes at 4K.** Measured inside the decoder under load:
+
+  | Step | First version | Now |
+  |---|---|---|
+  | GPU decode, including the wait for it | 17–24 ms | same |
+  | Shrink on the GPU | — | 2–3 ms |
+  | Copy off the GPU | 10–17 ms (4K) | 2 ms (1080p) |
+  | Colour conversion and scaling | 9–20 ms | about 3 ms (FFmpeg's own tool, 1080p) |
+
+  Slicing the scaler across cores cut its time to about a quarter. More
+  decoder threads made no difference on the GPU path. FFmpeg's VideoToolbox
+  decoder waits for each frame; AVFoundation's reader decodes ahead by itself.
+- **End to end, on the NDI stream** (`examples/ndi_stream_probe`):
+
+  | Background | FFmpeg | AVFoundation |
+  |---|---|---|
+  | 1080p | 28–30 fps; video 28–29 fps (17 in one run) | 30 fps; video 25–29 fps |
+  | 4K | 30 fps; video 25–27 fps, up to 0.5 s behind | 30 fps; video 25–29 fps, within 15 ms |
+
+  The first version, without GPU shrinking, decoding ahead or the stream that
+  does not wait, took the whole stream down to 2 fps at 4K
+  (known-issues §22).
+- **Still slower than AVFoundation at 4K on this Mac.** The GPU decode's wait
+  runs in turn with the copy and conversion on one thread. Splitting them
+  would help. The wgpu compositor takes frames on the GPU and removes the copy
+  and conversion altogether.
 
 ## Consequences
 
@@ -111,6 +136,11 @@ opens. It was kept only while the two were compared, behind
 
 **Software decoding only.** A 4K frame costs 30–80 ms on this machine, over
 the 33 ms a 30 fps output has.
+
+**Converting colour on the GPU too** (VideoToolbox's pixel transfer to BGRA).
+It would be faster again, but it is a second set of colour rules, and
+macOS-only; the CPU conversion is now about 3 ms, and wgpu will do it in a
+shader.
 
 **Linking FFmpeg statically.** It is simpler to ship, but under the LGPL a
 closed app would then have to let users relink it against their own FFmpeg.

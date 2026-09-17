@@ -10,7 +10,7 @@
 fn main() {
     use present_lib::services::video::ffmpeg::FfmpegVideoDecoder;
     use present_lib::services::video::macos::MacVideoDecoder;
-    use present_lib::services::video::{contain_size, VideoDecoder, VideoFrame};
+    use present_lib::services::video::{contain_size, ReadAhead, VideoDecoder, VideoFrame};
     use std::time::Instant;
 
     const FRAMES: usize = 90;
@@ -78,8 +78,9 @@ fn main() {
                 continue;
             }
         };
+        // Decoding ahead, as `video::open` does.
         let mut ff = match FfmpegVideoDecoder::open_sized(&path, contained) {
-            Ok(decoder) => decoder,
+            Ok(decoder) => ReadAhead::new(Box::new(decoder)),
             Err(error) => {
                 println!("  FFmpeg cannot open it: {error}");
                 continue;

@@ -197,8 +197,10 @@ impl Scaler {
                 // among the fastest; area averaging and full chroma
                 // interpolation were no closer and slower.
                 (c"sws_flags", i64::from(scaling::Flags::BILINEAR.bits())),
-                // Slices on every core (0): a quarter of the time of one.
-                (c"threads", 0),
+                // Slices on every core (0) when resizing: a quarter of the time
+                // of one. A conversion at the same size is swscale's fast path,
+                // which slicing made no faster.
+                (c"threads", if (width, height) == size { 1 } else { 0 }),
             ];
             for (name, value) in options {
                 if ff::ffi::av_opt_set_int(context.cast(), name.as_ptr(), value, 0) < 0 {
@@ -240,13 +242,73 @@ impl Drop for Scaler {
     }
 }
 
+/// NV12's chroma, interleaved, split into YUV 4:2:0's two planes.
+///
+/// swscale has a fast path to BGRA from planar YUV at the same size and none
+/// from NV12, which is what a GPU decoder hands back: measured 3.1 ms a 1080p
+/// frame this way against 8.3 ms directly, on one core.
+fn split_nv12(frame: &ff::frame::Video, planar: &mut ff::frame::Video) -> Result<(), VideoError> {
+    let (width, height) = (frame.width(), frame.height());
+    if planar.format() != Pixel::YUV420P || (planar.width(), planar.height()) != (width, height) {
+        *planar = ff::frame::Video::new(Pixel::YUV420P, width, height);
+    }
+    // SAFETY: both frames are valid; this copies timestamps and colour.
+    let result = unsafe { ff::ffi::av_frame_copy_props(planar.as_mut_ptr(), frame.as_ptr()) };
+    if result < 0 {
+        return Err(decode_error(ff::Error::from(result)));
+    }
+    let short = || VideoError::Decode("an NV12 frame was short".to_owned());
+
+    let (luma_width, luma_height) = (width as usize, height as usize);
+    let (source_stride, target_stride) = (frame.stride(0), planar.stride(0));
+    for row in 0..luma_height {
+        let line = frame
+            .data(0)
+            .get(row * source_stride..row * source_stride + luma_width)
+            .ok_or_else(short)?;
+        planar
+            .data_mut(0)
+            .get_mut(row * target_stride..row * target_stride + luma_width)
+            .ok_or_else(short)?
+            .copy_from_slice(line);
+    }
+
+    let (chroma_width, chroma_height) = (luma_width.div_ceil(2), luma_height.div_ceil(2));
+    let source_stride = frame.stride(1);
+    for (plane, offset) in [(1, 0), (2, 1)] {
+        let target_stride = planar.stride(plane);
+        for row in 0..chroma_height {
+            let pairs = frame
+                .data(1)
+                .get(row * source_stride..row * source_stride + chroma_width * 2)
+                .ok_or_else(short)?;
+            let target = planar
+                .data_mut(plane)
+                .get_mut(row * target_stride..row * target_stride + chroma_width)
+                .ok_or_else(short)?;
+            for (value, pair) in target.iter_mut().zip(pairs.chunks_exact(2)) {
+                *value = pair[offset];
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Scale `frame` into `converted` as BGRA at `size`, and copy the rows out.
+/// `planar` is working space for an NV12 frame (`split_nv12`).
 fn convert(
     scaler: &mut Option<Scaler>,
     size: (u32, u32),
-    frame: &mut ff::frame::Video,
+    frame: &ff::frame::Video,
+    planar: &mut ff::frame::Video,
     converted: &mut ff::frame::Video,
 ) -> Result<Vec<u8>, VideoError> {
+    let frame = if frame.format() == Pixel::NV12 && (frame.width(), frame.height()) == size {
+        split_nv12(frame, planar)?;
+        &*planar
+    } else {
+        frame
+    };
     let format = frame.format();
     let (width, height) = (frame.width(), frame.height());
     let space = effective_color_space(frame.color_space(), height);
@@ -284,6 +346,16 @@ fn convert(
     Ok(bgra)
 }
 
+/// Whether a GPU frame is shrunk before it is copied off (`gpu_scale.rs`).
+#[cfg(target_os = "macos")]
+enum GpuScaling {
+    /// Not needed yet, or the frames changed shape.
+    Unbuilt,
+    Built(super::gpu_scale::GpuScaler),
+    /// It failed for this video, which the CPU scales from then on.
+    Off,
+}
+
 pub struct FfmpegVideoDecoder {
     input: ff::format::context::Input,
     stream_index: usize,
@@ -294,8 +366,14 @@ pub struct FfmpegVideoDecoder {
     size: (u32, u32),
     duration_seconds: Option<f64>,
     decoded: ff::frame::Video,
+    /// A GPU frame shrunk on the GPU, before it is copied off.
+    gpu_scaled: ff::frame::Video,
+    #[cfg(target_os = "macos")]
+    gpu_scaling: GpuScaling,
     /// A GPU frame's pixels, copied into memory.
     transferred: ff::frame::Video,
+    /// `transferred` as planar YUV, when that converts faster.
+    planar: ff::frame::Video,
     converted: ff::frame::Video,
     /// The demuxer has run out and the decoder has been told.
     drained: bool,
@@ -367,7 +445,11 @@ impl FfmpegVideoDecoder {
             size,
             duration_seconds,
             decoded: ff::frame::Video::empty(),
+            gpu_scaled: ff::frame::Video::empty(),
+            #[cfg(target_os = "macos")]
+            gpu_scaling: GpuScaling::Unbuilt,
             transferred: ff::frame::Video::empty(),
+            planar: ff::frame::Video::empty(),
             converted: ff::frame::Video::empty(),
             drained: false,
             finished: false,
@@ -452,19 +534,26 @@ impl FfmpegVideoDecoder {
             return convert(
                 &mut self.scaler,
                 self.size,
-                &mut self.decoded,
+                &self.decoded,
+                &mut self.planar,
                 &mut self.converted,
             );
         }
+        let shrunk = self.shrink_on_gpu();
+        // SAFETY: both are valid frames owned by `self`.
+        let source = unsafe {
+            if shrunk {
+                self.gpu_scaled.as_ptr()
+            } else {
+                self.decoded.as_ptr()
+            }
+        };
         // SAFETY: both frames are valid; the destination is reset so the
         // transfer allocates it in the GPU frame's software format.
         let result = unsafe {
             ff::ffi::av_frame_unref(self.transferred.as_mut_ptr());
-            let result = ff::ffi::av_hwframe_transfer_data(
-                self.transferred.as_mut_ptr(),
-                self.decoded.as_ptr(),
-                0,
-            );
+            let result =
+                ff::ffi::av_hwframe_transfer_data(self.transferred.as_mut_ptr(), source, 0);
             if result >= 0 {
                 // Timestamps and the colour description.
                 ff::ffi::av_frame_copy_props(self.transferred.as_mut_ptr(), self.decoded.as_ptr())
@@ -478,9 +567,61 @@ impl FfmpegVideoDecoder {
         convert(
             &mut self.scaler,
             self.size,
-            &mut self.transferred,
+            &self.transferred,
+            &mut self.planar,
             &mut self.converted,
         )
+    }
+
+    /// Shrink the GPU frame on the GPU when it is larger than wanted; `true`
+    /// when `gpu_scaled` holds the result.
+    #[cfg(target_os = "macos")]
+    fn shrink_on_gpu(&mut self) -> bool {
+        use super::gpu_scale::{gpu_size, GpuScaler};
+
+        let larger = self.decoded.width() > self.size.0 || self.decoded.height() > self.size.1;
+        if !larger || matches!(self.gpu_scaling, GpuScaling::Off) {
+            return false;
+        }
+        let output = gpu_size(self.size);
+        let fits = matches!(&self.gpu_scaling, GpuScaling::Built(scaler) if scaler.fits(&self.decoded, output));
+        if !fits {
+            let time_base = self
+                .input
+                .stream(self.stream_index)
+                .map_or(ff::Rational::new(1, 1_000_000), |stream| stream.time_base());
+            self.gpu_scaling = match GpuScaler::new(&self.decoded, time_base, output) {
+                Ok(scaler) => GpuScaling::Built(scaler),
+                Err(error) => {
+                    tracing::warn!(
+                        path = %self.path.display(),
+                        error,
+                        "could not shrink this video on the GPU; the CPU will"
+                    );
+                    GpuScaling::Off
+                }
+            };
+        }
+        let GpuScaling::Built(scaler) = &mut self.gpu_scaling else {
+            return false;
+        };
+        match scaler.scale(&mut self.decoded, &mut self.gpu_scaled) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(
+                    path = %self.path.display(),
+                    error,
+                    "shrinking on the GPU failed; the CPU will from here"
+                );
+                self.gpu_scaling = GpuScaling::Off;
+                false
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn shrink_on_gpu(&mut self) -> bool {
+        false
     }
 
     /// Feed the decoder the next packet of our stream, or tell it the file ended.
@@ -859,6 +1000,44 @@ mod tests {
         }
     }
 
+    /// A GPU frame larger than wanted is shrunk on the GPU, and keeps its
+    /// colour through that — including to an odd size, which the GPU cannot
+    /// make and the CPU finishes.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_frame_shrunk_on_the_gpu_keeps_its_colour() {
+        let spec = ClipSpec {
+            codec: Codec::Named("h264_videotoolbox"),
+            size: (1280, 720),
+            frames: 10,
+            fps: 30,
+            gop: 5,
+            space: color::Space::BT709,
+            range: color::Range::MPEG,
+        };
+        let Some(clip) = write_clip("shrink-h264", &spec, |_| COLOUR) else {
+            return;
+        };
+        let (y, cb, cr) = COLOUR;
+        for size in [(640, 360), (639, 359)] {
+            let mut decoder =
+                FfmpegVideoDecoder::open_sized(&clip.0, |_| Some(size)).expect("it opens");
+            let frame = decoder.next_frame().unwrap().expect("a frame");
+            assert_eq!((frame.width, frame.height), size);
+            assert_close(
+                centre(&frame),
+                expected_rgb(y, cb, cr, true, false),
+                &format!("H.264 shrunk to {size:?}"),
+            );
+            if decoder.hardware.is_some() {
+                assert!(
+                    matches!(decoder.gpu_scaling, GpuScaling::Built(_)),
+                    "decoded on the GPU, so shrunk there too"
+                );
+            }
+        }
+    }
+
     fn check_seeking(clip: &Clip) {
         let mut decoder = FfmpegVideoDecoder::open_sized(&clip.0, Some).expect("it opens");
         eprintln!(
@@ -925,6 +1104,51 @@ mod tests {
             .unwrap()
             .expect("the first frame again");
         assert_eq!(frame_number(&frame), 0);
+    }
+
+    #[test]
+    fn nv12_splits_into_planar_yuv_at_an_odd_size() {
+        init();
+        let (width, height) = (5, 3);
+        let mut nv12 = ff::frame::Video::new(Pixel::NV12, width, height);
+        let luma_stride = nv12.stride(0);
+        for row in 0..3 {
+            for column in 0..5 {
+                nv12.data_mut(0)[row * luma_stride + column] = (row * 10 + column) as u8;
+            }
+        }
+        let chroma_stride = nv12.stride(1);
+        for row in 0..2 {
+            for column in 0..3 {
+                let at = row * chroma_stride + column * 2;
+                nv12.data_mut(1)[at] = (100 + row * 10 + column) as u8;
+                nv12.data_mut(1)[at + 1] = (200 + row * 10 + column) as u8;
+            }
+        }
+        nv12.set_color_space(color::Space::BT709);
+
+        let mut planar = ff::frame::Video::empty();
+        split_nv12(&nv12, &mut planar).expect("it splits");
+        assert_eq!(planar.format(), Pixel::YUV420P);
+        assert_eq!(planar.color_space(), color::Space::BT709);
+        let (y, u, v) = (planar.stride(0), planar.stride(1), planar.stride(2));
+        for row in 0..3 {
+            for column in 0..5 {
+                assert_eq!(planar.data(0)[row * y + column], (row * 10 + column) as u8);
+            }
+        }
+        for row in 0..2 {
+            for column in 0..3 {
+                assert_eq!(
+                    planar.data(1)[row * u + column],
+                    (100 + row * 10 + column) as u8
+                );
+                assert_eq!(
+                    planar.data(2)[row * v + column],
+                    (200 + row * 10 + column) as u8
+                );
+            }
+        }
     }
 
     #[test]

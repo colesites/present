@@ -27,6 +27,7 @@ zero-behaviour-change change, per migration rule 4.
 | 19 | The preview and the output dropped frames of a playing video | High | **Fixed** |
 | 20 | Windows showed white until the UI painted | Medium | **Fixed** |
 | 21 | The editor's Artist and Author fields would not take a space | Medium | **Fixed** |
+| 22 | The NDI stream fell to 2 fps when video decoding fell behind | **High** | **Fixed**; 4K video itself still trails on this Mac |
 
 ---
 
@@ -609,3 +610,44 @@ Every keystroke passed the presentation settings through their normaliser, which
 trims text, so a trailing space vanished as it was typed. **Fixed:** the draft
 keeps the fields as typed; they are trimmed when the item is saved. The same bug
 was in the Electron build, which shares the component.
+
+## 22. The NDI stream fell to 2 fps when video decoding fell behind — FIXED
+
+Found while moving decoding to FFmpeg (ADR-003). The stream and the native
+audience surface asked the decoder for each frame inside their own 33 ms and
+waited for it. When decoding could not keep up, the feed decoded up to eight
+frames in one stream frame and then seeked, and a seek plus decoding forward
+took long enough to fall behind again. The stream settled at about 650 ms a
+frame. FFmpeg hit this with a 4K background: its GPU decode waits for each
+frame, and it copied the full 4K frame off the GPU and shrank it on the CPU.
+AVFoundation hit it too whenever the machine was busy.
+
+**Fixed:**
+
+- **Decoding runs ahead on its own thread** (`services/video/read_ahead.rs`),
+  up to two frames, as AVFoundation's reader did.
+- **The feed never waits once a frame is on screen**
+  (`VideoDecoder::poll_frame`). If the next frame is not ready, the last one
+  stays up, and a seek on its way is not repeated.
+- **A 4K frame is shrunk on the GPU before it is copied off** on macOS
+  (`scale_vt`, `services/video/gpu_scale.rs`).
+- **A GPU frame is split into planar YUV before colour conversion**, which
+  takes swscale's fast path: 3.1 ms a 1080p frame against 8.3 ms.
+
+Measured with `examples/ndi_stream_probe` at a load average of 5–12, best of
+three runs:
+
+| Background | Stream | Render | Video in the stream |
+|---|---|---|---|
+| 4K, before | 1.5–11 fps | 80–720 ms | — |
+| 4K, after | 30 fps | 11 ms | 25–27 fps |
+| 1080p, after | 28–30 fps | 8–19 ms | 17–29 fps |
+
+**Still open:** on this 2018 Intel MacBook Pro, the 4K video inside the stream
+runs at about 25 fps and drifts up to half a second behind before a seek
+catches it up. AVFoundation kept it within 15 ms. The stream itself holds
+30 fps. What is left is FFmpeg's GPU decode waiting for each frame, done in
+turn with the copy and conversion on one thread. Splitting those onto two
+threads would help, and the wgpu compositor removes the copy and conversion
+altogether (HANDOFF §4).
+

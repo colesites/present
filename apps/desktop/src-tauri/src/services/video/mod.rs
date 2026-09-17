@@ -16,6 +16,10 @@
 use std::path::Path;
 
 pub mod ffmpeg;
+#[cfg(target_os = "macos")]
+mod gpu_scale;
+mod read_ahead;
+pub use read_ahead::ReadAhead;
 /// The decoder FFmpeg replaced; public only so `examples/decoder_compare` can
 /// hold the two side by side until it goes.
 #[cfg(target_os = "macos")]
@@ -92,6 +96,28 @@ pub trait VideoDecoder: Send {
     fn duration_seconds(&self) -> Option<f64>;
 
     fn dimensions(&self) -> (u32, u32);
+
+    /// The next frame if it is ready now, without waiting for one.
+    ///
+    /// For a stream that must not stall: the caller shows what it has and asks
+    /// again next frame. A decoder that only decodes when asked has the frame
+    /// "ready" by decoding it, which is the default.
+    fn poll_frame(&mut self) -> Result<Polled, VideoError> {
+        Ok(match self.next_frame()? {
+            Some(frame) => Polled::Frame(frame),
+            None => Polled::Ended,
+        })
+    }
+}
+
+/// What `VideoDecoder::poll_frame` found.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Polled {
+    Frame(VideoFrame),
+    /// Still being decoded.
+    Pending,
+    /// No frames after this position.
+    Ended,
 }
 
 /// What the app can play everywhere it shows video, by extension.
@@ -240,8 +266,9 @@ fn open_sized(
         #[cfg(target_os = "macos")]
         Backend::AvFoundation => macos::MacVideoDecoder::open_sized(path, size)
             .map(|decoder| Box::new(decoder) as Box<dyn VideoDecoder>),
+        // Decoding ahead: FFmpeg decodes only when asked (`read_ahead.rs`).
         _ => ffmpeg::FfmpegVideoDecoder::open_sized(path, size)
-            .map(|decoder| Box::new(decoder) as Box<dyn VideoDecoder>),
+            .map(|decoder| Box::new(ReadAhead::new(Box::new(decoder))) as Box<dyn VideoDecoder>),
     }
 }
 
