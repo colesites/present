@@ -308,3 +308,34 @@ the monitor.
 
 On this Mac a 4K background will not hold 50 or 60 — the GPU decode alone is
 17–24 ms a frame — which the setting says next to the picker.
+
+## 10. The phone remote — `867bb69`
+
+The last of the ways in, and it rides the same action table as the pedals: a
+phone press, a pedal press and a click are the same thing happening.
+
+`services/remote` serves one page, built into the binary — a phone in a hall
+with no signal has to be able to open it, and a remote that needs a download is
+a remote nobody uses. It shows what is on the audience screen, has big targets
+for one-handed use in the dark, and reconnects by itself after the phone
+sleeps. Four routes: the page, the state, an action, and a socket that pushes
+what is on screen when it changes (`axum`, whose sockets are
+`tokio-tungstenite`).
+
+**What keeps it safe on a church's open Wi-Fi:** it is off until switched on;
+every request carries a 128-bit token from the operating system's randomness,
+compared whole rather than character by character; the token is new each time
+the remote starts, so a photograph of last Sunday's screen is not a way in; and
+anything without it gets a plain 404, which does not admit there is a remote
+there at all. Settings → Connections shows the code to scan and the address to
+type. The name is announced over mDNS for whatever looks for it later.
+
+**Verified against the running app:** the page, the state, an action and the
+live socket all answered with the token; no token, a wrong one and a truncated
+one each got 404; the action reached the core marked as coming from the remote.
+**Not verified:** the mDNS announcement, and the page on a real phone.
+
+**Found doing it:** macOS's firewall blocks incoming connections to the
+development binary, so a phone cannot reach `bun run desktop:tauri` until it is
+allowed — the server answers on localhost meanwhile, which is how this was
+tested. A packaged, signed app asks the usual way.

@@ -314,9 +314,8 @@ frames instead is the other way, and is natural after wgpu.
 log files (`tracing-appender`), frame-time benchmarks (`criterion`), media
 folders that update live (`notify`), OpenLyrics import (`quick-xml`), scripture
 references (`nom`), and MIDI and OSC control (`midir`, `rosc`) —
-after-stage-7.md. Left: **a phone remote on the local network** (`axum`,
-`tokio-tungstenite`, `mdns-sd`, `qrcode`), which rides the same action table
-the pedals do; then the offline store.
+after-stage-7.md. and the phone remote
+(`axum`, `mdns-sd`, `qrcode`). Left: **the offline store**.
 
 **3. SQLite in Rust for offline data** (owner, 2026-09-15): `rusqlite` bundled,
 migrations, WAL, `ulid` ids, `blake3` media hashes, and Convex sync from Rust
@@ -1174,6 +1173,9 @@ if asked.
 - **A mirror compared against a position that crossed IPC is always behind.**
   Aim at the position plus the time since it was sampled
   (`mirror-video-sync.mjs`), and never seek a playing mirror for a small gap.
+- **macOS's firewall blocks incoming connections to the development binary.**
+  The phone remote answers on localhost but not from the network until the
+  binary is allowed through; a packaged, signed app asks the usual way.
 - **Homebrew's FFmpeg is a GPL build.** Build and test against it, never ship
   it: the bundles carry their own LGPL build (`scripts/build-ffmpeg.sh`), and
   a release that loaded a system one logs an error at the first decode.
