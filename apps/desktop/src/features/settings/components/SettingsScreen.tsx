@@ -26,6 +26,7 @@ import { areDisplayListsEqual } from "../../../renderer/shared/lib/display-list"
 import { NDI_FRAME_RATES } from "../../../renderer/shared/hooks/useAppSettings";
 import { NativeOutputSurfaceToggle } from "./NativeOutputSurfaceToggle";
 import { ControlSurfacesSettings } from "./ControlSurfacesSettings";
+import { PhoneRemoteSettings } from "./PhoneRemoteSettings";
 
 type AudioInputOption = {
   deviceId: string;
@@ -1677,6 +1678,8 @@ export function SettingsScreen({
               <NativeOutputSurfaceToggle />
 
               <ControlSurfacesSettings />
+
+              <PhoneRemoteSettings />
 
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

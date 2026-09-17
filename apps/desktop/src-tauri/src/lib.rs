@@ -273,6 +273,8 @@ pub fn run() {
             commands::control::set_control_settings,
             commands::control::run_control_action,
             commands::control::learn_midi_message,
+            commands::remote::get_remote_status,
+            commands::remote::set_remote_settings,
             commands::pptx::open_pptx,
             commands::pptx::parse_pptx,
             commands::fonts::get_system_fonts,
@@ -348,6 +350,12 @@ pub fn run() {
                 let control = state::ControlState::load(&config_dir);
                 control.listen(app.handle());
                 app.manage(control);
+            }
+            // The phone remote, off until somebody turns it on.
+            {
+                let remote = state::RemoteState::load(&config_dir);
+                remote.apply(app.handle());
+                app.manage(remote);
             }
             // Browser mode (Stage 7). Its views report through `signals`, and
             // are answered here, off the main thread they live on.
