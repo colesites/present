@@ -1,6 +1,8 @@
 # ADR-002 — Video is decoded by the operating system, not by a bundled FFmpeg
 
-**Status:** accepted · **Date:** 2026-09-11 · **Follows:** [ADR-001](adr-001-output-compositor.md)
+**Status:** superseded by [ADR-003](adr-003-ffmpeg-video-decode.md) (the owner
+chose FFmpeg on every platform, 2026-09-15) · **Date:** 2026-09-11 ·
+**Follows:** [ADR-001](adr-001-output-compositor.md)
 
 ## Context
 

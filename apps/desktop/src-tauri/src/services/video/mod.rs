@@ -1,26 +1,31 @@
-//! Video frames for the compositor.
+//! Video frames for the compositor, the NDI stream, the native audience
+//! surface and thumbnails.
 //!
-//! ADR-002: the operating system decodes, not a bundled FFmpeg. That buys
-//! hardware decode, correct colour conversion and nothing extra in the
-//! installer, and it costs the containers the OS will not open.
+//! ADR-003: FFmpeg decodes, on every platform, on the GPU where the platform's
+//! decoder takes the file (`ffmpeg.rs`).
 //!
-//! **That cost is the reason this module has a support check at all.** A
-//! volunteer drops files into a media folder days before anyone presents from
-//! them. If an unsupported one fails at the moment it goes on the audience
-//! screen, it fails in front of a congregation. So "can this be played" is
-//! answerable without decoding anything, and the panel can say so while there
-//! is still time to convert the file.
+//! **The support check exists because of the operator's windows.** They play
+//! video in WebKit, which does not open every container FFmpeg does, and a
+//! video the audience sees but the operator's preview shows black is worse
+//! than one refused. A volunteer drops files into a media folder days before
+//! anyone presents from them; if one fails at the moment it goes on the
+//! audience screen, it fails in front of a congregation. So "can this be
+//! played" is answerable without decoding anything, and the panel can say so
+//! while there is still time to convert the file.
 
 use std::path::Path;
 
+pub mod ffmpeg;
+/// The decoder FFmpeg replaced; public only so `examples/decoder_compare` can
+/// hold the two side by side until it goes.
 #[cfg(target_os = "macos")]
-mod macos;
+pub mod macos;
 
 /// One decoded frame, in the compositor's own terms.
 ///
-/// BGRA because that is what `Frame::to_bgra` produces for NDI and what
-/// VideoToolbox is asked for directly, so a frame crosses this boundary without
-/// a conversion in either direction.
+/// BGRA because that is what `Frame::to_bgra` produces for NDI and what the
+/// decoder's scaler is asked for, so a frame crosses this boundary without a
+/// conversion in either direction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VideoFrame {
     pub width: u32,
@@ -74,7 +79,7 @@ impl std::error::Error for VideoError {}
 ///
 /// A pull interface rather than a player: `services::playback` already owns
 /// play, pause and position, and a decoder with its own clock would be a second
-/// opinion about where the video is (ADR-002).
+/// opinion about where the video is (ADR-002, kept by ADR-003).
 pub trait VideoDecoder: Send {
     /// The next frame in presentation order, or `None` at the end.
     fn next_frame(&mut self) -> Result<Option<VideoFrame>, VideoError>;
@@ -89,7 +94,7 @@ pub trait VideoDecoder: Send {
     fn dimensions(&self) -> (u32, u32);
 }
 
-/// What the platform decoder can open, by extension.
+/// What the app can play everywhere it shows video, by extension.
 ///
 /// Extension rather than content, deliberately. This answers a question the
 /// media panel asks about hundreds of files while drawing a list, and opening
@@ -97,32 +102,33 @@ pub trait VideoDecoder: Send {
 /// not a guarantee — `open` is still where a file is really judged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Support {
-    /// The platform decoder handles this.
+    /// Plays in the operator's windows and on the outputs.
     Supported,
-    /// The container is one the platform decoder cannot open. The operator
-    /// needs to convert it, and needs to know before the service.
+    /// A container the operator's windows cannot open. The operator needs to
+    /// convert it, and needs to know before the service.
     UnsupportedContainer,
     /// Not a video as far as this application is concerned.
     NotVideo,
 }
 
-/// Containers AVFoundation opens. QuickTime and the MPEG-4 family.
-const MACOS_CONTAINERS: [&str; 4] = ["mp4", "mov", "m4v", "m4p"];
+/// Containers WebKit opens as well as FFmpeg. QuickTime and the MPEG-4 family.
+const PLAYABLE_CONTAINERS: [&str; 4] = ["mp4", "mov", "m4v", "m4p"];
 
-/// Video containers the media panel accepts that the platform decoder does not.
+/// Video containers the media panel accepts that WebKit does not open, though
+/// FFmpeg would. Converting them on import would lift this (ADR-003).
 ///
 /// Listed rather than inferred so the message can name them. `useMediaFolders.ts`
 /// offers all of these, so every one is a file somebody can already add today.
 const UNSUPPORTED_CONTAINERS: [&str; 3] = ["mkv", "avi", "webm"];
 
-/// Can the platform decoder open this path?
+/// Can this path play everywhere the app shows video?
 pub fn support_for(path: &Path) -> Support {
     let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
         return Support::NotVideo;
     };
     let extension = extension.to_ascii_lowercase();
 
-    if MACOS_CONTAINERS.contains(&extension.as_str()) {
+    if PLAYABLE_CONTAINERS.contains(&extension.as_str()) {
         return Support::Supported;
     }
     if UNSUPPORTED_CONTAINERS.contains(&extension.as_str()) {
@@ -153,19 +159,17 @@ pub fn unsupported_advice(path: &Path) -> Option<String> {
 /// Open a video for decoding.
 ///
 /// Refuses an unsupported container before touching the file, so the error says
-/// what to do about it rather than whatever the platform decoder says when it
-/// fails to parse something.
+/// what to do about it rather than whatever the decoder says when it fails to
+/// parse something.
 pub fn open(path: &Path) -> Result<Box<dyn VideoDecoder>, VideoError> {
     open_scaled(path, None)
 }
 
 /// Open a video, asking the decoder for frames at a given size.
 ///
-/// The scaling happens on the same hardware that decodes, which is why this
-/// exists rather than the compositor resizing afterwards: a source that does not
-/// match the output was measured at 117 ms a frame resampled in software,
-/// against 23 ms for one that did. The scaler is already in the decode path and
-/// costs nothing to use.
+/// The decoder scales, on every core, rather than the compositor resizing
+/// afterwards: a source that does not match the output was measured at 117 ms
+/// a frame resampled in the compositor, against 23 ms for one that did.
 pub fn open_scaled(
     path: &Path,
     target: Option<(u32, u32)>,
@@ -232,18 +236,31 @@ fn open_sized(
         return Err(VideoError::NotFound(path.display().to_string()));
     }
 
+    match backend() {
+        #[cfg(target_os = "macos")]
+        Backend::AvFoundation => macos::MacVideoDecoder::open_sized(path, size)
+            .map(|decoder| Box::new(decoder) as Box<dyn VideoDecoder>),
+        _ => ffmpeg::FfmpegVideoDecoder::open_sized(path, size)
+            .map(|decoder| Box::new(decoder) as Box<dyn VideoDecoder>),
+    }
+}
+
+/// Which decoder `open` uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    Ffmpeg,
+    /// The macOS decoder FFmpeg replaced, kept while the two are compared.
     #[cfg(target_os = "macos")]
-    {
-        macos::MacVideoDecoder::open_sized(path, size)
-            .map(|decoder| Box::new(decoder) as Box<dyn VideoDecoder>)
+    AvFoundation,
+}
+
+/// FFmpeg, unless `PRESENT_VIDEO_DECODER=avfoundation` asks for the old one.
+pub fn backend() -> Backend {
+    #[cfg(target_os = "macos")]
+    if std::env::var("PRESENT_VIDEO_DECODER").is_ok_and(|value| value == "avfoundation") {
+        return Backend::AvFoundation;
     }
-    // Windows and Linux inherit the trait and no backend, which is the honest
-    // state of ADR-002 rather than a stub that pretends otherwise.
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = size;
-        Err(VideoError::NoBackend)
-    }
+    Backend::Ffmpeg
 }
 
 #[cfg(test)]

@@ -81,6 +81,11 @@ notify = "8"
 # OpenLyrics song import (`services/openlyrics.rs`). The version already in
 # the tree.
 quick-xml = "0.42"
+# Video decoding on every platform (`services/video/ffmpeg.rs`, ADR-003).
+# Builds against an installed FFmpeg, 5.0 or later, found through `FFMPEG_DIR`,
+# vcpkg on Windows, or pkg-config. What ships inside the app must be an
+# LGPL-only build of shared libraries — never Homebrew's, which is GPL.
+ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling"] }
 # Browser mode's two webviews (`services/browser_mode/view.rs`), built directly
 # rather than as Tauri child webviews (stage-7-subsystems.md §10). Pinned to
 # the version Tauri resolves: a second wry would be a second webview runtime in

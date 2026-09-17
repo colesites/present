@@ -34,7 +34,9 @@ on:
 jobs:
   rust-quality:
     name: Rust quality
-    runs-on: ubuntu-22.04
+    # 24.04 for FFmpeg 6.1: the video decoder needs 5.0 or later, and 22.04
+    # has 4.4.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -54,10 +56,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
+            libayatana-appindicator3-dev \
             librsvg2-dev \
             libxdo-dev \
-            patchelf
+            patchelf \
+            libavcodec-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libswscale-dev \
+            pkg-config \
+            clang \
+            libclang-dev
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -97,7 +106,9 @@ jobs:
           - os: windows-latest
             label: Windows
             artifact: present-tauri-windows
-          - os: ubuntu-22.04
+          # 24.04 for FFmpeg 6.1, as in the quality job. This raises the
+          # AppImage's glibc floor to 2.39 until FFmpeg is bundled (HANDOFF §4).
+          - os: ubuntu-24.04
             label: Linux
             artifact: present-tauri-linux
     runs-on: ${{ matrix.os }}
@@ -116,15 +127,47 @@ jobs:
           node-version: 22
 
       - name: Install Linux build dependencies
-        if: matrix.os == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
+            libayatana-appindicator3-dev \
             librsvg2-dev \
             libxdo-dev \
-            patchelf
+            patchelf \
+            libavcodec-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libswscale-dev \
+            pkg-config \
+            clang \
+            libclang-dev
+
+      # FFmpeg to build against. The bundles do not carry it yet — a machine
+      # without FFmpeg installed cannot play video in them — and these builds
+      # are not the LGPL-only FFmpeg a release must ship (HANDOFF §4).
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkgconf
+
+      - name: Cache vcpkg's FFmpeg build (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: vcpkg-ffmpeg-x64-windows-v1
+
+      # vcpkg's FFmpeg without its `gpl` feature is LGPL. DXVA2 and D3D11 decoding
+      # come with the Windows SDK headers.
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg install "ffmpeg[core,avcodec,avformat,swscale]:x64-windows"
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
