@@ -21,13 +21,15 @@ has gone out over it.
 | How does the Rust-drawn audience screen roll out? | **Opt-in**, with the webview output the default until a full service and the two-monitor test pass on it. |
 | Has Electron's NDI ever run past 30 minutes? | **Yes.** The bundled `libndi` contains a string about a 30-minute limit; it sits beside the NDI\|HX encoder text and does not apply to a standard send. |
 
-The first answer has a consequence worth stating plainly, because it was not
-spelled out when the question was asked: **the operator's quick toggles — show
+The first answer had a consequence worth stating plainly, because it was not
+spelled out when the question was asked: the operator's quick toggles — show
 text, show media, hide background, the timer — write to the program column
-only** (`App.tsx:548-600`). With the stream following the NDI column, clearing
-the words on the projector does not clear them on the stream. That is one line
-to change (`services/ndi/stream.rs` picks the target) if it turns out not to be
-what a livestream operator expects.
+only, so clearing the words on the projector did not clear them on the stream.
+
+**Settled on 2026-09-17** (owner): it should. The NDI column now says which
+layers the stream *may* carry, and the quick toggles say what is showing this
+minute; a layer reaches the stream when both agree, and the background is
+hidden if either asks (`services/ndi/look.rs`).
 
 ## 2. The gate, before anything moved
 

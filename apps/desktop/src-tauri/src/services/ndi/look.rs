@@ -27,10 +27,12 @@
 //! clears anything when the NDI column changes, so a flag that did not gate the
 //! banner would do nothing at all. Here it gates.
 //!
-//! **What this does not carry over:** the operator's quick toggles — show text,
-//! show media, hide background, the timer — write to the program column only
-//! (`App.tsx:548-600`). Clearing the words on the projector does not clear them
-//! on the stream.
+//! **The operator's quick toggles reach the stream too** (owner, 2026-09-17).
+//! The NDI column says which layers the stream may carry; the toggles say what
+//! is showing this minute, and the scene arrives carrying them. A layer shows
+//! when both agree, and the background is hidden if either asks — so clearing
+//! the words on the projector clears them on the stream, while a column with
+//! the words switched off never shows them whatever the operator does.
 
 use crate::services::looks::{LookTargetState, LookTextPosition, TextAlign, VerticalAlign};
 use crate::services::output::{OutputScene, OutputTextPosition};
@@ -40,10 +42,12 @@ pub fn scene_for_ndi(on_screen: &OutputScene, ndi: &LookTargetState) -> OutputSc
     let messages = layers.messages || layers.announcements;
 
     OutputScene {
-        show_text: layers.slide || layers.presentation,
-        show_media: layers.media || layers.video_input,
-        hide_background: layers.mask,
-        timer_visible: layers.props,
+        // The column allows it, the operator is showing it.
+        show_text: (layers.slide || layers.presentation) && on_screen.show_text,
+        show_media: (layers.media || layers.video_input) && on_screen.show_media,
+        // Either hiding the background hides it.
+        hide_background: layers.mask || on_screen.hide_background,
+        timer_visible: layers.props && on_screen.timer_visible,
         text_position: Some(text_position(&ndi.text_position)),
         message_overlay: on_screen.message_overlay.clone().filter(|_| messages),
         ..on_screen.clone()
@@ -126,6 +130,51 @@ mod tests {
     }
 
     #[test]
+    fn clearing_the_words_on_the_projector_clears_them_on_the_stream() {
+        let showing = OutputScene {
+            show_text: true,
+            show_media: true,
+            timer_visible: true,
+            hide_background: false,
+            ..program_scene()
+        };
+        let mut ndi = default_ndi();
+        ndi.layers.props = true;
+        assert!(scene_for_ndi(&showing, &ndi).show_text);
+        assert!(scene_for_ndi(&showing, &ndi).timer_visible);
+
+        // The operator clears each one.
+        let cleared = OutputScene {
+            show_text: false,
+            show_media: false,
+            timer_visible: false,
+            hide_background: true,
+            ..showing
+        };
+        let stream = scene_for_ndi(&cleared, &ndi);
+        assert!(!stream.show_text, "the words are gone from the stream");
+        assert!(!stream.show_media);
+        assert!(!stream.timer_visible);
+        assert!(stream.hide_background, "and the background with them");
+    }
+
+    #[test]
+    fn a_column_with_a_layer_switched_off_never_shows_it() {
+        let showing = OutputScene {
+            show_text: true,
+            show_media: true,
+            ..program_scene()
+        };
+        let mut ndi = default_ndi();
+        ndi.layers.slide = false;
+        ndi.layers.presentation = false;
+        assert!(
+            !scene_for_ndi(&showing, &ndi).show_text,
+            "the stream is set up without words"
+        );
+    }
+
+    #[test]
     fn each_layer_pair_reaches_its_field_either_way_round() {
         let off = LookLayers {
             mask: false,
@@ -141,7 +190,14 @@ mod tests {
             layers,
             ..default_ndi()
         };
-        let scene = program_scene();
+        // The operator is showing everything, so the column decides.
+        let scene = OutputScene {
+            show_text: true,
+            show_media: true,
+            timer_visible: true,
+            hide_background: false,
+            ..program_scene()
+        };
 
         let none = scene_for_ndi(&scene, &target(off));
         assert!(!none.show_text && !none.show_media && !none.hide_background);

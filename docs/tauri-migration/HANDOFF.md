@@ -330,9 +330,9 @@ offline — the owner's point, not yet looked at. And `ServicesSidebar.tsx`, one
 the owner's in-progress files, still draws video thumbnails as live video
 elements (known-issues §18).
 
-**Still the owner's to decide:** the operator's quick toggles write only the
-program column, so clearing the words on the projector does not clear them on
-the NDI stream (stage-6-ndi.md §1).
+**Decided, 2026-09-17:** the operator's quick toggles reach the NDI stream as
+well as the projector — the NDI column says what the stream may carry, the
+toggles what is showing (stage-6-ndi.md §1).
 
 ## 5. What the Rust core contains today
 
