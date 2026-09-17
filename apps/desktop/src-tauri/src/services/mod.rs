@@ -7,6 +7,7 @@ pub mod bible;
 pub mod browser_mode;
 pub mod collation;
 pub mod compositor;
+pub mod control;
 pub mod deep_link;
 pub mod dialog;
 pub mod display;

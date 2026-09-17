@@ -84,6 +84,10 @@ quick-xml = "0.42"
 # The chapter and verse grammar in a scripture reference
 # (`services/scripture.rs`).
 nom = "8"
+# Foot pedals, control surfaces and lighting desks (`services/control`): MIDI
+# in over the platform's own driver, and OSC over the network.
+midir = "0.10"
+rosc = "0.11"
 # Video decoding on every platform (`services/video/ffmpeg.rs`, ADR-003).
 # Builds against an installed FFmpeg, 5.0 or later, found through `FFMPEG_DIR`,
 # vcpkg on Windows, or pkg-config. What ships inside the app must be an

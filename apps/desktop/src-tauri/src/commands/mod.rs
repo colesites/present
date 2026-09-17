@@ -10,6 +10,7 @@ pub mod auth;
 pub mod bible;
 pub mod browser_mode;
 pub mod compositor;
+pub mod control;
 pub mod deep_link;
 pub mod diagnostics;
 pub mod display;

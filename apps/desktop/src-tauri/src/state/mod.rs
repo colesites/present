@@ -8,6 +8,7 @@
 pub mod app_state;
 pub mod audio_state;
 pub mod auth_state;
+pub mod control_state;
 pub mod display_state;
 pub mod file_state;
 pub mod looks_state;
@@ -25,6 +26,7 @@ pub mod window_state;
 pub use app_state::AppState;
 pub use audio_state::AudioState;
 pub use auth_state::AuthState;
+pub use control_state::ControlState;
 pub use display_state::DisplayState;
 pub use file_state::FileState;
 pub use looks_state::LooksState;

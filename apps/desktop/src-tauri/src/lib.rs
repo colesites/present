@@ -269,6 +269,10 @@ pub fn run() {
             commands::thumbnails::get_media_thumbnail,
             commands::songs::import_openlyrics_songs,
             commands::scripture::parse_scripture_reference,
+            commands::control::get_control_settings,
+            commands::control::set_control_settings,
+            commands::control::run_control_action,
+            commands::control::learn_midi_message,
             commands::pptx::open_pptx,
             commands::pptx::parse_pptx,
             commands::fonts::get_system_fonts,
@@ -338,6 +342,13 @@ pub fn run() {
                 app.manage(watch);
             }
             app.manage(commands::thumbnails::ThumbnailQueue::default());
+            // Foot pedals, MIDI and OSC. Both are off until somebody sets them
+            // up, so this opens nothing on a fresh install.
+            {
+                let control = state::ControlState::load(&config_dir);
+                control.listen(app.handle());
+                app.manage(control);
+            }
             // Browser mode (Stage 7). Its views report through `signals`, and
             // are answered here, off the main thread they live on.
             {

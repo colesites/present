@@ -55,6 +55,10 @@ import {
 import { useSpeechAutopilot } from "../../renderer/shared/hooks/useSpeechAutopilot";
 import { useAppNavigation } from "../../renderer/shared/hooks/useAppNavigation";
 import { useAppHandlers } from "../../renderer/shared/hooks/useAppHandlers";
+import {
+  useControlActions,
+  type ControlSwitch,
+} from "../../renderer/shared/hooks/useControlActions";
 import { MainView } from "./MainView";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import {
@@ -1563,6 +1567,36 @@ export function PresentContainer({
     setIsMessageLayerEnabled,
     isGridView,
     setIsGridView,
+  });
+
+  // Foot pedals, MIDI and OSC reach the same handlers a click does
+  // (`services/control` in the core, `useControlActions`).
+  /** What a control's on, off or toggle means for a flag that is `current`. */
+  const applySwitch = (to: ControlSwitch, current: boolean) =>
+    to === "toggle" ? !current : to === "on";
+
+  const moveServiceItem = useCallback(
+    (by: number) => {
+      if (!serviceItems.length) return;
+      const from = serviceItemIndex ?? (by > 0 ? -1 : serviceItems.length);
+      const next = Math.min(Math.max(from + by, 0), serviceItems.length - 1);
+      if (next !== serviceItemIndex) handleSelectServiceItem(next);
+    },
+    [handleSelectServiceItem, serviceItemIndex, serviceItems.length],
+  );
+
+  useControlActions({
+    onNextItem: () => moveServiceItem(1),
+    onPreviousItem: () => moveServiceItem(-1),
+    onText: (to) => setShowTextInOutput(applySwitch(to, showTextInOutput)),
+    onMedia: (to) => setShowMediaInOutput(applySwitch(to, showMediaInOutput)),
+    // "Background on" is the operator's hide-background switched off.
+    onBackground: (to) => setHideBackgroundInOutput(!applySwitch(to, !hideBackgroundInOutput)),
+    onFreeze: (to) => setIsOutputFrozen(applySwitch(to, isOutputFrozen)),
+    onClearMedia: () => selectMediaForOutputWithComposer(null),
+    onScripture: (reference) => {
+      void handleSelectScripture(reference);
+    },
   });
 
   useStageBroadcast({

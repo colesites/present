@@ -24,6 +24,7 @@ import type {
 } from "../../../shared/types/output-window";
 import { areDisplayListsEqual } from "../../../renderer/shared/lib/display-list";
 import { NativeOutputSurfaceToggle } from "./NativeOutputSurfaceToggle";
+import { ControlSurfacesSettings } from "./ControlSurfacesSettings";
 
 type AudioInputOption = {
   deviceId: string;
@@ -1669,6 +1670,8 @@ export function SettingsScreen({
               </section>
 
               <NativeOutputSurfaceToggle />
+
+              <ControlSurfacesSettings />
 
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
