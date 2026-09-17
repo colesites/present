@@ -30,6 +30,7 @@ pub mod permissions;
 pub mod playback;
 pub mod pptx;
 pub mod presentation;
+pub mod scripture;
 pub mod shortcuts;
 pub mod slide;
 pub mod speech;

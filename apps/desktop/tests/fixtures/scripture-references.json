@@ -1,0 +1,590 @@
+{
+  "books": [
+    {
+      "pk": "nkjv|gen",
+      "version": "nkjv",
+      "id": "gen",
+      "name": "Genesis",
+      "abbreviation": "Gen",
+      "chapters": 50
+    },
+    {
+      "pk": "nkjv|exo",
+      "version": "nkjv",
+      "id": "exo",
+      "name": "Exodus",
+      "abbreviation": "Ex",
+      "chapters": 40
+    },
+    {
+      "pk": "nkjv|psa",
+      "version": "nkjv",
+      "id": "psa",
+      "name": "Psalms",
+      "abbreviation": "Ps",
+      "chapters": 150
+    },
+    {
+      "pk": "nkjv|sng",
+      "version": "nkjv",
+      "id": "sng",
+      "name": "Song of Solomon",
+      "abbreviation": "Song",
+      "chapters": 8
+    },
+    {
+      "pk": "nkjv|jhn",
+      "version": "nkjv",
+      "id": "jhn",
+      "name": "John",
+      "abbreviation": "Jn",
+      "chapters": 21
+    },
+    {
+      "pk": "nkjv|1jn",
+      "version": "nkjv",
+      "id": "1jn",
+      "name": "1 John",
+      "abbreviation": "1 Jn",
+      "chapters": 5
+    },
+    {
+      "pk": "nkjv|2jn",
+      "version": "nkjv",
+      "id": "2jn",
+      "name": "2 John",
+      "abbreviation": "2 Jn",
+      "chapters": 1
+    },
+    {
+      "pk": "nkjv|3jn",
+      "version": "nkjv",
+      "id": "3jn",
+      "name": "3 John",
+      "abbreviation": "3 Jn",
+      "chapters": 1
+    }
+  ],
+  "cases": [
+    {
+      "input": "",
+      "book": null,
+      "chapter": null,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "   ",
+      "book": null,
+      "chapter": null,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis",
+      "book": "gen",
+      "chapter": null,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": [
+        "Missing chapter number."
+      ]
+    },
+    {
+      "input": "Genesis 1",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis 1:2",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "genesis 1:2",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "GENESIS 1:2",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Gen 1:2",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "gen 1",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis 1:2-5",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": 5,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis 1:2 - 5",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": 5,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis 1:2-2",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": 2,
+      "versionCode": null,
+      "errors": [
+        "End verse must be greater than start verse."
+      ]
+    },
+    {
+      "input": "Genesis 1:5-3",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 5,
+      "verseEnd": 3,
+      "versionCode": null,
+      "errors": [
+        "End verse must be greater than start verse."
+      ]
+    },
+    {
+      "input": "Genesis 51:1",
+      "book": "gen",
+      "chapter": 51,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": [
+        "Invalid chapter: 51. Genesis has 50 chapters."
+      ]
+    },
+    {
+      "input": "Genesis 0:1",
+      "book": "gen",
+      "chapter": null,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": [
+        "Missing chapter number."
+      ]
+    },
+    {
+      "input": "Genesis 1:2 NKJV",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": "NKJV",
+      "errors": []
+    },
+    {
+      "input": "Genesis 1:2 nkjv",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": "NKJV",
+      "errors": []
+    },
+    {
+      "input": "Genesis 1 2 NIV",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": "NIV",
+      "errors": []
+    },
+    {
+      "input": "Genesis 1 2-4 KJV",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": 4,
+      "versionCode": "KJV",
+      "errors": []
+    },
+    {
+      "input": "John 3:16",
+      "book": "jhn",
+      "chapter": 3,
+      "verseStart": 16,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "john 3 16",
+      "book": "jhn",
+      "chapter": 3,
+      "verseStart": 16,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Jn 3:16",
+      "book": "jhn",
+      "chapter": 3,
+      "verseStart": 16,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "1 John 1:1",
+      "book": "1jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "first John 1 1",
+      "book": "1jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "I John 1:1",
+      "book": "1jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "1st john 1:1",
+      "book": "1jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "1jn 1:1",
+      "book": "1jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "2 John 1:1",
+      "book": "2jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "second john 1 1",
+      "book": "2jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "II John 1:1",
+      "book": "2jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "3 John 1:1",
+      "book": "3jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "third john 1 1",
+      "book": "3jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "III John 1:1",
+      "book": "3jn",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Song of Solomon 2:1",
+      "book": "sng",
+      "chapter": 2,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "song of solomon chapter two verse one",
+      "book": "sng",
+      "chapter": 2,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "the book of Genesis 1",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "book of Genesis 1:1",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis chapter one verse two",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis chapter 1 verse 2",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis chapter twenty one verse three",
+      "book": "gen",
+      "chapter": 21,
+      "verseStart": 3,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Psalms chapter one hundred and nineteen verse one",
+      "book": "psa",
+      "chapter": 119,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "genesis 1 verses 3 to 5",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": 5,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "genesis 1 verses 3-5",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": 5,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "genesis 1 verse 3",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "genesis 1 verses 3 through 5",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": 5,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "please open to Genesis chapter one verse two",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "turn to first John one two",
+      "book": "1jn",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Leviticus 1:1",
+      "book": null,
+      "chapter": null,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": [
+        "Invalid format. Expected: Book Chapter or Book Chapter:Verse"
+      ]
+    },
+    {
+      "input": "notabook 3:16",
+      "book": null,
+      "chapter": null,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": [
+        "Invalid format. Expected: Book Chapter or Book Chapter:Verse"
+      ]
+    },
+    {
+      "input": "Genesis one two",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis twenty three",
+      "book": "gen",
+      "chapter": 23,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Psalms 119:105",
+      "book": "psa",
+      "chapter": 119,
+      "verseStart": 105,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Psalms 151:1",
+      "book": "psa",
+      "chapter": 151,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": [
+        "Invalid chapter: 151. Psalms has 150 chapters."
+      ]
+    },
+    {
+      "input": "Genesis 1:2.",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis, chapter 1, verse 2",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis 1:2 ESV extra words",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": "ESV",
+      "errors": []
+    }
+  ]
+}

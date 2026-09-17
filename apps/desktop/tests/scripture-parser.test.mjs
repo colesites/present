@@ -25,6 +25,33 @@ new Script(transpiled.outputText).runInContext(context);
 
 const { parseReference } = module.exports;
 
+const table = JSON.parse(
+  readFileSync(new URL("./fixtures/scripture-references.json", import.meta.url), "utf8"),
+);
+
+// The rules both parsers answer to. `services/scripture.rs` is checked against
+// this same table, so the Rust core and the panel read a reference the same
+// way — including the quirks, like a chapter 0 reported as a missing chapter.
+test("parses every reference in the shared table the same way", () => {
+  for (const expected of table.cases) {
+    const parsed = parseReference(expected.input, table.books);
+    // Through JSON: the parser runs in its own VM context, so its arrays are
+    // not this realm's and would never compare equal.
+    const actual = JSON.parse(
+      JSON.stringify({
+        input: expected.input,
+        book: parsed.book?.id ?? null,
+        chapter: parsed.chapter,
+        verseStart: parsed.verseStart,
+        verseEnd: parsed.verseEnd,
+        versionCode: parsed.versionCode,
+        errors: [...parsed.errors],
+      }),
+    );
+    assert.deepEqual(actual, expected);
+  }
+});
+
 const books = [
   {
     pk: "nkjv|gen",
