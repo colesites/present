@@ -88,7 +88,26 @@ pub struct FrameHeader {
     pub fourcc: u32,
 }
 
-pub fn frame_header(width: u32, height: u32) -> Option<FrameHeader> {
+/// The frame rates a stream can be sent at.
+///
+/// What a receiver expects to see: film, PAL, and the broadcast rates either
+/// side. A number outside this list is refused rather than sent, because a
+/// stream that declares a rate it cannot hold is worse than one that runs
+/// slower than asked.
+pub const FRAME_RATES: [u32; 5] = [24, 25, 30, 50, 60];
+
+/// 30 unless the operator says otherwise: NDI's own default, and what the
+/// Electron build sent.
+pub const DEFAULT_FRAME_RATE: u32 = 30;
+
+/// The rate to send at, given what was asked for.
+pub fn frame_rate(asked: Option<u32>) -> u32 {
+    asked
+        .filter(|rate| FRAME_RATES.contains(rate))
+        .unwrap_or(DEFAULT_FRAME_RATE)
+}
+
+pub fn frame_header(width: u32, height: u32, rate: u32) -> Option<FrameHeader> {
     if width == 0 || height == 0 {
         return None;
     }
@@ -96,7 +115,8 @@ pub fn frame_header(width: u32, height: u32) -> Option<FrameHeader> {
     Some(FrameHeader {
         width: i32::try_from(width).ok()?,
         height: i32::try_from(height).ok()?,
-        frame_rate_n: FRAME_RATE_N,
+        // As thousandths, the way the SDK's own examples declare a rate.
+        frame_rate_n: i32::try_from(rate.checked_mul(1_000)?).ok()?,
         frame_rate_d: FRAME_RATE_D,
         picture_aspect_ratio: (f64::from(width) / f64::from(height)) as f32,
         line_stride_bytes: i32::try_from(stride).ok()?,
@@ -420,7 +440,7 @@ mod tests {
     #[test]
     fn a_frame_is_declared_as_progressive_bgra_at_exactly_30_fps() {
         assert_eq!(
-            frame_header(1920, 1080),
+            frame_header(1920, 1080, 30),
             Some(FrameHeader {
                 width: 1920,
                 height: 1080,
@@ -443,11 +463,30 @@ mod tests {
     }
 
     #[test]
+    fn the_frame_rate_is_one_of_the_ones_receivers_expect() {
+        assert_eq!(frame_rate(None), 30, "the default");
+        for rate in FRAME_RATES {
+            assert_eq!(frame_rate(Some(rate)), rate);
+        }
+        for odd in [0, 1, 29, 31, 120, 1000] {
+            assert_eq!(frame_rate(Some(odd)), 30, "{odd} is not a rate to declare");
+        }
+    }
+
+    #[test]
+    fn a_header_declares_the_rate_it_was_made_for() {
+        let header = frame_header(1920, 1080, 60).expect("a header");
+        assert_eq!((header.frame_rate_n, header.frame_rate_d), (60_000, 1_000));
+        let header = frame_header(1920, 1080, 25).expect("a header");
+        assert_eq!((header.frame_rate_n, header.frame_rate_d), (25_000, 1_000));
+    }
+
+    #[test]
     fn a_frame_nobody_can_be_told_about_has_no_header() {
-        assert_eq!(frame_header(0, 1080), None);
-        assert_eq!(frame_header(1920, 0), None);
+        assert_eq!(frame_header(0, 1080, 30), None);
+        assert_eq!(frame_header(1920, 0, 30), None);
         assert_eq!(
-            frame_header(u32::MAX / 2, 1),
+            frame_header(u32::MAX / 2, 1, 30),
             None,
             "the stride overflows an int"
         );

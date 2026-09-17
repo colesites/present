@@ -402,8 +402,8 @@ const bridge = {
   // Same payloads as `ndi:start` / `ndi:stop` / `ndi:status`, so Settings did
   // not change. The frames come from the Rust compositor rather than a
   // capture of the audience window.
-  startNdiOutput: (sourceName: string, groupName: string) =>
-    invoke("start_ndi_output", { sourceName, groupName }),
+  startNdiOutput: (sourceName: string, groupName: string, frameRate?: number) =>
+    invoke("start_ndi_output", { sourceName, groupName, frameRate }),
   stopNdiOutput: () => invoke<void>("stop_ndi_output"),
   getNdiStatus: () => invoke("get_ndi_status"),
   // NDI props: discovery for the Layers panel, and the receiver the prop

@@ -46,6 +46,9 @@ const DEFAULT_SCREEN_RESOLUTIONS: ScreenResolutions = {
 const DEFAULT_NDI_ENABLED = false;
 const DEFAULT_NDI_SOURCE_NAME = "Present Main Output";
 const DEFAULT_NDI_GROUP_NAME = "Public";
+/** What the stream declares and is paced to; the core allows these five. */
+export const NDI_FRAME_RATES = [24, 25, 30, 50, 60] as const;
+const DEFAULT_NDI_FRAME_RATE = 30;
 const swallowAsyncError = (): null => null;
 const DEFAULT_NDI_RUNTIME_STATUS = {
   running: false,
@@ -189,6 +192,9 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   );
   const [settingsNdiGroupName, setSettingsNdiGroupName] = useState(
     DEFAULT_NDI_GROUP_NAME
+  );
+  const [settingsNdiFrameRate, setSettingsNdiFrameRate] = useState<number>(
+    DEFAULT_NDI_FRAME_RATE
   );
   const [settingsNdiRuntimeStatus, setSettingsNdiRuntimeStatus] = useState(
     DEFAULT_NDI_RUNTIME_STATUS
@@ -373,6 +379,12 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         normalized.length > 0 ? normalized : DEFAULT_NDI_SOURCE_NAME
       );
     }
+    if (
+      typeof parsed.ndiFrameRate === "number" &&
+      (NDI_FRAME_RATES as readonly number[]).includes(parsed.ndiFrameRate)
+    ) {
+      setSettingsNdiFrameRate(parsed.ndiFrameRate);
+    }
     if (typeof parsed.ndiGroupName === "string") {
       setSettingsNdiGroupName(normalizeNdiGroupName(parsed.ndiGroupName));
     }
@@ -490,6 +502,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         ndiSourceName:
           settingsNdiSourceName.trim() || DEFAULT_NDI_SOURCE_NAME,
         ndiGroupName: normalizeNdiGroupName(settingsNdiGroupName),
+        ndiFrameRate: settingsNdiFrameRate,
       };
       const serialized = JSON.stringify(next);
       localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
@@ -531,6 +544,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsNdiEnabled,
     settingsNdiSourceName,
     settingsNdiGroupName,
+    settingsNdiFrameRate,
   ]);
 
   useEffect(() => {
@@ -544,7 +558,11 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
 
     if (settingsNdiEnabled && window.electronAPI?.startNdiOutput) {
       void window.electronAPI
-        .startNdiOutput(settingsNdiSourceName, settingsNdiGroupName)
+        .startNdiOutput(
+          settingsNdiSourceName,
+          settingsNdiGroupName,
+          settingsNdiFrameRate
+        )
         .then((result) => {
           setSettingsNdiRuntimeStatus(result.status);
         })
@@ -567,7 +585,13 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         })
         .catch(swallowAsyncError);
     }
-  }, [settingsNdiEnabled, settingsNdiSourceName, settingsNdiGroupName, settingsHydrated]);
+  }, [
+    settingsNdiEnabled,
+    settingsNdiSourceName,
+    settingsNdiGroupName,
+    settingsNdiFrameRate,
+    settingsHydrated,
+  ]);
 
   useEffect(() => {
     if (!settingsHydrated || !window.electronAPI?.getNdiStatus) {
@@ -664,6 +688,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsNdiSourceName,
     settingsNdiGroupName,
     setSettingsNdiGroupName,
+    settingsNdiFrameRate,
+    setSettingsNdiFrameRate,
     settingsNdiRuntimeStatus,
     settingsHydrated,
     settingsMediaFolderId,

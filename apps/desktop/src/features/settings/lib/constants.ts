@@ -45,6 +45,8 @@ export type Settings = {
   ndiEnabled?: boolean;
   ndiSourceName?: string;
   ndiGroupName?: string;
+  /** What the stream declares and is paced to: 24, 25, 30, 50 or 60. */
+  ndiFrameRate?: number;
 };
 
 export const SETTINGS_STORAGE_KEY = "present-settings";

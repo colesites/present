@@ -16,6 +16,8 @@ fn resource_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
 
 /// Start sending the audience frame as an NDI source.
 ///
+/// `frame_rate` is 24, 25, 30, 50 or 60; anything else means 30.
+///
 /// `async` because it stops any running stream first, which waits for that
 /// stream's thread to finish its frame.
 #[tauri::command]
@@ -24,9 +26,16 @@ pub async fn start_ndi_output(
     state: State<'_, NdiState>,
     source_name: String,
     group_name: String,
+    frame_rate: Option<u32>,
 ) -> AppResult<StartResult> {
     let resources = resource_dir(&app);
-    Ok(state.start_output(app, resources.as_deref(), &source_name, &group_name))
+    Ok(state.start_output(
+        app,
+        resources.as_deref(),
+        &source_name,
+        &group_name,
+        frame_rate,
+    ))
 }
 
 #[tauri::command]

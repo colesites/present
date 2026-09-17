@@ -12,6 +12,8 @@ use super::sys::{NdiLib, SendCreate, VideoFrameV2, SEND_TIMECODE_SYNTHESIZE};
 pub struct Sender {
     lib: Arc<NdiLib>,
     instance: NonNull<c_void>,
+    /// The rate every frame declares, and the rate the SDK paces to.
+    rate: u32,
 }
 
 // SAFETY: an NDI sender may be driven from any thread, but not from two at
@@ -48,7 +50,7 @@ impl Sender {
     /// Clocked on video and not on audio, as Electron's sender is: the SDK
     /// paces `send_bgra` to the declared 30 fps, so the sending thread needs no
     /// timer of its own, and there is no audio to clock.
-    pub fn new(lib: Arc<NdiLib>, name: &str, groups: &str) -> Result<Self, String> {
+    pub fn new(lib: Arc<NdiLib>, name: &str, groups: &str, rate: u32) -> Result<Self, String> {
         let name = CString::new(name)
             .map_err(|_| "An NDI source name cannot contain a NUL character.".to_owned())?;
         let groups = CString::new(groups)
@@ -63,7 +65,11 @@ impl Sender {
         // SAFETY: both strings outlive the call, which copies them.
         let instance = unsafe { (lib.send_create)(&settings) };
         NonNull::new(instance)
-            .map(|instance| Self { lib, instance })
+            .map(|instance| Self {
+                lib,
+                instance,
+                rate: rules::frame_rate(Some(rate)),
+            })
             .ok_or_else(|| "The NDI sender could not be created.".to_owned())
     }
 
@@ -71,7 +77,7 @@ impl Sender {
     ///
     /// Blocks until the SDK's video clock says the frame is due.
     pub fn send_bgra(&mut self, width: u32, height: u32, bgra: &[u8]) -> Result<(), SendError> {
-        let header = rules::frame_header(width, height)
+        let header = rules::frame_header(width, height, self.rate)
             .ok_or(SendError::UnsendableSize { width, height })?;
         let expected = (width as usize) * (height as usize) * 4;
         if bgra.len() != expected {
@@ -129,7 +135,7 @@ mod tests {
 
     #[test]
     fn the_raw_frame_carries_the_header_unchanged_and_asks_the_sdk_for_a_timecode() {
-        let header = rules::frame_header(1920, 1080).unwrap();
+        let header = rules::frame_header(1920, 1080, 30).unwrap();
         let pixels = [0_u8; 4];
         let frame = frame_from_header(header, pixels.as_ptr());
 

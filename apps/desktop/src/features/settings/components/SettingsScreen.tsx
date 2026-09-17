@@ -23,6 +23,7 @@ import type {
   ScriptureVerticalAlign,
 } from "../../../shared/types/output-window";
 import { areDisplayListsEqual } from "../../../renderer/shared/lib/display-list";
+import { NDI_FRAME_RATES } from "../../../renderer/shared/hooks/useAppSettings";
 import { NativeOutputSurfaceToggle } from "./NativeOutputSurfaceToggle";
 import { ControlSurfacesSettings } from "./ControlSurfacesSettings";
 
@@ -142,6 +143,8 @@ interface SettingsScreenProps {
   settingsNdiSourceName: string;
   setSettingsNdiSourceName: (value: string) => void;
   settingsNdiGroupName: string;
+  settingsNdiFrameRate: number;
+  setSettingsNdiFrameRate: (rate: number) => void;
   setSettingsNdiGroupName: (value: string) => void;
   settingsNdiRuntimeStatus: {
     running: boolean;
@@ -216,6 +219,8 @@ export function SettingsScreen({
   settingsNdiSourceName,
   setSettingsNdiSourceName,
   settingsNdiGroupName,
+  settingsNdiFrameRate,
+  setSettingsNdiFrameRate,
   setSettingsNdiGroupName,
   settingsNdiRuntimeStatus,
   settingsMediaFolderId,
@@ -1717,7 +1722,27 @@ export function SettingsScreen({
                       placeholder="Public"
                     />
                   </label>
+                  <label className="space-y-1 text-[11px] text-muted-foreground">
+                    <span>Frames a second</span>
+                    <select
+                      value={settingsNdiFrameRate}
+                      onChange={(event) =>
+                        setSettingsNdiFrameRate(Number(event.target.value))
+                      }
+                      className="h-9 w-full rounded-md border border-border bg-muted/45 px-3 text-[12px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                    >
+                      {NDI_FRAME_RATES.map((rate) => (
+                        <option key={rate} value={rate}>
+                          {rate} fps
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
+                <p className="text-[11px] text-muted-foreground">
+                  The rate the stream declares and is paced to. A 4K background
+                  on a modest machine may not hold 50 or 60.
+                </p>
                 <p className="text-[11px] text-muted-foreground">
                   Status:{" "}
                   <span

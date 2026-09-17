@@ -85,8 +85,12 @@ impl Default for NdiStatus {
 /// The frame a stream falls back to before anything has rendered.
 pub const FALLBACK_SIZE: (u32, u32) = (1920, 1080);
 
-/// One frame of the stream's clock. Used only if the SDK stops pacing.
-const FRAME_INTERVAL: Duration = Duration::from_micros(33_333);
+/// One frame of the stream's clock at `rate`. Used only if the SDK stops
+/// pacing, which it does not, but a runtime that returned from `send` at once
+/// would otherwise spin a core.
+fn frame_interval(rate: u32) -> Duration {
+    Duration::from_secs_f64(1.0 / f64::from(rate.max(1)))
+}
 
 /// How often the connection count is asked for.
 const CONNECTIONS_EVERY: u64 = 30;
@@ -103,7 +107,9 @@ pub fn run(
     mut sink: impl FrameSink,
     status: &Mutex<NdiStatus>,
     stop: &AtomicBool,
+    rate: u32,
 ) {
+    let interval = frame_interval(rate);
     let mut rendering = Vec::new();
     let mut good = Vec::new();
     let mut good_size: Option<(u32, u32)> = None;
@@ -119,8 +125,8 @@ pub fn run(
         // faster than anyone can receive them.
         if let Some(previous) = previous_start {
             let since = started.saturating_duration_since(previous);
-            if since < FRAME_INTERVAL / 2 {
-                std::thread::sleep(FRAME_INTERVAL - since);
+            if since < interval / 2 {
+                std::thread::sleep(interval - since);
             }
         }
         previous_start = Some(Instant::now());
@@ -209,7 +215,12 @@ pub struct OutputWorker {
 }
 
 impl OutputWorker {
-    pub fn spawn<S, K>(source: S, sink: K, status: Arc<Mutex<NdiStatus>>) -> std::io::Result<Self>
+    pub fn spawn<S, K>(
+        source: S,
+        sink: K,
+        status: Arc<Mutex<NdiStatus>>,
+        rate: u32,
+    ) -> std::io::Result<Self>
     where
         S: FrameSource + 'static,
         K: FrameSink + 'static,
@@ -219,7 +230,7 @@ impl OutputWorker {
         let handle = std::thread::Builder::new()
             .name("ndi-output".to_owned())
             .spawn(move || {
-                run(source, sink, &status, &flag);
+                run(source, sink, &status, &flag, rate);
                 if let Ok(mut status) = status.lock() {
                     status.running = false;
                     status.connections = 0;
@@ -318,7 +329,7 @@ mod tests {
         let recorder = Recorder::default();
         let sent = recorder.sent.clone();
         let status = Mutex::new(NdiStatus::default());
-        run(source, recorder, &status, &stop);
+        run(source, recorder, &status, &stop, 30);
         let sent = sent.lock().unwrap().clone();
         let status = status.lock().unwrap().clone();
         (sent, status)
@@ -387,7 +398,7 @@ mod tests {
         let recorder = Recorder::default();
         let sent = recorder.sent.clone();
         let status = Mutex::new(NdiStatus::default());
-        run(Liar(stop.clone()), recorder, &status, &stop);
+        run(Liar(stop.clone()), recorder, &status, &stop, 30);
 
         let sent = sent.lock().unwrap();
         assert_eq!(
@@ -433,7 +444,7 @@ mod tests {
             ..NdiStatus::default()
         }));
         let worker =
-            OutputWorker::spawn(Forever, Recorder::default(), status.clone()).expect("spawn");
+            OutputWorker::spawn(Forever, Recorder::default(), status.clone(), 30).expect("spawn");
         std::thread::sleep(Duration::from_millis(60));
         worker.stop();
 

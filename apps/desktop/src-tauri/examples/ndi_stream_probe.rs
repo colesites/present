@@ -149,7 +149,7 @@ fn main() {
     println!("runtime  {} ({})", runtime.path.display(), runtime.version);
 
     let name = format!("Present Stream Probe {}", std::process::id());
-    let sender = Sender::new(runtime.lib.clone(), &name, rules::DEFAULT_GROUP_NAME)
+    let sender = Sender::new(runtime.lib.clone(), &name, rules::DEFAULT_GROUP_NAME, rules::DEFAULT_FRAME_RATE)
         .expect("create the sender");
     let render_ms = Arc::new(Mutex::new(Vec::new()));
     let video_shown = Arc::new(Mutex::new(Vec::new()));
@@ -166,7 +166,7 @@ fn main() {
         program,
     };
     let status = Arc::new(Mutex::new(NdiStatus::default()));
-    let worker = OutputWorker::spawn(source, sender, status.clone()).expect("start the stream");
+    let worker = OutputWorker::spawn(source, sender, status.clone(), rules::DEFAULT_FRAME_RATE).expect("start the stream");
 
     // Find it and watch it, the way a switcher on the network would.
     let suffix = format!("({name})");

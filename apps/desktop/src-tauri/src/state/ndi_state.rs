@@ -97,6 +97,7 @@ impl NdiState {
         resource_dir: Option<&Path>,
         source_name: &str,
         group_name: &str,
+        frame_rate: Option<u32>,
     ) -> StartResult {
         let source_name = rules::normalize_source_name(source_name);
         let group_name = rules::normalize_group_name(group_name);
@@ -128,7 +129,8 @@ impl NdiState {
             Err(error) => return fail(format!("Failed to load NDI backend. {error}")),
         };
 
-        let sender = match Sender::new(lib, &source_name, &group_name) {
+        let rate = rules::frame_rate(frame_rate);
+        let sender = match Sender::new(lib, &source_name, &group_name, rate) {
             Ok(sender) => sender,
             Err(error) => return fail(error),
         };
@@ -143,7 +145,7 @@ impl NdiState {
             status.frame_ms = None;
         }
 
-        match OutputWorker::spawn(AppFrameSource::new(app), sender, self.status.clone()) {
+        match OutputWorker::spawn(AppFrameSource::new(app), sender, self.status.clone(), rate) {
             Ok(worker) => {
                 *lock(&self.worker) = Some(worker);
                 tracing::info!(source = %source_name, group = %group_name, "NDI output started");

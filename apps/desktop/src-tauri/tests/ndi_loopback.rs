@@ -60,7 +60,7 @@ impl Sending {
     fn start(lib: Arc<NdiLib>, name: &str) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let sent = Arc::new(AtomicU64::new(0));
-        let mut sender = Sender::new(lib, name, rules::DEFAULT_GROUP_NAME).expect("create sender");
+        let mut sender = Sender::new(lib, name, rules::DEFAULT_GROUP_NAME, rules::DEFAULT_FRAME_RATE).expect("create sender");
         let (stop_flag, counter) = (stop.clone(), sent.clone());
         let handle = thread::spawn(move || {
             let frame = pattern();
@@ -258,7 +258,7 @@ fn the_sender_keeps_its_own_clock_with_nobody_watching() {
     // core flat out rendering frames that go nowhere.
     let runtime = library::load(&library::candidates_from_env(None)).expect("load the NDI runtime");
     let name = format!("Present Unwatched {}", std::process::id());
-    let mut sender = Sender::new(runtime.lib, &name, rules::DEFAULT_GROUP_NAME).expect("sender");
+    let mut sender = Sender::new(runtime.lib, &name, rules::DEFAULT_GROUP_NAME, rules::DEFAULT_FRAME_RATE).expect("sender");
     let frame = pattern();
 
     let started = Instant::now();
