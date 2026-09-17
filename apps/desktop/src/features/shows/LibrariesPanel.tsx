@@ -67,6 +67,20 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "../../renderer/shared/components/ui/resizable";
+import { invoke } from "@tauri-apps/api/core";
+
+type ImportedSongFile = {
+  fileName: string;
+  song: {
+    title: string;
+    authors: string[];
+    copyright: string | null;
+    ccliNumber: string | null;
+    body: string;
+    slideCount: number;
+  } | null;
+  error: string | null;
+};
 
 interface LibrariesPanelProps {
   libraryItems: LibraryItem[];
@@ -340,6 +354,52 @@ export const LibrariesPanel = memo(
         toast.success(`Exported ${result.itemCount} libraries to ${result.path}`);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to export libraries");
+      }
+    };
+
+    // Songs from OpenLP and other OpenLyrics exporters, into the library being
+    // viewed (`services/openlyrics.rs`).
+    const handleImportOpenLyrics = async () => {
+      let files: ImportedSongFile[] | null;
+      try {
+        files = await invoke<ImportedSongFile[] | null>("import_openlyrics_songs");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not open the songs");
+        return;
+      }
+      if (!files) {
+        return;
+      }
+      const categoryId = selectedCategoryId ? resolveCategoryId(selectedCategoryId) : undefined;
+      let imported = 0;
+      const failed: string[] = [];
+      for (const file of files) {
+        if (!file.song) {
+          failed.push(`${file.fileName}: ${file.error ?? "unreadable"}`);
+          continue;
+        }
+        const credits = file.song.authors.join(", ");
+        await onCreateLibraryItemFromDraft(
+          {
+            title: file.song.title,
+            body: file.song.body,
+            slides: [],
+            content: {
+              presentation: {
+                author: credits,
+                artist: "",
+              },
+            },
+          } as LibraryItemDraft,
+          categoryId ?? undefined,
+        );
+        imported += 1;
+      }
+      if (imported > 0) {
+        toast.success(`Imported ${imported} ${imported === 1 ? "song" : "songs"}`);
+      }
+      if (failed.length > 0) {
+        toast.error(`Could not import ${failed.length}: ${failed.slice(0, 3).join("; ")}`);
       }
     };
 
@@ -642,16 +702,25 @@ export const LibrariesPanel = memo(
                   <ArrowUpFromLine className="h-4 w-4" />
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleImportLibraries();
-                  }}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-input bg-background text-muted-foreground shadow-sm transition hover:bg-secondary"
-                  title="Import libraries"
-                >
-                  <ArrowDownToLine className="h-4 w-4" />
-                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-input bg-background text-muted-foreground shadow-sm transition hover:bg-secondary"
+                      title="Import"
+                    >
+                      <ArrowDownToLine className="h-4 w-4" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => void handleImportLibraries()}>
+                      Present library export…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => void handleImportOpenLyrics()}>
+                      OpenLyrics songs (.xml)…
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

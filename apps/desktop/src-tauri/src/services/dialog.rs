@@ -312,6 +312,25 @@ pub fn select_prop_media(
     Ok(None)
 }
 
+/// OpenLyrics song files. Read by Rust itself, so nothing is granted to the
+/// webview.
+pub fn select_openlyrics_files(
+    app: &AppHandle,
+    requester: Option<&WebviewWindow>,
+) -> AppResult<Option<Vec<PathBuf>>> {
+    let Some(picked) = builder(app, requester)
+        .add_filter("OpenLyrics songs", &["xml"])
+        .blocking_pick_files()
+    else {
+        return Ok(None);
+    };
+    picked
+        .into_iter()
+        .map(to_path)
+        .collect::<AppResult<Vec<_>>>()
+        .map(Some)
+}
+
 pub fn select_presentation_files(
     app: &AppHandle,
     state: &FileState,

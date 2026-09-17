@@ -78,6 +78,9 @@ roxmltree = "0.20"
 blake3 = "1"
 # Media folders that update live (`services/media_watch.rs`).
 notify = "8"
+# OpenLyrics song import (`services/openlyrics.rs`). The version already in
+# the tree.
+quick-xml = "0.42"
 # Browser mode's two webviews (`services/browser_mode/view.rs`), built directly
 # rather than as Tauri child webviews (stage-7-subsystems.md §10). Pinned to
 # the version Tauri resolves: a second wry would be a second webview runtime in

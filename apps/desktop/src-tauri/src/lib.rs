@@ -267,6 +267,7 @@ pub fn run() {
             commands::browser_mode::get_browser_mode_state,
             commands::browser_mode::fetch_browser_suggestions,
             commands::thumbnails::get_media_thumbnail,
+            commands::songs::import_openlyrics_songs,
             commands::pptx::open_pptx,
             commands::pptx::parse_pptx,
             commands::fonts::get_system_fonts,

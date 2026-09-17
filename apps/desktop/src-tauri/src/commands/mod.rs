@@ -24,6 +24,7 @@ pub mod permissions;
 pub mod playback;
 pub mod pptx;
 pub mod presentation;
+pub mod songs;
 pub mod speech;
 pub mod stage;
 pub mod surface;

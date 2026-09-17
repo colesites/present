@@ -24,6 +24,7 @@ pub mod media_watch;
 pub mod mini_lyrics;
 pub mod monitors;
 pub mod ndi;
+pub mod openlyrics;
 pub mod output;
 pub mod permissions;
 pub mod playback;
