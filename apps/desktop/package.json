@@ -7,7 +7,8 @@
   "scripts": {
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "tauri:build": "node scripts/tauri-build.mjs",
+    "tauri:ffmpeg": "bash scripts/build-ffmpeg.sh && node scripts/stage-tauri-ffmpeg.mjs",
     "tauri:vite:dev": "vite",
     "tauri:vite:build": "vite build --mode production",
     "tauri:stage-ndi": "node scripts/stage-tauri-ndi.mjs",

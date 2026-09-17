@@ -37,7 +37,35 @@ fn init() {
         // decoder turns a file down. What matters reaches callers as errors,
         // and the switch to software is logged here.
         ff::util::log::set_level(ff::util::log::Level::Fatal);
+
+        let (version, license) = library();
+        if is_lgpl(license) {
+            tracing::info!(version, license, "FFmpeg loaded");
+        } else if cfg!(debug_assertions) {
+            // A development build against Homebrew's FFmpeg, which is GPL.
+            tracing::info!(version, license, "FFmpeg loaded (not the build that ships)");
+        } else {
+            tracing::error!(
+                version,
+                license,
+                "this build loaded an FFmpeg that must not ship with it (ADR-003)"
+            );
+        }
     });
+}
+
+/// The FFmpeg in use: its version and the licence it was built under.
+pub fn library() -> (&'static str, &'static str) {
+    // SAFETY: FFmpeg returns a static string.
+    let version = unsafe { std::ffi::CStr::from_ptr(ff::ffi::av_version_info()) }
+        .to_str()
+        .unwrap_or("unknown");
+    (version, ff::util::license())
+}
+
+/// Whether FFmpeg reports the licence the app may ship it under.
+pub fn is_lgpl(license: &str) -> bool {
+    license.starts_with("LGPL")
 }
 
 fn decode_error(error: ff::Error) -> VideoError {
@@ -955,23 +983,26 @@ mod tests {
         );
     }
 
-    /// Frame `i` of the seek clip: its index in the luma.
+    /// Frame `i` of the seek clip: its index in the luma, five levels a frame.
+    ///
+    /// Five, because swscale's fast same-size conversion rounds down: a level
+    /// low with FFmpeg's assembly, two without it.
     fn numbered(index: i64) -> (u8, u8, u8) {
-        (40 + (index as u8) * 3, 128, 128)
+        (20 + (index as u8) * 5, 128, 128)
     }
 
     /// Which frame a decoded one is, read back from its grey level.
     fn frame_number(frame: &VideoFrame) -> i64 {
         let grey = f64::from(centre(frame)[1]);
         let luma = grey * 219.0 / 255.0 + 16.0;
-        ((luma - 40.0) / 3.0).round() as i64
+        ((luma - 20.0) / 5.0).round() as i64
     }
 
     fn seek_clip(codec: Codec) -> ClipSpec {
         ClipSpec {
             codec,
             size: (640, 360),
-            frames: 60,
+            frames: 40,
             fps: 30,
             gop: 12,
             space: color::Space::BT709,
@@ -1049,7 +1080,7 @@ mod tests {
             }
         );
         let duration = decoder.duration_seconds().expect("a duration");
-        assert!((duration - 2.0).abs() < 0.1, "duration {duration}");
+        assert!((duration - 40.0 / 30.0).abs() < 0.1, "duration {duration}");
 
         let first = decoder.next_frame().unwrap().expect("a first frame");
         assert_eq!(first.presentation_seconds, 0.0);
@@ -1147,6 +1178,25 @@ mod tests {
                     (200 + row * 10 + column) as u8
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_licence_check_tells_lgpl_from_gpl() {
+        assert!(is_lgpl("LGPL version 2.1 or later"));
+        assert!(!is_lgpl("GPL version 2 or later"));
+        assert!(!is_lgpl("nonfree and unredistributable"));
+    }
+
+    /// Run with `PRESENT_EXPECT_LGPL_FFMPEG=1` against the build that ships, to
+    /// prove the tests ran against it and not a system FFmpeg.
+    #[test]
+    fn the_ffmpeg_in_use_is_the_expected_one() {
+        init();
+        let (version, license) = library();
+        assert!(!version.is_empty());
+        if std::env::var_os("PRESENT_EXPECT_LGPL_FFMPEG").is_some() {
+            assert!(is_lgpl(license), "FFmpeg {version} is {license}");
         }
     }
 

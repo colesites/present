@@ -1,0 +1,28 @@
+{
+  "bundle": {
+    "linux": {
+      "deb": {
+        "depends": [
+          "libva2",
+          "libva-drm2"
+        ],
+        "files": {
+          "/usr/lib/present-ffmpeg": "ffmpeg/runtime"
+        }
+      },
+      "rpm": {
+        "depends": [
+          "libva"
+        ],
+        "files": {
+          "/usr/lib/present-ffmpeg": "ffmpeg/runtime"
+        }
+      },
+      "appimage": {
+        "files": {
+          "/usr/lib/present-ffmpeg": "ffmpeg/runtime"
+        }
+      }
+    }
+  }
+}

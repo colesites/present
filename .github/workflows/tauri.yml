@@ -34,9 +34,12 @@ on:
 jobs:
   rust-quality:
     name: Rust quality
-    # 24.04 for FFmpeg 6.1: the video decoder needs 5.0 or later, and 22.04
-    # has 4.4.
     runs-on: ubuntu-24.04
+    # The Rust build links the FFmpeg built below, so the tests run against
+    # what ships rather than the distribution's GPL one (ADR-003).
+    env:
+      FFMPEG_DIR: ${{ github.workspace }}/apps/desktop/src-tauri/ffmpeg/prefix
+      PRESENT_EXPECT_LGPL_FFMPEG: "1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -60,13 +63,22 @@ jobs:
             librsvg2-dev \
             libxdo-dev \
             patchelf \
-            libavcodec-dev \
-            libavformat-dev \
-            libavutil-dev \
-            libswscale-dev \
+            nasm \
+            libva-dev \
             pkg-config \
             clang \
             libclang-dev
+
+      - name: Cache the FFmpeg build
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/desktop/src-tauri/ffmpeg/prefix
+            apps/desktop/src-tauri/ffmpeg/cache
+          key: ffmpeg-ubuntu-24.04-${{ hashFiles('apps/desktop/scripts/build-ffmpeg.sh') }}
+
+      - name: Build FFmpeg
+        run: bash apps/desktop/scripts/build-ffmpeg.sh
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -136,38 +148,52 @@ jobs:
             librsvg2-dev \
             libxdo-dev \
             patchelf \
-            libavcodec-dev \
-            libavformat-dev \
-            libavutil-dev \
-            libswscale-dev \
+            nasm \
+            libva-dev \
             pkg-config \
             clang \
             libclang-dev
 
-      # FFmpeg to build against. The bundles do not carry it yet — a machine
-      # without FFmpeg installed cannot play video in them — and these builds
-      # are not the LGPL-only FFmpeg a release must ship (HANDOFF §4).
-      - name: Install FFmpeg (macOS)
+      # The LGPL FFmpeg the bundle carries (ADR-003). `tauri:build` builds it
+      # where it can; Windows needs MSYS2 and MSVC, so it is built here.
+      - name: Install FFmpeg's build tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install ffmpeg pkgconf
+        run: brew install nasm
 
-      - name: Cache vcpkg's FFmpeg build (Windows)
-        if: runner.os == 'Windows'
+      - name: Cache the FFmpeg build
         uses: actions/cache@v4
         with:
-          path: ~\AppData\Local\vcpkg\archives
-          key: vcpkg-ffmpeg-x64-windows-v1
+          path: |
+            apps/desktop/src-tauri/ffmpeg/prefix
+            apps/desktop/src-tauri/ffmpeg/cache
+          key: ffmpeg-${{ matrix.os }}-${{ hashFiles('apps/desktop/scripts/build-ffmpeg.sh') }}
 
-      # vcpkg's FFmpeg without its `gpl` feature is LGPL. DXVA2 and D3D11 decoding
-      # come with the Windows SDK headers.
-      - name: Install FFmpeg (Windows)
+      - name: Set up MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Set up MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          # MSVC's cl.exe and link.exe have to stay on PATH for
+          # `configure --toolchain=msvc`.
+          path-type: inherit
+          install: make diffutils nasm tar xz
+
+      - name: Build FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          # MSYS2's own `link` shadows MSVC's linker, which configure needs.
+          mv -f /usr/bin/link.exe /usr/bin/link-msys.exe || true
+          bash apps/desktop/scripts/build-ffmpeg.sh
+
+      - name: Point the Windows build at LLVM
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          vcpkg install "ffmpeg[core,avcodec,avformat,swscale]:x64-windows"
-          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
-          "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
-          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+        run: '"LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV'
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
