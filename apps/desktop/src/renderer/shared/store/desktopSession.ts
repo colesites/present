@@ -5,6 +5,7 @@ import { useWorkspaceStore } from "../../../../../../packages/shared/src/store/w
 import { decodeJwtPayload } from "../lib/utils";
 import {
   getRefreshRetryDelayMs,
+  expiredSessionAction,
   isAuthFailureStatus,
   isTransientRefreshStatus,
   shouldKeepCachedIdentity,
@@ -512,12 +513,18 @@ export const ensureFreshDesktopAccessToken = async (options?: {
   }
 
   if (isTimestampExpired(stateSessionExpiresAtMs)) {
-    if (isOnline()) {
+    // A service must never stop because a token did
+    // (`auth-refresh-policy.mjs`).
+    const action = expiredSessionAction({
+      online: isOnline(),
+      hasUser: Boolean(currentState.user),
+    });
+    if (action === "sign-in-again") {
       return persistTokenFailure("Session expired. Please sign in again.", true);
     }
 
     currentState.setError("Session expired. Reconnect to verify your account.");
-    if (currentState.user) {
+    if (action === "keep-presenting") {
       currentState.setAuthStatus("authenticated");
     }
     return null;

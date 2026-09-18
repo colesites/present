@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  expiredSessionAction,
   getRefreshRetryDelayMs,
   isAuthFailureStatus,
   isTransientRefreshStatus,
@@ -69,4 +70,23 @@ test("cached identity survives every non-auth refresh failure", () => {
   assert.equal(shouldKeepCachedIdentity({ hasUser: true, status: 401 }), false);
   assert.equal(shouldKeepCachedIdentity({ hasUser: true, status: 403 }), false);
   assert.equal(shouldKeepCachedIdentity({ hasUser: false, status: 503 }), false);
+});
+
+test("an expired session never stops a service that is offline", () => {
+  // Sunday morning, no internet, the token ran out overnight: the operator
+  // keeps presenting on what is already on the machine.
+  assert.equal(
+    expiredSessionAction({ online: false, hasUser: true }),
+    "keep-presenting",
+  );
+  // Offline and nothing cached: there is nobody to present as yet.
+  assert.equal(
+    expiredSessionAction({ online: false, hasUser: false }),
+    "wait-for-network",
+  );
+  // Online, it is a fact and signing in again is possible.
+  assert.equal(
+    expiredSessionAction({ online: true, hasUser: true }),
+    "sign-in-again",
+  );
 });
