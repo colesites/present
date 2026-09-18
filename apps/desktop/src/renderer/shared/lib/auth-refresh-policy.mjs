@@ -33,15 +33,15 @@ export function shouldKeepCachedIdentity({ hasUser, status }) {
 /**
  * What to do when the stored session's own clock says it has expired.
  *
- * **A service must never stop because a token did.** With no network there is
- * no way to renew one and no way to know it was really revoked, so the cached
- * identity stays and the operator keeps presenting; the app says to reconnect
- * rather than asking them to sign in during a service. Online, an expired
- * session is a fact and signing in again is possible, so it is asked for.
+ * **A service must never stop because a token did**, and the desktop does not
+ * sign anybody out on its own say-so. The clock is a hint: with no network the
+ * cached identity stays and the operator keeps presenting; online, the server
+ * is asked, and only its definitive 401 or 403 signs anybody out — the same
+ * rule every other refresh follows (`shouldKeepCachedIdentity`).
  */
 export function expiredSessionAction({ online, hasUser }) {
   if (!online) {
     return hasUser ? "keep-presenting" : "wait-for-network";
   }
-  return "sign-in-again";
+  return "ask-the-server";
 }

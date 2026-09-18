@@ -497,7 +497,7 @@ const areUsersEqual = (
 export const ensureFreshDesktopAccessToken = async (options?: {
   forceRefresh?: boolean;
 }): Promise<string | null> => {
-  const forceRefresh = options?.forceRefresh === true;
+  let forceRefresh = options?.forceRefresh === true;
   const currentState = useDesktopSessionStore.getState();
   const stateToken = currentState.token;
   const stateTokenExpiresAtMs =
@@ -513,21 +513,22 @@ export const ensureFreshDesktopAccessToken = async (options?: {
   }
 
   if (isTimestampExpired(stateSessionExpiresAtMs)) {
-    // A service must never stop because a token did
-    // (`auth-refresh-policy.mjs`).
+    // A service must never stop because a token did, and the local clock is
+    // not the judge (`auth-refresh-policy.mjs`).
     const action = expiredSessionAction({
       online: isOnline(),
       hasUser: Boolean(currentState.user),
     });
-    if (action === "sign-in-again") {
-      return persistTokenFailure("Session expired. Please sign in again.", true);
+    if (action === "ask-the-server") {
+      // The refresh below renews it, or hears a 401/403 and signs out.
+      forceRefresh = true;
+    } else {
+      currentState.setError("Session expired. Reconnect to verify your account.");
+      if (action === "keep-presenting") {
+        currentState.setAuthStatus("authenticated");
+      }
+      return null;
     }
-
-    currentState.setError("Session expired. Reconnect to verify your account.");
-    if (action === "keep-presenting") {
-      currentState.setAuthStatus("authenticated");
-    }
-    return null;
   }
 
   if (
@@ -721,15 +722,11 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
     const sessionExpiresAtMs =
       stored.sessionExpiresAtMs ?? getSessionExpiryTimestampMs(stored.sessionToken);
 
-    if (isTimestampExpired(sessionExpiresAtMs)) {
-      await window.electronAPI?.clearStoredAuthSession?.();
-      set({
-        authStatus: "unauthenticated",
-        error: "Session expired. Please sign in again.",
-        hasHydratedSession: true,
-      });
-      return;
-    }
+    // A session whose own clock has run out is still loaded, not deleted:
+    // starting the app on a Sunday morning must not sign anybody out. The
+    // first token request settles it — renewed by the server, kept while
+    // offline, or ended only by the server's 401 or 403
+    // (`expiredSessionAction` in auth-refresh-policy.mjs).
 
     const tokenExpiresAtMs =
       stored.tokenExpiresAtMs ??

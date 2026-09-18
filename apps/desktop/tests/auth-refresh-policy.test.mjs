@@ -84,9 +84,10 @@ test("an expired session never stops a service that is offline", () => {
     expiredSessionAction({ online: false, hasUser: false }),
     "wait-for-network",
   );
-  // Online, it is a fact and signing in again is possible.
+  // Online, the local clock is not the judge: the server is asked, and only
+  // its 401 or 403 signs anybody out.
   assert.equal(
     expiredSessionAction({ online: true, hasUser: true }),
-    "sign-in-again",
+    "ask-the-server",
   );
 });
