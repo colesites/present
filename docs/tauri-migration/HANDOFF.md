@@ -1173,6 +1173,12 @@ if asked.
 - **A mirror compared against a position that crossed IPC is always behind.**
   Aim at the position plus the time since it was sampled
   (`mirror-video-sync.mjs`), and never seek a playing mirror for a small gap.
+- **The Rust target folder grows without limit.** Cargo never deletes old
+  build outputs, and every switch between Homebrew's FFmpeg and the shipped
+  one (`FFMPEG_DIR`) or between profiles writes a whole new set: it reached
+  43 GB and filled the owner's disk on 2026-09-17. Test against the shipped
+  FFmpeg in a separate `--target-dir` you delete afterwards, and
+  `cargo clean` now and then.
 - **macOS's firewall blocks incoming connections to the development binary.**
   The phone remote answers on localhost but not from the network until the
   binary is allowed through; a packaged, signed app asks the usual way.
