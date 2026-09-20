@@ -51,6 +51,13 @@ const privateKeyPem = (): string | null => {
 /**
  * The issuer these tokens claim, which Convex must have as a provider domain
  * and which serves the discovery documents below.
+ *
+ * **The same URL in development as in production.** Convex fetches the key
+ * from this address itself, over the internet, so `http://localhost:3000`
+ * cannot be an issuer however the app is being run: Convex cannot reach it. A
+ * development web app signs with the same key as the deployed one and claims
+ * the deployed one's name, and the development Convex deployment trusts that
+ * name — the tokens verify against the keys production publishes.
  */
 export const desktopJwtIssuer = (): string | null => {
   const configured =
@@ -60,8 +67,31 @@ export const desktopJwtIssuer = (): string | null => {
   return configured ? configured.replace(/\/+$/, "") : null;
 };
 
-export const isDesktopJwtConfigured = (): boolean =>
-  Boolean(privateKeyPem() && desktopJwtIssuer());
+let hasSaidIssuerIsMissing = false;
+
+/**
+ * Whether this app can sign the desktop's tokens.
+ *
+ * A key with no issuer is the quiet failure worth shouting about: everything
+ * carries on working, because the refresh route falls back to Clerk's session,
+ * and the only sign that the credential is off is that computers start being
+ * signed out weeks later. Development is where this happens, since
+ * `WEB_APP_URL` is usually only set in production.
+ */
+export const isDesktopJwtConfigured = (): boolean => {
+  const hasKey = Boolean(privateKeyPem());
+  const issuer = desktopJwtIssuer();
+  if (hasKey && !issuer && !hasSaidIssuerIsMissing) {
+    hasSaidIssuerIsMissing = true;
+    console.warn(
+      "[Desktop Auth] a signing key is set but no issuer is, so the desktop " +
+        "credential is off and Clerk's session is being used instead. Set " +
+        "DESKTOP_JWT_ISSUER (or WEB_APP_URL) to this app's public URL — the " +
+        "same one Convex has as DESKTOP_JWT_ISSUER_DOMAIN.",
+    );
+  }
+  return hasKey && Boolean(issuer);
+};
 
 let cachedKey: { key: KeyObject; kid: string } | null = null;
 

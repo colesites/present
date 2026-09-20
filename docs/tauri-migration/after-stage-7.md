@@ -382,13 +382,21 @@ know is a token every desktop is refused:
    time, which rotates the key id and asks every desktop to refresh once.
 2. **Convex first:** `DESKTOP_JWT_ISSUER_DOMAIN=https://present.multivrs.space`
    — the web app's URL, and nothing else — then deploy the backend, so the
-   provider exists before any token claims it.
+   provider exists before any token claims it. **In every deployment**, dev as
+   well as prod: they are separate environments and each needs the variable,
+   but the value is the same in both. It cannot be `localhost` anywhere,
+   because Convex fetches the key from that address itself, over the internet.
 3. **Then the web app:** `DESKTOP_JWT_PRIVATE_KEY` is the whole contents of
-   `desktop.pkcs8.pem`, `BEGIN`/`END` lines included (environment panels that
-   will not take newlines take `\n`, which the code turns back). Deploy.
-   `DESKTOP_JWT_ISSUER` is optional: without it the issuer is
-   `NEXT_PUBLIC_APP_URL` or `WEB_APP_URL`, which production already sets to
-   the same URL. Set it only to say something different.
+   `desktop.pkcs8.pem`, `BEGIN`/`END` lines included. In a `.env` file that
+   means wrapping it in double quotes, which is how a multi-line value is
+   written there; a hosting panel takes it as it is, or as one line with
+   `\n`, which the code turns back. Deploy.
+   `DESKTOP_JWT_ISSUER` is only optional where something else already says the
+   URL: production has `WEB_APP_URL`, `.env.local` has nothing, so development
+   needs it set explicitly — to the deployed URL, not localhost. One key in
+   both, so what production publishes verifies what development signs.
+   Without an issuer the app carries on using Clerk's session and now says so
+   in the log once, rather than failing quietly.
 4. Check `https://present.multivrs.space/.well-known/openid-configuration` and
    `/.well-known/jwks.json` answer, the second with one key.
 5. The desktop needs no change or release: its next refresh gets the new token.

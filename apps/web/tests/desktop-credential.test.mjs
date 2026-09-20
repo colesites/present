@@ -121,6 +121,28 @@ test("nothing is signed until a key is configured", async () => {
   process.env.DESKTOP_JWT_PRIVATE_KEY = key;
 });
 
+test("a key with no issuer is not configured, and says so once", async () => {
+  // What a development environment looks like when only the key was set: the
+  // refresh route falls back to Clerk, and nothing else would say why.
+  const issuer = process.env.DESKTOP_JWT_ISSUER;
+  const said = [];
+  const wasWarn = console.warn;
+  console.warn = (message) => said.push(String(message));
+  try {
+    delete process.env.DESKTOP_JWT_ISSUER;
+    assert.equal(isDesktopJwtConfigured(), false);
+    assert.equal(await signConvexAccessToken({ userId: "user_2abc" }), null);
+    assert.equal(isDesktopJwtConfigured(), false, "asked twice");
+  } finally {
+    console.warn = wasWarn;
+    process.env.DESKTOP_JWT_ISSUER = issuer;
+  }
+
+  assert.equal(said.length, 1, "said once, not on every request");
+  assert.match(said[0], /DESKTOP_JWT_ISSUER/);
+  assert.equal(isDesktopJwtConfigured(), true, "and configured again with it");
+});
+
 test("a computer that has signed in stays signed in", () => {
   const token = issueDesktopSessionToken({ sessionId: "sess_1", userId: "user_2abc" });
   const claims = verifyDesktopSessionToken(token);
