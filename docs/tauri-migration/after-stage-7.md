@@ -370,16 +370,25 @@ before it stop being renewed, and a desktop that cannot renew signs out within
 the hour. Settable from the Clerk dashboard today; a button for it is a
 follow-up.
 
-**Turning it on** — it is inert until then, and the order matters, because a
-token Convex does not know is a token every desktop is refused:
+**Turning it on.** Neither value comes from Clerk, Convex or anywhere else:
+the key is one we make, and the issuer is the web app's own URL. It is inert
+until both are set, and the order matters, because a token Convex does not
+know is a token every desktop is refused:
 
-1. Make a key: `openssl genrsa -out desktop.pem 2048` then
+1. **Make a key** — nothing issues this, it is generated:
+   `openssl genrsa -out desktop.pem 2048` then
    `openssl pkcs8 -topk8 -nocrypt -in desktop.pem -out desktop.pkcs8.pem`.
-2. **Convex first:** set `DESKTOP_JWT_ISSUER_DOMAIN` to the web app's URL
-   (`https://present.multivrs.space`) and deploy the backend, so the provider
-   exists before any token claims it.
-3. **Then the web app:** set `DESKTOP_JWT_PRIVATE_KEY` to the PKCS#8 file's
-   contents and `DESKTOP_JWT_ISSUER` to the same URL, and deploy.
+   Keep `desktop.pkcs8.pem` out of the repo; it can be regenerated at any
+   time, which rotates the key id and asks every desktop to refresh once.
+2. **Convex first:** `DESKTOP_JWT_ISSUER_DOMAIN=https://present.multivrs.space`
+   — the web app's URL, and nothing else — then deploy the backend, so the
+   provider exists before any token claims it.
+3. **Then the web app:** `DESKTOP_JWT_PRIVATE_KEY` is the whole contents of
+   `desktop.pkcs8.pem`, `BEGIN`/`END` lines included (environment panels that
+   will not take newlines take `\n`, which the code turns back). Deploy.
+   `DESKTOP_JWT_ISSUER` is optional: without it the issuer is
+   `NEXT_PUBLIC_APP_URL` or `WEB_APP_URL`, which production already sets to
+   the same URL. Set it only to say something different.
 4. Check `https://present.multivrs.space/.well-known/openid-configuration` and
    `/.well-known/jwks.json` answer, the second with one key.
 5. The desktop needs no change or release: its next refresh gets the new token.
@@ -428,8 +437,53 @@ that was not made twice fails there instead of on a Sunday.
 database at startup — `PRAGMA journal_mode` is `wal`, `user_version` is 1, and
 both tables and their indexes are there.
 
-**Not done yet, and deliberately:** nothing reads it. The React tree still
-uses the offline path it had, because the owner's uncommitted `localData.ts`
-and `useOfflineSyncEngine.ts` are the files that would change, and those are
-theirs. The Convex sync from Rust — backoff, `blake3` media hashes — is the
-other half and is not built.
+**And the React tree reads it** — `9d4f00a`. `localData.ts`, which every
+screen reads its categories, library items, services and messages from, keeps
+its memory from this store and writes every change back to it. Reads stay
+synchronous because the screens are: a slide list asks for its items while it
+renders. The first read of a run can be empty while the database is opened,
+and everything showing this data already listens for
+`LOCAL_DATA_CHANGED_EVENT`, which fires when it arrives; the sync waits for
+the same signal, since a queue that looked empty would have let a pull
+overwrite a service written offline.
+
+Writes go row by row. Every edit builds a new object for the thing it changed
+and leaves the rest alone, so comparing by identity says exactly which rows
+changed — one edit, one row written, whatever else the library holds. That
+comparison is `offline-rows.mjs`, tested on its own (8 cases). What browser
+storage held is carried over once, queue included, and only into an empty
+store.
+
+**Verified in the running app:** a service made through `createLocalService`
+appeared in `documents` at version 1 with its queued change beside it; an edit
+wrote one row and took it to version 2; a restart read both back, and the
+untouched row was not rewritten.
+
+**Still not built:** the Convex sync from Rust — backoff, `blake3` media
+hashes. The React sync engine still does that work, now reading its queue from
+SQLite. Cross-window notification is not wired either: both windows share one
+file now, but only the operator window reads the library, so nothing needs
+telling yet.
+
+## 13. Sign-in with no date on it — `b5f2e85`
+
+§11 stopped the desktop signing itself out and cut the tie to Clerk's browser
+session. What was left was the desktop's own credential carrying 180 days.
+Rotated on every refresh, so a church that opens Present most weeks would
+never have seen it — but a machine left in a cupboard over the summer came
+back asking somebody to sign in, and an operator asked that at 9am on a Sunday
+has no way to answer.
+
+**The session token now claims no expiry at all.** What ends a session is
+somebody ending it: signing that computer out
+(`desktopSessionsRevokedBefore`, within the hour), or the account being
+banned, locked or deleted. Both are checked on every refresh. Tokens issued
+while they still expired are honoured whatever their `exp` says, so this signs
+nobody out on its way in.
+
+**The API routes the desktop calls** (`request-auth.ts`: the speech-to-text
+token and usage) were the same bug wearing a different hat — they asked Clerk
+whether the browser session was still active, so dictation would have stopped
+working long before anything looked wrong. They check the account now, exactly
+as the refresh route does, and fall back to Clerk's session until a key is
+set.

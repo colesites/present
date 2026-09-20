@@ -317,12 +317,10 @@ references (`nom`), MIDI and OSC control (`midir`, `rosc`), the phone remote
 (`axum`, `mdns-sd`, `qrcode`) and the offline store (`rusqlite`, `ulid`) —
 after-stage-7.md. The list is done; what is left of §3 is the sync.
 
-**3. SQLite in Rust for offline data** (owner, 2026-09-15). The store is
-built and the app creates it at startup — after-stage-7.md §12. **Nothing
-reads it yet:** the files that would change are the owner's uncommitted
-`localData.ts` and `useOfflineSyncEngine.ts`, so wiring the React tree to it
-needs their word first. Then the other half: Convex sync from Rust, with
-backoff and `blake3` media hashes.
+**3. SQLite in Rust for offline data** (owner, 2026-09-15). Done, both
+halves: the store, and `localData.ts` reading and writing it — after-stage-7.md
+§12. Left: the Convex sync from Rust, with backoff and `blake3` media hashes.
+The React sync engine still does that work, now reading its queue from SQLite.
 
 **4. The manual gates, §8**, still unrun: a service on one machine (A), the
 second monitor (B), an account (C), NDI (E), the Stage 7 checklist (F).
@@ -331,9 +329,12 @@ second monitor (B), an account (C), NDI (E), the Stage 7 checklist (F).
 both, type-checked by cross-compiling (stage-7-subsystems.md §8 has the recipe)
 and never run.
 
-**Owed to the owner:** the desktop credential is built but **not turned on** —
-it needs a key and two environment variables, Convex first (after-stage-7.md
-§11). Until then sign-ins still expire when Clerk's session does.
+**Owed to the owner:** the desktop credential is built but **not turned on**.
+It needs a key — one we generate, `openssl`, not issued by anybody — and the
+web app's own URL, set in Convex first and then beside the key in the web
+app's environment (after-stage-7.md §11 has the steps). Sessions no longer
+carry any expiry (§13), but until this is on, a refresh still goes through
+Clerk's session, so Clerk's lifetime is still Present's.
 
 **Decided, 2026-09-17:** the operator's quick toggles reach the NDI stream as
 well as the projector — the NDI column says what the stream may carry, the
