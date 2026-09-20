@@ -459,6 +459,17 @@ appeared in `documents` at version 1 with its queued change beside it; an edit
 wrote one row and took it to version 2; a restart read both back, and the
 untouched row was not rewritten.
 
+**The trap this sprang** — `29ee460`, and worth remembering for anything else
+that moves off browser storage. Reads used to answer in the same tick, so
+"does the library already have a Songs category? then do not make one" was
+safe. From SQLite the first answer of a run is an empty library, so every
+launch looked like a first launch and made four more default categories. It
+waits for `whenOfflineDataReady()` now. Two screens had the milder version of
+the same thing — the categories list and the messages panel read once and did
+not follow `LOCAL_DATA_CHANGED_EVENT`, so they stayed empty until something
+else re-rendered them. **Anything that reads this library must either follow
+that event or wait for that promise.**
+
 **Still not built:** the Convex sync from Rust — backoff, `blake3` media
 hashes. The React sync engine still does that work, now reading its queue from
 SQLite. Cross-window notification is not wired either: both windows share one
