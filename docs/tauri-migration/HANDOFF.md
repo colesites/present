@@ -332,9 +332,7 @@ and never run.
 
 **Owed to the owner:** the desktop credential is built but **not turned on** —
 it needs a key and two environment variables, Convex first (after-stage-7.md
-§11). Until then sign-ins still expire with Clerk's session. And `ServicesSidebar.tsx`, one of
-the owner's in-progress files, still draws video thumbnails as live video
-elements (known-issues §18).
+§11). Until then sign-ins still expire when Clerk's session does.
 
 **Decided, 2026-09-17:** the operator's quick toggles reach the NDI stream as
 well as the projector — the NDI column says what the stream may carry, the
