@@ -313,15 +313,16 @@ frames instead is the other way, and is natural after wgpu.
 **2. The owner's crate list, as features** (owner, 2026-09-15). Done: rolling
 log files (`tracing-appender`), frame-time benchmarks (`criterion`), media
 folders that update live (`notify`), OpenLyrics import (`quick-xml`), scripture
-references (`nom`), and MIDI and OSC control (`midir`, `rosc`) —
-after-stage-7.md. and the phone remote
-(`axum`, `mdns-sd`, `qrcode`). Left: **the offline store**.
+references (`nom`), MIDI and OSC control (`midir`, `rosc`), the phone remote
+(`axum`, `mdns-sd`, `qrcode`) and the offline store (`rusqlite`, `ulid`) —
+after-stage-7.md. The list is done; what is left of §3 is the sync.
 
-**3. SQLite in Rust for offline data** (owner, 2026-09-15): `rusqlite` bundled,
-migrations, WAL, `ulid` ids, `blake3` media hashes, and Convex sync from Rust
-with backoff. It replaces the IndexedDB work in the owner's uncommitted
-`localData.ts` and `useOfflineSyncEngine.ts` — agree with the owner what happens
-to those edits before touching them.
+**3. SQLite in Rust for offline data** (owner, 2026-09-15). The store is
+built and the app creates it at startup — after-stage-7.md §12. **Nothing
+reads it yet:** the files that would change are the owner's uncommitted
+`localData.ts` and `useOfflineSyncEngine.ts`, so wiring the React tree to it
+needs their word first. Then the other half: Convex sync from Rust, with
+backoff and `blake3` media hashes.
 
 **4. The manual gates, §8**, still unrun: a service on one machine (A), the
 second monitor (B), an account (C), NDI (E), the Stage 7 checklist (F).

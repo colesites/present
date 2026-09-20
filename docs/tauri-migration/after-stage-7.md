@@ -392,3 +392,44 @@ Convex does, with the published keys, but nothing here can deploy.
 deploy: raise the session lifetime in Clerk's dashboard and turn off its
 inactivity timeout. That helps the web app as well, and stops mattering for
 the desktop once the above is on.
+
+## 12. The library on this machine, in SQLite — `44f7fab`
+
+The last of the owner's crate list. Everything the operator can open on a
+Sunday — categories, library items, services, messages — is kept in
+`library.sqlite3` beside the app's settings, written before anything is sent
+anywhere and read back from there, so a hall with no wifi is an ordinary
+Sunday and not a broken one.
+
+**Why not the browser's own storage.** IndexedDB is per origin, and the app
+has two (`stage-7-subsystems.md`): what the main window wrote, the output
+window could not read. It is also cleared with the webview's data, it has no
+transaction the two windows share, and a write interrupted halfway can leave
+the library looking empty with nothing to say why. SQLite is one file on every
+platform, bundled so no machine needs it installed, in WAL so the sync can read
+while the operator writes, with `synchronous=NORMAL` and a five-second busy
+timeout — a power cut costs the last write, never the library.
+
+**The shape.** `services/store`: `documents` keyed by (workspace, kind, id),
+holding the entity as it was written plus `updated_at` and a `version` that
+goes up on every write, which is what a sync needs to tell which copy is newer.
+`sync_queue` holds changes made here that Convex has not been told about, in
+the order they were made. Migrations are `rusqlite_migration`, one so far, and
+a test re-applies them to prove a second start is a no-op. Ids made here are
+ULIDs: unique without asking anybody, sortable by when they were made, so two
+machines offline never collide and a service keeps its order.
+
+**How the React tree reaches it:** nine commands (`commands/offline.rs`) and
+the typed bindings in `renderer/tauri/offline.ts`. Those field names are
+written by hand on both sides, so a Rust test pins the wire shape — a rename
+that was not made twice fails there instead of on a Sunday.
+
+**Verified:** 814 Rust tests, clippy clean, and the running app creates the
+database at startup — `PRAGMA journal_mode` is `wal`, `user_version` is 1, and
+both tables and their indexes are there.
+
+**Not done yet, and deliberately:** nothing reads it. The React tree still
+uses the offline path it had, because the owner's uncommitted `localData.ts`
+and `useOfflineSyncEngine.ts` are the files that would change, and those are
+theirs. The Convex sync from Rust — backoff, `blake3` media hashes — is the
+other half and is not built.
