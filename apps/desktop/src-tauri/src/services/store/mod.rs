@@ -523,7 +523,7 @@ mod tests {
     /// anything: which workspaces this machine holds, and everything waiting.
     #[test]
     fn the_machine_can_say_what_it_holds_without_being_told() {
-        let mut store = store();
+        let store = store();
         store
             .put("personal", Kind::Service, "s1", &json!({}), 1_000)
             .unwrap();
