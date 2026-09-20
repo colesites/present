@@ -339,3 +339,56 @@ one each got 404; the action reached the core marked as coming from the remote.
 development binary, so a phone cannot reach `bun run desktop:tauri` until it is
 allowed — the server answers on localhost meanwhile, which is how this was
 tested. A packaged, signed app asks the usual way.
+
+## 11. Signing in stays signed in — `fa3f2b5`, `ccc0ab1`
+
+The owner asked why signing in expires at all, when ProPresenter never signs
+anybody out. Three things were wrong, and browser sign-in was not one of them
+— that is what Claude, ChatGPT and ProPresenter do too. What those keep
+afterwards is a credential of their own; Present kept a pointer to a browser
+session.
+
+**On the desktop** (`fa3f2b5`): it signed itself out on its own clock, in two
+places — at startup, where a stored session past its date was deleted from the
+keychain before anything was asked of the network, and online, where a token
+request past that date signed out rather than asking. Both are gone. The rule
+is `expiredSessionAction` beside the refresh policy: offline, the cached
+identity stays and the operator keeps presenting; online, the server is asked;
+only its 401 or 403 signs anybody out.
+
+**On the server** (`ccc0ab1`): every refresh asked Clerk whether the browser
+session that started this was still active, so Clerk's session lifetime was
+Present's. The web app now mints the desktop's Convex token itself — RS256,
+one hour, subject the Clerk user id that every Convex function reads — and
+checks the account, not a session. Convex accepts it because the issuer is a
+second provider in `auth.config.ts` and the key is published at
+`/.well-known/jwks.json`.
+
+**Signing a computer out** is a timestamp on the account,
+`desktopSessionsRevokedBefore` in Clerk's private metadata: tokens issued
+before it stop being renewed, and a desktop that cannot renew signs out within
+the hour. Settable from the Clerk dashboard today; a button for it is a
+follow-up.
+
+**Turning it on** — it is inert until then, and the order matters, because a
+token Convex does not know is a token every desktop is refused:
+
+1. Make a key: `openssl genrsa -out desktop.pem 2048` then
+   `openssl pkcs8 -topk8 -nocrypt -in desktop.pem -out desktop.pkcs8.pem`.
+2. **Convex first:** set `DESKTOP_JWT_ISSUER_DOMAIN` to the web app's URL
+   (`https://present.multivrs.space`) and deploy the backend, so the provider
+   exists before any token claims it.
+3. **Then the web app:** set `DESKTOP_JWT_PRIVATE_KEY` to the PKCS#8 file's
+   contents and `DESKTOP_JWT_ISSUER` to the same URL, and deploy.
+4. Check `https://present.multivrs.space/.well-known/openid-configuration` and
+   `/.well-known/jwks.json` answer, the second with one key.
+5. The desktop needs no change or release: its next refresh gets the new token.
+
+Until step 3, Clerk's session is used exactly as before. **Not verified:** the
+minted token against a real Convex deployment — the tests verify it the way
+Convex does, with the published keys, but nothing here can deploy.
+
+**The stop-gap**, if the owner wants the expiries to stop today without a
+deploy: raise the session lifetime in Clerk's dashboard and turn off its
+inactivity timeout. That helps the web app as well, and stops mattering for
+the desktop once the above is on.
