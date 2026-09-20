@@ -63,14 +63,23 @@ pub async fn offline_enqueue(
     state.with(|store| store.enqueue(&change))
 }
 
+/// The changes waiting, for one workspace or — without one — every workspace
+/// this machine holds, which is what the sync reads when it wakes up.
 #[tauri::command]
 pub async fn offline_queued(
     state: State<'_, StoreState>,
-    workspace: String,
+    workspace: Option<String>,
     limit: Option<usize>,
 ) -> AppResult<Vec<QueuedChange>> {
-    let limit = limit.unwrap_or(200).clamp(1, 1_000);
-    state.with(|store| store.queued(&workspace, limit))
+    let limit = limit.unwrap_or(500).clamp(1, 10_000);
+    state.with(|store| store.queued(workspace.as_deref(), limit))
+}
+
+/// Every workspace this machine holds anything for, so the app can read its
+/// library back before it has been told which workspaces exist.
+#[tauri::command]
+pub async fn offline_workspaces(state: State<'_, StoreState>) -> AppResult<Vec<String>> {
+    state.with(|store| store.workspaces())
 }
 
 #[tauri::command]

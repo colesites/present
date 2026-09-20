@@ -25,8 +25,8 @@ export const MIRRORED_PREFIXES = ["present-", "present:"];
  *   under Tauri (Stage 4); a stale browser copy must not come back.
  * - `present-desktop-session`: the auth session is in the OS keychain.
  * - the offline library and its sync queue: several megabytes, rewritten on
- *   every change, and being moved to IndexedDB in `localData.ts` — storage for
- *   them belongs with that work, not in a settings file.
+ *   every change. They live in SQLite now (`services::store`), which is where
+ *   a library belongs; a settings file is not the place for one.
  */
 export const EXCLUDED_KEYS = new Set([
   "present-looks-config",

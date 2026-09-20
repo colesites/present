@@ -79,12 +79,26 @@ export const offlineEnqueue = <Payload = unknown>(
   change: OfflineQueuedChange<Payload>,
 ): Promise<void> => invoke<void>("offline_enqueue", { change });
 
-/** The changes waiting to reach Convex, oldest first. */
+/**
+ * The changes waiting to reach Convex, oldest first — for one workspace, or
+ * without one, for every workspace this machine holds.
+ */
 export const offlineQueued = <Payload = unknown>(
-  workspace: string,
+  workspace?: string,
   limit?: number,
 ): Promise<OfflineQueuedChange<Payload>[]> =>
-  invoke<OfflineQueuedChange<Payload>[]>("offline_queued", { workspace, limit });
+  invoke<OfflineQueuedChange<Payload>[]>("offline_queued", {
+    workspace: workspace ?? null,
+    limit,
+  });
+
+/**
+ * Every workspace this machine holds anything for.
+ *
+ * The app reads its library back before anything has told it which workspaces
+ * exist — that is the whole point of the store — so the store is asked.
+ */
+export const offlineWorkspaces = (): Promise<string[]> => invoke<string[]>("offline_workspaces");
 
 /** Forget changes the server has taken. */
 export const offlineDequeue = (ids: string[]): Promise<number> =>

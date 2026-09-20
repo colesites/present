@@ -16,6 +16,7 @@ import {
   replaceOrgMessages,
   replaceOrgServices,
   removeSyncQueueItems,
+  whenOfflineDataReady,
 } from "../offline/localData";
 import { remapServiceLibraryItemIds } from "../offline/service-library-id-map.mjs";
 import {
@@ -503,6 +504,27 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
           }
 
           await syncServiceItems(item.orgId, remoteServiceId, localService);
+
+          // syncServiceItems rebuilds the remote item list by removing every
+          // item and re-adding it, and the server maintains `layout` as a side
+          // effect of those calls: removeItem drops an item's layout entry, and
+          // addItem appends a fresh one at the end for any item without a
+          // groupId. A standalone item therefore always lands last, discarding
+          // the position pushed above — grouped items are unaffected because
+          // addItem leaves the layout alone for them. Write the authoritative
+          // layout last so that churn cannot outlive the sync.
+          await convex.mutation(api.services.update, {
+            workspaceId,
+            serviceId: remoteServiceId,
+            name: localService.name,
+            date: localService.date,
+            groups: localService.groups ?? [],
+            layout: toSyncableServiceLayout(
+              localService,
+              idMapRef.current,
+              item.orgId,
+            ),
+          });
           return "ok";
         }
 
@@ -667,6 +689,11 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
 
     runningRef.current = true;
     clearRetryTimer();
+
+    // Nothing is pushed or pulled until this machine's own library has been
+    // read: a queue that looks empty because SQLite has not answered yet
+    // would let the pull below overwrite a service written offline.
+    await whenOfflineDataReady();
 
     for (const workspaceId of getWorkspaceIdsToPull()) {
       repairOrgServiceLibraryReferences(

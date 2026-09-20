@@ -281,6 +281,7 @@ pub fn run() {
             commands::offline::offline_replace,
             commands::offline::offline_enqueue,
             commands::offline::offline_queued,
+            commands::offline::offline_workspaces,
             commands::offline::offline_dequeue,
             commands::offline::offline_queue_depth,
             commands::offline::offline_new_id,

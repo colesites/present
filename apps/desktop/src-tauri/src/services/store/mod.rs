@@ -272,13 +272,31 @@ impl Store {
         Ok(())
     }
 
-    /// The changes waiting for a workspace, oldest first.
-    pub fn queued(&self, workspace: &str, limit: usize) -> AppResult<Vec<QueuedChange>> {
+    /// Every workspace this machine holds anything for.
+    ///
+    /// What the app reads at startup: it has no list of its own until the
+    /// network answers, and the point of this store is that it does not wait
+    /// for the network.
+    pub fn workspaces(&self) -> AppResult<Vec<String>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT workspace FROM documents \
+                 UNION SELECT workspace FROM sync_queue ORDER BY workspace",
+            )
+            .map_err(sql_error)?;
+        let rows = statement.query_map([], |row| row.get(0)).map_err(sql_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sql_error)
+    }
+
+    /// The changes waiting, oldest first — for one workspace, or all of them.
+    pub fn queued(&self, workspace: Option<&str>, limit: usize) -> AppResult<Vec<QueuedChange>> {
         let mut statement = self
             .connection
             .prepare(
                 "SELECT id, workspace, kind, entity_id, operation, payload, queued_at, version \
-                 FROM sync_queue WHERE workspace = ?1 ORDER BY queued_at, rowid LIMIT ?2",
+                 FROM sync_queue WHERE (?1 IS NULL OR workspace = ?1) \
+                 ORDER BY queued_at, rowid LIMIT ?2",
             )
             .map_err(sql_error)?;
         let rows = statement
@@ -460,7 +478,7 @@ mod tests {
         store.enqueue(&change("c1", 1_000)).unwrap();
         store.enqueue(&change("c3", 3_000)).unwrap();
 
-        let waiting = store.queued("personal", 10).unwrap();
+        let waiting = store.queued(Some("personal"), 10).unwrap();
         assert_eq!(
             waiting.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             vec!["c1", "c2", "c3"],
@@ -470,7 +488,7 @@ mod tests {
 
         assert_eq!(store.dequeue(&["c1".to_owned(), "c3".to_owned()]).unwrap(), 2);
         assert_eq!(store.queue_depth().unwrap(), 1);
-        assert_eq!(store.queued("personal", 10).unwrap()[0].id, "c2");
+        assert_eq!(store.queued(Some("personal"), 10).unwrap()[0].id, "c2");
     }
 
     #[test]
@@ -482,7 +500,7 @@ mod tests {
         later.version = 2;
         store.enqueue(&later).unwrap();
 
-        let waiting = store.queued("personal", 10).unwrap();
+        let waiting = store.queued(Some("personal"), 10).unwrap();
         assert_eq!(waiting.len(), 1, "one row for one change");
         assert_eq!(waiting[0].payload["name"], "Renamed");
         assert_eq!(waiting[0].version, 2);
@@ -496,9 +514,39 @@ mod tests {
         other.workspace = "org_2".to_owned();
         store.enqueue(&other).unwrap();
 
-        assert_eq!(store.queued("personal", 10).unwrap().len(), 1);
-        assert_eq!(store.queued("org_2", 10).unwrap().len(), 1);
+        assert_eq!(store.queued(Some("personal"), 10).unwrap().len(), 1);
+        assert_eq!(store.queued(Some("org_2"), 10).unwrap().len(), 1);
         assert_eq!(store.queue_depth().unwrap(), 2);
+    }
+
+    /// What the app asks for at startup, before the network has told it
+    /// anything: which workspaces this machine holds, and everything waiting.
+    #[test]
+    fn the_machine_can_say_what_it_holds_without_being_told() {
+        let mut store = store();
+        store
+            .put("personal", Kind::Service, "s1", &json!({}), 1_000)
+            .unwrap();
+        store
+            .put("org_2", Kind::Library, "l1", &json!({}), 1_000)
+            .unwrap();
+        let mut waiting = change("c1", 1_000);
+        waiting.workspace = "org_3".to_owned();
+        store.enqueue(&waiting).unwrap();
+
+        assert_eq!(
+            store.workspaces().unwrap(),
+            vec!["org_2", "org_3", "personal"],
+            "documents and the queue, each workspace once"
+        );
+
+        store.enqueue(&change("c2", 2_000)).unwrap();
+        let all = store.queued(None, 10).unwrap();
+        assert_eq!(
+            all.iter().map(|change| change.id.as_str()).collect::<Vec<_>>(),
+            vec!["c1", "c2"],
+            "every workspace, oldest first"
+        );
     }
 
     #[test]
