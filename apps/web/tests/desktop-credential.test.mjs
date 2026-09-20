@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { createHmac, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 
 import { createLocalJWKSet, jwtVerify } from "jose";
@@ -13,7 +13,13 @@ process.env.DESKTOP_JWT_ISSUER = "https://present.multivrs.space/";
 
 const { CONVEX_AUDIENCE, desktopJwks, desktopJwtIssuer, isDesktopJwtConfigured, openIdConfiguration, signConvexAccessToken } =
   await import("../src/lib/server/desktop-jwt.ts");
-const { isDesktopSessionRevoked } = await import("../src/lib/server/desktop-auth.ts");
+process.env.DESKTOP_AUTH_SESSION_SECRET ??= "a secret for these tests only";
+const {
+  decodeDesktopSessionToken,
+  isDesktopSessionRevoked,
+  issueDesktopSessionToken,
+  verifyDesktopSessionToken,
+} = await import("../src/lib/server/desktop-auth.ts");
 
 test("the desktop's token says who it is for, and Convex can check it", async () => {
   assert.equal(isDesktopJwtConfigured(), true);
@@ -113,4 +119,52 @@ test("nothing is signed until a key is configured", async () => {
   assert.equal(await fresh.signConvexAccessToken({ userId: "user_2abc" }), null);
   assert.deepEqual(await fresh.desktopJwks(), { keys: [] });
   process.env.DESKTOP_JWT_PRIVATE_KEY = key;
+});
+
+test("a computer that has signed in stays signed in", () => {
+  const token = issueDesktopSessionToken({ sessionId: "sess_1", userId: "user_2abc" });
+  const claims = verifyDesktopSessionToken(token);
+
+  assert.ok(claims, "the token is good");
+  assert.equal(claims.userId, "user_2abc");
+  assert.equal(claims.expiresAt, null, "nothing counts down to a sign-out");
+  assert.equal(decodeDesktopSessionToken(token)?.expiresAt, null);
+  assert.ok(claims.issuedAt > 0, "when it was issued, which is what revoking compares");
+
+  const payload = JSON.parse(
+    Buffer.from(token.split(".")[0], "base64url").toString("utf8"),
+  );
+  assert.equal("exp" in payload, false, "no expiry is claimed at all");
+});
+
+test("a token issued back when they expired still works", () => {
+  // What a desktop signed in last year is holding. Refusing it would sign
+  // somebody out on the Sunday after this ships.
+  const longAgo = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 400;
+  const payload = Buffer.from(
+    JSON.stringify({
+      exp: longAgo + 60 * 60 * 24 * 180,
+      iat: longAgo,
+      sid: "sess_old",
+      sub: "user_2abc",
+      typ: "present-desktop-session",
+      v: 1,
+    }),
+    "utf8",
+  ).toString("base64url");
+  const signature = createHmac("sha256", process.env.DESKTOP_AUTH_SESSION_SECRET)
+    .update(payload)
+    .digest("base64url");
+
+  const claims = verifyDesktopSessionToken(`${payload}.${signature}`);
+  assert.ok(claims, "an expiry that has passed is not a reason to refuse it");
+  assert.equal(claims.userId, "user_2abc");
+  assert.equal(claims.issuedAt, longAgo);
+});
+
+test("a token nobody signed is still refused", () => {
+  const token = issueDesktopSessionToken({ sessionId: "sess_1", userId: "user_2abc" });
+  const [payload] = token.split(".");
+  assert.equal(verifyDesktopSessionToken(`${payload}.not-the-signature`), null);
+  assert.equal(verifyDesktopSessionToken("nonsense"), null);
 });

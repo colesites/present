@@ -1,7 +1,8 @@
 import "server-only";
 
 import { clerkClient, verifyToken } from "@clerk/nextjs/server";
-import { verifyDesktopSessionToken } from "./desktop-auth";
+import { isDesktopSessionRevoked, verifyDesktopSessionToken } from "./desktop-auth";
+import { isDesktopJwtConfigured, signConvexAccessToken } from "./desktop-jwt";
 
 const readBearerToken = (authorizationHeader: string | null): string | null => {
   if (!authorizationHeader) {
@@ -50,9 +51,35 @@ export const resolveRequestAuthContext = async (request: Request): Promise<{
   const desktopSession = verifyDesktopSessionToken(bearerToken);
   if (desktopSession) {
     const client = await clerkClient();
-    const session = await client.sessions.getSession(desktopSession.sessionId);
     const user = await client.users.getUser(desktopSession.userId);
 
+    // The account, not the browser session that started it — the same rule the
+    // refresh route follows, so these routes keep working for a computer that
+    // has been signed in for a year (`lib/server/desktop-jwt.ts`).
+    if (isDesktopJwtConfigured()) {
+      if (user.banned || user.locked) {
+        throw new Error("This account can no longer sign in");
+      }
+      if (isDesktopSessionRevoked(desktopSession.issuedAt, user.privateMetadata)) {
+        throw new Error("This computer was signed out");
+      }
+      const signed = await signConvexAccessToken({
+        email: getClerkUserEmail(user),
+        name: [user.firstName, user.lastName].filter(Boolean).join(" ") || null,
+        pictureUrl: user.imageUrl ?? null,
+        userId: desktopSession.userId,
+      });
+      if (signed) {
+        return {
+          userId: desktopSession.userId,
+          convexToken: signed.token,
+          email: getClerkUserEmail(user),
+        };
+      }
+    }
+
+    // Until a signing key is configured: Clerk's session, as before.
+    const session = await client.sessions.getSession(desktopSession.sessionId);
     if (
       session.userId !== desktopSession.userId ||
       session.status !== "active"

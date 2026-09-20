@@ -124,9 +124,10 @@ export async function POST(request: Request) {
       {
         accessToken,
         accessTokenExpiresAt,
-        // Report the rotated token's expiry. Returning the old token's expiry
-        // prevents the desktop's persisted session lifetime from extending.
-        sessionExpiresAt: nextSessionClaims?.expiresAt ?? claims.expiresAt,
+        // `null`: a signed-in computer stays signed in until it is signed out
+        // (`lib/server/desktop-auth.ts`). A desktop that still holds a date
+        // from before this replaces it here.
+        sessionExpiresAt: nextSessionClaims?.expiresAt ?? null,
         sessionToken: nextSessionToken,
         // Compatibility for older desktop versions.
         refreshToken: nextSessionToken,

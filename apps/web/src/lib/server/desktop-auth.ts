@@ -4,10 +4,29 @@ import { createHmac, timingSafeEqual } from "crypto";
 
 const DESKTOP_SESSION_TOKEN_VERSION = 1;
 const DESKTOP_SESSION_TOKEN_TYPE = "present-desktop-session";
-const DESKTOP_SESSION_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 180;
 
+/**
+ * What a computer keeps after it has signed in — and it keeps it.
+ *
+ * There is no expiry. Signing in on the desktop opens a browser, as Claude's,
+ * ChatGPT's and ProPresenter's do, and like them what is kept afterwards lasts
+ * until it is given up: a church that signed in in March is signed in in
+ * December, and a machine that spends a year in a cupboard comes back signed
+ * in. The old 180-day life was a countdown to an unattended sign-out, and an
+ * operator who is asked to sign in on a Sunday morning has no way to answer.
+ *
+ * What still ends a session: signing this computer out, which is one timestamp
+ * on the account (`isDesktopSessionRevoked`), and the account itself being
+ * banned, locked or deleted. Tokens are checked against those on every
+ * refresh, so revoking one takes effect within the hour.
+ *
+ * `iat` therefore matters — it is what revocation compares against — and older
+ * tokens that still carry an `exp` are honoured rather than expired, so
+ * nobody is signed out by this change.
+ */
 type DesktopSessionTokenClaims = {
-  exp: number;
+  /** Only on tokens issued before sessions stopped expiring. */
+  exp?: number;
   iat: number;
   sid: string;
   sub: string;
@@ -70,7 +89,6 @@ export const issueDesktopSessionToken = (input: {
 }): string => {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const payload: DesktopSessionTokenClaims = {
-    exp: nowSeconds + DESKTOP_SESSION_TOKEN_TTL_SECONDS,
     iat: nowSeconds,
     sid: input.sessionId,
     sub: input.userId,
@@ -85,7 +103,8 @@ export const issueDesktopSessionToken = (input: {
 export const verifyDesktopSessionToken = (
   token: string
 ): {
-  expiresAt: number;
+  /** `null` unless the token predates sessions that do not expire. */
+  expiresAt: number | null;
   issuedAt: number;
   sessionId: string;
   userId: string;
@@ -110,18 +129,15 @@ export const verifyDesktopSessionToken = (
     payload.v !== DESKTOP_SESSION_TOKEN_VERSION ||
     typeof payload.sid !== "string" ||
     typeof payload.sub !== "string" ||
-    typeof payload.exp !== "number"
+    typeof payload.iat !== "number"
   ) {
     return null;
   }
 
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  if (payload.exp <= nowSeconds) {
-    return null;
-  }
-
+  // A past `exp` on an older token is not a reason to refuse it: the computer
+  // it came from was signed in, and nothing has signed it out.
   return {
-    expiresAt: payload.exp,
+    expiresAt: typeof payload.exp === "number" ? payload.exp : null,
     issuedAt: payload.iat,
     sessionId: payload.sid,
     userId: payload.sub,
@@ -151,7 +167,7 @@ export const isDesktopSessionRevoked = (
 
 export const decodeDesktopSessionToken = (
   token: string
-): { expiresAt: number; sessionId: string; userId: string } | null => {
+): { expiresAt: number | null; sessionId: string; userId: string } | null => {
   const [encodedPayload] = token.split(".");
   if (!encodedPayload) {
     return null;
@@ -166,14 +182,13 @@ export const decodeDesktopSessionToken = (
     payload.typ !== DESKTOP_SESSION_TOKEN_TYPE ||
     payload.v !== DESKTOP_SESSION_TOKEN_VERSION ||
     typeof payload.sid !== "string" ||
-    typeof payload.sub !== "string" ||
-    typeof payload.exp !== "number"
+    typeof payload.sub !== "string"
   ) {
     return null;
   }
 
   return {
-    expiresAt: payload.exp,
+    expiresAt: typeof payload.exp === "number" ? payload.exp : null,
     sessionId: payload.sid,
     userId: payload.sub,
   };
@@ -182,6 +197,3 @@ export const decodeDesktopSessionToken = (
 // Backward compatibility aliases. Existing callers can migrate incrementally.
 export const issueDesktopRefreshToken = issueDesktopSessionToken;
 export const verifyDesktopRefreshToken = verifyDesktopSessionToken;
-
-export const getDesktopSessionTokenTtlSeconds = (): number =>
-  DESKTOP_SESSION_TOKEN_TTL_SECONDS;
