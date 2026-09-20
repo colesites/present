@@ -275,6 +275,15 @@ pub fn run() {
             commands::control::learn_midi_message,
             commands::remote::get_remote_status,
             commands::remote::set_remote_settings,
+            commands::offline::offline_list,
+            commands::offline::offline_put,
+            commands::offline::offline_remove,
+            commands::offline::offline_replace,
+            commands::offline::offline_enqueue,
+            commands::offline::offline_queued,
+            commands::offline::offline_dequeue,
+            commands::offline::offline_queue_depth,
+            commands::offline::offline_new_id,
             commands::pptx::open_pptx,
             commands::pptx::parse_pptx,
             commands::fonts::get_system_fonts,
@@ -342,6 +351,16 @@ pub fn run() {
                 let watch = services::media_watch::MediaWatch::start(app.handle().clone());
                 watch.sync_with(&app.state::<state::FileState>());
                 app.manage(watch);
+            }
+            // The offline library: the songs, services and messages a church
+            // has when the internet does not.
+            match state::StoreState::load(&config_dir) {
+                Ok(store) => {
+                    app.manage(store);
+                }
+                Err(error) => {
+                    tracing::error!(%error, "the offline library could not be opened");
+                }
             }
             app.manage(commands::thumbnails::ThumbnailQueue::default());
             // Foot pedals, MIDI and OSC. Both are off until somebody sets them

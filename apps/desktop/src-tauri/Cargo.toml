@@ -88,6 +88,13 @@ nom = "8"
 # in over the platform's own driver, and OSC over the network.
 midir = "0.10"
 rosc = "0.11"
+# The offline library and its sync queue (`services/store`). Bundled, so no
+# machine needs SQLite installed and every platform gets the same version.
+rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite_migration = "2"
+# Ids for rows made on this machine: sortable by the time they were made, so a
+# service's items keep their order without a separate sequence.
+ulid = "1"
 # The phone remote (`services/remote`): a small web server on the local
 # network, announced over mDNS, joined by scanning a code. Already in the tree
 # through rustls: the token's randomness.

@@ -33,6 +33,7 @@ pub mod pptx;
 pub mod presentation;
 pub mod remote;
 pub mod scripture;
+pub mod store;
 pub mod shortcuts;
 pub mod slide;
 pub mod speech;

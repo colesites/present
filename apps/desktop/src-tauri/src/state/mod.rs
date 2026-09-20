@@ -21,6 +21,7 @@ pub mod playback_state;
 pub mod presentation_state;
 pub mod remote_state;
 pub mod stage_relay_state;
+pub mod store_state;
 pub mod web_storage_state;
 pub mod window_state;
 
@@ -39,5 +40,6 @@ pub use playback_state::PlaybackState;
 pub use presentation_state::PresentationState;
 pub use remote_state::RemoteState;
 pub use stage_relay_state::StageRelayState;
+pub use store_state::StoreState;
 pub use web_storage_state::WebStorageState;
 pub use window_state::WindowState;
