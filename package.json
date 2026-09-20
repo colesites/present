@@ -14,7 +14,7 @@
     "desktop:tauri:build": "bun run --filter @present/desktop tauri:build",
     "web": "bun run --filter @present/web dev",
     "convex": "bun run --filter @present/backend convex",
-    "test": "bun run --filter @present/desktop test",
+    "test": "bun run --filter @present/desktop test && bun run --filter @present/web test",
     "typecheck": "bun run --filter @present/desktop typecheck && bun run --filter @present/web typecheck",
     "lint": "bun run --filter @present/desktop lint",
     "quality": "bun run test && bun run typecheck && bun run lint",

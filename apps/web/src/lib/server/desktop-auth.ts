@@ -84,7 +84,12 @@ export const issueDesktopSessionToken = (input: {
 
 export const verifyDesktopSessionToken = (
   token: string
-): { expiresAt: number; sessionId: string; userId: string } | null => {
+): {
+  expiresAt: number;
+  issuedAt: number;
+  sessionId: string;
+  userId: string;
+} | null => {
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) {
     return null;
@@ -117,9 +122,31 @@ export const verifyDesktopSessionToken = (
 
   return {
     expiresAt: payload.exp,
+    issuedAt: payload.iat,
     sessionId: payload.sid,
     userId: payload.sub,
   };
+};
+
+/**
+ * Whether a desktop token issued at `issuedAtSeconds` was cut off by the user
+ * signing their computers out.
+ *
+ * Signing out every computer is one timestamp on the account
+ * (`desktopSessionsRevokedBefore`, milliseconds): tokens older than it stop
+ * being renewed, and a desktop that cannot renew signs out. Nothing else
+ * expires a signed-in computer.
+ */
+export const isDesktopSessionRevoked = (
+  issuedAtSeconds: number,
+  privateMetadata: unknown
+): boolean => {
+  const revokedBefore = (privateMetadata as { desktopSessionsRevokedBefore?: unknown } | null)
+    ?.desktopSessionsRevokedBefore;
+  if (typeof revokedBefore !== "number" || !Number.isFinite(revokedBefore)) {
+    return false;
+  }
+  return issuedAtSeconds * 1000 < revokedBefore;
 };
 
 export const decodeDesktopSessionToken = (
