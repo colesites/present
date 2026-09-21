@@ -29,6 +29,13 @@ const FRAME_EVERY: Duration = Duration::from_micros(16_667);
 /// preview nobody is looking at stops costing anything.
 const KEEP_DRAWING_FOR: Duration = Duration::from_secs(2);
 
+/// How long the largest size asked for is kept.
+///
+/// Long enough that a window being dragged is one size and not sixty, short
+/// enough that a preview which shrank is being drawn at its own size again
+/// within a moment.
+const WIDEST_FOR: Duration = Duration::from_secs(3);
+
 #[derive(Default)]
 pub struct PreviewState {
     shared: Arc<Shared>,
@@ -39,9 +46,19 @@ pub struct PreviewState {
 struct Shared {
     /// The newest frame, as JPEG. `Arc` so a request clones a pointer.
     latest: Mutex<Option<Arc<Vec<u8>>>>,
-    /// The size asked for, packed as two `u32`s so the loop can read it
+    /// The size to draw at, packed as two `u32`s so the loop can read it
     /// without waiting for a lock a request might be holding.
+    ///
+    /// The **largest** asked for recently, not the latest. Two windows can
+    /// show this preview at different sizes, and a panel changes size while it
+    /// is dragged — and the video is opened for the size it is drawn at, so
+    /// following every request meant reopening the decoder on every turn of
+    /// the loop and never getting a frame out of it at all. One size, the
+    /// biggest anyone wants, and the smaller ones scale it down themselves.
     wanted: AtomicU64,
+    /// When the largest was last let go of, so a preview that shrank does not
+    /// keep being drawn at the size it used to be.
+    widest_since: Mutex<Option<Instant>>,
     /// When the last request came in, as milliseconds since the loop started.
     asked_at: Mutex<Option<Instant>>,
     stop: AtomicBool,
@@ -53,9 +70,22 @@ impl Shared {
         (((packed >> 32) & 0xffff_ffff) as u32, (packed & 0xffff_ffff) as u32)
     }
 
+    /// Ask for a size. The largest asked for in the last [`WIDEST_FOR`] wins.
     fn want(&self, size: (u32, u32)) {
+        let mut since = self
+            .widest_since
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let expired = since.is_none_or(|at| at.elapsed() >= WIDEST_FOR);
+        let (width, height) = if expired {
+            *since = Some(Instant::now());
+            size
+        } else {
+            let (widest, tallest) = self.wanted_size();
+            (widest.max(size.0), tallest.max(size.1))
+        };
         self.wanted
-            .store((u64::from(size.0) << 32) | u64::from(size.1), Ordering::Relaxed);
+            .store((u64::from(width) << 32) | u64::from(height), Ordering::Relaxed);
     }
 }
 
@@ -157,9 +187,7 @@ fn draw_until_idle(app: &AppHandle, shared: &Shared) {
         if size.0 > 0 && size.1 > 0 {
             match source.frame(size) {
                 Ok(picture) => {
-                    let drew = started.elapsed();
                     let frame = Arc::new(picture.to_vec());
-                    tracing::trace!(?drew, bytes = frame.len(), "preview frame");
                     *shared
                         .latest
                         .lock()
@@ -252,8 +280,40 @@ mod tests {
         let shared = Shared::default();
         shared.want((3840, 2160));
         assert_eq!(shared.wanted_size(), (3840, 2160));
-        shared.want((1, 1));
-        assert_eq!(shared.wanted_size(), (1, 1));
+    }
+
+    /// The largest wins, which is what stops the decoder being reopened.
+    ///
+    /// Two windows can show this preview at different sizes, and a panel
+    /// changes size while it is dragged. The video is opened for the size it
+    /// is drawn at, so following every request reopened the decoder on every
+    /// turn of the loop and it never produced a frame at all.
+    #[test]
+    fn the_biggest_size_anyone_asks_for_is_the_one_drawn() {
+        let shared = Shared::default();
+        shared.want((480, 270));
+        shared.want((960, 540));
+        assert_eq!(shared.wanted_size(), (960, 540));
+        shared.want((480, 270));
+        assert_eq!(
+            shared.wanted_size(),
+            (960, 540),
+            "the small one scales the big picture down itself"
+        );
+    }
+
+    #[test]
+    fn a_preview_that_shrank_is_drawn_small_again_once_the_big_one_has_gone() {
+        let shared = Shared::default();
+        shared.want((1920, 1080));
+        // As though the last big request was long enough ago.
+        *shared
+            .widest_since
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some(Instant::now() - WIDEST_FOR - Duration::from_millis(1));
+        shared.want((480, 270));
+        assert_eq!(shared.wanted_size(), (480, 270));
     }
 
     #[test]

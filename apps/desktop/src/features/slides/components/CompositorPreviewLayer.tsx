@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 
 import { previewFrameUrl } from "../../../renderer/tauri/preview-frames";
 
+/** The widest the preview is ever drawn, whatever the screen's density. */
+const WIDEST = 960;
+
 /**
  * The audience picture as the compositor draws it, over the preview.
  *
@@ -27,11 +30,17 @@ export function CompositorPreviewLayer({ className }: { className?: string }) {
     const box = boxRef.current;
     if (!box) return;
     const measure = () => {
-      const scale = window.devicePixelRatio || 1;
       const { width, height } = box.getBoundingClientRect();
-      if (width > 0 && height > 0) {
-        setSize({ width: width * scale, height: height * scale });
+      if (width <= 0 || height <= 0) {
+        return;
       }
+      // Sharp enough to read, and not a pixel more. A Retina panel asks for
+      // twice the pixels in each direction — four times the drawing, four
+      // times the encoding — for a picture a few inches across that nobody
+      // inspects. Past this the frame rate costs more than the sharpness is
+      // worth, and the frame rate is what a preview is for.
+      const scale = Math.min(window.devicePixelRatio || 1, WIDEST / width);
+      setSize({ width: width * scale, height: height * scale });
     };
     measure();
     const observer = new ResizeObserver(measure);

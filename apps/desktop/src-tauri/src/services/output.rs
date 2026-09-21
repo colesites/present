@@ -311,12 +311,42 @@ impl OutputScene {
     /// excludes it (`useOutputBroadcast.ts:270-273`). It is an instruction
     /// rather than a fact — "seek now" — and including it would make every
     /// 10 Hz position sample look like a change and re-send the whole scene.
+    /// Whether the two would be *drawn* differently, given the same video
+    /// frame.
+    ///
+    /// Where the video has got to is not a picture: the compositor draws the
+    /// frame it is handed, and which frame that is, is already known. Counting
+    /// the transport as a change made every position report — ten a second —
+    /// redraw the slide and re-encode the picture for a screen that had not
+    /// altered, which is most of a core spent to produce the frame that was
+    /// already on it, and taken from the thread decoding the video.
+    pub fn draws_differently(&self, other: &Self) -> bool {
+        let mut probe = other.clone();
+        probe.should_sync_time = self.should_sync_time;
+        probe.video_current_time = self.video_current_time;
+        probe.video_time_sampled_at_ms = self.video_time_sampled_at_ms;
+        probe.is_video_playing = self.is_video_playing;
+        *self != probe
+    }
+
     pub fn differs(&self, other: &Self) -> bool {
         let mut left = self.clone();
         let mut right = other.clone();
         left.should_sync_time = false;
         right.should_sync_time = false;
         left != right
+    }
+
+    #[cfg(test)]
+    fn transport_test_scene() -> Self {
+        Self {
+            media_url: Some("local-media://media/loop.mp4".to_owned()),
+            show_media: true,
+            slide_text: Some("Amazing grace".to_owned()),
+            video_current_time: 4.0,
+            is_video_playing: true,
+            ..Self::default()
+        }
     }
 
     /// Whether the slide half of the scene has anything to show.
@@ -544,6 +574,62 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn where_a_video_has_got_to_is_not_a_reason_to_redraw() {
+        let before = OutputScene::transport_test_scene();
+
+        // Ten times a second, this is all that arrives.
+        let mut later = before.clone();
+        later.video_current_time = 4.1;
+        later.video_time_sampled_at_ms = Some(1_700_000_000_000.0);
+        assert!(
+            !before.draws_differently(&later),
+            "the picture is whatever frame the decoder hands over"
+        );
+        assert!(before.differs(&later), "the scene itself did change");
+
+        let mut paused = before.clone();
+        paused.is_video_playing = false;
+        assert!(
+            !before.draws_differently(&paused),
+            "a paused video still draws the frame it is on"
+        );
+    }
+
+    #[test]
+    fn anything_that_is_a_picture_is_a_reason_to_redraw() {
+        let before = OutputScene::transport_test_scene();
+        for (name, changed) in [
+            ("new words", {
+                let mut next = before.clone();
+                next.slide_text = Some("How sweet the sound".to_owned());
+                next
+            }),
+            ("another video", {
+                let mut next = before.clone();
+                next.media_url = Some("local-media://media/other.mp4".to_owned());
+                next
+            }),
+            ("the media switched off", {
+                let mut next = before.clone();
+                next.show_media = false;
+                next
+            }),
+            ("the background masked", {
+                let mut next = before.clone();
+                next.hide_background = true;
+                next
+            }),
+            ("a filter", {
+                let mut next = before.clone();
+                next.media_filter_css = "brightness(0.5)".to_owned();
+                next
+            }),
+        ] {
+            assert!(before.draws_differently(&changed), "{name}");
+        }
+    }
 
     fn slide(
         id: Option<&str>,

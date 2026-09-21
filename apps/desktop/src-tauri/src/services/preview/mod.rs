@@ -93,7 +93,9 @@ impl PreviewSource {
             .last
             .as_ref()
             .is_some_and(|(previous_scene, previous_video, previous_size)| {
-                *previous_size == size && *previous_video == shown && !previous_scene.differs(&scene)
+                *previous_size == size
+                    && *previous_video == shown
+                    && !previous_scene.draws_differently(&scene)
             });
         if unchanged && !self.picture.is_empty() {
             return Ok(&self.picture);

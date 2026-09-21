@@ -69,7 +69,7 @@ impl SurfaceSource for AppSurfaceSource {
                 .is_some_and(|(previous_scene, previous_video, previous_size)| {
                     *previous_size == size
                         && *previous_video == shown
-                        && !previous_scene.differs(&scene)
+                        && !previous_scene.draws_differently(&scene)
                 });
         if unchanged {
             return Ok(false);
