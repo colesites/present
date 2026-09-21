@@ -151,6 +151,29 @@ pub fn run() {
                 responder.respond(state::ndi_input_state::respond(&state, &uri));
             });
         })
+        // `output-frame://frame/audience?w=&h=&t=` — what is on the audience
+        // screen, drawn by the compositor for the operator's own preview, as a
+        // JPEG for the `<img>` that asks for it. The third consumer of the one
+        // frame pipeline (ADR-001), after the audience surface and NDI.
+        .register_asynchronous_uri_scheme_protocol("output-frame", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let uri = request.uri().to_string();
+            // Drawing a frame is work: off the thread this closure runs on, as
+            // the media protocol does, so it never blocks the message loop.
+            tauri::async_runtime::spawn_blocking(move || {
+                let Some(state) = app.try_state::<state::PreviewState>() else {
+                    responder.respond(
+                        tauri::http::Response::builder()
+                            .status(204)
+                            .body(Vec::new())
+                            .unwrap_or_default(),
+                    );
+                    return;
+                };
+                let response = state::preview_state::respond(&state, &app, &uri);
+                responder.respond(response);
+            });
+        })
         .manage(app_state)
         .manage(WindowState::new())
         .manage(services::deep_link::PendingDeepLink::new())
@@ -158,6 +181,9 @@ pub fn run() {
         // now, and restoring last Sunday's slide on launch would be worse than
         // starting blank.
         .manage(state::OutputState::new())
+        // The operator's preview, drawn on demand. Made on first use, so a
+        // machine whose operator never opens it carries nothing.
+        .manage(state::PreviewState::new())
         // The NDI runtime and the stream while it runs. In memory: whether NDI
         // is on is a setting React re-applies on launch.
         .manage(state::NdiState::new())

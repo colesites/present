@@ -52,6 +52,11 @@ import type {
   ScriptureVerticalAlign,
 } from "../../shared/types/output-window";
 import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
+import { CompositorPreviewLayer } from "./components/CompositorPreviewLayer";
+import {
+  isCompositorPreviewOn,
+  onCompositorPreviewChanged,
+} from "../../renderer/tauri/preview-frames";
 
 interface SlideGroup {
   label: string;
@@ -334,6 +339,12 @@ export const OutputPreview = memo(function OutputPreview({
   } = timers;
   const activeTimerId = activeTimer?.id ?? null;
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Whether the operator has asked for the compositor to draw this preview.
+  const [drawnByCompositor, setDrawnByCompositor] = useState(isCompositorPreviewOn);
+  useEffect(() => onCompositorPreviewChanged(() => {
+    setDrawnByCompositor(isCompositorPreviewOn());
+  }), []);
   const outputFrameRef = useRef<HTMLDivElement>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [previewScale, setPreviewScale] = useState(0.35);
@@ -545,7 +556,16 @@ export const OutputPreview = memo(function OutputPreview({
                 height: "min(100cqh, 100cqw * 9 / 16)",
               }}
             >
-            {!hideBackground &&
+            {/* The compositor's own picture, which is what the audience sees.
+                Drawn in Rust from FFmpeg frames, so every format it reads
+                plays here — and the video below is not decoded a second time
+                in WebKit (`renderer/tauri/preview-frames.ts`). */}
+            {drawnByCompositor ? (
+              <CompositorPreviewLayer className="absolute inset-0 z-20" />
+            ) : null}
+
+            {!drawnByCompositor &&
+              !hideBackground &&
               showMedia &&
               activeMediaItem &&
               (activeMediaItem.type === "image" ? (

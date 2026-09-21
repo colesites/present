@@ -29,6 +29,7 @@ pub mod openlyrics;
 pub mod output;
 pub mod permissions;
 pub mod playback;
+pub mod preview;
 pub mod pptx;
 pub mod presentation;
 pub mod remote;
