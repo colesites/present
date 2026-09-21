@@ -32,6 +32,7 @@ pub mod songs;
 pub mod speech;
 pub mod stage;
 pub mod surface;
+pub mod transitions;
 pub mod thumbnails;
 pub mod web_storage;
 pub mod window;

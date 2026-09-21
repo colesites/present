@@ -12,6 +12,7 @@ import type {
   SlideElement,
 } from "../../../shared/types";
 import type { ScreenComposerLayout } from "../../../shared/types/screen-composer";
+import { readTransition, type Transition } from "../../tauri/transitions";
 
 type MediaItem =
   | {
@@ -31,6 +32,8 @@ type VideoSettings = {
 type ActiveSlidePayload = {
   type: "active-slide";
   slideId: string | null;
+  /** How this slide should arrive (`features/transitions`). */
+  transition: Transition | null;
   slideText: string | null | undefined;
   slideFooter: string | null | undefined;
   slideElements: SlideElement[] | null | undefined;
@@ -289,6 +292,9 @@ export function useOutputBroadcast({
     const incomingSlidePayload: ActiveSlidePayload = {
       type: "active-slide" as const,
       slideId: activeSlideId,
+      // Read per slide rather than held: the operator can change it between
+      // one slide and the next, and the next one should arrive the new way.
+      transition: readTransition(),
       slideText: slideText,
       slideFooter: slideFooter,
       slideElements,

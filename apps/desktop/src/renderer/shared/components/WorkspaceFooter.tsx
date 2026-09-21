@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { LayoutGrid, List } from "lucide-react";
 import { cn } from "../lib/utils";
+import { TransitionPicker } from "../../../features/transitions/TransitionPicker";
 
 interface WorkspaceFooterProps {
   isGridView: boolean;
@@ -13,6 +14,13 @@ interface WorkspaceFooterProps {
   disableScaleControl?: boolean;
   centerContent?: ReactNode;
   leftContent?: ReactNode;
+  /**
+   * Show how the next slide arrives, beside the view toggles.
+   *
+   * The show area only: the media panel uses this same footer, and a
+   * transition belongs to a slide rather than to a folder of files.
+   */
+  showTransitionPicker?: boolean;
   className?: string;
 }
 
@@ -25,6 +33,7 @@ export function WorkspaceFooter({
   disableScaleControl = false,
   centerContent,
   leftContent,
+  showTransitionPicker = false,
   className,
 }: WorkspaceFooterProps) {
   return (
@@ -42,8 +51,10 @@ export function WorkspaceFooter({
         {centerContent}
       </div>
 
-      {/* Right side: View Toggles + Scale Control */}
+      {/* Right side: Transition + View Toggles + Scale Control */}
       <div className="flex items-center gap-4">
+        {showTransitionPicker ? <TransitionPicker /> : null}
+
         <div className="mr-1 flex items-center gap-0.5 rounded-lg bg-secondary/40 p-0.5">
           <button
             type="button"

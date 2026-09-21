@@ -174,6 +174,18 @@ pub fn run() {
                 responder.respond(response);
             });
         })
+        // `transition-sample://frame/<id>?p=&w=&h=` — one moment of a
+        // transition, drawn by the engine that will run it in front of the
+        // congregation. The picker's tiles are not an imitation in CSS.
+        .register_asynchronous_uri_scheme_protocol(
+            "transition-sample",
+            |_context, request, responder| {
+                let uri = request.uri().to_string();
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(services::compositor::transition::sample_response(&uri));
+                });
+            },
+        )
         .manage(app_state)
         .manage(WindowState::new())
         .manage(services::deep_link::PendingDeepLink::new())
@@ -327,6 +339,7 @@ pub fn run() {
             commands::bible::read_bundled_bible,
             commands::bible::fetch_hosted_bible_catalog,
             commands::surface::get_output_surface,
+            commands::transitions::get_transitions,
             commands::output::get_output_scene,
             commands::output::send_to_output,
             commands::output::set_output_frozen,
