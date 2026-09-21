@@ -208,6 +208,14 @@ pub struct OutputScene {
     pub library_style: Option<LibraryStyle>,
     pub timer_layout: Option<TimerLayout>,
 
+    /// How this slide should arrive: `services/compositor/transition`.
+    ///
+    /// On the scene rather than beside it because it belongs to the moment —
+    /// the operator chose it for this slide, and the compositor is told the
+    /// scene and nothing else.
+    #[serde(default)]
+    pub transition: Option<crate::services::compositor::transition::Transition>,
+
     pub screen_composer_enabled: bool,
     /// Carried verbatim, like `slide_elements`.
     pub screen_composer_layout: Option<serde_json::Value>,
@@ -230,6 +238,7 @@ impl Default for OutputScene {
             show_text: false,
             show_media: false,
             hide_background: false,
+            transition: None,
             text_position: None,
             video_settings: VideoSettings::DEFAULT,
             media_filter_css: "none".to_owned(),
@@ -384,6 +393,8 @@ pub enum OutputUpdate {
     #[serde(rename_all = "camelCase")]
     ActiveSlide {
         slide_id: Option<String>,
+        #[serde(default)]
+        transition: Option<crate::services::compositor::transition::Transition>,
         slide_text: Option<String>,
         slide_footer: Option<String>,
         #[serde(default)]
@@ -510,6 +521,7 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
         }
         OutputUpdate::ActiveSlide {
             slide_id,
+            transition,
             slide_text,
             slide_footer,
             slide_elements,
@@ -532,6 +544,9 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
                 return;
             }
 
+            // How it should arrive. Cleared when the slide does not ask for
+            // one, so last slide's transition is not used for this one.
+            scene.transition = transition;
             scene.active_slide_id = slide_id;
             scene.slide_text = slide_text;
             scene.slide_footer = slide_footer;
@@ -638,6 +653,7 @@ mod tests {
         background: Option<&str>,
     ) -> OutputUpdate {
         OutputUpdate::ActiveSlide {
+            transition: None,
             slide_id: id.map(str::to_owned),
             slide_text: text.map(str::to_owned),
             slide_footer: None,

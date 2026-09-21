@@ -27,6 +27,8 @@ use std::time::{Duration, Instant};
 use tiny_skia::{Color, Pixmap, Transform};
 
 use crate::services::output::{MediaKind, OutputScene};
+
+use super::transition;
 use crate::services::video::VideoFrame;
 
 use super::scene::{MediaLoader, Rendered};
@@ -39,6 +41,39 @@ use super::{color, filters, geometry, images, parallel, shapes, Frame};
 /// enough that an operator who copies it into place sees it without doing
 /// anything else.
 const STILL_RETRY: Duration = Duration::from_secs(2);
+
+
+/// Which of a slide's elements a layer is drawn with.
+///
+/// A transition needs one side of a change on its own: the elements that did
+/// not move, drawn once and left alone, and the ones that did, drawn twice —
+/// as they were and as they will be — so the two can be blended between.
+#[derive(Debug, Clone, Copy)]
+pub enum Keep<'a> {
+    Everything,
+    /// Only these, by the key `change_detection` matched them under.
+    Only(&'a [String]),
+    /// Everything but these.
+    Except(&'a [String]),
+}
+
+impl Keep<'_> {
+    fn wants(self, index: usize, element: &crate::services::slide::SlideElement) -> bool {
+        let named = |ids: &[String]| {
+            let key = if element.id.trim().is_empty() {
+                format!("#{index}")
+            } else {
+                element.id.clone()
+            };
+            ids.contains(&key)
+        };
+        match self {
+            Self::Everything => true,
+            Self::Only(ids) => named(ids),
+            Self::Except(ids) => !named(ids),
+        }
+    }
+}
 
 /// A background image, decoded once.
 struct CachedStill {
@@ -54,6 +89,11 @@ pub struct SceneCompositor {
     height: u32,
     /// The slide layers over transparency, valid while `cached_for` holds.
     cached_layers: Option<Pixmap>,
+    /// A transition part-way through, and the scene it is arriving from.
+    ///
+    /// The picture it came from cannot be recovered afterwards — the slide is
+    /// gone — so it is kept here from the moment the change lands.
+    running: Option<(transition::Running, OutputScene)>,
     /// The scene the cache was built from. Compared structurally, which is what
     /// typing the scene in Stage 4 bought — the Electron path compared
     /// `JSON.stringify` output on every render (audit §5.5).
@@ -128,6 +168,7 @@ impl SceneCompositor {
             height,
             cached_layers: None,
             cached_for: None,
+            running: None,
             last_rebuild: false,
             frame: None,
             still: None,
@@ -198,6 +239,9 @@ impl SceneCompositor {
         loader: &dyn MediaLoader,
     ) -> Option<(&Frame, Rendered)> {
         let mut report = Rendered::default();
+        // One reading of the clock for the whole frame: a transition drawn
+        // from two different instants within one frame would tear.
+        let now = Instant::now();
 
         // Reuse the buffer when it is the right shape. Only its contents change
         // between frames; its size changes when the output does.
@@ -256,8 +300,13 @@ impl SceneCompositor {
         }
 
         // 4. The slide, only rebuilt when it changed.
-        if let Some(layers) = self.layers_for(scene, loader, &mut report) {
-            blend_over(&mut frame, layers);
+        match self.transition_layers(scene, loader, &mut report, now) {
+            Some(layers) => blend_over(&mut frame, &layers),
+            None => {
+                if let Some(layers) = self.layers_for(scene, loader, &mut report) {
+                    blend_over(&mut frame, layers);
+                }
+            }
         }
 
         // 5. The timer, redrawn only when it ticks.
@@ -328,6 +377,196 @@ impl SceneCompositor {
             .map(|(layer, counts)| (layer, *counts))
     }
 
+    /// Draw a scene's slide layers into `layers`.
+    ///
+    /// Pulled out of the cache so a transition can ask for one side of a
+    /// change on its own — `keep` decides which elements are in it.
+    fn draw_layer_into(
+        &self,
+        layers: &mut Pixmap,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+        report: &mut Rendered,
+        keep: Keep<'_>,
+        viewport: &geometry::Viewport,
+    ) {
+        if scene.show_text && !scene.screen_composer_enabled {
+            match slide_text::layer_for(scene) {
+                SlideTextLayer::Scripture => {
+                    slide_text::draw_scripture(
+                        &mut layers.as_mut(),
+                        scene.slide_text.as_deref().unwrap_or_default(),
+                        scene.slide_footer.as_deref(),
+                        scene.scripture_style.as_ref(),
+                    );
+                    report.elements_drawn += 1;
+                }
+                SlideTextLayer::PlainText => {
+                    slide_text::draw_plain(
+                        &mut layers.as_mut(),
+                        scene.slide_text.as_deref().unwrap_or_default(),
+                        scene.library_style.as_ref(),
+                        viewport,
+                    );
+                    report.elements_drawn += 1;
+                }
+                SlideTextLayer::Elements => {
+                    for (index, element) in
+                        scene.slide_elements().unwrap_or_default().into_iter().enumerate()
+                    {
+                        if !element.is_visible() || !keep.wants(index, &element) {
+                            continue;
+                        }
+                        if !element.element_type.is_composited() {
+                            report.elements_deferred += 1;
+                            continue;
+                        }
+                        if super::scene::draw_element_into(layers, &element, viewport, loader)
+                        {
+                            report.elements_drawn += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // The screen composer replaces the slide rather than sitting above it:
+        // when it is on, the regions are the output. So it is drawn instead of
+        // the elements above, not as well as them.
+        if scene.screen_composer_enabled {
+            if let Some(layout) = scene.screen_composer_layout() {
+                let mut view = layers.as_mut();
+                let regions = super::overlays::draw_composer(&mut view, &layout, loader);
+                report.elements_drawn += regions.drawn;
+                report.elements_deferred += regions.deferred;
+            }
+        }
+    }
+
+    /// The slide layers for this frame while a transition is running.
+    ///
+    /// `None` when there is nothing in flight, and the ordinary cached layer
+    /// is used instead. The video is not in either: it is drawn beneath, so a
+    /// background carries on playing through a change of words without
+    /// anything here arranging it.
+    fn transition_layers(
+        &mut self,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+        report: &mut Rendered,
+        now: Instant,
+    ) -> Option<Pixmap> {
+        self.start_transition_if_the_slide_moved(scene, loader, report, now);
+
+        let (running, from_scene) = self.running.as_ref()?;
+        if running.is_over(now) {
+            self.running = None;
+            return None;
+        }
+
+        let mut out = Pixmap::new(self.width, self.height)?;
+        let (running, from_scene) = (running, from_scene.clone());
+        match running.mode() {
+            transition::Mode::FullSlide => {
+                let to = self.build_layer(scene, loader, report, Keep::Everything)?;
+                running.draw(&mut out.as_mut(), &to, now);
+            }
+            transition::Mode::ChangedElements => {
+                // What did not change is drawn once, from the new slide,
+                // and never moves. Only the rest is animated over it.
+                let moving = running.changes().moving();
+                let still = self.build_layer(scene, loader, report, Keep::Except(&moving))?;
+                let to = self.build_layer(scene, loader, report, Keep::Only(&moving))?;
+                out.draw_pixmap(
+                    0,
+                    0,
+                    still.as_ref(),
+                    &tiny_skia::PixmapPaint::default(),
+                    Transform::identity(),
+                    None,
+                );
+                let mut animated = Pixmap::new(self.width, self.height)?;
+                running.draw(&mut animated.as_mut(), &to, now);
+                out.draw_pixmap(
+                    0,
+                    0,
+                    animated.as_ref(),
+                    &tiny_skia::PixmapPaint::default(),
+                    Transform::identity(),
+                    None,
+                );
+                let _ = from_scene;
+            }
+        }
+        Some(out)
+    }
+
+    /// Begin one if this scene is a different slide and asks for it.
+    fn start_transition_if_the_slide_moved(
+        &mut self,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+        report: &mut Rendered,
+        now: Instant,
+    ) {
+        let Some(wanted) = scene.transition.as_ref() else {
+            return;
+        };
+        if !wanted.animates() {
+            return;
+        }
+        let Some(previous) = self.cached_for.clone() else {
+            // Nothing was on screen to transition from.
+            return;
+        };
+        if !layers_differ(&previous, scene) {
+            return;
+        }
+
+        let changes = transition::compare(&previous, scene);
+        let from = match wanted.mode {
+            transition::Mode::FullSlide => {
+                self.build_layer(&previous, loader, report, Keep::Everything)
+            }
+            transition::Mode::ChangedElements => {
+                let moving = changes.moving();
+                self.build_layer(&previous, loader, report, Keep::Only(&moving))
+            }
+        };
+        let Some(from) = from else {
+            return;
+        };
+        self.running = transition::Running::begin(from, wanted, changes, now)
+            .map(|running| (running, previous));
+
+        // The cache moves to the new slide as the transition begins, not when
+        // it ends. Otherwise the next frame sees the cache still holding the
+        // old slide, decides the slide has moved again, and starts another
+        // transition — for ever, with the old picture on screen throughout.
+        if self.running.is_some() {
+            self.cached_layers = self.build_layer(scene, loader, report, Keep::Everything);
+            self.cached_for = Some(scene.clone());
+        }
+    }
+
+    /// Draw the slide layers of `scene`, keeping only what `keep` wants.
+    ///
+    /// The whole slide for the ordinary frame; one side or the other of a
+    /// change while a transition is running.
+    fn build_layer(
+        &self,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+        report: &mut Rendered,
+        keep: Keep<'_>,
+    ) -> Option<Pixmap> {
+        let mut layers = Pixmap::new(self.width, self.height)?;
+        let viewport =
+            geometry::Viewport::new(scene.slide_canvas_size.as_deref(), self.width, self.height);
+        self.draw_layer_into(&mut layers, scene, loader, report, keep, &viewport);
+        Some(layers)
+    }
+
     /// The cached slide layer, rebuilt if the scene moved.
     fn layers_for(
         &mut self,
@@ -370,56 +609,14 @@ impl SceneCompositor {
         let mut layers = Pixmap::new(self.width, self.height)?;
         let viewport =
             geometry::Viewport::new(scene.slide_canvas_size.as_deref(), self.width, self.height);
-
-        if scene.show_text && !scene.screen_composer_enabled {
-            match slide_text::layer_for(scene) {
-                SlideTextLayer::Scripture => {
-                    slide_text::draw_scripture(
-                        &mut layers.as_mut(),
-                        scene.slide_text.as_deref().unwrap_or_default(),
-                        scene.slide_footer.as_deref(),
-                        scene.scripture_style.as_ref(),
-                    );
-                    report.elements_drawn += 1;
-                }
-                SlideTextLayer::PlainText => {
-                    slide_text::draw_plain(
-                        &mut layers.as_mut(),
-                        scene.slide_text.as_deref().unwrap_or_default(),
-                        scene.library_style.as_ref(),
-                        &viewport,
-                    );
-                    report.elements_drawn += 1;
-                }
-                SlideTextLayer::Elements => {
-                    for element in scene.slide_elements().unwrap_or_default() {
-                        if !element.is_visible() {
-                            continue;
-                        }
-                        if !element.element_type.is_composited() {
-                            report.elements_deferred += 1;
-                            continue;
-                        }
-                        if super::scene::draw_element_into(&mut layers, &element, &viewport, loader)
-                        {
-                            report.elements_drawn += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        // The screen composer replaces the slide rather than sitting above it:
-        // when it is on, the regions are the output. So it is drawn instead of
-        // the elements above, not as well as them.
-        if scene.screen_composer_enabled {
-            if let Some(layout) = scene.screen_composer_layout() {
-                let mut view = layers.as_mut();
-                let regions = super::overlays::draw_composer(&mut view, &layout, loader);
-                report.elements_drawn += regions.drawn;
-                report.elements_deferred += regions.deferred;
-            }
-        }
+        self.draw_layer_into(
+            &mut layers,
+            scene,
+            loader,
+            report,
+            Keep::Everything,
+            &viewport,
+        );
 
         self.cached_layers = Some(layers);
         self.cached_for = Some(scene.clone());
@@ -760,6 +957,115 @@ mod tests {
                 .collect(),
             presentation_seconds: 0.0,
         }
+    }
+
+    /// The whole reason the transition engine is layer-aware.
+    ///
+    /// The lyric changes and the background video does not: the words are what
+    /// transitions, the logo beside them does not move, and the video behind
+    /// them is the frame the decoder handed over, untouched. A transition that
+    /// restarted or dimmed the background on every line would be unusable in a
+    /// service, and it is the default behaviour of every whole-frame
+    /// transition system.
+    #[test]
+    fn a_lyric_changing_over_a_playing_video_moves_only_the_words() {
+        let words = |text: &str| {
+            json!([
+                { "id": "logo", "type": "shape",
+                  "x": 0.0, "y": 0.0, "width": 20.0, "height": 20.0,
+                  "style": { "backgroundColor": "#00ff00" } },
+                { "id": "words", "type": "shape",
+                  "x": 40.0, "y": 40.0, "width": 40.0, "height": 40.0,
+                  "style": { "backgroundColor": text } },
+            ])
+        };
+        let video = frame_of(100, 100, [200, 100, 50, 255]);
+
+        let first = OutputScene {
+            slide_elements: Some(words("#ff0000")),
+            ..video_scene()
+        };
+        let second = OutputScene {
+            slide_elements: Some(words("#0000ff")),
+            transition: Some(transition::Transition {
+                kind: "fade".to_owned(),
+                duration_ms: 400,
+                ..transition::Transition::none()
+            }),
+            ..video_scene()
+        };
+
+        let mut compositor = SceneCompositor::new(100, 100);
+        compositor
+            .render(&first, Some(&video), &NoMedia)
+            .expect("the first slide");
+
+        // The second arrives, and a frame part way through it is drawn.
+        compositor
+            .render(&second, Some(&video), &NoMedia)
+            .expect("the transition begins");
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let (frame, _) = compositor
+            .render(&second, Some(&video), &NoMedia)
+            .expect("part way through");
+        let at = |x, y| frame.pixel_at(x, y).expect("a pixel");
+
+        assert_eq!(
+            at(90, 90),
+            (50, 100, 200, 255),
+            "the background is the frame the decoder handed over"
+        );
+        assert_eq!(
+            at(10, 10),
+            (0, 255, 0, 255),
+            "the logo did not change, so it does not take part"
+        );
+        let (red, _, blue, _) = at(60, 60);
+        assert!(
+            red > 0 && blue > 0,
+            "the words are part way between their two colours, not one or the other"
+        );
+    }
+
+    #[test]
+    fn a_transition_ends_and_leaves_the_new_slide_on_screen() {
+        let slide = |colour: &str, transition: Option<transition::Transition>| OutputScene {
+            slide_elements: Some(json!([{
+                "id": "words", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+                "style": { "backgroundColor": colour }
+            }])),
+            transition,
+            ..scene()
+        };
+
+        let mut compositor = SceneCompositor::new(100, 100);
+        compositor
+            .render(&slide("#ff0000", None), None, &NoMedia)
+            .expect("the first slide");
+
+        let arriving = slide(
+            "#0000ff",
+            Some(transition::Transition {
+                kind: "fade".to_owned(),
+                // Short enough that the next frame is after the end of it.
+                duration_ms: 1,
+                ..transition::Transition::none()
+            }),
+        );
+        compositor
+            .render(&arriving, None, &NoMedia)
+            .expect("mid transition");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        let (frame, _) = compositor
+            .render(&arriving, None, &NoMedia)
+            .expect("after it");
+        assert_eq!(
+            frame.pixel_at(50, 50),
+            Some((0, 0, 255, 255)),
+            "the new slide, with nothing of the old one left"
+        );
     }
 
     #[test]

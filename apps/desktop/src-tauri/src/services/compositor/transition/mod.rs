@@ -19,10 +19,13 @@
 
 pub mod change_detection;
 pub mod config;
+pub mod draw;
+pub mod engine;
 pub mod easing;
 pub mod registry;
 
 pub use change_detection::{compare, Changes};
+pub use engine::Running;
 pub use config::{Direction, Mode, Transition};
 pub use easing::Easing;
 pub use registry::{Category, Preset, Primitive, PRESETS};

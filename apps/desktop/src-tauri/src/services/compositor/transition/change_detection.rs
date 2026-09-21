@@ -34,6 +34,14 @@ impl Changes {
         self.changed.is_empty() && self.removed.is_empty() && !self.media_changed
     }
 
+    /// Every element taking part, by key: the ones that changed and the ones
+    /// that went.
+    pub fn moving(&self) -> Vec<String> {
+        let mut moving = self.changed.clone();
+        moving.extend(self.removed.iter().cloned());
+        moving
+    }
+
     /// Whether this element takes part in a changed-elements transition.
     pub fn touches(&self, id: &str) -> bool {
         self.changed.iter().any(|changed| changed == id)
