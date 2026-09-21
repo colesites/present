@@ -232,6 +232,28 @@ default = []
 
 [profile.dev]
 incremental = true
+# Present's own per-pixel code, at a level where it can be judged.
+#
+# At `opt-level = 0` the compositor draws a 480x270 preview frame in tens of
+# milliseconds and the app looks broken in development in ways it is not when
+# shipped — which is not a useful thing for a development build to do. Level 1
+# keeps compiles quick and line numbers honest while making the picture move.
+opt-level = 1
+
+# Dependencies are optimised even in a development build.
+#
+# Without this every crate in the tree is built at `opt-level = 0`, including
+# the ones that do the per-pixel work: measured in the running dev app, a
+# 480x270 JPEG took **59 ms** to encode and the same encode in a release build
+# is a couple of milliseconds. That is the difference between a preview that
+# plays and one that shows thirteen frames a second, and it made every
+# measurement taken by running the dev app a measurement of the wrong thing.
+#
+# Present's own code stays at `opt-level = 0`, so it is still debuggable and
+# still compiles quickly. Only the dependencies are optimised, and they are
+# rebuilt rarely.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 codegen-units = 1

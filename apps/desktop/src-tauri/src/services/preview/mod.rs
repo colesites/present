@@ -55,7 +55,7 @@ pub struct PreviewSource {
     /// What the last JPEG was drawn from, so an unchanged scene is encoded
     /// once however often it is asked for.
     last: Option<(OutputScene, Option<f64>, (u32, u32))>,
-    jpeg: Vec<u8>,
+    picture: Vec<u8>,
 }
 
 impl PreviewSource {
@@ -67,7 +67,7 @@ impl PreviewSource {
             video: VideoFeed::default(),
             open,
             last: None,
-            jpeg: Vec::new(),
+            picture: Vec::new(),
         }
     }
 
@@ -95,8 +95,8 @@ impl PreviewSource {
             .is_some_and(|(previous_scene, previous_video, previous_size)| {
                 *previous_size == size && *previous_video == shown && !previous_scene.differs(&scene)
             });
-        if unchanged && !self.jpeg.is_empty() {
-            return Ok(&self.jpeg);
+        if unchanged && !self.picture.is_empty() {
+            return Ok(&self.picture);
         }
 
         self.compositor.resize(size.0, size.1);
@@ -108,9 +108,10 @@ impl PreviewSource {
 
         let mut bgra = Vec::new();
         rendered.write_bgra(&mut bgra);
-        self.jpeg = thumbnails::encode_jpeg(size.0, size.1, &bgra).map_err(|error| error.to_string())?;
+        self.picture =
+            thumbnails::encode_jpeg(size.0, size.1, &bgra).map_err(|error| error.to_string())?;
         self.last = Some((scene, shown, size));
-        Ok(&self.jpeg)
+        Ok(&self.picture)
     }
 }
 

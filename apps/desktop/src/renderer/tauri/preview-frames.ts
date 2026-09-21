@@ -12,9 +12,6 @@
  * itself, with no IPC and no JavaScript in the way.
  */
 
-/** Frames a second. Not a projector: this is a panel somebody glances at. */
-export const PREVIEW_FRAMES_PER_SECOND = 20;
-
 /** Whether the operator has asked for this. Off until they do. */
 export const COMPOSITOR_PREVIEW_KEY = "present-compositor-preview";
 

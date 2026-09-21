@@ -2,10 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import {
-  PREVIEW_FRAMES_PER_SECOND,
-  previewFrameUrl,
-} from "../../../renderer/tauri/preview-frames";
+import { previewFrameUrl } from "../../../renderer/tauri/preview-frames";
 
 /**
  * The audience picture as the compositor draws it, over the preview.
@@ -42,18 +39,21 @@ export function CompositorPreviewLayer({ className }: { className?: string }) {
     return () => observer.disconnect();
   }, []);
 
-  // Ask for the next frame. The core answers with the one it already has when
-  // nothing has changed, so a still slide costs a request and no drawing.
+  // Ask for the next frame as soon as this screen can paint one, rather than
+  // on a timer of its own. The core draws in a loop and hands back whatever is
+  // newest, so asking more often costs a request and never a decode — and
+  // asking less often than the video runs is how a preview skips.
   useEffect(() => {
     if (!size) return;
     let tick = 0;
+    let frame = 0;
     const next = () => {
       tick += 1;
       setLoading(previewFrameUrl(size.width, size.height, tick));
+      frame = window.requestAnimationFrame(next);
     };
-    next();
-    const timer = window.setInterval(next, Math.round(1000 / PREVIEW_FRAMES_PER_SECOND));
-    return () => window.clearInterval(timer);
+    frame = window.requestAnimationFrame(next);
+    return () => window.cancelAnimationFrame(frame);
   }, [size]);
 
   return (
