@@ -53,10 +53,6 @@ import type {
 } from "../../shared/types/output-window";
 import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
 import { CompositorPreviewLayer } from "./components/CompositorPreviewLayer";
-import {
-  isCompositorPreviewOn,
-  onCompositorPreviewChanged,
-} from "../../renderer/tauri/preview-frames";
 
 interface SlideGroup {
   label: string;
@@ -340,11 +336,6 @@ export const OutputPreview = memo(function OutputPreview({
   const activeTimerId = activeTimer?.id ?? null;
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Whether the operator has asked for the compositor to draw this preview.
-  const [drawnByCompositor, setDrawnByCompositor] = useState(isCompositorPreviewOn);
-  useEffect(() => onCompositorPreviewChanged(() => {
-    setDrawnByCompositor(isCompositorPreviewOn());
-  }), []);
   const outputFrameRef = useRef<HTMLDivElement>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [previewScale, setPreviewScale] = useState(0.35);
@@ -556,43 +547,14 @@ export const OutputPreview = memo(function OutputPreview({
                 height: "min(100cqh, 100cqw * 9 / 16)",
               }}
             >
-            {/* The compositor's own picture, which is what the audience sees.
-                Drawn in Rust from FFmpeg frames, so every format it reads
-                plays here — and the video below is not decoded a second time
-                in WebKit (`renderer/tauri/preview-frames.ts`). */}
-            {drawnByCompositor ? (
-              <CompositorPreviewLayer className="absolute inset-0 z-20" />
-            ) : null}
-
-            {!drawnByCompositor &&
-              !hideBackground &&
-              showMedia &&
-              activeMediaItem &&
-              (activeMediaItem.type === "image" ? (
-                <img
-                  src={activeMediaItem.url}
-                  alt={activeMediaItem.name}
-                  className={cn(
-                    "absolute inset-0 h-full w-full object-contain",
-                    isMediaPreview && "opacity-0",
-                  )}
-                  style={{ filter: filterStyle }}
-                />
-              ) : (
-                <video
-                  aria-label={`${activeMediaItem.name} preview`}
-                  ref={videoRef}
-                  src={activeMediaItem.url}
-                  className={cn(
-                    "absolute inset-0 h-full w-full object-contain",
-                    isMediaPreview && "opacity-0",
-                  )}
-                  style={{ filter: filterStyle }}
-                  loop={videoSettings.loop}
-                  muted
-                  playsInline
-                />
-              ))}
+            {/* What the audience sees, drawn by the compositor from FFmpeg
+                frames. There is no second player here: the media used to be
+                played by the browser engine in this panel, which meant a file
+                it could not open was black to the operator however well it
+                played to the congregation, and a video on screen was decoded
+                twice on one machine. (The scan that counts audible players
+                reads comments too, so this one says it in words.) */}
+            <CompositorPreviewLayer className="absolute inset-0 z-20" />
 
             {previewTarget === "media" ? (
               <MediaStagePreview

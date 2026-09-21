@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[cfg(target_os = "macos")]
 pub mod macos;
@@ -44,22 +44,11 @@ pub trait SurfaceSource: Send {
     fn render(&mut self, size: (u32, u32), out: &mut Vec<u8>) -> Result<bool, String>;
 }
 
-/// The persisted choice.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SurfaceSetting {
-    /// Draw the audience window natively. Off unless the operator turned it on.
-    #[serde(default)]
-    pub native: bool,
-}
-
 /// What the audience window is told, so it knows whether to draw everything
 /// itself or only the props the compositor leaves to it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SurfaceStatus {
-    /// The operator has turned it on.
-    pub enabled: bool,
     /// Frames are on the native view right now. Only then may the webview stop
     /// drawing the output itself.
     pub presenting: bool,
@@ -414,12 +403,5 @@ mod tests {
             &on_presenting,
         );
         assert!(seen.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn the_setting_is_off_unless_it_says_otherwise() {
-        assert!(!SurfaceSetting::default().native);
-        let parsed: SurfaceSetting = serde_json::from_str("{}").unwrap();
-        assert!(!parsed.native);
     }
 }

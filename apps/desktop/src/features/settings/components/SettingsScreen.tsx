@@ -24,7 +24,6 @@ import type {
 } from "../../../shared/types/output-window";
 import { areDisplayListsEqual } from "../../../renderer/shared/lib/display-list";
 import { NDI_FRAME_RATES } from "../../../renderer/shared/hooks/useAppSettings";
-import { NativeOutputSurfaceToggle } from "./NativeOutputSurfaceToggle";
 import { ControlSurfacesSettings } from "./ControlSurfacesSettings";
 import { PhoneRemoteSettings } from "./PhoneRemoteSettings";
 
@@ -1674,8 +1673,6 @@ export function SettingsScreen({
                   </Select>
                 </div>
               </section>
-
-              <NativeOutputSurfaceToggle />
 
               <ControlSurfacesSettings />
 

@@ -327,7 +327,6 @@ pub fn run() {
             commands::bible::read_bundled_bible,
             commands::bible::fetch_hosted_bible_catalog,
             commands::surface::get_output_surface,
-            commands::surface::set_output_surface_native,
             commands::output::get_output_scene,
             commands::output::send_to_output,
             commands::output::set_output_frozen,
@@ -432,11 +431,9 @@ pub fn run() {
             // Persisted because the device choice is wired up once when the
             // desk is, and because localStorage partitions it per origin.
             app.manage(state::AudioState::load(&config_dir));
-            // Whether the audience window is drawn natively. Off unless the
-            // operator turned it on; Stage 6 ships it opt-in.
-            app.manage(std::sync::Arc::new(state::OutputSurfaceState::load(
-                &config_dir,
-            )));
+            // The view the audience window is drawn on. Not a setting: the
+            // compositor draws the audience output wherever it can.
+            app.manage(std::sync::Arc::new(state::OutputSurfaceState::new()));
 
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),

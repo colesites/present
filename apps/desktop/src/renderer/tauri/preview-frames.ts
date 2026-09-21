@@ -12,36 +12,6 @@
  * itself, with no IPC and no JavaScript in the way.
  */
 
-/** Whether the operator has asked for this. Off until they do. */
-export const COMPOSITOR_PREVIEW_KEY = "present-compositor-preview";
-
-export const isCompositorPreviewOn = (): boolean => {
-  try {
-    return window.localStorage.getItem(COMPOSITOR_PREVIEW_KEY) === "on";
-  } catch {
-    // Private browsing, cleared site data, a preview in a thumbnail: the
-    // answer is simply no.
-    return false;
-  }
-};
-
-/** So a preview already on screen changes with the setting, not on restart. */
-const CHANGED_EVENT = "present-compositor-preview-changed";
-
-export const setCompositorPreview = (on: boolean): void => {
-  try {
-    window.localStorage.setItem(COMPOSITOR_PREVIEW_KEY, on ? "on" : "off");
-  } catch {
-    // Nothing to do: the setting is a convenience, not a record.
-  }
-  window.dispatchEvent(new Event(CHANGED_EVENT));
-};
-
-export const onCompositorPreviewChanged = (handler: () => void): (() => void) => {
-  window.addEventListener(CHANGED_EVENT, handler);
-  return () => window.removeEventListener(CHANGED_EVENT, handler);
-};
-
 /**
  * The URL for one frame.
  *

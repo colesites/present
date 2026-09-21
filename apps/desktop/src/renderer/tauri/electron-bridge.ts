@@ -462,8 +462,6 @@ const bridge = {
   // The opt-in natively drawn audience screen. Tauri only: Settings shows the
   // switch when these exist, so the Electron build never offers it.
   getNativeOutputSurface: () => invoke("get_output_surface"),
-  setNativeOutputSurface: (enabled: boolean) =>
-    invoke("set_output_surface_native", { enabled }),
 
   // Errors the renderer catches. Optional-chained at the call site, so
   // leaving this out meant every render failure vanished without trace.
