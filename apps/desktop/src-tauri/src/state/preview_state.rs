@@ -64,7 +64,12 @@ pub fn size_from_uri(uri: &str) -> (u32, u32) {
 /// on screen elsewhere, so the honest answer to "I could not draw it" is to
 /// show nothing and let the next request try again.
 pub fn respond(state: &PreviewState, app: &AppHandle, uri: &str) -> http::Response<Vec<u8>> {
-    let builder = http::Response::builder().header("Cache-Control", "no-store");
+    // Same origin rules as the media protocol: a preview frame is a picture
+    // this app drew for itself, and a canvas that reads it — a test, a
+    // thumbnail — should not be tainted by it.
+    let builder = http::Response::builder()
+        .header("Cache-Control", "no-store")
+        .header("Access-Control-Allow-Origin", "*");
     match state.frame(app, size_from_uri(uri)) {
         Ok(jpeg) => builder
             .status(200)

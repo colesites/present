@@ -18,7 +18,7 @@
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::services::output::{MediaKind, OutputScene};
 use crate::services::playback::MIRROR_DRIFT_TOLERANCE;
@@ -125,13 +125,39 @@ struct Playing {
     anchor: Anchor,
     /// The last position report seen, to tell a fresh report from a repeat.
     last_reported: f64,
-    /// A seek was asked for and its first frame has not arrived: the frame on
-    /// hand is from before it, and is no reason to seek again.
-    awaiting_seek: bool,
-    /// Decoding failed. Holds whatever frame was on hand rather than retrying
-    /// thirty times a second; a different video starts afresh.
-    broken: bool,
+    /// Where a seek was asked for whose first frame has not arrived, if one
+    /// is on its way. The frame on hand is from before it, and is no reason to
+    /// seek again.
+    ///
+    /// When it was asked for, and not merely "yes": a report that moved the
+    /// anchor used to cancel this, and the next frame asked for another seek
+    /// to almost the same place. The decoder was told to seek faster than it
+    /// could answer, so it never delivered a frame at all and the background
+    /// held whatever it had — for the rest of the service. Now a seek is
+    /// waited for while it is still going roughly where the stream wants to
+    /// be, and replaced when the operator has gone somewhere else.
+    awaiting_seek: Option<(f64, Instant)>,
+    /// When decoding last failed, if it has.
+    ///
+    /// Holds whatever frame was on hand rather than retrying thirty times a
+    /// second — but not for ever. It used to be a plain flag that nothing
+    /// cleared, so one failed seek left the background frozen on one frame for
+    /// the rest of the service, on the stream and in the operator's preview.
+    /// A video that stops decoding is re-opened after [`RECOVER_AFTER`].
+    broken_at: Option<Instant>,
 }
+
+/// How long a video that stopped decoding is left alone before it is opened
+/// again. Long enough not to thrash a file that is genuinely unreadable,
+/// short enough that a congregation sees a background come back.
+const RECOVER_AFTER: Duration = Duration::from_secs(2);
+
+/// How long a seek is given to produce its frame before it is asked again.
+///
+/// Long enough that a 4K seek on a slow disk is waited for rather than
+/// cancelled — cancelling it is what wedged the decoder — and short enough
+/// that one lost in an error never leaves the background still.
+const SEEK_PATIENCE: Duration = Duration::from_millis(1500);
 
 /// One background video, followed across frames.
 #[derive(Default)]
@@ -213,8 +239,8 @@ impl VideoFeed {
                         at: now,
                     },
                     last_reported: scene.video_current_time,
-                    awaiting_seek: false,
-                    broken: false,
+                    awaiting_seek: None,
+                    broken_at: None,
                 });
                 Some(())
             }
@@ -300,32 +326,45 @@ impl VideoFeed {
                     playing: scene.is_video_playing,
                     at: now,
                 };
-                // A seek still on its way is for the old place.
-                playing.awaiting_seek = false;
+                // The seek on its way is not cancelled here: `advance`
+                // replaces it only if the new target is somewhere else
+                // entirely, so a run of small corrections cannot stop the
+                // decoder ever answering one.
             }
             playing.last_reported = scene.video_current_time;
         }
 
-        if !playing.broken {
-            let target = target_seconds(&playing.anchor, now, looping, duration);
-            match advance(playing, target) {
-                Ok(Advanced::Ended) if looping && duration.is_none() => {
-                    // A loop with no known length cannot wrap in
-                    // `target_seconds`, so it starts again from here.
-                    playing.anchor = Anchor {
-                        seconds: 0.0,
-                        playing: playing.anchor.playing,
-                        at: now,
-                    };
-                    if let Err(error) = restart(playing) {
-                        tracing::warn!(%error, url, "the NDI stream's background video would not loop");
-                        playing.broken = true;
+        match playing.broken_at {
+            // Long enough since it failed: let the decoder and its file go, so
+            // the open path above makes a new one on the next frame.
+            Some(failed_at) if now.duration_since(failed_at) >= RECOVER_AFTER => {
+                tracing::info!(url, "opening the background video again");
+                self.playing = None;
+                return None;
+            }
+            Some(_) => {}
+            None => {
+                let target = target_seconds(&playing.anchor, now, looping, duration);
+                match advance(playing, now, target) {
+                    Ok(Advanced::Ended) if looping => {
+                        // A loop whose length is unknown cannot wrap in
+                        // `target_seconds`, and one that ends a frame early
+                        // has nothing left to show. Either way it starts again.
+                        playing.anchor = Anchor {
+                            seconds: 0.0,
+                            playing: playing.anchor.playing,
+                            at: now,
+                        };
+                        if let Err(error) = restart(playing, now) {
+                            tracing::warn!(%error, url, "the background video would not loop");
+                            playing.broken_at = Some(now);
+                        }
                     }
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::warn!(%error, url, "the NDI stream's background video stopped decoding");
-                    playing.broken = true;
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, url, "the background video stopped decoding");
+                        playing.broken_at = Some(now);
+                    }
                 }
             }
         }
@@ -350,8 +389,23 @@ enum Took {
 
 /// Bring the frame on hand up to `target`, as far as the decoder has frames
 /// ready.
-fn advance(playing: &mut Playing, target: f64) -> Result<Advanced, String> {
-    if playing.awaiting_seek {
+fn advance(playing: &mut Playing, now: Instant, target: f64) -> Result<Advanced, String> {
+    if let Some((sought, asked_at)) = playing.awaiting_seek {
+        // Where that seek was going, carried forward by the time it has been
+        // waiting: a playing video's target moves on while the decoder works,
+        // and that drift is not the operator going anywhere.
+        let waited = now.duration_since(asked_at);
+        let still_going_to = if playing.anchor.playing {
+            sought + waited.as_secs_f64()
+        } else {
+            sought
+        };
+        // Somewhere else entirely, or it has had long enough: ask again.
+        // Otherwise wait, because asking again for a place it is already
+        // going to is how a decoder seeks for ever and shows nothing.
+        if (still_going_to - target).abs() > SEEK_WHEN_BEHIND || waited > SEEK_PATIENCE {
+            return seek_and_take(playing, now, target);
+        }
         match take_one(playing)? {
             Took::Frame => {}
             Took::Pending => return Ok(Advanced::UpToDate),
@@ -366,9 +420,9 @@ fn advance(playing: &mut Playing, target: f64) -> Result<Advanced, String> {
             .map(|frame| frame.presentation_seconds);
         match next_step(shown, target) {
             Step::Hold => return Ok(Advanced::UpToDate),
-            Step::Seek(seconds) => return seek_and_take(playing, seconds),
+            Step::Seek(seconds) => return seek_and_take(playing, now, seconds),
             Step::Advance if decodes == MAX_DECODES_PER_FRAME => {
-                return seek_and_take(playing, target)
+                return seek_and_take(playing, now, target)
             }
             Step::Advance => {
                 decodes += 1;
@@ -382,12 +436,12 @@ fn advance(playing: &mut Playing, target: f64) -> Result<Advanced, String> {
     }
 }
 
-fn seek_and_take(playing: &mut Playing, seconds: f64) -> Result<Advanced, String> {
+fn seek_and_take(playing: &mut Playing, now: Instant, seconds: f64) -> Result<Advanced, String> {
     playing
         .decoder
         .seek(seconds)
         .map_err(|error| error.to_string())?;
-    playing.awaiting_seek = true;
+    playing.awaiting_seek = Some((seconds, now));
     // Whatever is on hand stays up until the new position's frame arrives.
     Ok(match take_one(playing)? {
         Took::Ended => Advanced::Ended,
@@ -395,8 +449,8 @@ fn seek_and_take(playing: &mut Playing, seconds: f64) -> Result<Advanced, String
     })
 }
 
-fn restart(playing: &mut Playing) -> Result<(), String> {
-    seek_and_take(playing, 0.0).map(|_| ())
+fn restart(playing: &mut Playing, now: Instant) -> Result<(), String> {
+    seek_and_take(playing, now, 0.0).map(|_| ())
 }
 
 /// Take the decoder's next frame into `playing` if it is ready.
@@ -413,13 +467,13 @@ fn take_one(playing: &mut Playing) -> Result<Took, String> {
     {
         Polled::Frame(frame) if frame.is_well_formed() => {
             playing.frame = Some(frame);
-            playing.awaiting_seek = false;
+            playing.awaiting_seek = None;
             Ok(Took::Frame)
         }
         Polled::Frame(_) => Err("the decoder produced a malformed frame".to_owned()),
         Polled::Pending => Ok(Took::Pending),
         Polled::Ended => {
-            playing.awaiting_seek = false;
+            playing.awaiting_seek = None;
             Ok(Took::Ended)
         }
     }
@@ -538,10 +592,16 @@ mod tests {
         /// Frames a poll finds ready, like a decoder working ahead. `None`
         /// decodes on every poll.
         ready: Option<Arc<AtomicUsize>>,
+        /// Fails from this frame on, as a file going away mid-service does.
+        fails_from: Option<usize>,
     }
 
     impl VideoDecoder for FakeDecoder {
         fn next_frame(&mut self) -> Result<Option<VideoFrame>, VideoError> {
+            if self.fails_from.is_some_and(|from| self.next >= from) {
+                self.log.lock().unwrap().push("fail".to_owned());
+                return Err(VideoError::Decode("the file went away".to_owned()));
+            }
             let mut log = self.log.lock().unwrap();
             if self.next >= self.frames {
                 log.push("end".to_owned());
@@ -595,6 +655,7 @@ mod tests {
         frames: usize,
         knows_duration: bool,
         ready: Option<Arc<AtomicUsize>>,
+        fails_from: Option<usize>,
     }
 
     impl Harness {
@@ -606,6 +667,7 @@ mod tests {
                 frames,
                 knows_duration: true,
                 ready: None,
+                fails_from: None,
             }
         }
 
@@ -626,12 +688,13 @@ mod tests {
 
         /// The frame number shown for `scene` at `now`.
         fn shown(&mut self, scene: &OutputScene, now: Instant) -> Option<usize> {
-            let (log, opens, frames, knows_duration, ready) = (
+            let (log, opens, frames, knows_duration, ready, fails_from) = (
                 self.log.clone(),
                 self.opens.clone(),
                 self.frames,
                 self.knows_duration,
                 self.ready.clone(),
+                self.fails_from,
             );
             let open: Opener = Arc::new(
                 move |_url: &str, _size: (u32, u32)| -> Result<Box<dyn VideoDecoder>, String> {
@@ -642,6 +705,7 @@ mod tests {
                         knows_duration,
                         log: log.clone(),
                         ready: ready.clone(),
+                        fails_from,
                     }))
                 },
             );
@@ -678,6 +742,50 @@ mod tests {
             },
             ..OutputScene::default()
         }
+    }
+
+    /// The owner's report: the preview freezes on one frame after a while.
+    ///
+    /// It was a decode error, and the flag that recorded one was never
+    /// cleared — so one bad seek held the background on a single frame for the
+    /// rest of the service, on the stream as well as in the preview.
+    #[test]
+    fn a_video_that_stops_decoding_is_opened_again_rather_than_frozen() {
+        let mut harness = Harness::new(300);
+        harness.fails_from = Some(4);
+        let start = Instant::now();
+        let scene = video_scene(0.0, true, false);
+
+        // It plays until the file goes away.
+        let played: Vec<Option<usize>> = (0..4u32)
+            .map(|tick| harness.shown(&scene, start + STREAM_FRAME * tick))
+            .collect();
+        assert_eq!(played, vec![Some(0), Some(1), Some(2), Some(3)]);
+
+        // The frame on hand stays up rather than the screen going black, and
+        // the decoder is not asked again thirty times a second.
+        let held = harness.shown(&scene, start + STREAM_FRAME * 5);
+        assert_eq!(held, Some(3), "the last good frame is held");
+        let failures = |log: Vec<String>| log.iter().filter(|entry| *entry == "fail").count();
+        let after_failing = failures(harness.log());
+        for tick in 6..20u32 {
+            assert_eq!(harness.shown(&scene, start + STREAM_FRAME * tick), Some(3));
+        }
+        assert_eq!(failures(harness.log()), after_failing, "it stopped asking");
+
+        // And then it is opened again, and plays.
+        let opens_before = *harness.opens.lock().unwrap();
+        // It failed at the fifth frame, so the wait runs from there.
+        let ready_at = start + STREAM_FRAME * 4 + RECOVER_AFTER;
+        let recovered = harness.shown(&scene, ready_at + STREAM_FRAME);
+        assert_eq!(recovered, None, "the frame it was holding is let go with it");
+        let playing_again = harness.shown(&scene, ready_at + STREAM_FRAME * 2);
+        assert!(playing_again.is_some(), "a new decoder is playing it");
+        assert_eq!(
+            *harness.opens.lock().unwrap(),
+            opens_before + 1,
+            "opened once more, not on every frame"
+        );
     }
 
     #[test]
@@ -893,6 +1001,7 @@ mod tests {
                 knows_duration: true,
                 log: Arc::default(),
                 ready: None,
+                fails_from: None,
             }) as Box<dyn VideoDecoder>)
         });
 
