@@ -20,6 +20,14 @@ import { useCallback, useEffect, useState } from "react";
 const rustCore = () => import("../../tauri/playback");
 
 export type PlaybackView = {
+  /**
+   * The item the position belongs to.
+   *
+   * Carried because a position without one is a number that can be applied to
+   * the wrong video: choosing another item is a round trip to Rust, and until
+   * it answers the view still holds the previous item's place.
+   */
+  mediaId: string | null;
   playing: boolean;
   positionSeconds: number;
   durationSeconds: number | null;
@@ -56,6 +64,7 @@ export function usePlaybackTransport(initialView: PlaybackView): PlaybackTranspo
       const core = await rustCore();
 
       const apply = (playback: {
+        mediaId?: string | null;
         playing: boolean;
         positionSeconds: number;
         durationSeconds: number | null;
@@ -63,6 +72,7 @@ export function usePlaybackTransport(initialView: PlaybackView): PlaybackTranspo
       }) => {
         if (cancelled) return;
         setRustView({
+          mediaId: playback.mediaId ?? null,
           playing: playback.playing,
           positionSeconds: playback.positionSeconds,
           durationSeconds: playback.durationSeconds,

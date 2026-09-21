@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MediaItem, VideoSettings } from "../../../features/media/hooks/useMediaFolders";
 import { applyAudioRouting, useAudioRouting } from "./useAudioRouting";
 import { usePlaybackTransport } from "./usePlaybackTransport";
+import { positionForVideo } from "../../../shared/lib/mirror-video-sync.mjs";
 
 export function useShowVideoSync(params: {
   showViewMedia: MediaItem;
@@ -77,6 +78,7 @@ export function useShowVideoSync(params: {
   // The Rust transport owns whether the video is running and where it has got
   // to; the local values stand in until it answers.
   const transport = usePlaybackTransport({
+    mediaId: currentVideoItem?.id ?? null,
     playing: isVideoPlaying,
     positionSeconds: videoCurrentTime,
     durationSeconds: null,
@@ -85,6 +87,18 @@ export function useShowVideoSync(params: {
 
   const effectiveIsVideoPlaying = forcePlay || transport.playing;
   const effectiveVideoTime = transport.positionSeconds;
+
+  // Whose position the transport is holding (`mirror-video-sync.mjs`): until
+  // Rust confirms the item on screen, the answer is the beginning, or a video
+  // chosen again would be seeked to where the last one had got to.
+  const followed = positionForVideo({
+    transportMediaId: transport.mediaId,
+    videoId: currentVideoItem?.id ?? null,
+    positionSeconds: transport.positionSeconds,
+    sampledAtMs: transport.positionSampledAtMs,
+  });
+  const positionIsForThisVideo =
+    !currentVideoItem || transport.mediaId === currentVideoItem.id;
 
   // Which item the transport is on. A different item starts from its
   // beginning; the same one keeps its place.
@@ -127,6 +141,7 @@ export function useShowVideoSync(params: {
       // operator's own player is corrected loosely so that scrubbing is not
       // fought; the audience mirror uses a much tighter 0.12s.
       if (
+        positionIsForThisVideo &&
         Number.isFinite(effectiveVideoTime) &&
         Math.abs(showVideoRef.current.currentTime - effectiveVideoTime) > 0.5
       ) {
@@ -146,7 +161,12 @@ export function useShowVideoSync(params: {
         isProgrammaticPlayRef.current = false;
       }, 100);
     }
-  }, [currentVideoItem?.id, currentVideoItem?.type, effectiveIsVideoPlaying]);
+  }, [
+    currentVideoItem?.id,
+    currentVideoItem?.type,
+    effectiveIsVideoPlaying,
+    positionIsForThisVideo,
+  ]);
 
   // The element's own controls. They have to reach the transport: every player
   // follows it, so a pause that stayed in local state left the transport
@@ -249,8 +269,10 @@ export function useShowVideoSync(params: {
   return {
     showVideoRef,
     isVideoPlaying: effectiveIsVideoPlaying,
-    videoCurrentTime: effectiveVideoTime,
-    videoTimeSampledAtMs: transport.positionSampledAtMs,
+    // The beginning, until Rust confirms this item — so the audience screen,
+    // the preview and the stream never seek to where a different video was.
+    videoCurrentTime: followed.positionSeconds,
+    videoTimeSampledAtMs: followed.sampledAtMs,
 
     handleVideoPlay,
     handleVideoPause,
