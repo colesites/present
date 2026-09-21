@@ -89,6 +89,8 @@ pub struct SceneCompositor {
     height: u32,
     /// The slide layers over transparency, valid while `cached_for` holds.
     cached_layers: Option<Pixmap>,
+    /// The last finished picture, for a whole-slide transition to come from.
+    last_picture: Option<Pixmap>,
     /// A transition part-way through, and the scene it is arriving from.
     ///
     /// The picture it came from cannot be recovered afterwards — the slide is
@@ -168,6 +170,7 @@ impl SceneCompositor {
             height,
             cached_layers: None,
             cached_for: None,
+            last_picture: None,
             running: None,
             last_rebuild: false,
             frame: None,
@@ -326,8 +329,40 @@ impl SceneCompositor {
             }
         }
 
+        // A whole-slide transition is between two *pictures*, background and
+        // all — which is what the operator asked for when they chose it, and
+        // what was missing while this only ever crossed the slide layers: a
+        // change of background video looked like nothing happening.
+        let frame = self.blend_whole_frame(frame, now);
+
+        // Kept for the transition after this one to come from. The picture on
+        // screen cannot be recovered once the scene has moved.
+        self.last_picture = Some(frame.pixmap().to_owned());
         self.frame = Some(frame);
         Some((self.frame.as_ref()?, report))
+    }
+
+    /// Put a whole-slide transition over the finished frame.
+    ///
+    /// Only for `Mode::FullSlide`: the changed-elements ones have already been
+    /// drawn into the slide layers, where they can leave a playing background
+    /// alone.
+    fn blend_whole_frame(&mut self, frame: Frame, now: Instant) -> Frame {
+        let Some((running, _)) = self.running.as_ref() else {
+            return frame;
+        };
+        if running.mode() != transition::Mode::FullSlide {
+            return frame;
+        }
+        if running.is_over(now) {
+            self.running = None;
+            return frame;
+        }
+        let Some(mut out) = Frame::new(self.width, self.height) else {
+            return frame;
+        };
+        running.draw(&mut out.pixmap_mut(), frame.pixmap(), now);
+        out
     }
 
     /// The cached timer layer, redrawn if what it shows changed.
@@ -467,10 +502,9 @@ impl SceneCompositor {
         let mut out = Pixmap::new(self.width, self.height)?;
         let (running, from_scene) = (running, from_scene.clone());
         match running.mode() {
-            transition::Mode::FullSlide => {
-                let to = self.build_layer(scene, loader, report, Keep::Everything)?;
-                running.draw(&mut out.as_mut(), &to, now);
-            }
+            // Drawn at the end of the frame instead, over the finished
+            // picture: a whole-slide transition includes the background.
+            transition::Mode::FullSlide => return None,
             transition::Mode::ChangedElements => {
                 // What did not change is drawn once, from the new slide,
                 // and never moves. Only the rest is animated over it.
@@ -519,15 +553,18 @@ impl SceneCompositor {
             // Nothing was on screen to transition from.
             return;
         };
-        if !layers_differ(&previous, scene) {
+
+        // Any visible change, not only the slide layers: choosing another
+        // background video is a change the operator expects to see
+        // transitioned, and it moves no text at all.
+        let changes = transition::compare(&previous, scene);
+        if changes.is_nothing() {
             return;
         }
 
-        let changes = transition::compare(&previous, scene);
         let from = match wanted.mode {
-            transition::Mode::FullSlide => {
-                self.build_layer(&previous, loader, report, Keep::Everything)
-            }
+            // The picture that was on screen, background included.
+            transition::Mode::FullSlide => self.last_picture.clone(),
             transition::Mode::ChangedElements => {
                 let moving = changes.moving();
                 self.build_layer(&previous, loader, report, Keep::Only(&moving))
@@ -1024,6 +1061,50 @@ mod tests {
         assert!(
             red > 0 && blue > 0,
             "the words are part way between their two colours, not one or the other"
+        );
+    }
+
+    /// The owner's report: chosen on whole slide, with videos, nothing
+    /// happened.
+    ///
+    /// It was drawing the transition into the slide layers, which a background
+    /// video is not in — so a change of background crossed nothing at all. A
+    /// whole-slide transition is between two finished pictures.
+    #[test]
+    fn a_whole_slide_transition_crosses_the_background_as_well() {
+        let whole = |url: &str| OutputScene {
+            media_url: Some(url.to_owned()),
+            media_type: Some(MediaKind::Video),
+            transition: Some(transition::Transition {
+                kind: "fade".to_owned(),
+                duration_ms: 400,
+                mode: transition::Mode::FullSlide,
+                ..transition::Transition::none()
+            }),
+            ..scene()
+        };
+
+        let mut compositor = SceneCompositor::new(100, 100);
+        let first = frame_of(100, 100, [0, 0, 255, 255]);
+        compositor
+            .render(&whole("local-media://media/one.mp4"), Some(&first), &NoMedia)
+            .expect("the first video");
+
+        // A different file, and a frame of a different colour with it.
+        let second = frame_of(100, 100, [255, 0, 0, 255]);
+        let arriving = whole("local-media://media/two.mp4");
+        compositor
+            .render(&arriving, Some(&second), &NoMedia)
+            .expect("the transition begins");
+        std::thread::sleep(std::time::Duration::from_millis(120));
+
+        let (frame, _) = compositor
+            .render(&arriving, Some(&second), &NoMedia)
+            .expect("part way through");
+        let (red, _, blue, _) = frame.pixel_at(50, 50).expect("a pixel");
+        assert!(
+            red > 0 && blue > 0,
+            "part way between the two backgrounds, not one or the other: {red},{blue}"
         );
     }
 

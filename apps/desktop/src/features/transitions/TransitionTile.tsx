@@ -1,67 +1,67 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Check } from "lucide-react";
 
 import { transitionSampleUrl, type TransitionPreset } from "../../renderer/tauri/transitions";
 import { cn } from "../../renderer/shared/lib/utils";
 
-/** How many steps a hover plays through. Enough to read the movement. */
-const STEPS = 18;
-/** How long one play takes, in milliseconds. */
-const PLAY_MS = 900;
+/** Frames in one play. Enough to read the movement, few enough to preload. */
+const STEPS = 16;
+/** How long one play takes. */
+const PLAY_MS = 850;
+/** The still shown at rest: part way in, so the movement is legible. */
+const RESTING_STEP = 6;
 
-/** The still shown when nothing is hovering: the middle of the movement. */
-const RESTING = 0.5;
+/** What a tile is drawn at, in device pixels. Sharp on a Retina panel. */
+const SAMPLE_WIDTH = 320;
+const SAMPLE_HEIGHT = 180;
 
 /**
- * One transition in the picker: a still that plays when the pointer is on it.
+ * One transition in the picker: a still that plays while the pointer is on it.
  *
  * The frames come from the engine that runs the transition for real
  * (`transition-sample://`), so nothing here can look like one thing in the
- * menu and behave like another on the screen.
+ * menu and behave like another on screen.
  */
 export function TransitionTile({
   preset,
   selected,
   onChoose,
-  width = 132,
-  height = 74,
 }: {
   preset: TransitionPreset;
   selected: boolean;
   onChoose: () => void;
-  width?: number;
-  height?: number;
 }) {
-  const [progress, setProgress] = useState(RESTING);
+  const [step, setStep] = useState(RESTING_STEP);
   const playing = useRef<number | null>(null);
 
-  // The frames of one play, built up front so a hover does not wait for them
-  // one at a time.
   const frames = useMemo(
     () =>
-      Array.from({ length: STEPS + 1 }, (_, step) =>
-        transitionSampleUrl(preset.id, step / STEPS, width, height),
+      Array.from({ length: STEPS + 1 }, (_, index) =>
+        transitionSampleUrl(preset.id, index / STEPS, SAMPLE_WIDTH, SAMPLE_HEIGHT),
       ),
-    [preset.id, width, height],
+    [preset.id],
   );
 
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       if (playing.current !== null) {
         window.clearInterval(playing.current);
       }
-    };
-  }, []);
+    },
+    [],
+  );
 
   const play = () => {
     if (playing.current !== null) {
       return;
     }
-    let step = 0;
+    let frame = 0;
+    setStep(0);
     playing.current = window.setInterval(() => {
-      step += 1;
-      setProgress((step % (STEPS + 1)) / STEPS);
+      frame = (frame + 1) % (STEPS + 1);
+      setStep(frame);
     }, PLAY_MS / STEPS);
   };
 
@@ -70,7 +70,7 @@ export function TransitionTile({
       window.clearInterval(playing.current);
       playing.current = null;
     }
-    setProgress(RESTING);
+    setStep(RESTING_STEP);
   };
 
   return (
@@ -81,35 +81,56 @@ export function TransitionTile({
       onMouseLeave={rest}
       onFocus={play}
       onBlur={rest}
-      title={preset.available ? preset.name : `${preset.name} — shown as a fade until the GPU path`}
+      title={
+        preset.available
+          ? preset.name
+          : `${preset.name} — plays as a fade until the GPU path lands`
+      }
       className={cn(
-        "group relative overflow-hidden rounded-lg border bg-black text-left transition",
+        "group relative w-full overflow-hidden rounded-lg border text-left outline-hidden transition",
+        "focus-visible:ring-2 focus-visible:ring-primary/70",
         selected
-          ? "border-primary ring-2 ring-primary/60"
-          : "border-border/60 hover:border-primary/50",
+          ? "border-primary/80 ring-1 ring-primary/50"
+          : "border-white/8 hover:border-white/25",
       )}
-      style={{ width, height }}
     >
-      {/* Every frame is in the page; only the one at `progress` is shown, so a
-          play is a class change rather than a fetch. */}
-      {frames.map((src, step) => (
-        <img
-          key={src}
-          src={src}
-          alt=""
-          aria-hidden
-          className="absolute inset-0 h-full w-full object-cover"
-          style={{ opacity: Math.abs(step / STEPS - progress) < 1 / (STEPS * 2) ? 1 : 0 }}
-        />
-      ))}
-      <span className="absolute inset-x-0 bottom-0 truncate bg-linear-to-t from-black/85 to-transparent px-1.5 pb-1 pt-3 text-[10px] font-medium text-white">
+      <div className="relative aspect-video w-full bg-black/60">
+        {/* Every frame is in the page, so a play is an opacity change rather
+            than a fetch. */}
+        {frames.map((src, index) => (
+          <img
+            key={src}
+            src={src}
+            alt=""
+            aria-hidden
+            draggable={false}
+            className="absolute inset-0 h-full w-full object-cover"
+            style={{ opacity: index === step ? 1 : 0 }}
+          />
+        ))}
+
+        {selected ? (
+          <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
+            <Check className="h-2.5 w-2.5" strokeWidth={3} aria-hidden />
+          </span>
+        ) : null}
+        {preset.available ? null : (
+          <span className="absolute left-1.5 top-1.5 rounded-sm bg-black/65 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-amber-300/90">
+            soon
+          </span>
+        )}
+      </div>
+
+      <span
+        className={cn(
+          "block truncate border-t px-2 py-1.5 text-[11px] leading-none transition",
+          selected
+            ? "border-primary/30 bg-primary/12 font-medium text-foreground"
+            : "border-white/6 bg-white/2 text-muted-foreground group-hover:text-foreground",
+        )}
+      >
         {preset.name}
       </span>
-      {preset.available ? null : (
-        <span className="absolute right-1 top-1 rounded bg-black/70 px-1 text-[9px] text-amber-300">
-          soon
-        </span>
-      )}
     </button>
   );
 }
