@@ -128,6 +128,42 @@ pub async fn set_look_layer(
     broadcast(&app, &state, changed)
 }
 
+/// Turn several layers on or off together, as one change.
+///
+/// The quick toggles are not one layer each: "words" is the slide layer and
+/// the presentation layer, "media" is the media layer and the video input.
+/// Sent as two commands they were two changes, each broadcasting the state it
+/// produced — and two events racing meant the second could arrive first and
+/// leave one of the pair on. The toggle then looked as though it had not
+/// responded, or had turned itself back on.
+#[tauri::command]
+pub async fn set_look_layers(
+    app: AppHandle,
+    state: State<'_, LooksState>,
+    look_id: String,
+    target: LookTarget,
+    layers: Vec<LookLayer>,
+    enabled: bool,
+) -> AppResult<LooksConfig> {
+    let changed = state.update(|config| {
+        let mut moved = false;
+        for layer in &layers {
+            let current = config
+                .looks
+                .iter()
+                .find(|look| look.id == look_id)
+                .map(|look| look.targets.get(target).layers.get(*layer));
+            if current == Some(enabled) {
+                continue;
+            }
+            looks::set_layer_enabled(config, &look_id, target, *layer, enabled, now_ms());
+            moved = true;
+        }
+        moved
+    })?;
+    broadcast(&app, &state, changed)
+}
+
 #[tauri::command]
 pub async fn set_look_text_position(
     app: AppHandle,

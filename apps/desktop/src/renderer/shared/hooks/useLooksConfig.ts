@@ -120,6 +120,14 @@ export function useLooksConfig() {
     [apply],
   );
 
+  /** Several layers as one change, so a toggle cannot half-apply. */
+  const setLayersEnabledForLook = useCallback(
+    (lookId: string, target: LookTargetKey, layers: LookLayerKey[], enabled: boolean) => {
+      apply((core) => core.setLookLayers(lookId, target, layers, enabled));
+    },
+    [apply],
+  );
+
   const setLayerEnabled = useCallback(
     (target: LookTargetKey, layer: LookLayerKey, enabled: boolean) => {
       setLayerEnabledForLook(looksConfig.selectedLookId, target, layer, enabled);
@@ -171,6 +179,7 @@ export function useLooksConfig() {
     setLookName,
     setLayerEnabled,
     setLayerEnabledForLook,
+    setLayersEnabledForLook,
     setTextPosition,
     setTextPositionForLook,
   };

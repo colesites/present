@@ -280,6 +280,7 @@ pub fn run() {
             commands::looks::add_look,
             commands::looks::set_look_name,
             commands::looks::set_look_layer,
+            commands::looks::set_look_layers,
             commands::looks::set_look_text_position,
             commands::auth::get_stored_auth_session,
             commands::auth::set_stored_auth_session,

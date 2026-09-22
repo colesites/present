@@ -45,6 +45,20 @@ export const setLookLayer = (
   enabled: boolean,
 ): Promise<LooksConfig> => invoke("set_look_layer", { lookId, target, layer, enabled });
 
+/**
+ * Turn several layers on or off together, as one change.
+ *
+ * A quick toggle is rarely one layer — "words" is the slide layer and the
+ * presentation layer — and sending one command each made them two changes
+ * whose events could arrive in either order, leaving one of the pair on.
+ */
+export const setLookLayers = (
+  lookId: string,
+  target: LookTargetKey,
+  layers: LookLayerKey[],
+  enabled: boolean,
+): Promise<LooksConfig> => invoke("set_look_layers", { lookId, target, layers, enabled });
+
 export const setLookTextPosition = (
   lookId: string,
   target: LookTargetKey,

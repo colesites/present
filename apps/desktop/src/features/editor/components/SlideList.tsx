@@ -242,7 +242,7 @@ export const SlideList = memo(function SlideList({
                       onSelectSlide(slide.id ?? null);
                     }}
                     className={cn(
-                      "group flex w-full flex-col gap-2 rounded-2xl border px-2 py-2 text-left transition",
+                      "group flex w-full flex-col gap-1.5 rounded-lg border p-1.5 text-left transition",
                       isSelected
                         ? "border-primary bg-primary/10"
                         : "border-border/40 bg-muted/20 hover:border-border hover:bg-muted/40",
@@ -250,7 +250,7 @@ export const SlideList = memo(function SlideList({
                       draggedSlideIndex === index && "opacity-40",
                     )}
                   >
-                    <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center justify-between px-0.5">
                       <div className="flex items-center gap-2">
                         <GripVertical className="h-4 w-4 text-muted-foreground/30" />
                         <span className="text-[11px] font-medium text-muted-foreground/70">
@@ -267,21 +267,25 @@ export const SlideList = memo(function SlideList({
                       </div>
                     </div>
 
+                    {/* The slide, as a plain rectangle of the right shape.
+                        No padding inside it: the words are laid out to the
+                        whole slide, and an inset made "WELCOME" wrap in the
+                        middle of itself. */}
                     <div
-                      className="relative aspect-video overflow-hidden rounded-xl border border-border bg-black px-4 py-3 shadow-lg shadow-black/20"
-                      style={{ backgroundColor: backgroundColor ?? "var(--background)" }}
+                      className="relative aspect-video w-full overflow-hidden rounded-md ring-1 ring-white/8"
+                      style={{ backgroundColor: backgroundColor ?? "#000000" }}
                     >
-                      <div className="relative flex h-full items-center justify-center">
-                        {slide.text.trim() ? (
+                      {slide.text.trim() ? (
+                        <div className="absolute inset-0 flex items-center justify-center">
                           <AutoFitText
                             text={slide.text.trim()}
-                            className="pointer-events-none select-none text-center text-foreground"
+                            className="pointer-events-none select-none px-1 text-center text-foreground"
                             style={{ fontFamily }}
                             maxFontSize={22}
                             minScale={0.4}
                           />
-                        ) : null}
-                      </div>
+                        </div>
+                      ) : null}
                     </div>
                   </button>
                   <button

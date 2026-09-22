@@ -531,7 +531,8 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     setSettingsScreenDisplayIds,
     settingsScreenResolutions,
   } = settings;
-  const { looksConfig, liveLook, setLayerEnabledForLook } = useLooksConfig();
+  const { looksConfig, liveLook, setLayerEnabledForLook, setLayersEnabledForLook } =
+    useLooksConfig();
   const programLooks = liveLook.targets.program;
   const showTextInOutput =
     programLooks.layers.slide || programLooks.layers.presentation;
@@ -545,30 +546,31 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     ...programLooks.textPosition,
   };
 
+  // Each of these is one toggle over more than one layer, so they are sent as
+  // one change: two commands were two events, and two events racing could
+  // leave one of a pair on, which read as a toggle that would not respond.
   const setShowTextInOutput = useCallback(
     (show: boolean) => {
-      setLayerEnabledForLook(looksConfig.liveLookId, "program", "slide", show);
-      setLayerEnabledForLook(
+      setLayersEnabledForLook(
         looksConfig.liveLookId,
         "program",
-        "presentation",
+        ["slide", "presentation"],
         show
       );
     },
-    [looksConfig.liveLookId, setLayerEnabledForLook]
+    [looksConfig.liveLookId, setLayersEnabledForLook]
   );
 
   const setShowMediaInOutput = useCallback(
     (show: boolean) => {
-      setLayerEnabledForLook(looksConfig.liveLookId, "program", "media", show);
-      setLayerEnabledForLook(
+      setLayersEnabledForLook(
         looksConfig.liveLookId,
         "program",
-        "videoInput",
+        ["media", "videoInput"],
         show
       );
     },
-    [looksConfig.liveLookId, setLayerEnabledForLook]
+    [looksConfig.liveLookId, setLayersEnabledForLook]
   );
 
   const setHideBackgroundInOutput = useCallback(
@@ -587,20 +589,14 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
 
   const setIsMessageLayerEnabled = useCallback(
     (show: boolean) => {
-      setLayerEnabledForLook(
+      setLayersEnabledForLook(
         looksConfig.liveLookId,
         "program",
-        "messages",
-        show
-      );
-      setLayerEnabledForLook(
-        looksConfig.liveLookId,
-        "program",
-        "announcements",
+        ["messages", "announcements"],
         show
       );
     },
-    [looksConfig.liveLookId, setLayerEnabledForLook]
+    [looksConfig.liveLookId, setLayersEnabledForLook]
   );
   const showsPanelRef = useRef<LibrariesPanelRef>(null);
   const mediaPanelRef = useRef<MediaPanelRef>(null);
