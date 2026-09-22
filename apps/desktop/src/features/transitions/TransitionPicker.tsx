@@ -8,13 +8,6 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "../../renderer/shared/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../renderer/shared/components/ui/select";
 import { cn } from "../../renderer/shared/lib/utils";
 import {
   getTransitions,
@@ -253,21 +246,21 @@ export function TransitionPicker({ className }: { className?: string }) {
                   onChange={(durationMs) => choose({ durationMs })}
                 />
                 <span className="ml-auto text-[11px] text-muted-foreground">Easing</span>
-                <Select
+                {/* The same control as the preview's screen picker, which is
+                    the one the owner asked for: the platform's own select. */}
+                <select
                   value={chosen.easing}
-                  onValueChange={(easing) => choose({ easing: easing as TransitionEasing })}
+                  onChange={(event) => choose({ easing: event.target.value as TransitionEasing })}
+                  className="h-7 rounded border border-border bg-background px-2 text-[11px] font-medium text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                  title="Easing"
+                  aria-label="Easing"
                 >
-                  <SelectTrigger className="h-7 w-[132px] text-[11px]" aria-label="Easing">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EASINGS.map((easing) => (
-                      <SelectItem key={easing} value={easing} className="text-[11px]">
-                        {easing}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {EASINGS.map((easing) => (
+                    <option key={easing} value={easing}>
+                      {easing}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="flex items-center gap-3">

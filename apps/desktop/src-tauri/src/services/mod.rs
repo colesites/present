@@ -34,6 +34,7 @@ pub mod pptx;
 pub mod presentation;
 pub mod remote;
 pub mod scripture;
+pub mod scripture_agent;
 pub mod store;
 pub mod shortcuts;
 pub mod slide;
