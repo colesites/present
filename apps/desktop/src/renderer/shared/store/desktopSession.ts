@@ -95,6 +95,9 @@ class DesktopRefreshError extends Error {
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 let desktopAccessTokenRefreshPromise: Promise<string | null> | null = null;
 
+/** Where the web app is, for anything that has to ask it something. */
+export const desktopWebBaseUrl = (): string => resolveDesktopWebBaseUrl();
+
 const resolveDesktopWebBaseUrl = (): string => {
   const configured = process.env.WEB_APP_URL;
   if (configured) {

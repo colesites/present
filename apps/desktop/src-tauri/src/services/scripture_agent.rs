@@ -193,6 +193,59 @@ fn contains_word(haystack: &str, word: &str) -> bool {
         .any(|token| token == word)
 }
 
+/// Where the desktop asks. The key for the gateway lives on the web app, not
+/// on this machine, so this is the one hop the model call takes.
+const ASK_PATH: &str = "/api/ai/scripture";
+
+/// How long the whole round trip may take.
+///
+/// Shorter than the route's own timeout, because a reference that arrives
+/// after the preacher has moved on is worse than none: the operator is
+/// already doing it by hand.
+const ASK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+pub fn ask_url(web_app_base_url: &str) -> Option<String> {
+    let trimmed = web_app_base_url.trim().trim_end_matches('/');
+    (!trimmed.is_empty()).then(|| format!("{trimmed}{ASK_PATH}"))
+}
+
+/// Ask what a sentence meant, and decide what it is worth.
+///
+/// `None` when there is nothing to ask about, nobody signed in, or the model
+/// could not be reached — all of which are ordinary, and none of which stop
+/// the operator doing it themselves.
+pub async fn ask(
+    web_app_base_url: &str,
+    session_token: &str,
+    heard: &str,
+    books: &[Book],
+) -> Option<Understanding> {
+    if session_token.trim().is_empty() || !matches!(triage(heard, books), Heard::Ask) {
+        return None;
+    }
+    let url = ask_url(web_app_base_url)?;
+    let names: Vec<&str> = books.iter().map(|book| book.name.as_str()).collect();
+
+    let client = reqwest::Client::builder().timeout(ASK_TIMEOUT).build().ok()?;
+    let response = client
+        .post(&url)
+        .bearer_auth(session_token)
+        .json(&serde_json::json!({ "heard": heard.trim(), "books": names }))
+        .send()
+        .await
+        .map_err(|error| tracing::debug!(%error, "the scripture agent could not be reached"))
+        .ok()?;
+    if !response.status().is_success() {
+        tracing::debug!(status = %response.status(), "the scripture agent had nothing");
+        return None;
+    }
+
+    let body: serde_json::Value = response.json().await.ok()?;
+    let content = body.get("content")?.as_str()?;
+    let answer = answer_from_json(content)?;
+    Some(understand(&answer, books))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,6 +424,44 @@ mod tests {
         let understanding = understand(&backwards, &books());
         assert_eq!(understanding.reference.verse_end, None, "the end is ignored");
         assert!(understanding.may_project(), "the verse itself is still good");
+    }
+
+    #[test]
+    fn the_desktop_asks_the_web_app_and_not_the_gateway() {
+        // The key is not on this machine, so this is where the question goes.
+        assert_eq!(
+            ask_url("https://present.multivrs.space").as_deref(),
+            Some("https://present.multivrs.space/api/ai/scripture")
+        );
+        assert_eq!(
+            ask_url("https://present.multivrs.space/").as_deref(),
+            Some("https://present.multivrs.space/api/ai/scripture"),
+            "however the URL was written"
+        );
+        assert_eq!(ask_url("  "), None);
+    }
+
+    #[tokio::test]
+    async fn nothing_is_asked_without_somebody_signed_in_or_anything_to_ask() {
+        let books = books();
+        assert!(
+            ask("https://example.test", "", "the third chapter of John", &books)
+                .await
+                .is_none(),
+            "nobody signed in"
+        );
+        assert!(
+            ask("https://example.test", "token", "John 3:16", &books)
+                .await
+                .is_none(),
+            "the parser read it, so nothing is sent"
+        );
+        assert!(
+            ask("https://example.test", "token", "let us pray", &books)
+                .await
+                .is_none(),
+            "no reference in it"
+        );
     }
 
     #[test]

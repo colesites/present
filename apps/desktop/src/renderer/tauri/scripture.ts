@@ -37,3 +37,52 @@ export async function parseScriptureReference(
     errors: parsed.errors,
   };
 }
+
+/** What the listening agent made of a sentence. */
+export type SpokenScripture = {
+  reference: ParsedReference;
+  confidence: number;
+  /** Sure enough, and real enough, to go on screen without being asked. */
+  mayProject: boolean;
+};
+
+/**
+ * Ask what a spoken sentence meant, when the parser could not read it.
+ *
+ * `null` when there is nothing to ask about, nobody is signed in, or the model
+ * could not be reached — none of which stop the operator doing it by hand. The
+ * judgement about whether an answer is good enough is the core's, against the
+ * books installed there (`services/scripture_agent.rs`).
+ */
+export async function understandSpokenScripture(
+  webAppBaseUrl: string,
+  sessionToken: string,
+  heard: string,
+  books: BibleBookRecord[],
+): Promise<SpokenScripture | null> {
+  const answer = await invoke<{
+    reference: RustReference;
+    confidence: number;
+    mayProject: boolean;
+  } | null>("understand_spoken_scripture", {
+    webAppBaseUrl,
+    sessionToken,
+    heard,
+    books,
+  });
+  if (!answer) {
+    return null;
+  }
+  return {
+    reference: {
+      book: books.find((book) => book.id === answer.reference.book) ?? null,
+      chapter: answer.reference.chapter,
+      verseStart: answer.reference.verseStart,
+      verseEnd: answer.reference.verseEnd,
+      versionCode: answer.reference.versionCode,
+      errors: answer.reference.errors,
+    },
+    confidence: answer.confidence,
+    mayProject: answer.mayProject,
+  };
+}

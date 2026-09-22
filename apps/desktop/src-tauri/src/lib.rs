@@ -308,6 +308,7 @@ pub fn run() {
             commands::thumbnails::get_media_thumbnail,
             commands::songs::import_openlyrics_songs,
             commands::scripture::parse_scripture_reference,
+            commands::scripture::understand_spoken_scripture,
             commands::control::get_control_settings,
             commands::control::set_control_settings,
             commands::control::run_control_action,

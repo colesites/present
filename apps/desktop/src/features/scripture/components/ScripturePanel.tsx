@@ -12,6 +12,7 @@ import {
   type ChangeEvent,
 } from "react";
 import { parseReference, type ParsedReference } from "../lib/parser";
+import { understandSpokenScripture } from "../../../renderer/tauri/scripture";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
 import { cn } from "../../../renderer/shared/lib/utils";
@@ -43,7 +44,10 @@ import {
 import { ScriptureInput, type ScriptureInputRef } from "./ScriptureInput";
 import type { BibleVerse } from "../lib/db";
 import { ScriptureResults } from "./ScriptureResults";
-import { useDesktopSessionStore } from "../../../renderer/shared/store/desktopSession";
+import {
+  desktopWebBaseUrl,
+  useDesktopSessionStore,
+} from "../../../renderer/shared/store/desktopSession";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -120,6 +124,7 @@ export const ScripturePanel = memo(
     const liveVersions = useLiveQuery(() => db.versions.toArray());
     const availableVersions = useMemo(() => liveVersions ?? [], [liveVersions]);
     const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
+    const webAppBaseUrl = useMemo(() => desktopWebBaseUrl(), []);
 
     const {
       activeImport,
@@ -657,43 +662,6 @@ export const ScripturePanel = memo(
 
 
 
-    useEffect(() => {
-      if (!isActive) {
-        return;
-      }
-
-      if (identifyTimeoutRef.current !== null) {
-        window.clearTimeout(identifyTimeoutRef.current);
-        identifyTimeoutRef.current = null;
-      }
-
-      const text = liveTranscript.trim();
-      if (!text) {
-        return;
-      }
-
-      const quickParsed = parseReference(text, availableBooks);
-      if (quickParsed.book && quickParsed.chapter) {
-        return;
-      }
-
-      identifyTimeoutRef.current = window.setTimeout(() => {
-        void identifyScripture(text);
-      }, isListening ? 100 : 260);
-
-      return () => {
-        if (identifyTimeoutRef.current !== null) {
-          window.clearTimeout(identifyTimeoutRef.current);
-          identifyTimeoutRef.current = null;
-        }
-      };
-    }, [
-      isActive,
-      liveTranscript,
-      identifyScripture,
-      availableBooks,
-      isListening,
-    ]);
 
     useEffect(() => {
       if (!effectiveSelectedVersionCode) {
@@ -702,6 +670,7 @@ export const ScripturePanel = memo(
 
       void prewarmSearchPool(effectiveSelectedVersionCode);
     }, [effectiveSelectedVersionCode, prewarmSearchPool]);
+
 
     const handleRefChange = useCallback((nextRef: ParsedReference) => {
       setParsedRef(nextRef);
@@ -763,6 +732,72 @@ export const ScripturePanel = memo(
         onAddScriptureToService,
       ],
     );
+
+    useEffect(() => {
+      if (!isActive) {
+        return;
+      }
+
+      if (identifyTimeoutRef.current !== null) {
+        window.clearTimeout(identifyTimeoutRef.current);
+        identifyTimeoutRef.current = null;
+      }
+
+      const text = liveTranscript.trim();
+      if (!text) {
+        return;
+      }
+
+      const quickParsed = parseReference(text, availableBooks);
+      if (quickParsed.book && quickParsed.chapter) {
+        return;
+      }
+
+      identifyTimeoutRef.current = window.setTimeout(() => {
+        // The agent first: a sentence the parser could not read may still
+        // name a passage plainly enough to put on the screen. It answers
+        // `null` for anything it is unsure of, and for everything when
+        // nobody is signed in or the model cannot be reached — in which
+        // case this is exactly what it was before.
+        void understandSpokenScripture(webAppBaseUrl, sessionToken ?? "", text, availableBooks)
+          .then((understood) => {
+            if (!understood?.mayProject || !understood.reference.book) {
+              void identifyScripture(text);
+              return;
+            }
+            const { book, chapter, verseStart, verseEnd } = understood.reference;
+            let spoken = `${book.name} ${chapter ?? 1}`;
+            if (verseStart) {
+              spoken += `:${verseStart}`;
+              if (verseEnd) {
+                spoken += `-${verseEnd}`;
+              }
+            }
+            setLookupValue(spoken);
+            void handleEnter(spoken);
+          })
+          .catch(() => {
+            void identifyScripture(text);
+          });
+      }, isListening ? 100 : 260);
+
+      return () => {
+        if (identifyTimeoutRef.current !== null) {
+          window.clearTimeout(identifyTimeoutRef.current);
+          identifyTimeoutRef.current = null;
+        }
+      };
+    }, [
+      isActive,
+      liveTranscript,
+      identifyScripture,
+      availableBooks,
+      isListening,
+      webAppBaseUrl,
+      sessionToken,
+      handleEnter,
+      setLookupValue,
+    ]);
 
     useEffect(() => {
       if (!isActive) {
