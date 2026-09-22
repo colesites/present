@@ -59,7 +59,8 @@ impl Running {
 
     /// How far through, eased, in 0..=1.
     pub fn progress(&self, now: Instant) -> f64 {
-        self.transition.progress(now.saturating_duration_since(self.started))
+        self.transition
+            .progress(now.saturating_duration_since(self.started))
     }
 
     pub fn is_over(&self, now: Instant) -> bool {
@@ -131,8 +132,7 @@ mod tests {
     #[test]
     fn a_transition_runs_from_nothing_to_everything_and_then_stops() {
         let now = Instant::now();
-        let running =
-            Running::begin(layer(), &fade(400), changed(), now).expect("it begins");
+        let running = Running::begin(layer(), &fade(400), changed(), now).expect("it begins");
 
         assert_eq!(running.progress(now), 0.0);
         assert!(running.progress(now + Duration::from_millis(200)) > 0.0);

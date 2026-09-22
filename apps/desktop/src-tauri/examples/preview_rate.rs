@@ -17,9 +17,18 @@ use present_lib::services::video::VideoFrame;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let width: u32 = args.next().and_then(|value| value.parse().ok()).unwrap_or(480);
-    let height: u32 = args.next().and_then(|value| value.parse().ok()).unwrap_or(270);
-    let rounds: usize = args.next().and_then(|value| value.parse().ok()).unwrap_or(120);
+    let width: u32 = args
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(480);
+    let height: u32 = args
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(270);
+    let rounds: usize = args
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(120);
 
     let scene = OutputScene {
         show_media: true,

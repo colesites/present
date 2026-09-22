@@ -41,9 +41,10 @@ pub async fn get_media_thumbnail(
     // two at a time, every launch.
     let for_cache = path.clone();
     let cache_for_read = cache_dir.clone();
-    if let Ok(Some(bytes)) =
-        tauri::async_runtime::spawn_blocking(move || thumbnails::cached(&for_cache, &cache_for_read))
-            .await
+    if let Ok(Some(bytes)) = tauri::async_runtime::spawn_blocking(move || {
+        thumbnails::cached(&for_cache, &cache_for_read)
+    })
+    .await
     {
         return Ok(tauri::ipc::Response::new(bytes));
     }

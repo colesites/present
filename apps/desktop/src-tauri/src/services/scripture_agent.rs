@@ -107,7 +107,10 @@ pub fn answer_from_response(body: &serde_json::Value) -> Option<Answer> {
 /// Read one answer. Tolerant of a model that wrapped its JSON in prose or a
 /// code fence, because they do.
 pub fn answer_from_json(content: &str) -> Option<Answer> {
-    let trimmed = content.trim().trim_start_matches("```json").trim_matches('`');
+    let trimmed = content
+        .trim()
+        .trim_start_matches("```json")
+        .trim_matches('`');
     let start = trimmed.find('{')?;
     let end = trimmed.rfind('}')?;
     serde_json::from_str::<Answer>(trimmed.get(start..=end)?).ok()
@@ -177,7 +180,10 @@ pub async fn ask(
     let url = ask_url(web_app_base_url)?;
     let names: Vec<&str> = books.iter().map(|book| book.name.as_str()).collect();
 
-    let client = reqwest::Client::builder().timeout(ASK_TIMEOUT).build().ok()?;
+    let client = reqwest::Client::builder()
+        .timeout(ASK_TIMEOUT)
+        .build()
+        .ok()?;
     let response = client
         .post(&url)
         .bearer_auth(session_token)
@@ -224,15 +230,21 @@ mod tests {
         // The only sentences that do not: the ones there is no way to ask
         // about, or no way to check an answer against.
         assert!(
-            ask("https://example.test", "", "John 3:16", &books).await.is_none(),
+            ask("https://example.test", "", "John 3:16", &books)
+                .await
+                .is_none(),
             "nobody signed in"
         );
         assert!(
-            ask("https://example.test", "token", "   ", &books).await.is_none(),
+            ask("https://example.test", "token", "   ", &books)
+                .await
+                .is_none(),
             "nothing was said"
         );
         assert!(
-            ask("https://example.test", "token", "John 3:16", &[]).await.is_none(),
+            ask("https://example.test", "token", "John 3:16", &[])
+                .await
+                .is_none(),
             "no books installed, so no answer could be checked"
         );
     }
@@ -270,7 +282,11 @@ mod tests {
             "```json\n{\"book\":\"John\",\"chapter\":3,\"verse\":16,\"confidence\":0.94}\n```",
             "Sure! {\"book\":\"John\",\"chapter\":3,\"verse\":16,\"confidence\":0.94}",
         ] {
-            assert_eq!(answer_from_json(wrapped).as_ref(), Some(&expected), "{wrapped}");
+            assert_eq!(
+                answer_from_json(wrapped).as_ref(),
+                Some(&expected),
+                "{wrapped}"
+            );
         }
         assert_eq!(answer_from_json("no idea"), None);
         assert_eq!(answer_from_json(""), None);
@@ -298,10 +314,7 @@ mod tests {
         };
         let understanding = understand(&invented, &books());
         assert_eq!(understanding.reference.book, None);
-        assert!(
-            !understanding.may_project(),
-            "however sure it says it is"
-        );
+        assert!(!understanding.may_project(), "however sure it says it is");
     }
 
     #[test]
@@ -327,7 +340,10 @@ mod tests {
         };
         let understanding = understand(&unsure, &books());
         assert_eq!(understanding.reference.book.as_deref(), Some("john"));
-        assert!(!understanding.may_project(), "it is still offered, not sent");
+        assert!(
+            !understanding.may_project(),
+            "it is still offered, not sent"
+        );
 
         let sure = Answer {
             confidence: 0.95,
@@ -346,8 +362,14 @@ mod tests {
             confidence: 0.99,
         };
         let understanding = understand(&backwards, &books());
-        assert_eq!(understanding.reference.verse_end, None, "the end is ignored");
-        assert!(understanding.may_project(), "the verse itself is still good");
+        assert_eq!(
+            understanding.reference.verse_end, None,
+            "the end is ignored"
+        );
+        assert!(
+            understanding.may_project(),
+            "the verse itself is still good"
+        );
     }
 
     #[test]
@@ -364,7 +386,6 @@ mod tests {
         );
         assert_eq!(ask_url("  "), None);
     }
-
 
     #[test]
     fn nonsense_confidence_is_no_confidence() {

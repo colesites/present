@@ -120,7 +120,9 @@ impl Store {
         let mut connection = connection;
         schema::migrations()
             .to_latest(&mut connection)
-            .map_err(|error| AppError::Invalid(format!("the library could not be prepared: {error}")))?;
+            .map_err(|error| {
+                AppError::Invalid(format!("the library could not be prepared: {error}"))
+            })?;
         Ok(Self { connection })
     }
 
@@ -171,8 +173,9 @@ impl Store {
                 params![workspace, kind.as_str(), id, body_text, now_ms],
             )
             .map_err(sql_error)?;
-        self.get(workspace, kind, id)?
-            .ok_or_else(|| AppError::Invalid("the document went missing as it was written".to_owned()))
+        self.get(workspace, kind, id)?.ok_or_else(|| {
+            AppError::Invalid("the document went missing as it was written".to_owned())
+        })
     }
 
     pub fn get(&self, workspace: &str, kind: Kind, id: &str) -> AppResult<Option<Document>> {
@@ -285,7 +288,9 @@ impl Store {
                  UNION SELECT workspace FROM sync_queue ORDER BY workspace",
             )
             .map_err(sql_error)?;
-        let rows = statement.query_map([], |row| row.get(0)).map_err(sql_error)?;
+        let rows = statement
+            .query_map([], |row| row.get(0))
+            .map_err(sql_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(sql_error)
     }
 
@@ -392,16 +397,31 @@ mod tests {
     fn writing_again_bumps_the_version_so_a_sync_knows_which_is_newer() {
         let store = store();
         store
-            .put("personal", Kind::Library, "item-1", &json!({ "name": "First" }), 1_000)
+            .put(
+                "personal",
+                Kind::Library,
+                "item-1",
+                &json!({ "name": "First" }),
+                1_000,
+            )
             .expect("it writes");
         let second = store
-            .put("personal", Kind::Library, "item-1", &json!({ "name": "Second" }), 2_000)
+            .put(
+                "personal",
+                Kind::Library,
+                "item-1",
+                &json!({ "name": "Second" }),
+                2_000,
+            )
             .expect("it writes again");
         assert_eq!(second.version, 2);
         assert_eq!(second.updated_at, 2_000);
         assert_eq!(second.body["name"], "Second");
         assert_eq!(
-            store.list("personal", Kind::Library).expect("it lists").len(),
+            store
+                .list("personal", Kind::Library)
+                .expect("it lists")
+                .len(),
             1,
             "the same id is one row"
         );
@@ -410,9 +430,15 @@ mod tests {
     #[test]
     fn workspaces_and_kinds_do_not_see_each_other() {
         let store = store();
-        store.put("personal", Kind::Library, "a", &json!({}), 1).unwrap();
-        store.put("org_2", Kind::Library, "a", &json!({}), 1).unwrap();
-        store.put("personal", Kind::Service, "a", &json!({}), 1).unwrap();
+        store
+            .put("personal", Kind::Library, "a", &json!({}), 1)
+            .unwrap();
+        store
+            .put("org_2", Kind::Library, "a", &json!({}), 1)
+            .unwrap();
+        store
+            .put("personal", Kind::Service, "a", &json!({}), 1)
+            .unwrap();
 
         assert_eq!(store.list("personal", Kind::Library).unwrap().len(), 1);
         assert_eq!(store.list("org_2", Kind::Library).unwrap().len(), 1);
@@ -423,8 +449,24 @@ mod tests {
     #[test]
     fn replacing_a_workspace_leaves_exactly_what_arrived() {
         let mut store = store();
-        store.put("personal", Kind::Category, "old", &json!({ "name": "Old" }), 1).unwrap();
-        store.put("org_2", Kind::Category, "keep", &json!({ "name": "Other" }), 1).unwrap();
+        store
+            .put(
+                "personal",
+                Kind::Category,
+                "old",
+                &json!({ "name": "Old" }),
+                1,
+            )
+            .unwrap();
+        store
+            .put(
+                "org_2",
+                Kind::Category,
+                "keep",
+                &json!({ "name": "Other" }),
+                1,
+            )
+            .unwrap();
 
         let arriving = vec![
             ("one".to_owned(), json!({ "name": "Songs" })),
@@ -452,10 +494,15 @@ mod tests {
     #[test]
     fn removing_says_whether_there_was_anything_to_remove() {
         let store = store();
-        store.put("personal", Kind::Service, "s1", &json!({}), 1).unwrap();
+        store
+            .put("personal", Kind::Service, "s1", &json!({}), 1)
+            .unwrap();
         assert!(store.remove("personal", Kind::Service, "s1").unwrap());
         assert!(!store.remove("personal", Kind::Service, "s1").unwrap());
-        assert!(store.get("personal", Kind::Service, "s1").unwrap().is_none());
+        assert!(store
+            .get("personal", Kind::Service, "s1")
+            .unwrap()
+            .is_none());
     }
 
     fn change(id: &str, at: i64) -> QueuedChange {
@@ -486,7 +533,10 @@ mod tests {
         );
         assert_eq!(waiting[0].payload["name"], "Amazing grace");
 
-        assert_eq!(store.dequeue(&["c1".to_owned(), "c3".to_owned()]).unwrap(), 2);
+        assert_eq!(
+            store.dequeue(&["c1".to_owned(), "c3".to_owned()]).unwrap(),
+            2
+        );
         assert_eq!(store.queue_depth().unwrap(), 1);
         assert_eq!(store.queued(Some("personal"), 10).unwrap()[0].id, "c2");
     }
@@ -543,7 +593,9 @@ mod tests {
         store.enqueue(&change("c2", 2_000)).unwrap();
         let all = store.queued(None, 10).unwrap();
         assert_eq!(
-            all.iter().map(|change| change.id.as_str()).collect::<Vec<_>>(),
+            all.iter()
+                .map(|change| change.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["c1", "c2"],
             "every workspace, oldest first"
         );

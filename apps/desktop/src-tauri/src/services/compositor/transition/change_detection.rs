@@ -172,7 +172,10 @@ mod tests {
         let mut before = scene(json!([text("words", "Amazing Grace")]), Some("loop.mp4"));
         before.video_current_time = 4.0;
         before.is_video_playing = true;
-        let mut after = scene(json!([text("words", "How sweet the sound")]), Some("loop.mp4"));
+        let mut after = scene(
+            json!([text("words", "How sweet the sound")]),
+            Some("loop.mp4"),
+        );
         // Four seconds later, and the operator paused it.
         after.video_current_time = 8.0;
         after.is_video_playing = false;

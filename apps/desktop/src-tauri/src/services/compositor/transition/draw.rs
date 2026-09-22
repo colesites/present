@@ -11,9 +11,7 @@
 //! clamped to 0..=1: `Back` and `Elastic` overshoot, and a mask or an offset
 //! built from a number outside the range would draw outside the frame.
 
-use tiny_skia::{
-    FillRule, Mask, PathBuilder, Pixmap, PixmapMut, PixmapPaint, Transform,
-};
+use tiny_skia::{FillRule, Mask, PathBuilder, Pixmap, PixmapMut, PixmapPaint, Transform};
 
 use super::config::Direction;
 use super::registry::Primitive;
@@ -201,7 +199,9 @@ fn through(out: &mut PixmapMut<'_>, layer: &Pixmap, mask: &Mask) {
 fn wipe_mask(width: u32, height: u32, direction: Direction, progress: f32) -> Option<Mask> {
     let (w, h) = (width as f32, height as f32);
     let rect = match direction {
-        Direction::Right | Direction::Diagonal => tiny_skia::Rect::from_xywh(0.0, 0.0, w * progress, h),
+        Direction::Right | Direction::Diagonal => {
+            tiny_skia::Rect::from_xywh(0.0, 0.0, w * progress, h)
+        }
         Direction::Left => tiny_skia::Rect::from_xywh(w * (1.0 - progress), 0.0, w * progress, h),
         Direction::Down => tiny_skia::Rect::from_xywh(0.0, 0.0, w, h * progress),
         Direction::Up => tiny_skia::Rect::from_xywh(0.0, h * (1.0 - progress), w, h * progress),
@@ -349,7 +349,11 @@ mod tests {
         let (red, green, blue) = at(&drawn(Primitive::Fade, Direction::Left, 0.5), W / 2, H / 2);
         assert!(red > 0 && blue > 0, "halfway through a fade shows both");
 
-        let middle = at(&drawn(Primitive::DipToColor, Direction::Left, 0.5), W / 2, H / 2);
+        let middle = at(
+            &drawn(Primitive::DipToColor, Direction::Left, 0.5),
+            W / 2,
+            H / 2,
+        );
         assert_eq!(middle, (0, 0, 0), "a dip passes through the colour");
         assert_eq!(green, 0);
     }
@@ -392,7 +396,12 @@ mod tests {
 
     #[test]
     fn progress_outside_the_transition_does_not_draw_outside_the_picture() {
-        for primitive in [Primitive::Slide, Primitive::Wipe, Primitive::Shape, Primitive::Zoom] {
+        for primitive in [
+            Primitive::Slide,
+            Primitive::Wipe,
+            Primitive::Shape,
+            Primitive::Zoom,
+        ] {
             // What `Back` and `Elastic` hand over at their extremes.
             let under = drawn(primitive, Direction::Left, -0.4);
             let over = drawn(primitive, Direction::Left, 1.4);

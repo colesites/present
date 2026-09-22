@@ -16,9 +16,18 @@ fn main() {
         eprintln!("usage: decode_rate <video> [width] [height] [frames]");
         std::process::exit(2);
     };
-    let width: u32 = args.next().and_then(|value| value.parse().ok()).unwrap_or(480);
-    let height: u32 = args.next().and_then(|value| value.parse().ok()).unwrap_or(270);
-    let wanted: usize = args.next().and_then(|value| value.parse().ok()).unwrap_or(120);
+    let width: u32 = args
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(480);
+    let height: u32 = args
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(270);
+    let wanted: usize = args
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(120);
     let path = std::path::PathBuf::from(path);
 
     let opened = Instant::now();

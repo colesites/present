@@ -57,7 +57,10 @@ impl Direction {
             Self::Right => (1.0, 0.0),
             Self::Up => (0.0, -1.0),
             Self::Down => (0.0, 1.0),
-            Self::Diagonal => (std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2),
+            Self::Diagonal => (
+                std::f64::consts::FRAC_1_SQRT_2,
+                std::f64::consts::FRAC_1_SQRT_2,
+            ),
             Self::In | Self::Out | Self::Clockwise | Self::CounterClockwise => return None,
         })
     }
@@ -153,7 +156,8 @@ mod tests {
 
     #[test]
     fn a_slide_that_says_only_its_kind_gets_sensible_everything_else() {
-        let transition: Transition = serde_json::from_value(json!({ "type": "fade" })).expect("read");
+        let transition: Transition =
+            serde_json::from_value(json!({ "type": "fade" })).expect("read");
         assert_eq!(transition.duration_ms, 0, "nothing said, nothing animated");
         assert_eq!(transition.mode, Mode::ChangedElements);
         assert!(!transition.animates());
@@ -225,7 +229,11 @@ mod tests {
     fn the_directions_that_are_a_movement_say_which_way() {
         assert_eq!(Direction::Left.vector(), Some((-1.0, 0.0)));
         assert_eq!(Direction::Up.vector(), Some((0.0, -1.0)));
-        assert_eq!(Direction::In.vector(), None, "a shape opens, it does not move");
+        assert_eq!(
+            Direction::In.vector(),
+            None,
+            "a shape opens, it does not move"
+        );
         assert_eq!(Direction::Clockwise.vector(), None);
     }
 }

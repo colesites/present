@@ -20,15 +20,15 @@
 pub mod change_detection;
 pub mod config;
 pub mod draw;
-pub mod engine;
 pub mod easing;
+pub mod engine;
 pub mod registry;
 pub mod sample;
 
 pub use change_detection::{compare, Changes};
-pub use engine::Running;
 pub use config::{Direction, Mode, Transition};
 pub use easing::Easing;
+pub use engine::Running;
 pub use registry::{Category, Preset, Primitive, PRESETS};
 
 /// The `transition-sample://frame/<id>?p=&w=&h=` response.

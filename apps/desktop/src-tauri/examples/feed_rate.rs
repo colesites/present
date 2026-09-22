@@ -20,11 +20,20 @@ fn main() {
         eprintln!("usage: feed_rate <video> [polls-per-second] [seconds]");
         std::process::exit(2);
     };
-    let polls: u32 = args.next().and_then(|value| value.parse().ok()).unwrap_or(55);
-    let seconds: u64 = args.next().and_then(|value| value.parse().ok()).unwrap_or(5);
+    let polls: u32 = args
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(55);
+    let seconds: u64 = args
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(5);
     // How often the operator's player reports where it is. The app's is ten a
     // second; polling it more often than that is not the same test.
-    let reports: u32 = args.next().and_then(|value| value.parse().ok()).unwrap_or(10);
+    let reports: u32 = args
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(10);
     let path = std::path::PathBuf::from(path);
     let size = (480u32, 270u32);
 

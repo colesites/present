@@ -56,10 +56,7 @@ pub async fn offline_replace(
 }
 
 #[tauri::command]
-pub async fn offline_enqueue(
-    state: State<'_, StoreState>,
-    change: QueuedChange,
-) -> AppResult<()> {
+pub async fn offline_enqueue(state: State<'_, StoreState>, change: QueuedChange) -> AppResult<()> {
     state.with(|store| store.enqueue(&change))
 }
 

@@ -42,7 +42,6 @@ use super::{color, filters, geometry, images, parallel, shapes, Frame};
 /// anything else.
 const STILL_RETRY: Duration = Duration::from_secs(2);
 
-
 /// Which of a slide's elements a layer is drawn with.
 ///
 /// A transition needs one side of a change on its own: the elements that did
@@ -446,8 +445,11 @@ impl SceneCompositor {
                     report.elements_drawn += 1;
                 }
                 SlideTextLayer::Elements => {
-                    for (index, element) in
-                        scene.slide_elements().unwrap_or_default().into_iter().enumerate()
+                    for (index, element) in scene
+                        .slide_elements()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .enumerate()
                     {
                         if !element.is_visible() || !keep.wants(index, &element) {
                             continue;
@@ -456,8 +458,7 @@ impl SceneCompositor {
                             report.elements_deferred += 1;
                             continue;
                         }
-                        if super::scene::draw_element_into(layers, &element, viewport, loader)
-                        {
+                        if super::scene::draw_element_into(layers, &element, viewport, loader) {
                             report.elements_drawn += 1;
                         }
                     }
@@ -1087,7 +1088,11 @@ mod tests {
         let mut compositor = SceneCompositor::new(100, 100);
         let first = frame_of(100, 100, [0, 0, 255, 255]);
         compositor
-            .render(&whole("local-media://media/one.mp4"), Some(&first), &NoMedia)
+            .render(
+                &whole("local-media://media/one.mp4"),
+                Some(&first),
+                &NoMedia,
+            )
             .expect("the first video");
 
         // A different file, and a frame of a different colour with it.

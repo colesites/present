@@ -67,7 +67,10 @@ struct Shared {
 impl Shared {
     fn wanted_size(&self) -> (u32, u32) {
         let packed = self.wanted.load(Ordering::Relaxed);
-        (((packed >> 32) & 0xffff_ffff) as u32, (packed & 0xffff_ffff) as u32)
+        (
+            ((packed >> 32) & 0xffff_ffff) as u32,
+            (packed & 0xffff_ffff) as u32,
+        )
     }
 
     /// Ask for a size. The largest asked for in the last [`WIDEST_FOR`] wins.
@@ -84,8 +87,10 @@ impl Shared {
             let (widest, tallest) = self.wanted_size();
             (widest.max(size.0), tallest.max(size.1))
         };
-        self.wanted
-            .store((u64::from(width) << 32) | u64::from(height), Ordering::Relaxed);
+        self.wanted.store(
+            (u64::from(width) << 32) | u64::from(height),
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -162,7 +167,10 @@ struct Running(Arc<Mutex<bool>>);
 
 impl Drop for Running {
     fn drop(&mut self) {
-        *self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
     }
 }
 

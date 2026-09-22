@@ -41,7 +41,9 @@ pub const MIN_SIDE: u32 = 16;
 /// What a request asked to be drawn, once it has been checked.
 pub fn requested_size(width: Option<u32>, height: Option<u32>) -> (u32, u32) {
     let width = width.unwrap_or(640).clamp(MIN_SIDE, MAX_SIDE);
-    let height = height.unwrap_or_else(|| width * 9 / 16).clamp(MIN_SIDE, MAX_SIDE);
+    let height = height
+        .unwrap_or_else(|| width * 9 / 16)
+        .clamp(MIN_SIDE, MAX_SIDE);
     (width, height)
 }
 
@@ -89,14 +91,14 @@ impl PreviewSource {
             .video
             .frame_for(&scene, Instant::now(), size, &self.open);
         let shown = frame.map(|frame| frame.presentation_seconds);
-        let unchanged = self
-            .last
-            .as_ref()
-            .is_some_and(|(previous_scene, previous_video, previous_size)| {
-                *previous_size == size
-                    && *previous_video == shown
-                    && !previous_scene.draws_differently(&scene)
-            });
+        let unchanged =
+            self.last
+                .as_ref()
+                .is_some_and(|(previous_scene, previous_video, previous_size)| {
+                    *previous_size == size
+                        && *previous_video == shown
+                        && !previous_scene.draws_differently(&scene)
+                });
         if unchanged && !self.picture.is_empty() {
             return Ok(&self.picture);
         }

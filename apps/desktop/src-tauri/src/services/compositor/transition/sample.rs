@@ -48,9 +48,8 @@ pub fn draw(id: &str, progress: f64, width: u32, height: u32) -> Option<Pixmap> 
 
 /// A slide: a flat colour with a bar across it where the words would be.
 fn slide(width: u32, height: u32, colour: (u8, u8, u8), bar_at: f32) -> Pixmap {
-    let mut pixmap = Pixmap::new(width, height).unwrap_or_else(|| {
-        Pixmap::new(1, 1).expect("a pixel")
-    });
+    let mut pixmap =
+        Pixmap::new(width, height).unwrap_or_else(|| Pixmap::new(1, 1).expect("a pixel"));
     pixmap.fill(Color::from_rgba8(colour.0, colour.1, colour.2, 255));
 
     let (w, h) = (width as f32, height as f32);

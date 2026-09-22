@@ -778,7 +778,10 @@ mod tests {
         // It failed at the fifth frame, so the wait runs from there.
         let ready_at = start + STREAM_FRAME * 4 + RECOVER_AFTER;
         let recovered = harness.shown(&scene, ready_at + STREAM_FRAME);
-        assert_eq!(recovered, None, "the frame it was holding is let go with it");
+        assert_eq!(
+            recovered, None,
+            "the frame it was holding is let go with it"
+        );
         let playing_again = harness.shown(&scene, ready_at + STREAM_FRAME * 2);
         assert!(playing_again.is_some(), "a new decoder is playing it");
         assert_eq!(
