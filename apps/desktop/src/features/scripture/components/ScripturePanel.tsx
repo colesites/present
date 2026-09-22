@@ -600,19 +600,11 @@ export const ScripturePanel = memo(
           return;
         }
 
-        const quickParsed = parseReference(result.transcript, availableBooks);
-        if (quickParsed.book && quickParsed.chapter) {
-          return;
-        }
-
-        void identifyScripture(result.transcript);
+        // What happens next is the transcript effect's, which asks the model
+        // about everything that was heard. Asking here as well would ask
+        // twice about the same sentence and race its own answer.
       },
-      [
-        availableBooks,
-        handleAiQueryChange,
-        identifyScripture,
-        showAdjacentLiveVerse,
-      ],
+      [handleAiQueryChange, showAdjacentLiveVerse],
     );
 
     const {
@@ -748,17 +740,12 @@ export const ScripturePanel = memo(
         return;
       }
 
-      const quickParsed = parseReference(text, availableBooks);
-      if (quickParsed.book && quickParsed.chapter) {
-        return;
-      }
-
       identifyTimeoutRef.current = window.setTimeout(() => {
-        // The agent first: a sentence the parser could not read may still
-        // name a passage plainly enough to put on the screen. It answers
-        // `null` for anything it is unsure of, and for everything when
-        // nobody is signed in or the model cannot be reached — in which
-        // case this is exactly what it was before.
+        // Everything that was heard goes to the model: AssemblyAI turns
+        // sound into a sentence and the model decides what the sentence
+        // meant. It answers `null` for anything it is unsure of, and for
+        // everything when nobody is signed in or it cannot be reached — in
+        // which case this behaves exactly as it did before.
         void understandSpokenScripture(webAppBaseUrl, sessionToken ?? "", text, availableBooks)
           .then((understood) => {
             if (!understood?.mayProject || !understood.reference.book) {

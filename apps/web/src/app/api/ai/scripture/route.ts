@@ -11,11 +11,13 @@ import { resolveRequestAuthContext } from "@/lib/server/request-auth";
  *
  * The cost is one hop, twenty to fifty milliseconds, against a model call of
  * several hundred. The gain is that a leak means rotating an environment
- * variable rather than shipping a release, and that every call can be counted
- * against the account that made it.
+ * variable rather than shipping a release.
  *
- * **Almost nothing reaches here.** The desktop reads references with its own
- * parser first; only a sentence it cannot read is worth asking about.
+ * **Everything the microphone heard comes here.** AssemblyAI is a speech
+ * recogniser and nothing more; the model is what decides what a sentence
+ * meant. There is no quota of its own to keep: what limits voice search is
+ * AssemblyAI's own, which is counted when the microphone starts, and a free
+ * account that has used its hour cannot start one.
  */
 
 const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";

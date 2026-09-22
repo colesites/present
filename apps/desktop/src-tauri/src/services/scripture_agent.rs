@@ -142,57 +142,6 @@ pub fn understand(answer: &Answer, books: &[Book]) -> Understanding {
     }
 }
 
-/// What to do with an utterance, before anything is sent anywhere.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Heard {
-    /// The parser read it. No model, no network, no wait.
-    Read(Reference),
-    /// Worth asking about.
-    Ask,
-    /// Nothing that could be a reference.
-    Nothing,
-}
-
-/// Read what was heard, and say whether the model is needed at all.
-///
-/// The parser first, always: it is instant, it works with no network, and it
-/// is right about the forms people actually use.
-pub fn triage(heard: &str, books: &[Book]) -> Heard {
-    let trimmed = heard.trim();
-    if trimmed.is_empty() {
-        return Heard::Nothing;
-    }
-    let reference = scripture::parse(trimmed, books);
-    if reference.book.is_some() && reference.chapter.is_some() && reference.errors.is_empty() {
-        return Heard::Read(reference);
-    }
-    // A sentence with no digits and no number words in it is somebody
-    // preaching, not somebody naming a passage.
-    let has_number = trimmed.chars().any(|character| character.is_ascii_digit())
-        || NUMBER_WORDS
-            .iter()
-            .any(|word| contains_word(&trimmed.to_lowercase(), word));
-    if !has_number {
-        return Heard::Nothing;
-    }
-    Heard::Ask
-}
-
-/// Words that count as a number being said, including the ordinals — "the
-/// third chapter of John" names a chapter as surely as "John 3" does.
-const NUMBER_WORDS: [&str; 36] = [
-    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
-    "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
-    "twenty", "thirty", "forty", "fifty", "hundred", "first", "second", "third", "fourth",
-    "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth",
-];
-
-fn contains_word(haystack: &str, word: &str) -> bool {
-    haystack
-        .split(|character: char| !character.is_ascii_alphabetic())
-        .any(|token| token == word)
-}
-
 /// Where the desktop asks. The key for the gateway lives on the web app, not
 /// on this machine, so this is the one hop the model call takes.
 const ASK_PATH: &str = "/api/ai/scripture";
@@ -220,7 +169,9 @@ pub async fn ask(
     heard: &str,
     books: &[Book],
 ) -> Option<Understanding> {
-    if session_token.trim().is_empty() || !matches!(triage(heard, books), Heard::Ask) {
+    // Everything that was heard, whatever it looks like. What it meant is the
+    // model's question to answer, not this file's to pre-judge.
+    if session_token.trim().is_empty() || heard.trim().is_empty() || books.is_empty() {
         return None;
     }
     let url = ask_url(web_app_base_url)?;
@@ -267,50 +218,23 @@ mod tests {
         .collect()
     }
 
-    #[test]
-    fn what_the_parser_can_read_never_reaches_the_model() {
-        for heard in [
-            "John 3:16",
-            "john chapter 3 verse 16",
-            "first john 1 1",
-            "psalm 23",
-            "genesis chapter 1 from verse 1 to 5",
-        ] {
-            assert!(
-                matches!(triage(heard, &books()), Heard::Read(_)),
-                "{heard} should not need asking about"
-            );
-        }
-    }
-
-    #[test]
-    fn preaching_is_not_a_reference_and_is_not_sent_anywhere() {
-        for heard in [
-            "",
-            "   ",
-            "and so the Lord was with him all of his days",
-            "let us pray",
-        ] {
-            assert_eq!(triage(heard, &books()), Heard::Nothing, "{heard:?}");
-        }
-    }
-
-    #[test]
-    fn a_reference_said_sideways_is_worth_asking_about() {
-        for heard in [
-            "turn with me to the third chapter of John",
-            "the sixteenth verse of the third chapter",
-            "look at what jon says in three sixteen",
-        ] {
-            assert_eq!(triage(heard, &books()), Heard::Ask, "{heard}");
-        }
-
-        // And one the parser gets on its own, so the line between the two is
-        // where it is claimed to be.
-        assert!(matches!(
-            triage("the gospel of john 3 16", &books()),
-            Heard::Read(_)
-        ));
+    #[tokio::test]
+    async fn everything_that_was_heard_goes_to_the_model() {
+        let books = books();
+        // The only sentences that do not: the ones there is no way to ask
+        // about, or no way to check an answer against.
+        assert!(
+            ask("https://example.test", "", "John 3:16", &books).await.is_none(),
+            "nobody signed in"
+        );
+        assert!(
+            ask("https://example.test", "token", "   ", &books).await.is_none(),
+            "nothing was said"
+        );
+        assert!(
+            ask("https://example.test", "token", "John 3:16", &[]).await.is_none(),
+            "no books installed, so no answer could be checked"
+        );
     }
 
     #[test]
@@ -441,28 +365,6 @@ mod tests {
         assert_eq!(ask_url("  "), None);
     }
 
-    #[tokio::test]
-    async fn nothing_is_asked_without_somebody_signed_in_or_anything_to_ask() {
-        let books = books();
-        assert!(
-            ask("https://example.test", "", "the third chapter of John", &books)
-                .await
-                .is_none(),
-            "nobody signed in"
-        );
-        assert!(
-            ask("https://example.test", "token", "John 3:16", &books)
-                .await
-                .is_none(),
-            "the parser read it, so nothing is sent"
-        );
-        assert!(
-            ask("https://example.test", "token", "let us pray", &books)
-                .await
-                .is_none(),
-            "no reference in it"
-        );
-    }
 
     #[test]
     fn nonsense_confidence_is_no_confidence() {
