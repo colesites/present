@@ -250,7 +250,7 @@ export const SlideList = memo(function SlideList({
                       draggedSlideIndex === index && "opacity-40",
                     )}
                   >
-                    <div className="flex items-center justify-between px-0.5">
+                    <div className="flex items-center justify-between px-0.5 pr-5">
                       <div className="flex items-center gap-2">
                         <GripVertical className="h-4 w-4 text-muted-foreground/30" />
                         <span className="text-[11px] font-medium text-muted-foreground/70">
@@ -296,7 +296,10 @@ export const SlideList = memo(function SlideList({
                         onRemoveSlide(slide.id);
                       }
                     }}
-                    className="absolute right-3 top-3 inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground/45 transition hover:bg-muted hover:text-destructive"
+                    // The same height as the row it sits on, inset by the
+                    // card's own padding, so it lines up with the title
+                    // rather than floating near it.
+                    className="absolute right-1.5 top-1.5 inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground/45 transition hover:bg-muted hover:text-destructive"
                     aria-label={`Remove slide ${index + 1}`}
                   >
                     <Trash2 className="h-3.5 w-3.5" />

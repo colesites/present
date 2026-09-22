@@ -37,6 +37,8 @@ import {
   Upload,
   RefreshCw,
   Trash2,
+  Check,
+  ChevronDown,
 } from "lucide-react";
 import { ScriptureInput, type ScriptureInputRef } from "./ScriptureInput";
 import type { BibleVerse } from "../lib/db";
@@ -46,13 +48,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../../renderer/shared/components/ui/dropdown-menu";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "../../../renderer/shared/components/ui/resizable";
 
 interface ScripturePanelProps {
   onSendToOutput: (slides: ScriptureSlide[]) => void;
@@ -167,7 +165,9 @@ export const ScripturePanel = memo(
       versionCode: null,
       errors: [],
     });
-    const [isIdentifying, setIsIdentifying] = useState(false);
+    // Set while a spoken reference is being identified; the row that showed
+    // it went with the old three-column header.
+    const [, setIsIdentifying] = useState(false);
     const [isTextSearching, setIsTextSearching] = useState(false);
     const wasActiveRef = useRef(isActive);
     const activeVersePk = getActiveScriptureVersePk(activeSlideId);
@@ -906,321 +906,235 @@ export const ScripturePanel = memo(
     );
 
     return (
-      <ResizablePanelGroup direction="horizontal" className="flex h-full min-h-0 overflow-hidden bg-background">
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={30} className="flex shrink-0 flex-col border-r border-border/70 bg-card/40">
-          <div className="border-b border-border/70 px-3 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              Bible Versions
-            </p>
-            <div className="mt-3 flex flex-col gap-1.5 overflow-x-auto no-scrollbar pb-1">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+        {/* One row: which Bible, a reference, a search, and the microphone.
+            The sidebar of versions and books, and the heading that described
+            the row underneath it, took a third of the panel to say what the
+            controls already say. */}
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                title="Bible version"
+                className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-white/5 px-2.5 text-[11px] font-semibold tracking-wide text-foreground ring-1 ring-white/10 transition hover:ring-white/25"
+              >
+                {effectiveSelectedVersionCode || "No version"}
+                <ChevronDown className="h-3 w-3 opacity-50" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-60">
               {availableVersions.length === 0 ? (
-                <span className="text-[11px] text-muted-foreground px-1">No versions installed yet.</span>
+                <div className="px-2 py-2 text-xs text-muted-foreground">
+                  No versions installed yet.
+                </div>
               ) : (
                 availableVersions.map((version) => (
-                  <div
+                  <DropdownMenuItem
                     key={version.id}
-                    className={cn(
-                      "flex items-center justify-between gap-1 rounded-md border px-2 py-1.5 transition-colors",
-                      effectiveSelectedVersionCode === version.code
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-background text-muted-foreground hover:bg-accent/20",
-                    )}
+                    onClick={() => setSelectedVersionCode(version.code)}
+                    className="flex items-center justify-between gap-2"
                   >
-                    <button
-                      type="button"
-                      onClick={() => setSelectedVersionCode(version.code)}
-                      className="flex-1 text-left text-[11px] font-semibold"
-                    >
-                      {version.code}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleUninstallVersion(version.id);
-                      }}
-                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
-                      title="Remove version"
-                    >
-                      {removingVersionId === version.id ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-3 w-3" />
-                      )}
-                    </button>
-                  </div>
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs font-medium">{version.code}</span>
+                      <span className="block truncate text-[10px] text-muted-foreground">
+                        {version.name}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      {effectiveSelectedVersionCode === version.code ? (
+                        <Check className="h-3.5 w-3.5 text-primary" />
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleUninstallVersion(version.id);
+                        }}
+                        title="Remove version"
+                        className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        {removingVersionId === version.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3 w-3" />
+                        )}
+                      </button>
+                    </span>
+                  </DropdownMenuItem>
                 ))
               )}
-            </div>
+              <DropdownMenuSeparator />
+              {isHostedCatalogLoading ? (
+                <div className="px-2 py-2 text-xs text-muted-foreground">Loading versions…</div>
+              ) : (
+                hostedVersions.map((version) => (
+                  <DropdownMenuItem
+                    key={version.id}
+                    onClick={() => {
+                      void handleDownloadHostedVersion(version);
+                    }}
+                    disabled={downloadingHostedId === version.id}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs">{version.name}</span>
+                      <span className="block text-[10px] text-muted-foreground">{version.code}</span>
+                    </span>
+                    {downloadingHostedId === version.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5 opacity-60" />
+                    )}
+                  </DropdownMenuItem>
+                ))
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => importInputRef.current?.click()} className="gap-2">
+                <Upload className="h-3.5 w-3.5" />
+                Import a Bible file
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  void refreshHostedCatalog();
+                }}
+                className="gap-2"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", isHostedCatalogLoading && "animate-spin")} />
+                Refresh the list
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".zip,.json,.xml"
+            className="hidden"
+            onChange={(event) => {
+              void handleManualImport(event);
+            }}
+          />
+
+          <div className="min-w-0 flex-1">
+            <ScriptureInput
+              ref={inputRef}
+              onRefChange={handleRefChange}
+              value={lookupValue}
+              onValueChange={setLookupValue}
+              availableBooks={availableBooks}
+              availableVersions={availableVersions}
+              placeholder={
+                effectiveSelectedVersionCode
+                  ? `Reference — John 3:16`
+                  : "Reference"
+              }
+              onEnter={handleEnter}
+            />
           </div>
 
-          <div className="border-b border-border/70 px-3 py-2 bg-card/20">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              Books
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
+            <input
+              value={textSearchQuery}
+              onChange={(event) => handleTextSearchQueryChange(event.target.value)}
+              placeholder={searchMode === "exact" ? "Search an exact phrase" : "Search words"}
+              className="h-8 w-full rounded-md bg-white/4 pl-8 pr-16 text-xs text-foreground ring-1 ring-white/10 outline-hidden transition focus:ring-primary/50"
+            />
+            {isTextSearching ? (
+              <Loader2 className="absolute right-12 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-primary" />
+            ) : null}
+            <button
+              type="button"
+              aria-pressed={searchMode === "exact"}
+              onClick={() => setSearchMode(searchMode === "exact" ? "broad" : "exact")}
+              title={searchMode === "exact" ? "Matching the exact phrase" : "Matching words and variations"}
+              className={cn(
+                "absolute right-1 top-1/2 h-6 -translate-y-1/2 rounded px-1.5 text-[9px] font-bold uppercase tracking-wide transition",
+                searchMode === "exact"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground/70 hover:bg-white/8 hover:text-foreground",
+              )}
+            >
+              Exact
+            </button>
+          </div>
+
+          {isSupported ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (isListening) {
+                  stopListening();
+                  return;
+                }
+                if (isStarting) {
+                  return;
+                }
+                dismissedSpeechCandidateIds.clear();
+                setSpeechCandidates((previous) => previous.filter((candidate) => candidate.isAccepted));
+                handleAiQueryChange("");
+                if (effectiveSelectedVersionCode) {
+                  void prewarmSearchPool(effectiveSelectedVersionCode);
+                }
+                void startListening();
+              }}
+              disabled={isStarting}
+              aria-busy={isStarting}
+              aria-pressed={isListening}
+              title={
+                speechError
+                  ? speechError
+                  : isListening
+                    ? "Listening — click to stop"
+                    : isStarting
+                      ? "Starting the microphone…"
+                      : "Listen for a reference"
+              }
+              className={cn(
+                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md ring-1 transition",
+                isListening
+                  ? "bg-red-500 text-white ring-red-400"
+                  : isStarting
+                    ? "bg-amber-500/10 text-amber-500 ring-amber-500/40"
+                    : "bg-white/4 text-muted-foreground ring-white/10 hover:text-foreground hover:ring-white/25",
+                isStarting && "cursor-wait",
+              )}
+            >
+              {isListening ? (
+                <Mic className="h-4 w-4 animate-pulse" />
+              ) : isStarting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <MicOff className="h-4 w-4" />
+              )}
+            </button>
+          ) : null}
+        </div>
+
+        {activeImport ? (
+          <div className="shrink-0 px-3 pb-2">
+            <div className="mb-1 flex items-center justify-between text-[10px] capitalize text-muted-foreground">
+              <span>{activeImport.phase}</span>
+              <span>{activeImport.percent}%</span>
+            </div>
+            <div className="h-1 w-full overflow-hidden rounded-full bg-white/8">
+              <div
+                className="h-full bg-primary transition-all duration-200"
+                style={{ width: `${activeImport.percent}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {liveTranscript.trim() || isListening ? (
+          <div className="shrink-0 border-b border-border/40 px-3 py-1.5">
+            <p className="truncate text-[11px] text-muted-foreground">
+              <span className="mr-1.5 text-primary">●</span>
+              {liveTranscript.trim() || "Listening…"}
             </p>
           </div>
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-auto p-2">
-            {availableBooks.length === 0 ? (
-              <p className="text-[10px] text-muted-foreground p-2">Install a version to see books.</p>
-            ) : (
-              availableBooks.map((book) => (
-                <button
-                  key={book.pk}
-                  type="button"
-                  onClick={() => {
-                    setLookupValue(book.name + " ");
-                    inputRef.current?.focus();
-                  }}
-                  className="flex w-full items-center rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground transition hover:bg-secondary hover:text-foreground"
-                >
-                  {book.name}
-                </button>
-              ))
-            )}
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        <ResizablePanel defaultSize={80} className="flex min-w-0 flex-col overflow-hidden">
-          <div className="shrink-0 border-b border-border/60 bg-card px-4 py-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                  Content Control
-                </h2>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Lookup references, search keywords, or use voice identification.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept=".zip,.json,.xml"
-                  className="hidden"
-                  onChange={(event) => {
-                    void handleManualImport(event);
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => importInputRef.current?.click()}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-semibold text-foreground transition hover:bg-accent/40"
-                  title="Import Bible File"
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                </button>
-
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-semibold text-foreground transition hover:bg-accent/40"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      Download
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-72">
-                    {isHostedCatalogLoading ? (
-                      <div className="px-2 py-2 text-xs text-muted-foreground">
-                        Loading hosted versions...
-                      </div>
-                    ) : hostedVersions.length === 0 ? (
-                      <div className="space-y-2 px-2 py-2">
-                        <p className="text-xs text-muted-foreground">No hosted versions available.</p>
-                      </div>
-                    ) : (
-                      hostedVersions.map((version) => (
-                        <DropdownMenuItem
-                          key={version.id}
-                          onClick={() => {
-                            void handleDownloadHostedVersion(version);
-                          }}
-                          disabled={downloadingHostedId === version.id}
-                          className="flex items-center justify-between gap-2"
-                        >
-                          <span className="min-w-0">
-                            <span className="block truncate text-xs font-semibold">{version.name}</span>
-                            <span className="block text-[10px] text-muted-foreground">{version.code}</span>
-                          </span>
-                          {downloadingHostedId === version.id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : null}
-                        </DropdownMenuItem>
-                      ))
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    void refreshHostedCatalog();
-                  }}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition hover:text-foreground"
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", isHostedCatalogLoading && "animate-spin")} />
-                </button>
-              </div>
-            </div>
-
-            {activeImport ? (
-              <div className="mt-3">
-                <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground capitalize">
-                  <span>{activeImport.phase}</span>
-                  <span>{activeImport.percent}%</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
-                  <div
-                    className="h-full bg-primary transition-all duration-200"
-                    style={{ width: `${activeImport.percent}%` }}
-                  />
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="shrink-0 border-b border-border/40 bg-background px-4 py-3">
-            <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-              <div className="space-y-1">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Scripture Lookup
-                </p>
-                <ScriptureInput
-                  ref={inputRef}
-                  onRefChange={handleRefChange}
-                  value={lookupValue}
-                  onValueChange={setLookupValue}
-                  availableBooks={availableBooks}
-                  availableVersions={availableVersions}
-                  placeholder={
-                    effectiveSelectedVersionCode
-                      ? `Lookup in ${effectiveSelectedVersionCode} (e.g. John 3:16)`
-                      : "Lookup scripture reference"
-                  }
-                  onEnter={handleEnter}
-                />
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Verse Search
-                </p>
-                <div className="flex gap-1.5">
-                  <div className="relative min-w-0 flex-1">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                    <input
-                      value={textSearchQuery}
-                      onChange={(event) => handleTextSearchQueryChange(event.target.value)}
-                      placeholder={searchMode === "exact" ? "Search exact phrase" : "Search words and variations"}
-                      className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-8 text-xs text-foreground outline-none focus:border-primary/60"
-                    />
-                    {isTextSearching ? (
-                      <Loader2 className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-primary" />
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    aria-pressed={searchMode === "exact"}
-                    onClick={() => setSearchMode(searchMode === "exact" ? "broad" : "exact")}
-                    title={searchMode === "exact" ? "Exact phrase matching is on" : "Broad ranked matching is on"}
-                    className={cn(
-                      "h-9 shrink-0 rounded-md border px-2.5 text-[10px] font-bold uppercase transition",
-                      searchMode === "exact"
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-input bg-background text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    Exact
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Speech to Search
-                </p>
-                <div className="flex items-center gap-1.5">
-                  {isSupported ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (isListening) {
-                          stopListening();
-                          return;
-                        }
-                        if (isStarting) {
-                          return;
-                        }
-                        dismissedSpeechCandidateIds.clear();
-                        setSpeechCandidates((previous) =>
-                          previous.filter((candidate) => candidate.isAccepted),
-                        );
-                        handleAiQueryChange("");
-                        if (effectiveSelectedVersionCode) {
-                          void prewarmSearchPool(effectiveSelectedVersionCode);
-                        }
-                        void startListening();
-                      }}
-                      disabled={isStarting}
-                      aria-busy={isStarting}
-                      className={cn(
-                        "relative inline-flex h-9 w-9 items-center justify-center rounded-md border transition-colors",
-                        isListening
-                          ? "border-red-600 bg-red-500 text-white"
-                          : isStarting
-                            ? "border-amber-500 bg-amber-500/10 text-amber-600"
-                            : "border-border bg-background text-muted-foreground",
-                        isStarting && "cursor-wait",
-                      )}
-                    >
-                      {isListening ? (
-                        <Mic className="h-4 w-4 animate-pulse" />
-                      ) : isStarting ? (
-                        <>
-                          <span className="absolute right-1 top-1 flex h-2.5 w-2.5">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
-                          </span>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        </>
-                      ) : (
-                        <MicOff className="h-4 w-4" />
-                      )}
-                    </button>
-                  ) : null}
-                  <div className="relative flex-1">
-                    <input
-                      value={liveTranscript}
-                      onChange={(event) => handleAiQueryChange(event.target.value)}
-                      placeholder="Listen or type text"
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs outline-none focus:border-primary/60"
-                    />
-                    {isIdentifying ? (
-                      <Loader2 className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-primary" />
-                    ) : null}
-                  </div>
-                </div>
-                {speechError ? (
-                  <p className="text-[10px] text-destructive">{speechError}</p>
-                ) : isStarting ? (
-                  <p className="flex items-center gap-2 text-[10px] text-amber-600">
-                    <span className="relative flex h-2 w-2">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-400" />
-                    </span>
-                    Starting microphone...
-                  </p>
-                ) : isListening ? (
-                  <p className="text-[10px] text-primary">
-                    Listening for scripture reference...
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          </div>
+        ) : null}
 
           <div className="custom-scrollbar flex-1 overflow-y-auto p-4 space-y-6">
             <ScriptureResults
@@ -1300,10 +1214,8 @@ export const ScripturePanel = memo(
               </div>
             )}
 
-          </div>
-        </ResizablePanel>
-
-      </ResizablePanelGroup>
+        </div>
+      </div>
     );
   }),
 );

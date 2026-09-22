@@ -8,6 +8,13 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "../../renderer/shared/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../renderer/shared/components/ui/select";
 import { cn } from "../../renderer/shared/lib/utils";
 import {
   getTransitions,
@@ -246,18 +253,21 @@ export function TransitionPicker({ className }: { className?: string }) {
                   onChange={(durationMs) => choose({ durationMs })}
                 />
                 <span className="ml-auto text-[11px] text-muted-foreground">Easing</span>
-                <select
+                <Select
                   value={chosen.easing}
-                  onChange={(event) => choose({ easing: event.target.value as TransitionEasing })}
-                  aria-label="Easing"
-                  className="h-7 rounded-md bg-white/4 px-2 text-[11px] text-foreground ring-1 ring-white/8 outline-hidden focus:ring-primary/50"
+                  onValueChange={(easing) => choose({ easing: easing as TransitionEasing })}
                 >
-                  {EASINGS.map((easing) => (
-                    <option key={easing} value={easing}>
-                      {easing}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className="h-7 w-[132px] text-[11px]" aria-label="Easing">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EASINGS.map((easing) => (
+                      <SelectItem key={easing} value={easing} className="text-[11px]">
+                        {easing}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="flex items-center gap-3">
