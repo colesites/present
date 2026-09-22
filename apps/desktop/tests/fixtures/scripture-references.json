@@ -585,6 +585,114 @@
       "verseEnd": null,
       "versionCode": "ESV",
       "errors": []
+    },
+    {
+      "input": "genesis 4 3",
+      "book": "gen",
+      "chapter": 4,
+      "verseStart": 3,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "john chapter 1 from verse 2 to verse 10",
+      "book": "jhn",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": 10,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "genesis chapter 1 from verse 1 to 5",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 1,
+      "verseEnd": 5,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "john 3 16 to 18",
+      "book": "jhn",
+      "chapter": 3,
+      "verseStart": 16,
+      "verseEnd": 18,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "john 3 16 through 18",
+      "book": "jhn",
+      "chapter": 3,
+      "verseStart": 16,
+      "verseEnd": 18,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "john chapter 1 beginning at verse 2",
+      "book": "jhn",
+      "chapter": 1,
+      "verseStart": 2,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "2 john verse 5",
+      "book": "2jn",
+      "chapter": 1,
+      "verseStart": 5,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "second john verse 5",
+      "book": "2jn",
+      "chapter": 1,
+      "verseStart": 5,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "third john verse 4",
+      "book": "3jn",
+      "chapter": 1,
+      "verseStart": 4,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "psalm 119 verse 1",
+      "book": "psa",
+      "chapter": 119,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "psalm one hundred and nineteen verse one",
+      "book": "psa",
+      "chapter": 119,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "psalm 23",
+      "book": "psa",
+      "chapter": 23,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
     }
   ]
 }

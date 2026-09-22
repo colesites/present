@@ -120,6 +120,18 @@ fn book_aliases(book: &Book) -> Vec<String> {
         .map(|value| normalize_book_lookup(value))
         .filter(|alias| !alias.is_empty())
         .collect();
+    // "Psalm 23" is how it is said, and the book is called Psalms. A name
+    // that ends in "s" answers to itself without it, and one that does not
+    // answers to itself with it — which covers Psalm(s), Proverb(s), Song(s)
+    // and Revelation(s) without a table of exceptions.
+    let mut spoken: Vec<String> = Vec::new();
+    for alias in &aliases {
+        match alias.strip_suffix('s') {
+            Some(singular) if singular.len() >= 3 => spoken.push(singular.to_owned()),
+            _ => spoken.push(format!("{alias}s")),
+        }
+    }
+    aliases.extend(spoken);
     aliases.sort_by_key(|alias| std::cmp::Reverse(alias.len()));
     aliases.dedup();
     aliases
@@ -133,7 +145,12 @@ fn find_whole_word(input: &str, alias: &str) -> Option<(usize, usize)> {
         let start = from + offset;
         let end = start + alias.len();
         let before_is_space = start == 0 || lowered[..start].ends_with(' ');
-        let after_is_space = end == lowered.len() || lowered[end..].starts_with(' ');
+        // A colon ends the name as surely as a space does: normalising
+        // "2 John verse 5" leaves "2 john:5", and a book of one chapter is
+        // said that way more often than not.
+        let after_is_space = end == lowered.len()
+            || lowered[end..].starts_with(' ')
+            || lowered[end..].starts_with(':');
         if before_is_space && after_is_space {
             return Some((start, end));
         }
@@ -279,16 +296,25 @@ fn rewrite_chapter_and_verse_words(input: &str) -> String {
             index += 1;
             continue;
         }
+        // "from verse 2 to verse 10", "beginning at verse 3": the words that
+        // introduce a verse carry nothing the numbers do not.
+        if matches!(lowered.as_str(), "from" | "beginning" | "starting" | "at") {
+            index += 1;
+            continue;
+        }
         if lowered == "verse" || lowered == "verses" {
             if let Some(start) = number(words.get(index + 1)) {
                 let joined = words.get(index + 2).map(|word| word.to_lowercase());
                 let joined_range = match joined.as_deref() {
-                    // "verses 3 to 5" and "verses 3 through 5"
-                    Some("to") | Some("through") => {
-                        number(words.get(index + 3)).map(|end| (end, 4))
+                    // "verses 3 to 5", "verses 3 through 5", "verses 3 - 5",
+                    // and the same with the word repeated: "from verse 3 to
+                    // verse 5", which is how it is usually said aloud.
+                    Some("to") | Some("through") | Some("-") => {
+                        let after = words.get(index + 3).map(|word| word.to_lowercase());
+                        let repeats = matches!(after.as_deref(), Some("verse") | Some("verses"));
+                        let at = if repeats { index + 4 } else { index + 3 };
+                        number(words.get(at)).map(|end| (end, at - index + 1))
                     }
-                    // "verses 3 - 5"
-                    Some("-") => number(words.get(index + 3)).map(|end| (end, 4)),
                     _ => None,
                 };
                 if let Some((end, width)) = joined_range {
@@ -308,6 +334,20 @@ fn rewrite_chapter_and_verse_words(input: &str) -> String {
                 out.push(format!(":{range}"));
                 index += 2;
                 continue;
+            }
+        }
+        // "16 to 18", said without the word "verse" at all.
+        if is_digits(&lowered) {
+            let joiner = words.get(index + 1).map(|word| word.to_lowercase());
+            if matches!(joiner.as_deref(), Some("to") | Some("through")) {
+                let after = words.get(index + 2).map(|word| word.to_lowercase());
+                let repeats = matches!(after.as_deref(), Some("verse") | Some("verses"));
+                let at = if repeats { index + 3 } else { index + 2 };
+                if let Some(end) = number(words.get(at)) {
+                    out.push(format!("{lowered}-{end}"));
+                    index = at + 1;
+                    continue;
+                }
             }
         }
         out.push(words[index].to_owned());
@@ -437,6 +477,13 @@ pub fn parse(input: &str, books: &[Book]) -> Reference {
         return reference;
     };
     reference.book = Some(book.id.clone());
+
+    // A book of one chapter is spoken without it: "Jude verse 3", "2 John
+    // verse 5". The verse is there; the chapter can only be the one.
+    let after_book = match after_book.strip_prefix(':') {
+        Some(verse) if book.chapters == 1 => format!("1:{verse}"),
+        _ => after_book,
+    };
 
     let parsed = all_consuming(tail).parse(after_book.as_str()).ok();
     let Some((_, parsed)) = parsed else {
