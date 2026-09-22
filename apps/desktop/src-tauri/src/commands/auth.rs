@@ -18,6 +18,7 @@ use tauri::{AppHandle, State};
 
 use crate::errors::{AppError, AppResult};
 use crate::services::auth::{self, AuthPayload, RefreshOutcome, StoredSession};
+use crate::services::auth_loopback;
 use crate::services::deep_link::PendingDeepLink;
 use crate::state::AuthState;
 
@@ -73,7 +74,17 @@ pub async fn begin_auth_flow(
     app: AppHandle,
     web_app_base_url: String,
 ) -> AppResult<AuthFlowResult> {
-    let url = match auth::build_login_url(&web_app_base_url) {
+    // In development the browser is asked to come back here, because the
+    // `present://` link belongs to whichever Present is installed rather than
+    // to the one being worked on. A packaged build has no listener and no
+    // redirect, and the link is used exactly as before.
+    let come_back_to = if cfg!(debug_assertions) {
+        auth_loopback::listen(&app)
+    } else {
+        None
+    };
+
+    let url = match auth::build_login_url_returning_to(&web_app_base_url, come_back_to.as_deref()) {
         Ok(url) => url,
         Err(error) => {
             return Ok(AuthFlowResult {

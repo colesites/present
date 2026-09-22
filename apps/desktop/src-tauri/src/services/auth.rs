@@ -164,6 +164,20 @@ fn normalize_organization(value: &serde_json::Value) -> Option<StoredOrganizatio
 /// across two apps, which belongs with the rest of the auth work rather than
 /// here. Recorded rather than silently "fixed".
 pub fn build_login_url(web_app_base_url: &str) -> AppResult<String> {
+    build_login_url_returning_to(web_app_base_url, None)
+}
+
+/// The sign-in URL, optionally naming a loopback address to come back to.
+///
+/// A packaged build passes `None` and the session arrives over the
+/// `present://` link, as it always has. A development build passes the
+/// listener it opened, because on macOS that link belongs to whichever Present
+/// is installed and never reaches the one being worked on
+/// (`services/auth_loopback.rs`).
+pub fn build_login_url_returning_to(
+    web_app_base_url: &str,
+    come_back_to: Option<&str>,
+) -> AppResult<String> {
     let base = web_app_base_url.trim().trim_end_matches('/');
     if base.is_empty() {
         return Err(AppError::Invalid(
@@ -171,9 +185,16 @@ pub fn build_login_url(web_app_base_url: &str) -> AppResult<String> {
         ));
     }
 
+    let next = match come_back_to {
+        Some(address) => format!(
+            "/auth/desktop/callback?redirect={}",
+            encode_component(address)
+        ),
+        None => "/auth/desktop/callback".to_owned(),
+    };
     Ok(format!(
         "{base}/sign-in?source=desktop&client=electron&flow=external-browser&next={}",
-        encode_component("/auth/desktop/callback")
+        encode_component(&next)
     ))
 }
 
@@ -529,5 +550,29 @@ mod tests {
         assert_eq!(failed["ok"], false);
         assert_eq!(failed["status"], 401);
         assert_eq!(failed["error"], "nope");
+    }
+    #[test]
+    fn a_development_sign_in_names_where_to_come_back_to() {
+        let url = build_login_url_returning_to(
+            "http://localhost:3001",
+            Some("http://127.0.0.1:52341/auth"),
+        )
+        .expect("a url");
+        assert!(
+            url.starts_with("http://localhost:3001/sign-in?"),
+            "the local web app: {url}"
+        );
+        assert!(
+            url.contains("next=%2Fauth%2Fdesktop%2Fcallback%3Fredirect%3Dhttp%253A%252F%252F127.0.0.1%253A52341%252Fauth"),
+            "and the address it should hand the session to: {url}"
+        );
+    }
+
+    #[test]
+    fn a_packaged_sign_in_is_exactly_what_it_was() {
+        assert_eq!(
+            build_login_url("https://present.multivrs.space").expect("a url"),
+            build_login_url_returning_to("https://present.multivrs.space", None).expect("a url"),
+        );
     }
 }
