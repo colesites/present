@@ -1,14 +1,12 @@
 "use client";
 
 import {
-  createElement,
   memo,
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type HTMLAttributes,
 } from "react";
 import { cn } from "../../renderer/shared/lib/utils";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
@@ -63,7 +61,6 @@ export type OutputPreviewTarget = "audience" | "media" | "worship";
 
 const OUTPUT_BASE_WIDTH = 1280;
 const OUTPUT_BASE_HEIGHT = 720;
-const YOUTUBE_EMBED_REFERRER = "https://present.app/";
 const YOUTUBE_EMBED_ORIGIN = "https://present.app";
 
 interface OutputPreviewProps {
@@ -1643,13 +1640,6 @@ function PreviewYouTubeLayer({
   shownAtMs?: number;
   style: CSSProperties;
 }) {
-  type WebviewProps = HTMLAttributes<HTMLElement> & {
-    allow?: string;
-    allowpopups?: string;
-    httpreferrer?: string;
-    partition?: string;
-    src: string;
-  };
   const src = useMemo(
     () => getPreviewYouTubeEmbedUrl(youtubeUrl, getElapsedSeconds(shownAtMs)),
     [shownAtMs, youtubeUrl],
@@ -1657,15 +1647,17 @@ function PreviewYouTubeLayer({
 
   if (!src) return null;
 
-  return createElement("webview", {
-    src,
-    className: "absolute z-30 border-0 bg-black",
-    style: { ...style, aspectRatio: "16 / 9" },
-    partition: "persist:present-youtube-props",
-    allow: "autoplay; encrypted-media; picture-in-picture",
-    allowpopups: "false",
-    httpreferrer: YOUTUBE_EMBED_REFERRER,
-  } satisfies WebviewProps);
+  // See `OutputWindow`: `<webview>` is Electron's, and renders nothing here.
+  return (
+    <iframe
+      src={src}
+      title="YouTube"
+      className="absolute z-30 border-0 bg-black"
+      style={{ ...style, aspectRatio: "16 / 9" }}
+      allow="autoplay; encrypted-media; picture-in-picture"
+      referrerPolicy="strict-origin-when-cross-origin"
+    />
+  );
 }
 
 function getPreviewYouTubeEmbedUrl(

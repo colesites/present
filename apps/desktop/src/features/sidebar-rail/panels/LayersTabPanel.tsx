@@ -147,6 +147,17 @@ export function LayersTabPanel({
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [isMediaPickerOpen, setIsMediaPickerOpen] = useState(false);
   const [isVideoSourceMenuOpen, setIsVideoSourceMenuOpen] = useState(false);
+
+  // Escape closes it too. The backdrop below catches a click elsewhere; this
+  // catches the operator who reaches for the keyboard instead.
+  useEffect(() => {
+    if (!isVideoSourceMenuOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsVideoSourceMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isVideoSourceMenuOpen]);
   const [ndiSources, setNdiSources] = useState<NdiSource[]>([]);
   const [isLoadingNdiSources, setIsLoadingNdiSources] = useState(false);
   const [captureDevices, setCaptureDevices] = useState<CaptureDevice[]>([]);
@@ -539,6 +550,19 @@ export function LayersTabPanel({
               <ChevronDown className="h-3 w-3" strokeWidth={1.8} />
             </button>
             {isVideoSourceMenuOpen ? (
+              <>
+                {/*
+                  Somewhere to click that is not the menu. This menu is built by
+                  hand rather than with the popover component, so nothing was
+                  listening for a click elsewhere and the only way out was to
+                  press the button again — or to pick something the operator did
+                  not want.
+                */}
+                <div
+                  className="fixed inset-0 z-20"
+                  onClick={() => setIsVideoSourceMenuOpen(false)}
+                  aria-hidden
+                />
               <div className="absolute right-0 top-7 z-30 w-48 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
                 <button
                   type="button"
@@ -565,6 +589,7 @@ export function LayersTabPanel({
                   HDMI / capture card
                 </button>
               </div>
+              </>
             ) : null}
           </div>
         </div>
