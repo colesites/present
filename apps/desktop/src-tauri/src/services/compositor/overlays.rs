@@ -61,13 +61,28 @@ pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay) {
     let width = pixmap.width() as f32;
     let height = pixmap.height() as f32;
 
-    let font_size = (width * MESSAGE_FONT_VW).min(
-        height * MESSAGE_FONT_MAX_RATIO * 1080.0 / 1080.0 * 64.0 / 64.0
-            * (height * MESSAGE_FONT_MAX_RATIO),
-    );
-    let font_size = font_size.max(12.0);
+    // Six percent of the width, capped at the height's share — 64px on a
+    // 1080-tall frame. The cap used to multiply the two terms together, which
+    // squares a number already in pixels: on any real frame it came out in the
+    // thousands, so the cap never bound and every message was drawn at the
+    // full six percent of the width. At 1920 that is 115px before the
+    // operator's own scale is applied on top.
+    let font_size = (width * MESSAGE_FONT_VW)
+        .min(height * MESSAGE_FONT_MAX_RATIO)
+        .max(12.0);
+
+    let scale = if overlay.font_scale.is_finite() && overlay.font_scale > 0.0 {
+        overlay.font_scale as f32
+    } else {
+        1.0
+    };
+    // The band is sized around the text that actually goes in it. It used to
+    // be measured from the unscaled size, so an operator who set the font to
+    // 140% got text 40% taller than the colour behind it — the banner looked
+    // like it was covering the wrong height because the text had outgrown it.
+    let scaled_font = font_size * scale;
     let padding = height * MESSAGE_PADDING_RATIO;
-    let band_height = font_size * 1.4 + padding * 2.0;
+    let band_height = scaled_font * 1.4 + padding * 2.0;
 
     let top = if overlay.position == "top" {
         0.0
@@ -94,18 +109,12 @@ pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay) {
         }
     }
 
-    let scale = if overlay.font_scale.is_finite() && overlay.font_scale > 0.0 {
-        overlay.font_scale as f32
-    } else {
-        1.0
-    };
-
     let spec = text::TextBox::new(
         padding,
         top + padding,
         (width - padding * 2.0).max(1.0),
         (band_height - padding * 2.0).max(1.0),
-        font_size * scale,
+        scaled_font,
     )
     .centred()
     .with_color(ink)
@@ -549,6 +558,36 @@ mod tests {
     }
 
     #[test]
+    fn the_banner_grows_with_the_font_the_operator_chose() {
+        // The colour behind the text is sized from the text that goes in it.
+        // Measured from the unscaled size, a message set to 140% had text
+        // taller than its own banner, which read as the banner covering the
+        // wrong height.
+        let band_rows = |scale: f64| {
+            let mut frame = Frame::new(320, 180).expect("frame");
+            let mut overlay = message("top", "info", "Offering is by transfer");
+            overlay.font_scale = scale;
+            draw_message(&mut frame.pixmap_mut(), &overlay);
+            // The frame starts opaque black, so the plate is found by colour:
+            // every row at the left edge that is no longer black is banner.
+            (0..180)
+                .filter(|row| {
+                    frame
+                        .pixel_at(2, *row)
+                        .is_some_and(|(r, g, b, _)| r > 0 || g > 0 || b > 0)
+                })
+                .count()
+        };
+        let plain = band_rows(1.0);
+        let larger = band_rows(1.4);
+        assert!(plain > 0, "a banner is drawn at all");
+        assert!(
+            larger > plain,
+            "a larger font needs a taller banner: {plain} then {larger}"
+        );
+    }
+
+    #[test]
     fn each_theme_paints_its_own_plate() {
         // Ported case for case from `getOverlayThemeStyle`. A theme silently
         // falling back would send the wrong signal on a warning message.
@@ -557,7 +596,9 @@ mod tests {
             &mut warning.pixmap_mut(),
             &message("top", "warning", "Move your car"),
         );
-        let (r, g, b, _) = warning.pixel_at(160, 10).expect("pixel");
+        // Sampled at the band's left edge, inside the padding: the centre is
+        // where the text goes, and the band is only as tall as the text now.
+        let (r, g, b, _) = warning.pixel_at(2, 2).expect("pixel");
         assert!(
             r > 200 && g > 120 && b < 80,
             "amber expected, got {r},{g},{b}"
@@ -568,7 +609,7 @@ mod tests {
             &mut danger.pixmap_mut(),
             &message("top", "danger", "Evacuate"),
         );
-        let (r, g, b, _) = danger.pixel_at(160, 10).expect("pixel");
+        let (r, g, b, _) = danger.pixel_at(2, 2).expect("pixel");
         assert!(r > 180 && g < 90 && b < 90, "red expected, got {r},{g},{b}");
     }
 
