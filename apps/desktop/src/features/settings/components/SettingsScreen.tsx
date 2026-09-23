@@ -393,6 +393,12 @@ export function SettingsScreen({
         .filter(
           (device) =>
             device.kind === "audioinput" &&
+            // A device the browser will not name yet: until microphone
+            // permission is granted, `enumerateDevices` answers with one
+            // placeholder per kind whose id and label are both empty. It is
+            // not a device anyone can pick, and the picker below throws on an
+            // empty value — which takes the whole Settings window with it.
+            device.deviceId !== "" &&
             device.deviceId !== "default" &&
             device.deviceId !== "communications",
         )
@@ -404,6 +410,8 @@ export function SettingsScreen({
         .filter(
           (device) =>
             device.kind === "audiooutput" &&
+            // As above: an unnamed placeholder, not a device.
+            device.deviceId !== "" &&
             device.deviceId !== "default" &&
             device.deviceId !== "communications",
         )

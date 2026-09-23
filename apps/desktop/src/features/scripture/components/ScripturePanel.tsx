@@ -24,8 +24,6 @@ import {
   type ScriptureSlide,
 } from "../lib/slides";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
-import type { SpeechScriptureCandidate } from "./SpeechScriptureStack";
-import { useSpeechScriptureOverlayStore } from "../lib/speech-scripture-overlay";
 import { useScripturePanelStore } from "../lib/panel-state";
 import {
   Mic,
@@ -70,9 +68,6 @@ interface ScripturePanelProps {
   activeSlideId?: string | null;
 }
 
-const SPEECH_CANDIDATE_TTL_MS = 10_000;
-const MAX_SPEECH_CANDIDATES = 5;
-
 const isNextVerseCommand = (value: string) =>
   /\b(next|forward)\s+(verse|scripture)\b/i.test(value.trim());
 
@@ -99,19 +94,9 @@ export const ScripturePanel = memo(
     const inputRef = useRef<ScriptureInputRef>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
     const identifyTimeoutRef = useRef<number | null>(null);
-    const identifyRequestRef = useRef(0);
     const textSearchRequestRef = useRef(0);
-    const speechSearchRequestRef = useRef(0);
     const [downloadingHostedId, setDownloadingHostedId] = useState<string | null>(null);
     const [removingVersionId, setRemovingVersionId] = useState<string | null>(null);
-    const [speechCandidates, setSpeechCandidates] = useState<SpeechScriptureCandidate[]>([]);
-    const [dismissedSpeechCandidateIds] = useState(() => new Set<string>());
-    const setSpeechScriptureOverlay = useSpeechScriptureOverlayStore(
-      (state) => state.setOverlay,
-    );
-    const clearSpeechScriptureOverlay = useSpeechScriptureOverlayStore(
-      (state) => state.clearOverlay,
-    );
 
     useImperativeHandle(ref, () => ({
       focusSearch: () => {
@@ -123,6 +108,7 @@ export const ScripturePanel = memo(
     const allBooks = useMemo(() => liveBooks ?? [], [liveBooks]);
     const liveVersions = useLiveQuery(() => db.versions.toArray());
     const availableVersions = useMemo(() => liveVersions ?? [], [liveVersions]);
+
     const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
     const webAppBaseUrl = useMemo(() => desktopWebBaseUrl(), []);
 
@@ -132,13 +118,34 @@ export const ScripturePanel = memo(
       uninstallVersion,
       lookupRef,
       searchVersesByText,
-      identifyVerseFromText,
       prewarmSearchPool,
       downloadVersion,
       hostedVersions,
       isHostedCatalogLoading,
       refreshHostedCatalog,
     } = useScripture();
+    /**
+     * The catalog, minus what is already here.
+     *
+     * The list above this one is what the operator has installed; without this
+     * the same Bible appears in both, the second time still offering to
+     * download it. Matched on the version code rather than the id, because a
+     * bundled file's id comes from the catalog and an imported one's comes
+     * from the file — the same Bible arrives under two ids, and only the code
+     * is the same on both sides.
+     */
+    const installableVersions = useMemo(() => {
+      const installed = new Set(
+        availableVersions.flatMap((version) =>
+          [version.code, version.id].filter(Boolean).map((value) => value.toLowerCase()),
+        ),
+      );
+      return hostedVersions.filter(
+        (version) =>
+          !installed.has(version.code.toLowerCase())
+          && !installed.has(version.id.toLowerCase()),
+      );
+    }, [availableVersions, hostedVersions]);
 
     const lookupValue = useScripturePanelStore((state) => state.lookupValue);
     const setLookupValue = useScripturePanelStore((state) => state.setLookupValue);
@@ -170,9 +177,6 @@ export const ScripturePanel = memo(
       versionCode: null,
       errors: [],
     });
-    // Set while a spoken reference is being identified; the row that showed
-    // it went with the old three-column header.
-    const [, setIsIdentifying] = useState(false);
     const [isTextSearching, setIsTextSearching] = useState(false);
     const wasActiveRef = useRef(isActive);
     const activeVersePk = getActiveScriptureVersePk(activeSlideId);
@@ -298,180 +302,11 @@ export const ScripturePanel = memo(
       return (await db.verses.get(activeVersePk)) ?? null;
     }, [activeVersePk]);
 
-    const enqueueSpeechVerses = useCallback(
-      (verses: BibleVerse[], transcript: string) => {
-        if (verses.length === 0) return;
-        setSpeechCandidates((previous) => {
-          const now = Date.now();
-          const activePrevious = previous.filter(
-            (candidate) => candidate.isAccepted || candidate.expiresAtMs > now,
-          );
-          const previousById = new Map(
-            activePrevious.map((candidate) => [candidate.id, candidate]),
-          );
-          const incoming = verses.reduce<SpeechScriptureCandidate[]>((candidates, verse) => {
-            if (dismissedSpeechCandidateIds.has(verse.pk)) return candidates;
-            const existing = previousById.get(verse.pk);
-            candidates.push({
-              id: verse.pk,
-              reference: formatReference({
-                bookName: verse.bookName,
-                chapter: verse.chapter,
-                verseStart: verse.verse,
-                versionCode: resolveVersionCode(verse.version),
-              }),
-              transcript,
-              verse,
-              createdAtMs: existing?.createdAtMs ?? now,
-              expiresAtMs: existing?.expiresAtMs ?? now + SPEECH_CANDIDATE_TTL_MS,
-              isAccepted: existing?.isAccepted ?? false,
-            });
-            return candidates;
-          }, []);
-          return [...incoming, ...activePrevious.filter(
-            (candidate) => !incoming.some((item) => item.id === candidate.id),
-          )].slice(0, MAX_SPEECH_CANDIDATES);
-        });
-      },
-      [dismissedSpeechCandidateIds, formatReference, resolveVersionCode],
-    );
-
-    useEffect(() => {
-      if (speechCandidates.length === 0) {
-        return;
-      }
-
-      const expiringCandidates = speechCandidates.filter(
-        (candidate) => !candidate.isAccepted,
-      );
-      if (expiringCandidates.length === 0) {
-        return;
-      }
-
-      const now = Date.now();
-      const nextExpiry = Math.min(
-        ...expiringCandidates.map((candidate) => candidate.expiresAtMs),
-      );
-
-      if (nextExpiry <= now) {
-        setSpeechCandidates((previous) =>
-          previous.filter(
-            (candidate) => candidate.isAccepted || candidate.expiresAtMs > Date.now(),
-          ),
-        );
-        return;
-      }
-
-      const timeoutId = window.setTimeout(() => {
-        setSpeechCandidates((previous) =>
-          previous.filter(
-            (candidate) => candidate.isAccepted || candidate.expiresAtMs > Date.now(),
-          ),
-        );
-      }, nextExpiry - now + 25);
-
-      return () => {
-        window.clearTimeout(timeoutId);
-      };
-    }, [speechCandidates]);
-
-    const identifyScripture = useCallback(
-      async (transcript: string) => {
-        const trimmedTranscript = transcript.trim();
-        if (!trimmedTranscript) return;
-
-        const requestId = identifyRequestRef.current + 1;
-        identifyRequestRef.current = requestId;
-        setIsIdentifying(true);
-
-        let matchedVerse: BibleVerse | null = null;
-
-        try {
-          matchedVerse = await identifyVerseFromText({
-            query: trimmedTranscript,
-            versionCode: effectiveSelectedVersionCode,
-          });
-        } catch (err: unknown) {
-          console.error("Failed to identify scripture:", err);
-        }
-
-        if (identifyRequestRef.current !== requestId) {
-          return;
-        }
-
-        setIsIdentifying(false);
-
-        if (matchedVerse) enqueueSpeechVerses([matchedVerse], trimmedTranscript);
-      },
-      [
-        effectiveSelectedVersionCode,
-        enqueueSpeechVerses,
-        identifyVerseFromText,
-      ],
-    );
-
-    const searchSpeechCandidates = useCallback(
-      async (transcript: string) => {
-        const query = transcript.trim();
-        if (query.replace(/[^A-Za-z0-9]/g, "").length < 3) {
-          return;
-        }
-
-        const requestId = speechSearchRequestRef.current + 1;
-        speechSearchRequestRef.current = requestId;
-
-        const results = await searchVersesByText({
-          query,
-          versionCode: effectiveSelectedVersionCode,
-          limit: 5,
-          mode: "broad",
-        });
-
-        if (speechSearchRequestRef.current !== requestId) {
-          return;
-        }
-
-        enqueueSpeechVerses(results, query);
-      },
-      [effectiveSelectedVersionCode, enqueueSpeechVerses, searchVersesByText],
-    );
-
     const handleAiQueryChange = useCallback(
       (value: string) => {
         setLiveTranscript(value);
-
-        const text = value.trim();
-        if (!text) {
-          setIsIdentifying(false);
-          setSpeechCandidates((previous) =>
-            previous.filter((candidate) => candidate.isAccepted),
-          );
-          dismissedSpeechCandidateIds.clear();
-          return;
-        }
-
-        const quickParsed = parseReference(text, availableBooks);
-        if (!quickParsed.book || !quickParsed.chapter) {
-          void searchSpeechCandidates(text);
-          setIsIdentifying(false);
-          return;
-        }
-
-        const versionCode = quickParsed.versionCode || effectiveSelectedVersionCode;
-        void lookupRef({ ...quickParsed, versionCode }).then((verses) => {
-          enqueueSpeechVerses(verses.slice(0, 5), text);
-        });
-        setIsIdentifying(false);
       },
-      [
-        availableBooks,
-        effectiveSelectedVersionCode,
-        enqueueSpeechVerses,
-        dismissedSpeechCandidateIds,
-        lookupRef,
-        searchSpeechCandidates,
-        setLiveTranscript,
-      ],
+      [setLiveTranscript],
     );
 
     const handleTextSearchQueryChange = useCallback((value: string) => {
@@ -498,47 +333,6 @@ export const ScripturePanel = memo(
       [onSendToOutput, resolveVersionCode],
     );
 
-    const updateSpeechCandidateVerse = useCallback(
-      async (
-        candidate: SpeechScriptureCandidate,
-        direction: "next" | "previous",
-      ) => {
-        const adjacentVerse = await getAdjacentVerse(candidate.verse, direction);
-        if (!adjacentVerse) {
-          return;
-        }
-
-        const updatedCandidate = {
-          ...candidate,
-          id: adjacentVerse.pk,
-          reference: formatReference({
-            bookName: adjacentVerse.bookName,
-            chapter: adjacentVerse.chapter,
-            verseStart: adjacentVerse.verse,
-            versionCode: resolveVersionCode(adjacentVerse.version),
-          }),
-          verse: adjacentVerse,
-        };
-
-        setSpeechCandidates((previous) =>
-          previous.map((item) =>
-            item.id === candidate.id ? updatedCandidate : item,
-          ),
-        );
-
-        if (candidate.isAccepted || candidate.verse.pk === activeVersePk) {
-          void handleSendTextVerse(adjacentVerse);
-        }
-      },
-      [
-        activeVersePk,
-        formatReference,
-        getAdjacentVerse,
-        handleSendTextVerse,
-        resolveVersionCode,
-      ],
-    );
-
     const showAdjacentLiveVerse = useCallback(
       async (direction: "next" | "previous") => {
         const verse = await getLiveScriptureVerse();
@@ -552,23 +346,6 @@ export const ScripturePanel = memo(
         }
 
         void handleSendTextVerse(adjacentVerse);
-        setSpeechCandidates((previous) =>
-          previous.map((item) =>
-            item.isAccepted && item.verse.pk === verse.pk
-              ? {
-                  ...item,
-                  id: adjacentVerse.pk,
-                  reference: formatReference({
-                    bookName: adjacentVerse.bookName,
-                    chapter: adjacentVerse.chapter,
-                    verseStart: adjacentVerse.verse,
-                    versionCode: resolveVersionCode(adjacentVerse.version),
-                  }),
-                  verse: adjacentVerse,
-                }
-              : item,
-          ),
-        );
       },
       [
         formatReference,
@@ -639,11 +416,7 @@ export const ScripturePanel = memo(
         identifyTimeoutRef.current = null;
       }
 
-      identifyRequestRef.current += 1;
       textSearchRequestRef.current += 1;
-      speechSearchRequestRef.current += 1;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setIsIdentifying(false);
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsTextSearching(false);
 
@@ -748,8 +521,11 @@ export const ScripturePanel = memo(
         // which case this behaves exactly as it did before.
         void understandSpokenScripture(webAppBaseUrl, sessionToken ?? "", text, availableBooks)
           .then((understood) => {
+            // Anything the model resolved to a book the operator has goes
+            // straight up. Anything it could not read is left alone: there is
+            // no list of maybes to pick from any more, because nobody running
+            // a service has a hand free to pick from one.
             if (!understood?.mayProject || !understood.reference.book) {
-              void identifyScripture(text);
               return;
             }
             const { book, chapter, verseStart, verseEnd } = understood.reference;
@@ -764,7 +540,8 @@ export const ScripturePanel = memo(
             void handleEnter(spoken);
           })
           .catch(() => {
-            void identifyScripture(text);
+            // Offline, signed out, or the model could not be reached. The
+            // operator types it, exactly as before.
           });
       }, isListening ? 100 : 260);
 
@@ -777,7 +554,6 @@ export const ScripturePanel = memo(
     }, [
       isActive,
       liveTranscript,
-      identifyScripture,
       availableBooks,
       isListening,
       webAppBaseUrl,
@@ -827,62 +603,6 @@ export const ScripturePanel = memo(
       setTextSearchResults,
       textSearchQuery,
     ]);
-
-    const handleAcceptSpeechCandidate = useCallback(
-      (candidate: SpeechScriptureCandidate) => {
-        setSpeechCandidates((previous) => [
-          ...previous.map((item) =>
-            item.id === candidate.id ? { ...item, isAccepted: true } : item,
-          ),
-        ]);
-        setLookupValue(candidate.reference);
-        void handleSendTextVerse(candidate.verse);
-      },
-      [
-        handleSendTextVerse,
-        setLookupValue,
-      ],
-    );
-
-    const handleDeclineSpeechCandidate = useCallback(
-      (candidate: SpeechScriptureCandidate) => {
-        dismissedSpeechCandidateIds.add(candidate.id);
-        setSpeechCandidates((previous) =>
-          previous.filter((item) => item.id !== candidate.id),
-        );
-      },
-      [dismissedSpeechCandidateIds],
-    );
-
-    useEffect(() => {
-      setSpeechScriptureOverlay({
-        activeVersePk,
-        candidates: speechCandidates,
-        handlers: {
-          onAccept: handleAcceptSpeechCandidate,
-          onDecline: handleDeclineSpeechCandidate,
-          onNext: (candidate) => {
-            void updateSpeechCandidateVerse(candidate, "next");
-          },
-          onPrevious: (candidate) => {
-            void updateSpeechCandidateVerse(candidate, "previous");
-          },
-        },
-      });
-    }, [
-      activeVersePk,
-      handleAcceptSpeechCandidate,
-      handleDeclineSpeechCandidate,
-      setSpeechScriptureOverlay,
-      speechCandidates,
-      updateSpeechCandidateVerse,
-    ]);
-
-    useEffect(() => {
-      return () => {
-        clearSpeechScriptureOverlay();
-      };
-    }, [clearSpeechScriptureOverlay]);
 
     const handleAddTextVerseToService = useCallback(
       async (verse: BibleVerse) => {
@@ -989,8 +709,14 @@ export const ScripturePanel = memo(
               <DropdownMenuSeparator />
               {isHostedCatalogLoading ? (
                 <div className="px-2 py-2 text-xs text-muted-foreground">Loading versions…</div>
+              ) : installableVersions.length === 0 ? (
+                <div className="px-2 py-2 text-xs text-muted-foreground">
+                  {hostedVersions.length === 0
+                    ? "No other versions available."
+                    : "Every available version is installed."}
+                </div>
               ) : (
-                hostedVersions.map((version) => (
+                installableVersions.map((version) => (
                   <DropdownMenuItem
                     key={version.id}
                     onClick={() => {
@@ -1093,8 +819,6 @@ export const ScripturePanel = memo(
                 if (isStarting) {
                   return;
                 }
-                dismissedSpeechCandidateIds.clear();
-                setSpeechCandidates((previous) => previous.filter((candidate) => candidate.isAccepted));
                 handleAiQueryChange("");
                 if (effectiveSelectedVersionCode) {
                   void prewarmSearchPool(effectiveSelectedVersionCode);
