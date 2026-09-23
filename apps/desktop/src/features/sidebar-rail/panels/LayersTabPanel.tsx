@@ -25,6 +25,7 @@ import type { PropsOverlayItem } from "../../../shared/types/output-window";
 import type { MediaItem } from "../../media/hooks";
 import { cn } from "../../../renderer/shared/lib/utils";
 import { runAuthenticatedConvexMutation } from "../../../renderer/shared/lib/authenticated-convex-mutation";
+import { VideoThumbnail } from "../../media/components/VideoThumbnail";
 
 interface LayersTabPanelProps {
   orgId: Id<"organizations"> | null;
@@ -1111,17 +1112,12 @@ function MediaPropThumb({
 
   return (
     <span className={cn("relative block overflow-hidden bg-black", className)}>
-      <video
-        src={item.url}
-        aria-label={`${item.name} preview`}
-        tabIndex={-1}
-        className="h-full w-full object-cover"
-        muted
-        preload="metadata"
-        playsInline
-      >
-        <track kind="captions" />
-      </video>
+      <VideoThumbnail
+        path={item.path}
+        lastModified={item.lastModified}
+        name={item.name}
+        fit="cover"
+      />
       <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/70 p-0.5 text-white">
         <Video className="h-3 w-3" strokeWidth={1.8} />
       </span>

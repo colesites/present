@@ -239,6 +239,8 @@ interface ElectronAPI {
   startNdiOutput: (
     sourceName: string,
     groupName: string,
+    /** 24, 25, 30, 50 or 60; anything else means 30. */
+    frameRate?: number,
   ) => Promise<{
     ok: boolean;
     error?: string;

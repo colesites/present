@@ -1,0 +1,248 @@
+{
+  "title": "pictures-and-backgrounds",
+  "slideWidthPx": 1920,
+  "slideHeightPx": 1080,
+  "slides": [
+    {
+      "id": "pptx:1",
+      "title": "Slide 1",
+      "backgroundColor": "#102030",
+      "elements": [
+        {
+          "id": "pptx_1_2",
+          "type": "image",
+          "x": 192,
+          "y": 144,
+          "width": 384,
+          "height": 216,
+          "content": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAEElEQVR4nGP4z8AARww4OQD1MQv1NXv7ggAAAABJRU5ErkJggg==",
+          "style": {
+            "rotation": 0,
+            "objectFit": "fill"
+          }
+        },
+        {
+          "id": "pptx_1_3",
+          "type": "image",
+          "x": 768,
+          "y": 144,
+          "width": 192,
+          "height": 144,
+          "content": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAMDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD0Ciiivx8+kP/Z",
+          "style": {
+            "rotation": 0,
+            "objectFit": "fill"
+          }
+        },
+        {
+          "id": "pptx_1_4",
+          "type": "image",
+          "x": 1152,
+          "y": 144,
+          "width": 192,
+          "height": 144,
+          "content": "data:image/gif;base64,R0lGODdhAgACAIEAAP8AAAAAAAAAAAAAACwAAAAAAgACAAAIBgABCAQQEAA7",
+          "style": {
+            "rotation": 0,
+            "objectFit": "fill"
+          }
+        }
+      ],
+      "textContent": ""
+    },
+    {
+      "id": "pptx:2",
+      "title": "Slide 2",
+      "backgroundColor": null,
+      "elements": [
+        {
+          "id": "pptx_bg_2",
+          "type": "image",
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080,
+          "content": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEElEQVR4nGNgaPiPHQ2kBADb4kfR5mt6kQAAAABJRU5ErkJggg==",
+          "style": {
+            "objectFit": "fill"
+          }
+        },
+        {
+          "id": "pptx_2_2",
+          "type": "text",
+          "x": 192,
+          "y": 144,
+          "width": 768,
+          "height": 144,
+          "content": "over a picture",
+          "style": {
+            "rotation": 0,
+            "fontFamily": "Calibri",
+            "fontSize": 24,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textDecoration": "none",
+            "color": "#000000",
+            "textAlign": "left",
+            "verticalAlign": "middle",
+            "paddingLeft": 0,
+            "paddingRight": 0,
+            "paddingTop": 0,
+            "paddingBottom": 0
+          },
+          "textBody": {
+            "insetLeft": 0,
+            "insetRight": 0,
+            "insetTop": 0,
+            "insetBottom": 0,
+            "verticalAlign": "middle",
+            "wrap": false,
+            "autoFit": "shape_to_fit_text",
+            "paragraphs": [
+              {
+                "alignment": "left",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "over a picture",
+                    "fontFamily": "Calibri",
+                    "fontSize": 24,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "textContent": "over a picture"
+    },
+    {
+      "id": "pptx:3",
+      "title": "Slide 3",
+      "backgroundColor": "#D99694",
+      "elements": [],
+      "textContent": ""
+    },
+    {
+      "id": "pptx:4",
+      "title": "Slide 4",
+      "backgroundColor": "#FFFFFF",
+      "elements": [
+        {
+          "id": "pptx_4_2",
+          "type": "text",
+          "x": 376.3334,
+          "y": 756,
+          "width": 1152,
+          "height": 89.25015,
+          "content": "Captioned",
+          "style": {
+            "rotation": 0,
+            "fontFamily": "Calibri",
+            "fontSize": 40.00005,
+            "fontWeight": "700",
+            "fontStyle": "normal",
+            "textDecoration": "none",
+            "color": "#000000",
+            "textAlign": "left",
+            "verticalAlign": "middle",
+            "paddingLeft": 0,
+            "paddingRight": 0,
+            "paddingTop": 0,
+            "paddingBottom": 0
+          },
+          "textBody": {
+            "insetLeft": 0,
+            "insetRight": 0,
+            "insetTop": 0,
+            "insetBottom": 0,
+            "verticalAlign": "middle",
+            "wrap": true,
+            "autoFit": "none",
+            "paragraphs": [
+              {
+                "alignment": "left",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "Captioned",
+                    "fontFamily": "Calibri",
+                    "fontSize": 40.00005,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "pptx_4_4",
+          "type": "text",
+          "x": 376.3334,
+          "y": 845.25015,
+          "width": 1152,
+          "height": 126.74985,
+          "content": "",
+          "style": {
+            "rotation": 0,
+            "fontFamily": "Calibri",
+            "fontSize": 28.000049999999998,
+            "fontWeight": "700",
+            "fontStyle": "normal",
+            "textDecoration": "none",
+            "color": "#000000",
+            "textAlign": "left",
+            "verticalAlign": "middle",
+            "paddingLeft": 0,
+            "paddingRight": 0,
+            "paddingTop": 0,
+            "paddingBottom": 0
+          },
+          "textBody": {
+            "insetLeft": 0,
+            "insetRight": 0,
+            "insetTop": 0,
+            "insetBottom": 0,
+            "verticalAlign": "middle",
+            "wrap": true,
+            "autoFit": "none",
+            "paragraphs": [
+              {
+                "alignment": "left",
+                "lineHeight": 1,
+                "spaceBefore": 0,
+                "spaceAfter": 0,
+                "runs": [
+                  {
+                    "text": "",
+                    "fontFamily": "Calibri",
+                    "fontSize": 28.000049999999998,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "underline": false,
+                    "letterSpacing": 0
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "textContent": "Captioned"
+    }
+  ]
+}

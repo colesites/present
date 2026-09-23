@@ -10,10 +10,38 @@ function DesktopLaunchContent() {
     () => searchParams.get("sessionToken"),
     [searchParams]
   );
+  /**
+   * Where to hand the session back.
+   *
+   * A `present://` link belongs to whichever Present is installed, which in
+   * development is not the one being worked on — so a development desktop
+   * opens a listener and asks to be handed the session there instead. Only a
+   * loopback address, and only the path it listens on: this is a session
+   * token, and anything else here would be somewhere to send it. And only in
+   * development, because a packaged desktop never asks for it.
+   */
+  const comeBackTo = useMemo(() => {
+    const value = searchParams.get("redirect");
+    if (!value || process.env.NODE_ENV === "production") return null;
+    try {
+      const url = new URL(value);
+      const isLoopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+      return url.protocol === "http:" && isLoopback && url.pathname === "/auth"
+        ? url
+        : null;
+    } catch {
+      return null;
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (!sessionToken) {
       router.replace("/dashboard");
+      return;
+    }
+    if (comeBackTo) {
+      comeBackTo.searchParams.set("sessionToken", sessionToken);
+      window.location.href = comeBackTo.toString();
       return;
     }
     window.location.href = `present://auth?sessionToken=${encodeURIComponent(
@@ -29,7 +57,7 @@ function DesktopLaunchContent() {
       window.clearTimeout(closeTimeout);
       window.clearTimeout(fallbackTimeout);
     };
-  }, [router, sessionToken]);
+  }, [router, sessionToken, comeBackTo]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-6">

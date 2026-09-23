@@ -17,6 +17,7 @@ import {
   createLocalMessage,
   enqueueSyncOperation,
   listSyncQueueByOrg,
+  LOCAL_DATA_CHANGED_EVENT,
   readOrgMessages,
   removeMessageLocal,
   replaceOrgMessages,
@@ -134,7 +135,13 @@ export function MessagesTabPanel({
   }, [workspaceId]);
 
   useEffect(() => {
+    // The first read of a run can be empty while SQLite is opened
+    // (`offline/localData.ts`); this fires again when it answers.
     refreshLocalMessages();
+    window.addEventListener(LOCAL_DATA_CHANGED_EVENT, refreshLocalMessages);
+    return () => {
+      window.removeEventListener(LOCAL_DATA_CHANGED_EVENT, refreshLocalMessages);
+    };
   }, [refreshLocalMessages]);
 
   useEffect(() => {

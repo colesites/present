@@ -7,10 +7,12 @@ import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { Category } from "../../../shared/types";
 import {
   createLocalCategory,
+  LOCAL_DATA_CHANGED_EVENT,
   readOrgCategories,
   removeCategoryLocal,
   replaceOrgCategories,
   upsertCategory,
+  whenOfflineDataReady,
 } from "../offline/localData";
 
 const DEFAULT_CATEGORY_NAMES = ["Songs", "Flows", "Hymns", "Notes"];
@@ -46,7 +48,16 @@ export function useCategories(input: {
   };
 
   useEffect(() => {
-    refreshLocalCategories();
+    // The library is read from SQLite, so the first read of a run can be empty
+    // (`offline/localData.ts`). This fires again when it arrives.
+    const refresh = () => {
+      setLocalCategories(readOrgCategories(workspaceId));
+    };
+    refresh();
+    window.addEventListener(LOCAL_DATA_CHANGED_EVENT, refresh);
+    return () => {
+      window.removeEventListener(LOCAL_DATA_CHANGED_EVENT, refresh);
+    };
   }, [workspaceId]);
 
   useEffect(() => {
@@ -76,28 +87,39 @@ export function useCategories(input: {
   }, [orgId, userId, remoteCategories, ensureDefaultCategories]);
 
   useEffect(() => {
-    const existingByName = new Set(
-      readOrgCategories(workspaceId).map((category) =>
-        normalizeCategoryName(category.name),
-      ),
-    );
-
-    let didCreateDefault = false;
-    for (const [index, name] of DEFAULT_CATEGORY_NAMES.entries()) {
-      if (existingByName.has(normalizeCategoryName(name))) {
-        continue;
+    let cancelled = false;
+    // Not before the store has answered: asking an empty library whether it
+    // has a Songs category would make a second one every time the app opens.
+    void whenOfflineDataReady().then(() => {
+      if (cancelled) {
+        return;
       }
-      createLocalCategory(workspaceId, {
-        name,
-        isDefault: true,
-        order: index,
-      });
-      didCreateDefault = true;
-    }
+      const existingByName = new Set(
+        readOrgCategories(workspaceId).map((category) =>
+          normalizeCategoryName(category.name),
+        ),
+      );
 
-    if (didCreateDefault) {
-      refreshLocalCategories();
-    }
+      let didCreateDefault = false;
+      for (const [index, name] of DEFAULT_CATEGORY_NAMES.entries()) {
+        if (existingByName.has(normalizeCategoryName(name))) {
+          continue;
+        }
+        createLocalCategory(workspaceId, {
+          name,
+          isDefault: true,
+          order: index,
+        });
+        didCreateDefault = true;
+      }
+
+      if (didCreateDefault) {
+        refreshLocalCategories();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [workspaceId]);
 
   const categories = useMemo(() => localCategories, [localCategories]);

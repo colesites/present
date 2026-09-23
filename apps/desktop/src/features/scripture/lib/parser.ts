@@ -152,9 +152,19 @@ function normalizeReferenceInput(input: string): string {
       .replace(/^(third|3rd|iii)\b/i, "3"),
   )
     .replace(/\bchapters?\b/gi, "")
-    .replace(/\bverses?\b\s+(\d+)\s+(?:to|through)\s+(\d+)\b/gi, ":$1-$2")
-    .replace(/\bverses?\b\s+(\d+)\s*-\s*(\d+)\b/gi, ":$1-$2")
+    // "from verse 2 to verse 10", "beginning at verse 3": the words that
+    // introduce a verse carry nothing the numbers do not.
+    .replace(/\b(?:from|beginning|starting|at)\b/gi, " ")
+    // A range, with the word repeated after "to" as it usually is when said
+    // aloud: "from verse 3 to verse 5".
+    .replace(
+      /\bverses?\b\s+(\d+)\s*(?:to|through|-)\s*(?:verses?\s+)?(\d+)\b/gi,
+      ":$1-$2",
+    )
     .replace(/\bverses?\b\s+(\d+)\b/gi, ":$1")
+    // A range between two bare numbers, said without the word at all:
+    // "john 3 16 to 18".
+    .replace(/(\d+)\s+(?:to|through)\s+(?:verses?\s+)?(\d+)\b/gi, "$1-$2")
     .replace(/\s+:/g, ":")
     .replace(/\s*-\s*/g, "-")
     .replace(/\s+/g, " ")
@@ -162,13 +172,19 @@ function normalizeReferenceInput(input: string): string {
 }
 
 function getBookAliases(book: BibleBookRecord): string[] {
-  return Array.from(
-    new Set(
-      [book.name, book.id, book.abbreviation]
-        .filter((value): value is string => Boolean(value?.trim()))
-        .map(normalizeBookLookup),
-    ),
-  ).sort((left, right) => right.length - left.length);
+  const named = [book.name, book.id, book.abbreviation]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map(normalizeBookLookup);
+  // "Psalm 23" is how it is said, and the book is called Psalms. A name that
+  // ends in "s" answers to itself without it, and one that does not answers
+  // to itself with it — which covers Psalm(s), Proverb(s) and Song(s) without
+  // a table of exceptions.
+  const spoken = named.map((alias) =>
+    alias.endsWith("s") && alias.length > 3 ? alias.slice(0, -1) : `${alias}s`,
+  );
+  return Array.from(new Set([...named, ...spoken])).sort(
+    (left, right) => right.length - left.length,
+  );
 }
 
 function findReferencedBook(
@@ -188,7 +204,10 @@ function findReferencedBook(
     for (const alias of getBookAliases(book)) {
       if (!alias) continue;
 
-      const match = new RegExp(`(^|\\s)(${escapeRegex(alias)})(?=\\s|$)`, "i").exec(input);
+      // A colon ends the name as surely as a space does: normalising
+      // "2 John verse 5" leaves "2 john:5", and a book of one chapter is
+      // said that way more often than not.
+      const match = new RegExp(`(^|\\s)(${escapeRegex(alias)})(?=[\\s:]|$)`, "i").exec(input);
       if (!match || match.index === undefined) continue;
 
       const start = match.index + (match[1]?.length ?? 0);
@@ -287,7 +306,14 @@ export function parseReference(
   result.book = bookMatch.book;
 
   // 2. Resolve Chapter
-  const parsedTail = parseChapterVerseTail(bookMatch.tail);
+  //
+  // A book of one chapter is spoken without it: "Jude verse 3", "2 John
+  // verse 5". The verse is there; the chapter can only be the one.
+  const tail =
+    bookMatch.tail.startsWith(":") && bookMatch.book.chapters === 1
+      ? `1${bookMatch.tail}`
+      : bookMatch.tail;
+  const parsedTail = parseChapterVerseTail(tail);
   const chapter = parsedTail.chapter;
   if (!chapter) {
     result.errors.push("Missing chapter number.");

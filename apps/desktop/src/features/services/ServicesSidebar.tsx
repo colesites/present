@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { Service, LibraryItem, ServiceGroup } from "../../shared/types";
 import type { MediaItem } from "../media/hooks";
+import { VideoThumbnail } from "../media/components/VideoThumbnail";
 import type { ServiceTemplate } from "./hooks/useServices";
 import {
   getServiceTemplateItemLayoutKey,
@@ -1411,25 +1412,17 @@ function TemplateMediaPreview({
     );
   }
 
+  // A still frame from the core, as the media panel draws one: a live video
+  // element per template row loaded every file into WebKit and blanked when
+  // the window lost focus (known-issues §18).
   return (
     <span className={cn("relative block overflow-hidden bg-black", className)}>
-      <video
-        src={item.url}
-        className="h-full w-full object-cover"
-        aria-label={`${item.name} preview`}
-        tabIndex={-1}
-        muted
-        preload="metadata"
-        playsInline
-        onLoadedMetadata={(event) => {
-          const video = event.currentTarget;
-          try {
-            video.currentTime = 0.01;
-            video.pause();
-          } catch {
-            // Some codecs do not allow seeking before enough data is buffered.
-          }
-        }}
+      <VideoThumbnail
+        path={item.path}
+        lastModified={item.lastModified}
+        name={item.name}
+        fit="cover"
+        className="h-full w-full"
       />
       <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/70 p-0.5 text-white">
         <VideoIcon />
@@ -2362,7 +2355,10 @@ function RowBoundaryDropZone({
           onDrop={(event) => {
             void onDrop(event, layoutIndex);
           }}
-          className="absolute inset-x-0 -top-1 z-10 h-2"
+          // 16px band straddling the line. Rows are ~39px, so this stays a
+          // clear minority of a row — enough to aim at without starving the
+          // group section underneath, which claims the rest as "drop into me".
+          className="absolute inset-x-0 -top-2 z-10 h-4"
         />
       ) : null}
     </div>

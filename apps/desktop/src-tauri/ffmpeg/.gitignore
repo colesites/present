@@ -1,0 +1,8 @@
+# Built and staged by scripts/build-ffmpeg.sh and scripts/stage-tauri-ffmpeg.mjs.
+# Only the READMEs are committed; licenses/ has to exist for bundle.resources.
+*
+!.gitignore
+!README.md
+!licenses/
+licenses/*
+!licenses/README.md

@@ -51,6 +51,8 @@ import type {
   ScriptureTextAlign,
   ScriptureVerticalAlign,
 } from "../../shared/types/output-window";
+import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
+import { CompositorPreviewLayer } from "./components/CompositorPreviewLayer";
 
 interface SlideGroup {
   label: string;
@@ -102,6 +104,7 @@ interface OutputPreviewProps {
   onResetFilters: () => void;
   isVideoPlaying: boolean;
   videoCurrentTime: number;
+  videoTimeSampledAtMs?: number | null;
   isFrozen?: boolean;
   onToggleFreeze?: () => void;
   isTimerLayerEnabled: boolean;
@@ -299,6 +302,7 @@ export const OutputPreview = memo(function OutputPreview({
   onResetFilters,
   isVideoPlaying,
   videoCurrentTime,
+  videoTimeSampledAtMs,
   isFrozen,
   onToggleFreeze,
   isTimerLayerEnabled,
@@ -331,6 +335,7 @@ export const OutputPreview = memo(function OutputPreview({
   } = timers;
   const activeTimerId = activeTimer?.id ?? null;
   const videoRef = useRef<HTMLVideoElement>(null);
+
   const outputFrameRef = useRef<HTMLDivElement>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [previewScale, setPreviewScale] = useState(0.35);
@@ -463,11 +468,17 @@ export const OutputPreview = memo(function OutputPreview({
 
   useEffect(() => {
     if (videoRef.current && activeMediaItem?.type === "video") {
-      if (Math.abs(videoRef.current.currentTime - videoCurrentTime) > 0.12) {
-        videoRef.current.currentTime = videoCurrentTime;
+      syncMirrorVideo(videoRef.current, {
+        positionSeconds: videoCurrentTime,
+        sampledAtMs: videoTimeSampledAtMs,
+        playing: isVideoPlaying,
+      });
+      // A mirror WebKit paused while the window was hidden runs again.
+      if (isVideoPlaying && videoRef.current.paused) {
+        videoRef.current.play().catch((): void => undefined);
       }
     }
-  }, [videoCurrentTime, activeMediaItem, showMedia]);
+  }, [videoCurrentTime, videoTimeSampledAtMs, isVideoPlaying, activeMediaItem, showMedia]);
 
 
   const filterStyle = filtersToCSS(mediaFilters);
@@ -536,34 +547,14 @@ export const OutputPreview = memo(function OutputPreview({
                 height: "min(100cqh, 100cqw * 9 / 16)",
               }}
             >
-            {!hideBackground &&
-              showMedia &&
-              activeMediaItem &&
-              (activeMediaItem.type === "image" ? (
-                <img
-                  src={activeMediaItem.url}
-                  alt={activeMediaItem.name}
-                  className={cn(
-                    "absolute inset-0 h-full w-full object-contain",
-                    isMediaPreview && "opacity-0",
-                  )}
-                  style={{ filter: filterStyle }}
-                />
-              ) : (
-                <video
-                  aria-label={`${activeMediaItem.name} preview`}
-                  ref={videoRef}
-                  src={activeMediaItem.url}
-                  className={cn(
-                    "absolute inset-0 h-full w-full object-contain",
-                    isMediaPreview && "opacity-0",
-                  )}
-                  style={{ filter: filterStyle }}
-                  loop={videoSettings.loop}
-                  muted
-                  playsInline
-                />
-              ))}
+            {/* What the audience sees, drawn by the compositor from FFmpeg
+                frames. There is no second player here: the media used to be
+                played by the browser engine in this panel, which meant a file
+                it could not open was black to the operator however well it
+                played to the congregation, and a video on screen was decoded
+                twice on one machine. (The scan that counts audible players
+                reads comments too, so this one says it in words.) */}
+            <CompositorPreviewLayer className="absolute inset-0 z-20" />
 
             {previewTarget === "media" ? (
               <MediaStagePreview

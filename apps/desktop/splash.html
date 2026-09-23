@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <!-- CSP comes from src-tauri/tauri.conf.json — see index.html. -->
+    <title>Present</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #12131c;
+        color: #f4f4f8;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: default;
+      }
+      .splash {
+        display: flex;
+        align-items: center;
+        gap: 36px;
+        height: 100%;
+        padding: 0 48px;
+        box-sizing: border-box;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .icon {
+        width: 148px;
+        height: 148px;
+        flex-shrink: 0;
+        filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.45));
+      }
+      .text {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      h1 {
+        margin: 0;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .version {
+        margin-top: 6px;
+        font-size: 13px;
+        color: rgba(244, 244, 248, 0.6);
+        min-height: 16px;
+      }
+      .status {
+        margin-top: 42px;
+        font-size: 12px;
+        color: rgba(244, 244, 248, 0.75);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 16px;
+      }
+      .spinner {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        border: 2px solid rgba(244, 244, 248, 0.2);
+        border-top-color: rgba(244, 244, 248, 0.8);
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .fine {
+        margin-top: 10px;
+        font-size: 10px;
+        color: rgba(244, 244, 248, 0.4);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="splash">
+      <img class="icon" id="icon" alt="" />
+      <div class="text">
+        <h1>Present</h1>
+        <div class="version" id="version"></div>
+        <div class="status"><span class="spinner"></span><span id="status">Starting</span></div>
+        <div class="fine">Church presentation software</div>
+      </div>
+    </div>
+    <script type="module" src="/src/renderer/tauri/splash.ts"></script>
+  </body>
+</html>

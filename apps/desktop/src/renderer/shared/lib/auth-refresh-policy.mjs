@@ -29,3 +29,19 @@ export function getRefreshRetryDelayMs(attempt) {
 export function shouldKeepCachedIdentity({ hasUser, status }) {
   return hasUser && !isAuthFailureStatus(status);
 }
+
+/**
+ * What to do when the stored session's own clock says it has expired.
+ *
+ * **A service must never stop because a token did**, and the desktop does not
+ * sign anybody out on its own say-so. The clock is a hint: with no network the
+ * cached identity stays and the operator keeps presenting; online, the server
+ * is asked, and only its definitive 401 or 403 signs anybody out — the same
+ * rule every other refresh follows (`shouldKeepCachedIdentity`).
+ */
+export function expiredSessionAction({ online, hasUser }) {
+  if (!online) {
+    return hasUser ? "keep-presenting" : "wait-for-network";
+  }
+  return "ask-the-server";
+}

@@ -1,9 +1,15 @@
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
-import { inferBibleCodeFromName, formatBibleName } from './bible.utils';
+import {
+  SUPPORTED_BIBLE_EXTENSIONS,
+  bundledBibleId,
+  formatBibleName,
+  inferBibleCodeFromName,
+  orderBundledBibles,
+} from '../../shared/lib/bible-catalog.mjs';
 
-export const SUPPORTED_BIBLE_EXTENSIONS = new Set([".xml", ".json", ".zip"]);
+export { SUPPORTED_BIBLE_EXTENSIONS };
 
 const resolveBundledBibleDirectories = (): string[] => {
   const candidates = new Set<string>([
@@ -59,7 +65,7 @@ const discoverBundledBibles = async (): Promise<BundledBibleFile[]> => {
         const name = formatBibleName(fileNameBase);
 
         discovered.set(fullPath, {
-          id: `${code.toLowerCase()}-${fileStats.size}-${Math.round(fileStats.mtimeMs)}`,
+          id: bundledBibleId(code, fileStats.size, fileStats.mtimeMs),
           code,
           name,
           filePath: fullPath,
@@ -71,7 +77,7 @@ const discoverBundledBibles = async (): Promise<BundledBibleFile[]> => {
     }
   }
 
-  return Array.from(discovered.values()).sort((a, b) => a.name.localeCompare(b.name));
+  return orderBundledBibles(Array.from(discovered.values()));
 };
 
 export { getExistingBundledBibleRoots, discoverBundledBibles };

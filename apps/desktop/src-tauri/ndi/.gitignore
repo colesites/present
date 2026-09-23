@@ -1,0 +1,4 @@
+# Staged by scripts/stage-tauri-ndi.mjs. Only the README is committed.
+*
+!README.md
+!.gitignore

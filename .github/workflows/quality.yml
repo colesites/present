@@ -16,25 +16,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v5
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: 10.22.0
+          bun-version: 1.3.5
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Run automated tests
-        run: pnpm run test
+        run: bun run test
 
       - name: Run TypeScript checks
-        run: pnpm run typecheck
+        run: bun run typecheck
 
       - name: Run desktop lint
-        run: pnpm --filter @present/desktop run lint
+        run: bun run --filter @present/desktop lint

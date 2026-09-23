@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type {
   LibraryItem,
@@ -25,7 +25,6 @@ import {
   upsertService,
 } from "../../../renderer/shared/offline/localData";
 
-const SERVICE_STATE_KEY = "present-service-state";
 const LEGACY_SERVICE_TEMPLATE_KEY = "present-service-template-groups-v1";
 const SERVICE_TEMPLATES_KEY = "present-service-templates-v1";
 const DEFAULT_SERVICE_TEMPLATE_ID_KEY = "present-default-service-template-id-v1";
@@ -446,30 +445,30 @@ function normalizeServiceGroups(service: Service): Service {
   };
 }
 
-// Load service state from localStorage
-function loadServiceState() {
-  if (typeof window === "undefined") return null;
-  try {
-    const stored = localStorage.getItem(SERVICE_STATE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
+const rustCore = () => import("../../../renderer/tauri/presentation");
 
-// Save service state to localStorage
+/**
+ * Persist where the operator is in the running order.
+ *
+ * The Rust core owns it and writes `service-position.json`: one file for the
+ * app rather than one per renderer origin, so a packaged build and a dev build
+ * agree about which service is open (known-issues §2).
+ */
 function saveServiceState(state: {
   selectedServiceId: string | null;
   isInsideService: boolean;
   serviceItemIndex: number | null;
   selectedServiceGroupId: string | null;
 }) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(SERVICE_STATE_KEY, JSON.stringify(state));
-  } catch (e) {
-    console.error("Failed to save service state:", e);
-  }
+  void rustCore()
+    .then(async (core) => {
+      await core.setService(state.selectedServiceId, state.isInsideService);
+      await core.setServiceItem(state.serviceItemIndex);
+      await core.setServiceGroup(state.selectedServiceGroupId);
+    })
+    .catch((error: unknown) => {
+      console.error("Failed to save service state to the Rust core:", error);
+    });
 }
 
 export function useServices(
@@ -489,20 +488,11 @@ export function useServices(
   const [selectedServiceTemplateId, setSelectedServiceTemplateIdState] =
     useState<string | null>(() => loadDefaultTemplateId(initialServiceTemplates));
 
-  const [initialState] = useState(() => loadServiceState());
-
-  const [selectedServiceId, setSelectedServiceId] = useState<Id<"services"> | null>(
-    () => (initialState?.selectedServiceId as Id<"services">) || null
-  );
-  const [isInsideService, setIsInsideService] = useState(
-    () => initialState?.isInsideService || false
-  );
-  const [serviceItemIndex, setServiceItemIndex] = useState<number | null>(
-    () => initialState?.serviceItemIndex ?? null
-  );
-  const [selectedServiceGroupId, setSelectedServiceGroupId] = useState<string | null>(
-    () => initialState?.selectedServiceGroupId ?? null,
-  );
+  // Restored from the Rust core below.
+  const [selectedServiceId, setSelectedServiceId] = useState<Id<"services"> | null>(null);
+  const [isInsideService, setIsInsideService] = useState(false);
+  const [serviceItemIndex, setServiceItemIndex] = useState<number | null>(null);
+  const [selectedServiceGroupId, setSelectedServiceGroupId] = useState<string | null>(null);
 
   useEffect(() => {
     const refresh = () => {
@@ -515,8 +505,46 @@ export function useServices(
     };
   }, [workspaceId]);
 
+  // The position is restored from the Rust core. Runs once, before the persist
+  // effect below can write the empty initial state back over it.
+  const hydratedFromRustRef = useRef(false);
+  useEffect(() => {
+    if (hydratedFromRustRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    void rustCore()
+      .then((core) => core.getPresentationPosition())
+      .then((position) => {
+        if (cancelled) return;
+        hydratedFromRustRef.current = true;
+        setSelectedServiceId(
+          (position.service.selectedServiceId as Id<"services"> | null) ?? null,
+        );
+        setIsInsideService(position.service.isInsideService);
+        setServiceItemIndex(position.service.serviceItemIndex);
+        setSelectedServiceGroupId(position.service.selectedServiceGroupId);
+      })
+      .catch((error: unknown) => {
+        // A position that cannot be read is not worth blocking startup for;
+        // the operator lands outside a service and picks one.
+        hydratedFromRustRef.current = true;
+        console.error("Failed to restore the service position:", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Persist state changes
   useEffect(() => {
+    // Not before the restore has landed, or the empty initial state is written
+    // straight back over the operator's saved place.
+    if (!hydratedFromRustRef.current) {
+      return;
+    }
     saveServiceState({
       selectedServiceId: selectedServiceId as string | null,
       isInsideService,

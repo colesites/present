@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      Tauri main-window entry.
+
+      No CSP <meta> here on purpose: Tauri injects the policy from
+      `src-tauri/tauri.conf.json` (app.security.csp) so it can add the per-load
+      nonces its IPC needs. The Electron entry keeps its own meta tag in
+      src/renderer/main/index.html and is untouched by this file.
+    -->
+    <title>Present</title>
+    <style>
+      /* The app's own background from the first frame, not the webview's white. */
+      html,
+      body {
+        background-color: #12131c;
+        color-scheme: dark;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!--
+      Order matters. `boot.ts` installs the `window.electronAPI` bridge
+      synchronously; the React entry below expects it to already exist.
+    -->
+    <script type="module" src="/src/renderer/tauri/boot.ts"></script>
+    <script type="module" src="/src/renderer/tauri/boot-probe.ts"></script>
+    <!--
+      React starts once browser storage is ready: `start-main.ts` waits for
+      `web-storage.ts` (known-issues §2), never longer than its timeout.
+    -->
+    <script type="module" src="/src/renderer/tauri/start-main.ts"></script>
+  </body>
+</html>

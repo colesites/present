@@ -387,6 +387,7 @@ export function PresentCenterArea({
       {/* Footer Area - Reusable Workspace Footer */}
       {viewMode === "show" && (
         <WorkspaceFooter 
+          showTransitionPicker
           isGridView={effectiveIsGridView}
           onViewModeChange={onGridViewChange}
           scale={effectiveScale}

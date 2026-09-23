@@ -481,16 +481,18 @@ const SlideCard = memo(function SlideCard({
             canReorder && "cursor-grab active:cursor-grabbing",
           )}
         >
-          {/* Slide preview - black background like main output */}
+          {/* The slide itself: a plain rectangle, edge to edge, the colour
+              the audience sees. The inset it used to have shrank the picture
+              and made the words wrap where the slide does not. */}
           <div
             className={cn(
-              "flex items-center justify-center overflow-hidden p-2",
-              isGridView ? "flex-1" : "h-full w-32 shrink-0 border-r border-border"
+              "relative flex min-w-0 items-center justify-center overflow-hidden",
+              isGridView ? "w-full flex-1" : "h-full w-32 shrink-0 border-r border-border"
             )}
             style={{ backgroundColor: backgroundColor ?? "#000000" }}
           >
             {!isScripture && displayElements && displayElements.length > 0 ? (
-              <div className="relative h-full w-full overflow-hidden rounded-sm">
+              <div className="absolute inset-0 overflow-hidden">
                 <CanvasSlideLayer
                   text={displayText}
                   elements={displayElements}
@@ -534,7 +536,10 @@ const SlideCard = memo(function SlideCard({
           <div
             className={cn(
               "flex items-center justify-between px-3 py-1.5 text-xs font-medium",
-              isGridView ? "shrink-0" : "flex-1 h-full",
+              // `w-full` as well as stretching: a card whose children only
+              // took their content's width left the slide as a strip down the
+              // side and the number floating beside it.
+              isGridView ? "w-full shrink-0" : "flex-1 h-full",
               !slide.labelColor && getLabelColor(slide.label)
             )}
             style={customLabelStyle}

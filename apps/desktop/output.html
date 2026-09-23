@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <!-- CSP comes from src-tauri/tauri.conf.json — see index.html. -->
+    <title>Output Window</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        /* The audience screen must never flash white, not even for one frame. */
+        background-color: black;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!--
+      Order matters. `boot.ts` installs the `window.electronAPI` bridge
+      synchronously; the React entry below expects it to already exist.
+    -->
+    <script type="module" src="/src/renderer/tauri/boot.ts"></script>
+    <script type="module" src="/src/renderer/tauri/boot-probe.ts"></script>
+    <script type="module" src="/src/renderer/tauri/start-output.ts"></script>
+  </body>
+</html>

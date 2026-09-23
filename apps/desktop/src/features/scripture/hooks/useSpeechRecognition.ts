@@ -132,7 +132,6 @@ interface StreamingSession {
 
 const DEFAULT_WEB_APP_URL = "https://present.multivrs.space";
 const ASSEMBLYAI_STREAM_URL = "wss://streaming.assemblyai.com/v3/ws";
-const ASSEMBLYAI_TOKEN_PATH = "/api/assemblyai/token";
 const SPEECH_QUOTA_EXHAUSTED_MESSAGE =
   "You've used all of your speech-to-search time for this billing period. Upgrade your plan or wait for the next billing period to continue using voice search.";
 
@@ -499,30 +498,32 @@ export function useSpeechRecognition(
           return;
         }
 
-        void fetch(`${resolveWebBaseUrl()}/api/assemblyai/usage`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${authBearer}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            sessionId: session.billingSessionId,
-            endedAtMs,
-          }),
-          cache: "no-store",
-        })
-          .then(async (response): Promise<void> => {
-            if (!response.ok) {
-              return;
+        // Through the Rust core for the same reason the token request goes
+        // there — a browser preflight from the app's origin would drop it
+        // silently, and this call is what meters the feature.
+        void import("../../../renderer/tauri/runtime")
+          .then(({ reportSpeechUsage }) =>
+            reportSpeechUsage({
+              webAppBaseUrl: resolveWebBaseUrl(),
+              authBearer,
+              sessionId: session.billingSessionId as string,
+              endedAtMs,
+            }),
+          )
+          .then((payload) => {
+            const usage = payload as AssemblyAiUsageResponse | null;
+            if (usage?.billing) {
+              updateDesktopBillingSnapshot(usage.billing);
             }
-
-            const payload = (await response.json().catch((): null => null)) as AssemblyAiUsageResponse | null;
-            if (payload?.billing) {
-              updateDesktopBillingSnapshot(payload.billing);
+            // Recorded, so nothing is pending. The web-route path this replaced
+            // did this; the Rust path had not.
+            if (usage) {
+              setPendingCommittedUsageSeconds(0);
             }
-            setPendingCommittedUsageSeconds(0);
           })
-          .catch((): void => undefined);
+          .catch((error: unknown) => {
+            console.error("[Speech] usage report failed", error);
+          });
       });
     }
 
@@ -575,43 +576,36 @@ export function useSpeechRecognition(
       throw new Error("Sign in to use voice search.");
     }
 
-    const fetchFromWebRoute = async (): Promise<AssemblyAiTokenResponse> => {
-      const response = await fetch(`${resolveWebBaseUrl()}${ASSEMBLYAI_TOKEN_PATH}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ source: usageSource }),
-        cache: "no-store",
-      });
-
-      const raw = await response.text();
-      let payload: AssemblyAiTokenResponse | AssemblyAiTokenErrorPayload | null = null;
+    // The web route is called from the Rust core. The broker does not move — the desktop must never hold an AssemblyAI key
+    // — but a request from Rust is not a browser request, so there is no CORS
+    // preflight and no origin allowlist to keep in step with the app's origin.
+    // That preflight is why this ended up being used through the web app.
+    const fetchFromRustCore = async (): Promise<AssemblyAiTokenResponse> => {
+      const { requestSpeechToken } = await import("../../../renderer/tauri/runtime");
 
       try {
-        payload = raw ? JSON.parse(raw) as AssemblyAiTokenResponse : null;
-      } catch {
-        payload = null;
+        const payload = await requestSpeechToken({
+          webAppBaseUrl: resolveWebBaseUrl(),
+          sessionToken,
+          source: usageSource,
+        });
+        return parseAssemblyAiTokenPayload(
+          payload as AssemblyAiTokenResponse | null,
+          "Live transcription could not start.",
+        );
+      } catch (error) {
+        // Rust rejects with `{ kind, message }`; surface the message the same
+        // way the web-route path does.
+        const appError = error as { message?: string } | null;
+        throw new Error(
+          formatSpeechError(
+            appError?.message ?? "Live transcription could not start.",
+          ),
+        );
       }
-
-      if (!response.ok) {
-        const errorPayload = payload as AssemblyAiTokenErrorPayload | null;
-        const message =
-          errorPayload?.message
-          ?? errorPayload?.error
-          ?? raw
-          ?? "Live transcription could not start.";
-        throw new Error(formatSpeechError(message));
-      }
-
-      return parseAssemblyAiTokenPayload(
-        payload,
-        "Live transcription could not start.",
-      );
     };
 
-    const payload = await fetchFromWebRoute();
+    const payload = await fetchFromRustCore();
     if (payload.billing) {
       updateDesktopBillingSnapshot(payload.billing);
     }

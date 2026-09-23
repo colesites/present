@@ -1,20 +1,24 @@
 {
   "name": "present-monorepo",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "trustedDependencies": [
+    "esbuild"
+  ],
   "scripts": {
-    "dev": "pnpm --filter \"*\" run dev",
-    "convex": "pnpm --filter @present/backend run convex",
-    "test": "pnpm --filter @present/desktop run test",
-    "typecheck": "pnpm --filter @present/desktop run typecheck && pnpm --filter @present/web run typecheck",
-    "quality": "pnpm run test && pnpm run typecheck && pnpm --filter @present/desktop run lint",
+    "dev": "bun run --filter '*' dev",
+    "desktop:tauri": "bun run --filter @present/desktop tauri:dev",
+    "desktop:tauri:build": "bun run --filter @present/desktop tauri:build",
+    "web": "bun run --filter @present/web dev",
+    "convex": "bun run --filter @present/backend convex",
+    "test": "bun run --filter @present/desktop test && bun run --filter @present/web test",
+    "typecheck": "bun run --filter @present/desktop typecheck && bun run --filter @present/web typecheck",
+    "lint": "bun run --filter @present/desktop lint",
+    "quality": "bun run test && bun run typecheck && bun run lint",
     "release:check": "node .github/scripts/verify-desktop-release.mjs"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "electron-winstaller",
-      "esbuild"
-    ]
   },
   "dependencies": {
     "zustand": "^5.0.12"

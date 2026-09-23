@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "secondary",
+  "description": "The splash, and the seven windows the operator opens from the main one: the audience output, both stage displays, settings, looks, the screen composer and each mini-lyrics editor. Held apart from the main window's capability so the audience surface can stay render-only when the file and dialog commands arrive \u2014 see the audit's proposed capabilities/output.json and stage.json.",
+  "windows": [
+    "output",
+    "media-stage",
+    "worship-stage",
+    "settings",
+    "looks",
+    "screen-composer",
+    "mini-lyrics-*",
+    "splash"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

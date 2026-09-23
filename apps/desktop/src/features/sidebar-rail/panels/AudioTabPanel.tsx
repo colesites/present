@@ -14,6 +14,13 @@ import {
 } from "lucide-react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { cn } from "../../../renderer/shared/lib/utils";
+import { createLocalMediaUrl } from "../../../shared/lib/local-media-url.mjs";
+import {
+  applyAudioRouting,
+  setBackingTrackGain,
+  useAudioRouting,
+} from "../../../renderer/shared/hooks/useAudioRouting";
+import type { SourceRouting } from "../../../renderer/tauri/audio";
 
 interface AudioTabPanelProps {
   orgId: Id<"organizations"> | null;
@@ -79,10 +86,7 @@ const formatDuration = (seconds: number | undefined): string => {
   return `${m}:${String(s % 60).padStart(2, "0")}`;
 };
 
-const pathToFileUrl = (path: string): string => {
-  if (path.startsWith("local-media://")) return path;
-  return `local-media://media${encodeURI(path.startsWith("/") ? path : `/${path}`)}`;
-};
+const pathToFileUrl = (path: string): string => createLocalMediaUrl(path);
 
 export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
   const [audioState, setAudioState] = useState<LocalAudioState>(() =>
@@ -142,10 +146,22 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
     [currentTrackId, sortedTracks],
   );
 
+  // The backing track is the application's second audible source, and until
+  // Stage 5 it was the one nothing routed: it set `.volume` and never called
+  // `setSinkId`, so the audio-output-device setting reached the presentation
+  // video and left this playing out of the laptop (known-issues §1).
+  //
+  // It now reads the same Rust sink the video does, so one device choice moves
+  // both. The value below stands in until the sink answers.
+  const initialRouting = useMemo<SourceRouting>(
+    () => ({ audible: true, muted: false, volume, deviceId: null }),
+    [volume],
+  );
+  const routing = useAudioRouting("backing-track", "operator", initialRouting);
+
   useEffect(() => {
-    if (!audio) return;
-    audio.volume = volume;
-  }, [audio, volume]);
+    applyAudioRouting(audio, routing);
+  }, [audio, routing]);
 
   useEffect(() => {
     if (!audio || !currentTrack) return;
@@ -454,8 +470,14 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
               min={0}
               max={1}
               step={0.01}
-              value={volume}
-              onChange={(event) => setVolume(Number(event.target.value))}
+              value={routing.volume}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setVolume(next);
+                // The sink owns the level, so the slider writes there and the
+                // change comes back as an event.
+                void setBackingTrackGain(next);
+              }}
               className="flex-1 accent-primary"
             />
           </div>

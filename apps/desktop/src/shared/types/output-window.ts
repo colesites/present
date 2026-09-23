@@ -55,6 +55,8 @@ export type OutputState = {
   mediaFilterCSS: string;
   isVideoPlaying: boolean;
   videoCurrentTime: number;
+  /** When the operator's video was at `videoCurrentTime`, epoch ms. */
+  videoTimeSampledAtMs?: number | null;
   shouldSyncTime: boolean;
 
   // Text details

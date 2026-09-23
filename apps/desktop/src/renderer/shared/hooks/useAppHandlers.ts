@@ -5,7 +5,8 @@ import type { Dispatch, SetStateAction } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { LibraryItem, LibraryItemDraft } from "../../../shared/types";
 import type { ScriptureSlide } from "../../../features/scripture/lib/slides";
-import { parseReference, type ParsedReference } from "../../../features/scripture/lib/parser";
+import { type ParsedReference } from "../../../features/scripture/lib/parser";
+import { parseScriptureReference } from "../../tauri/scripture";
 import {
   generateBibleSlides,
   mergeScriptureSlides,
@@ -244,7 +245,7 @@ export function useAppHandlers({
     async (refString: string) => {
       if (availableBooks.length === 0) return;
 
-      const parsed = parseReference(refString, availableBooks);
+      const parsed = await parseScriptureReference(refString, availableBooks);
       if (!parsed.book || parsed.errors.length > 0) {
         console.warn(
           "Failed to parse scripture ref from service:",

@@ -1,0 +1,289 @@
+[package]
+name = "present"
+version = "0.3.8"
+description = "Church presentation software for worship services"
+authors = ["Cole"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.83"
+
+# Required for mobile targets, and harmless on desktop: Tauri replaces `main()`
+# with a generated entry point there, so every bit of application logic has to
+# be reachable from the library, not from `main.rs`.
+[lib]
+name = "present_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+# float_roundtrip: parse floats exactly. The PPTX importer is tested against
+# the Electron importer's JSON to the last bit, and the default parser can land
+# one bit away.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# The log as a file per day, kept a fortnight (`services/log_files.rs`).
+tracing-appender = "0.2"
+# Where that file goes, before Tauri's path resolver exists. Tauri's version.
+dirs = "6"
+# rustls rather than the system TLS stack, so the same code path is exercised on
+# macOS, Windows and Linux. No default features: we need neither blocking nor
+# cookies nor the compression codecs.
+reqwest = { version = "0.12", default-features = false, features = [
+    "charset",
+    "http2",
+    "json",
+    "rustls-tls",
+] }
+# Native dialogs and the `present://` scheme. Both replace an Electron API
+# rather than adding a capability: `dialog.show*` and `app.setAsDefault-
+# ProtocolClient` respectively.
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-deep-link = "2.4.10"
+# `select-prop-image` returns a data: URL so a prop can be stored in Convex
+# without exposing a local path (`file.ipc.ts:172-205`).
+base64 = "0.23.1"
+# `shell.openExternal` for the sign-in flow (`auth.service.ts:71`).
+tauri-plugin-opener = "2.5.5"
+tokio = { version = "1.53.1", features = ["sync", "time", "rt-multi-thread", "net"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+cosmic-text = "0.19"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+# The NDI runtime, opened when NDI is first used rather than linked at build
+# time — so no machine that builds Present needs the NDI SDK installed, and a
+# machine without NDI still launches. See `services/ndi/library.rs`.
+libloading = "0.8"
+# Instancing variable fonts at an optical size, so Inter is set as the audience
+# window sets it. See `services/compositor/optical_size.rs`. No default
+# features: flate2's pure-Rust backend rather than a system zlib. Its 1.83 is
+# why this crate declares 1.83.
+allsorts = { version = "0.17", default-features = false, features = ["flate2_rust"] }
+# The error log's redaction patterns (`services/error_log.rs`). Already in the
+# tree through several dependencies.
+regex = "1"
+# Reading the Electron build's localStorage once, to carry an operator's
+# settings over (`services/web_storage.rs`). Chromium keeps it in LevelDB.
+rusty-leveldb = "4.0.1"
+# The PPTX importer (`services/pptx`), replacing parse_pptx.py and its
+# python-pptx dependency. A .pptx is a zip of XML parts; only reading, and only
+# deflate, is needed.
+zip = { version = "2.4", default-features = false, features = ["deflate-flate2", "flate2"] }
+roxmltree = "0.20"
+# Cache keys for media thumbnails (`services/thumbnails.rs`).
+blake3 = "1"
+# Media folders that update live (`services/media_watch.rs`).
+notify = "8"
+# OpenLyrics song import (`services/openlyrics.rs`). The version already in
+# the tree.
+quick-xml = "0.42"
+# The chapter and verse grammar in a scripture reference
+# (`services/scripture.rs`).
+nom = "8"
+# Foot pedals, control surfaces and lighting desks (`services/control`): MIDI
+# in over the platform's own driver, and OSC over the network.
+midir = "0.10"
+rosc = "0.11"
+# The offline library and its sync queue (`services/store`). Bundled, so no
+# machine needs SQLite installed and every platform gets the same version.
+rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite_migration = "2"
+# Ids for rows made on this machine: sortable by the time they were made, so a
+# service's items keep their order without a separate sequence.
+ulid = "1"
+# The phone remote (`services/remote`): a small web server on the local
+# network, announced over mDNS, joined by scanning a code. Already in the tree
+# through rustls: the token's randomness.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "ws"] }
+mdns-sd = "0.16"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+getrandom = "0.2"
+# Video decoding on every platform (`services/video/ffmpeg.rs`, ADR-003).
+# Builds against an installed FFmpeg, 5.0 or later, found through `FFMPEG_DIR`,
+# vcpkg on Windows, or pkg-config. What ships inside the app must be an
+# LGPL-only build of shared libraries — never Homebrew's, which is GPL.
+ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling"] }
+# Browser mode's two webviews (`services/browser_mode/view.rs`), built directly
+# rather than as Tauri child webviews (stage-7-subsystems.md §10). Pinned to
+# the version Tauri resolves: a second wry would be a second webview runtime in
+# one process. Move it with Tauri.
+wry = { version = "=0.55.1", default-features = false, features = ["os-webview"] }
+
+# Desktop-only plugins. The crate keeps a mobile entry point (see `[lib]`), and
+# neither of these builds for iOS or Android.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# `globalShortcut.register('Control+Alt+Space')`
+# (`ai-operator-shortcuts.service.ts:6`).
+tauri-plugin-global-shortcut = "2.3.2"
+# `app.requestSingleInstanceLock()` (`main.window.ts:259-278`). Deep links on
+# Windows and Linux arrive as a second launch, so the single-instance hook is
+# how they reach the running app at all.
+tauri-plugin-single-instance = { version = "2.4.4", features = ["deep-link"] }
+
+# macOS reports monitor names as "Monitor #<model number>" (tao's
+# platform_impl/macos/monitor.rs:208). Reading the name a human would recognise
+# needs AppKit. All of these are already in the tree via tao, so depending on
+# them directly costs no extra build time.
+# The OS keychain for the auth session, replacing Electron's `safeStorage`.
+# Split per platform on purpose: the crate's Linux backend needs libdbus at
+# build time, which would add a system dependency to the Linux CI bundle for a
+# platform the Tauri build has never been run on. Linux falls back to a 0600
+# file, which is what Electron does on a host where safeStorage is unavailable.
+# Version 3 rather than 4 because 4 raises the MSRV above what this crate
+# declares.
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+# The render process dying (`services/webview_crash.rs`). The version wry
+# uses, so the interfaces Tauri hands back are these crates' types.
+webview2-com = "0.38.2"
+# Browser mode's preview capture reads WebView2's PNG from a COM stream. The
+# version webview2-com uses.
+windows = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_Shell"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The web process dying (`services/webview_crash.rs`). wry's version.
+webkit2gtk = "2.0.2"
+# Browser mode lays its webview over the window's own (`browser_mode/view`).
+# Tauri's and wry's version.
+gtk = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# FFmpeg's filters, for `scale_vt`: a 4K frame is scaled on the GPU before it is
+# copied off it (`services/video/ffmpeg.rs`). Adds libavfilter on macOS only.
+ffmpeg-next = { version = "9", default-features = false, features = ["filter"] }
+keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+objc2 = "0.6"
+# Browser mode: WKWebView's history state and snapshots, and the view wry
+# attaches a child webview to (`browser_mode/view/native.rs`).
+objc2-web-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-app-kit",
+    "objc2-core-foundation",
+    "WKWebView",
+    "WKNavigation",
+    "WKSnapshotConfiguration",
+] }
+raw-window-handle = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    # Browser mode's snapshot arrives as an NSImage.
+    "NSImage",
+    "NSImageRep",
+    "NSGraphicsContext",
+    "objc2-core-graphics",
+    "NSScreen",
+    # The natively drawn audience screen: a layer-backed view below the
+    # webview (`services/surface/macos.rs`).
+    "NSView",
+    "NSResponder",
+    "NSGraphics",
+    "objc2-quartz-core",
+    # The system font list, as font-list's helpers read it.
+    "NSFontManager",
+] }
+# The view's layer, and the image each frame becomes.
+objc2-quartz-core = { version = "0.3", default-features = false, features = [
+    "std",
+    "CALayer",
+    "CATransaction",
+    "objc2-core-foundation",
+] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "std",
+    # Browser mode draws its snapshot into plain RGBA.
+    "CGContext",
+    "CGBitmapContext",
+    "CGImage",
+    "CGDataProvider",
+    "CGColorSpace",
+] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "CFCGTypes",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSString",
+    "NSDictionary",
+    "NSValue",
+    "NSEnumerator",
+    "NSArray",
+] }
+core-graphics = "0.25"
+# Microphone and camera authorisation, replacing Electron's
+# `systemPreferences.getMediaAccessStatus` / `askForMediaAccess`
+# (`media-permissions.service.ts:56-88`).
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "AVCaptureDevice",
+    "AVMediaFormat",
+] }
+block2 = "0.6.2"
+
+[features]
+# Enabled by `tauri dev`/`tauri build` in debug so devtools are available.
+default = []
+
+[profile.dev]
+incremental = true
+# Present's own per-pixel code, at a level where it can be judged.
+#
+# At `opt-level = 0` the compositor draws a 480x270 preview frame in tens of
+# milliseconds and the app looks broken in development in ways it is not when
+# shipped — which is not a useful thing for a development build to do. Level 1
+# keeps compiles quick and line numbers honest while making the picture move.
+opt-level = 1
+
+# Dependencies are optimised even in a development build.
+#
+# Without this every crate in the tree is built at `opt-level = 0`, including
+# the ones that do the per-pixel work: measured in the running dev app, a
+# 480x270 JPEG took **59 ms** to encode and the same encode in a release build
+# is a couple of milliseconds. That is the difference between a preview that
+# plays and one that shows thirteen frames a second, and it made every
+# measurement taken by running the dev app a measurement of the wrong thing.
+#
+# Present's own code stays at `opt-level = 0`, so it is still debuggable and
+# still compiles quickly. Only the dependencies are optimised, and they are
+# rebuilt rarely.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+# For measuring the compositor, not for shipping.
+#
+# `profile.release` optimises for **size** (`opt-level = "s"`, LTO, one codegen
+# unit), which is right for a Tauri bundle and wrong for judging a rasteriser:
+# it costs build minutes and hides how fast the code can actually run. This
+# profile answers "is the algorithm fast enough" separately from "what does the
+# shipping profile cost", which are different questions with different fixes.
+#
+#     cargo run --profile perf --example render_sample
+[profile.perf]
+inherits = "release"
+opt-level = 3
+lto = false
+codegen-units = 16
+strip = false
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+# Frame-time benchmarks (`benches/frame_time.rs`). No plotting: the numbers are
+# read in the terminal.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "frame_time"
+harness = false

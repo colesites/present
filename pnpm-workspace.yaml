@@ -1,9 +1,0 @@
-packages:
-  - 'apps/*'
-  - 'packages/*'
-allowBuilds:
-  electron: set this to true or false
-onlyBuiltDependencies:
-  - electron
-  - electron-winstaller
-  - esbuild

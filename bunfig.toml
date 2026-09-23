@@ -1,0 +1,10 @@
+[install]
+# The repository needs a flat node_modules, which is what the removed
+# `.npmrc` asked pnpm for with `node-linker=hoisted`:
+# `apps/desktop/scripts/stage-tauri-ndi.mjs` copies libndi out of grandi's
+# prebuilt `@grandi/<platform>-<arch>` package in the repo-root node_modules.
+# Under bun's default isolated linker that lives behind symlinks in `.bun/`,
+# and the bundle would ship without the NDI runtime.
+#
+# Bun defaults to "isolated" for workspaces, so this has to be explicit.
+linker = "hoisted"

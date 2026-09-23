@@ -103,9 +103,24 @@ function buildDraftWithNormalizedContent(
   textDefaults?: LibraryTextStyleDefaults,
   options?: {
     preserveBody?: boolean;
+    /**
+     * Keep the artist and author exactly as typed. Normalising trims them, and
+     * doing that on every keystroke swallowed a space the moment it was typed,
+     * so neither field could hold two words. They are trimmed when saved.
+     */
+    preserveTypedText?: boolean;
   },
 ): LibraryItemDraft {
-  const normalizedContent = normalizeLibraryContent(content ?? draft.content, slides);
+  const sourceContent = content ?? draft.content;
+  const normalizedContent = normalizeLibraryContent(sourceContent, slides);
+  if (options?.preserveTypedText && normalizedContent.presentation) {
+    const typed = sourceContent?.presentation;
+    normalizedContent.presentation = {
+      ...normalizedContent.presentation,
+      artist: typed?.artist ?? normalizedContent.presentation.artist,
+      author: typed?.author ?? normalizedContent.presentation.author,
+    };
+  }
   const canvasSize =
     normalizedContent.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE;
   const nextSlides = slides.map((slide) =>
@@ -358,6 +373,7 @@ export const LyricsEditor = memo(function LyricsEditor({
           activeDefaultTextStyle,
           {
             preserveBody: options?.preserveBody ?? editorView === "source",
+            preserveTypedText: true,
           },
         );
       });

@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Image,
   Video,
+  AlertTriangle,
   Folder,
   Monitor,
   Plus,
@@ -36,6 +37,7 @@ import {
   DropdownMenuSeparator,
 } from "../../renderer/shared/components/ui/dropdown-menu";
 import type { MediaState, MediaItem, MediaFolder } from "./hooks";
+import { useVideoSupport } from "../../renderer/shared/hooks/useVideoSupport";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { api } from "@present/backend/convex/_generated/api";
@@ -63,6 +65,7 @@ import {
   ResizableHandle,
 } from "../../renderer/shared/components/ui/resizable";
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
+import { VideoThumbnail } from "./components/VideoThumbnail";
 
 type MediaFilter = "all" | "images" | "videos";
 
@@ -76,6 +79,7 @@ const MediaItemCard = memo(function MediaItemCard({
   onDelete,
   isInsideService,
   isGridView,
+  unplayableReason,
 }: {
   item: MediaItem;
   isActive: boolean;
@@ -85,6 +89,8 @@ const MediaItemCard = memo(function MediaItemCard({
   onDelete: (item: MediaItem) => void;
   isInsideService: boolean;
   isGridView?: boolean;
+  /** Set when this file will not play in the app (ADR-003). */
+  unplayableReason?: string;
 }) {
   const cardRef = useRef<HTMLButtonElement | null>(null);
   const [isInView, setIsInView] = useState(false);
@@ -118,12 +124,15 @@ const MediaItemCard = memo(function MediaItemCard({
       type="button"
       onClick={() => onSelect(item)}
       ref={cardRef}
+      title={unplayableReason}
       className={cn(
         "group relative overflow-hidden rounded-xl border bg-black transition-all duration-150",
         isGridView ? "aspect-video w-full" : "flex h-16 w-full flex-row items-center",
         isActive
           ? "border-primary/70 ring-2 ring-primary/70 ring-offset-1 ring-offset-background"
-          : "border-border/60 hover:border-primary/40 hover:shadow-md hover:shadow-black/30"
+          : unplayableReason
+            ? "border-amber-500/70 hover:border-amber-500"
+            : "border-border/60 hover:border-primary/40 hover:shadow-md hover:shadow-black/30"
       )}
     >
           <div className={cn(
@@ -138,24 +147,11 @@ const MediaItemCard = memo(function MediaItemCard({
                 loading="lazy"
               />
             ) : (
-              <video
-                src={item.url}
-                aria-label={`${item.name} preview`}
-                className="h-full w-full object-contain"
-                muted
-                preload={isInView ? "metadata" : "none"}
-                playsInline
-                onLoadedMetadata={(e) => {
-                  if (!isInView) {
-                    return;
-                  }
-                  try {
-                    e.currentTarget.currentTime = 0.01;
-                    e.currentTarget.pause();
-                  } catch {
-                    // Ignore seek errors for unsupported formats.
-                  }
-                }}
+              <VideoThumbnail
+                path={item.path}
+                lastModified={item.lastModified}
+                name={item.name}
+                enabled={isInView}
               />
             )}
           </div>
@@ -164,13 +160,25 @@ const MediaItemCard = memo(function MediaItemCard({
               <p className="truncate text-xs text-white">{item.name}</p>
             </div>
           ) : (
-            <div className="flex flex-1 items-center px-4 overflow-hidden">
+            <div className="flex flex-1 flex-col justify-center px-4 overflow-hidden">
               <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
+              {unplayableReason ? (
+                <p className="truncate text-xs text-amber-500">{unplayableReason}</p>
+              ) : null}
             </div>
           )}
-          {/* Type indicator */}
-          <div className="absolute right-1 top-1 rounded bg-black/60 p-1">
-            {item.type === "video" ? (
+          {/* Type indicator, or a warning when the file will not play.
+              A volunteer needs to find this out while there is still time to
+              convert the file, not when it reaches the screen (ADR-002). */}
+          <div
+            className={cn(
+              "absolute right-1 top-1 rounded p-1",
+              unplayableReason ? "bg-amber-500" : "bg-black/60"
+            )}
+          >
+            {unplayableReason ? (
+              <AlertTriangle className="h-3 w-3 text-black" aria-hidden />
+            ) : item.type === "video" ? (
               <Video className="h-3 w-3 text-white" />
             ) : (
               <Image className="h-3 w-3 text-white" />
@@ -347,6 +355,18 @@ export const MediaPanel = memo(
       return filteredItems;
     }, [filter, filteredItems]);
 
+    // Which of the visible videos will not play in the app (ADR-003).
+    // Asked about what is on screen rather than the whole library, so a folder
+    // of a thousand files does not check nine hundred it is not showing.
+    const visibleVideoPaths = useMemo(
+      () =>
+        visibleMediaItems
+          .filter((item) => item.type === "video")
+          .map((item) => item.path),
+      [visibleMediaItems]
+    );
+    const unplayableMedia = useVideoSupport(visibleVideoPaths);
+
     const handleAddToService = async (item: MediaItem) => {
       if (!selectedServiceId) {
         toast.error("Please select a service first");
@@ -456,24 +476,13 @@ export const MediaPanel = memo(
       }
     };
 
-    // Check if File System Access API is supported
-    const isSupported =
-      typeof window !== "undefined" && "showDirectoryPicker" in window;
-
-    if (!isSupported) {
-      return (
-        <div className="flex h-full items-center justify-center p-4 text-center text-sm text-muted-foreground">
-          <div>
-            <p className="font-medium">Browser not supported</p>
-            <p className="mt-1 text-xs">
-              Your browser doesn&apos;t support the File System Access API.
-              <br />
-              Please use Chrome, Edge, or another Chromium-based browser.
-            </p>
-          </div>
-        </div>
-      );
-    }
+    // NOTE: this panel used to gate itself on `"showDirectoryPicker" in window`.
+    // That check was vestigial — the app has never called the File System
+    // Access API. Folders are chosen through a native dialog
+    // (`useMediaFolders.addFolder` → `selectFolder`) and read from the native
+    // layer, neither of which touches the web API. Under Chromium the check
+    // always passed, so it was invisible; under a non-Chromium webview it hid a
+    // fully working panel behind a "browser not supported" message.
 
     return (
       <>
@@ -777,6 +786,7 @@ export const MediaPanel = memo(
                             onDelete={setMediaToRemove}
                             isInsideService={isInsideService}
                             isGridView={isGridView}
+                            unplayableReason={unplayableMedia.get(item.path)}
                           />
                         </div>
                       ))}
