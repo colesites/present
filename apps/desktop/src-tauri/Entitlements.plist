@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  What a signed Present is allowed to do.
+
+  A signed build runs under the hardened runtime, and the hardened runtime
+  will only load libraries signed by the same team as the app. NDI's runtime
+  is signed by NDI (team W8U66ET244) and Present by us, so without this the
+  bundled `libndi.dylib` is refused by the loader and every signed build
+  reports "NDI runtime unavailable" — the library is right there in
+  `Contents/Resources/ndi`, and macOS will not open it.
+
+  This is the entitlement Apple provides for exactly that case: an app that
+  ships a third party's signed library. It does not disable the signature
+  check on our own code, and it does not weaken the runtime in any other way.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

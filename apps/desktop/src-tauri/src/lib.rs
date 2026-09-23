@@ -126,11 +126,33 @@ pub fn run() {
                     tracing::error!("local-media request before the file scope was registered");
                     return;
                 };
-                responder.respond(services::media_protocol::respond(
-                    &state,
-                    &uri,
-                    range.as_deref(),
-                ));
+                let response =
+                    services::media_protocol::respond(&state, &uri, range.as_deref());
+
+                // The answer goes back on the main thread, because that is
+                // where WebKit both starts and stops a scheme task. Answering
+                // from this thread races the stop: wry checks the task is
+                // still alive and then hands it the response, and a cancel
+                // landing between those two makes WebKit raise an Objective-C
+                // exception. That crosses a frame that cannot unwind, which is
+                // not a catchable error — it is `abort()`, and the whole app
+                // goes down mid-service.
+                //
+                // A `<video>` cancels range requests constantly, as it seeks
+                // and buffers and is torn down, so it hit this every time.
+                // On the main thread the start, the stop and this answer are
+                // the same queue, and the race has nowhere to happen. Only the
+                // handing over moves — the disk read above stays here.
+                #[cfg(target_os = "macos")]
+                {
+                    if let Err(error) =
+                        app.run_on_main_thread(move || responder.respond(response))
+                    {
+                        tracing::warn!(%error, "could not answer a local-media request");
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                responder.respond(response);
             });
         })
         // `ndi-frame://frame/<source>` — the latest frame of the source an NDI
