@@ -53,7 +53,27 @@ fn theme_colors(theme_key: &str) -> (Option<Color>, Color) {
 }
 
 /// Draw the message banner, if there is one.
-pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay) {
+/// How far a marquee has travelled, 0 at the right edge and 1 fully off the
+/// left. `None` for a message that does not move.
+///
+/// The text crosses twice the frame's width — in from the right, out past the
+/// left — so a message is legible for roughly half its cycle whatever its
+/// length. `speed_seconds` is how long one crossing takes; a nonsense or
+/// missing speed falls back to ten seconds rather than dividing by zero.
+fn marquee_progress(overlay: &MessageOverlay, elapsed_seconds: f64) -> Option<f64> {
+    if !matches!(overlay.animation.as_str(), "marquee-left" | "marquee-right") {
+        return None;
+    }
+    let seconds = if overlay.speed_seconds.is_finite() && overlay.speed_seconds > 0.1 {
+        overlay.speed_seconds
+    } else {
+        10.0
+    };
+    let elapsed = elapsed_seconds.max(0.0);
+    Some((elapsed / seconds).rem_euclid(1.0))
+}
+
+pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay, elapsed_seconds: f64) {
     if overlay.text.trim().is_empty() {
         return;
     }
@@ -109,14 +129,35 @@ pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay) {
         }
     }
 
-    let spec = text::TextBox::new(
-        padding,
-        top + padding,
-        (width - padding * 2.0).max(1.0),
-        (band_height - padding * 2.0).max(1.0),
-        scaled_font,
-    )
-    .centred()
+    let spec = match marquee_progress(overlay, elapsed_seconds) {
+        // Standing still: centred in the band, as before.
+        None => text::TextBox::new(
+            padding,
+            top + padding,
+            (width - padding * 2.0).max(1.0),
+            (band_height - padding * 2.0).max(1.0),
+            scaled_font,
+        )
+        .centred(),
+        // Moving: the box itself travels, and the text sits at its left edge.
+        // Left to right is the same journey read backwards.
+        Some(progress) => {
+            let travel = width * 2.0;
+            let offset = travel * progress as f32;
+            let x = if overlay.animation == "marquee-right" {
+                -width + offset
+            } else {
+                width - offset
+            };
+            text::TextBox::new(
+                x,
+                top + padding,
+                width.max(1.0),
+                (band_height - padding * 2.0).max(1.0),
+                scaled_font,
+            )
+        }
+    }
     .with_color(ink)
     .with_weight(cosmic_text::Weight::SEMIBOLD);
 
@@ -570,12 +611,14 @@ mod tests {
         draw_message(
             &mut top.pixmap_mut(),
             &message("top", "info", "Cry room open"),
+            0.0,
         );
 
         let mut bottom = Frame::new(640, 360).expect("frame");
         draw_message(
             &mut bottom.pixmap_mut(),
             &message("bottom", "info", "Cry room open"),
+            0.0,
         );
 
         assert!(ink_in_rows(&top, 0, 90) > ink_in_rows(&top, 270, 360));
@@ -592,7 +635,7 @@ mod tests {
             let mut frame = Frame::new(320, 180).expect("frame");
             let mut overlay = message("top", "info", "Offering is by transfer");
             overlay.font_scale = scale;
-            draw_message(&mut frame.pixmap_mut(), &overlay);
+            draw_message(&mut frame.pixmap_mut(), &overlay, 0.0);
             // The frame starts opaque black, so the plate is found by colour:
             // every row at the left edge that is no longer black is banner.
             (0..180)
@@ -613,6 +656,55 @@ mod tests {
     }
 
     #[test]
+    fn a_marquee_moves_across_the_frame_over_time() {
+        // Same message, three moments: the text must be somewhere different
+        // each time, or it is not scrolling.
+        let ink_at = |elapsed: f64| {
+            let mut frame = Frame::new(320, 180).expect("frame");
+            let mut overlay = message("top", "transparent", "Offering by transfer");
+            overlay.animation = "marquee-left".to_owned();
+            overlay.speed_seconds = 6.0;
+            draw_message(&mut frame.pixmap_mut(), &overlay, elapsed);
+            (0..320)
+                .filter(|column| {
+                    (0..40).any(|row| {
+                        frame
+                            .pixel_at(*column, row)
+                            .is_some_and(|(r, g, b, _)| r > 40 || g > 40 || b > 40)
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let early = ink_at(0.5);
+        let later = ink_at(3.0);
+        assert!(!early.is_empty() && !later.is_empty(), "the text is drawn");
+        assert_ne!(early, later, "and it is somewhere else a moment later");
+    }
+
+    #[test]
+    fn a_still_message_does_not_move() {
+        let ink_at = |elapsed: f64| {
+            let mut frame = Frame::new(320, 180).expect("frame");
+            draw_message(
+                &mut frame.pixmap_mut(),
+                &message("top", "transparent", "Offering by transfer"),
+                elapsed,
+            );
+            (0..320)
+                .filter(|column| {
+                    (0..40).any(|row| {
+                        frame
+                            .pixel_at(*column, row)
+                            .is_some_and(|(r, g, b, _)| r > 40 || g > 40 || b > 40)
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ink_at(0.0), ink_at(30.0), "a static message stays put");
+    }
+
+    #[test]
     fn each_theme_paints_its_own_plate() {
         // Ported case for case from `getOverlayThemeStyle`. A theme silently
         // falling back would send the wrong signal on a warning message.
@@ -620,6 +712,7 @@ mod tests {
         draw_message(
             &mut warning.pixmap_mut(),
             &message("top", "warning", "Move your car"),
+            0.0,
         );
         // Sampled at the band's left edge, inside the padding: the centre is
         // where the text goes, and the band is only as tall as the text now.
@@ -633,6 +726,7 @@ mod tests {
         draw_message(
             &mut danger.pixmap_mut(),
             &message("top", "danger", "Evacuate"),
+            0.0,
         );
         let (r, g, b, _) = danger.pixel_at(2, 2).expect("pixel");
         assert!(r > 180 && g < 90 && b < 90, "red expected, got {r},{g},{b}");
@@ -644,6 +738,7 @@ mod tests {
         draw_message(
             &mut frame.pixmap_mut(),
             &message("top", "transparent", "Quiet"),
+            0.0,
         );
 
         // The corner of the banner band, away from where the centred text goes.
@@ -658,6 +753,7 @@ mod tests {
         draw_message(
             &mut frame.pixmap_mut(),
             &message("top", "seafoam", "Notice"),
+            0.0,
         );
 
         assert!(ink_in_rows(&frame, 0, 60) > 0, "nothing was drawn");
@@ -667,7 +763,7 @@ mod tests {
     fn an_empty_message_draws_nothing() {
         for text in ["", "   "] {
             let mut frame = Frame::new(320, 180).expect("frame");
-            draw_message(&mut frame.pixmap_mut(), &message("top", "info", text));
+            draw_message(&mut frame.pixmap_mut(), &message("top", "info", text), 0.0);
             assert_eq!(ink_in_rows(&frame, 0, 180), 0, "{text:?} drew something");
         }
     }

@@ -64,8 +64,16 @@ impl SurfaceSource for AppSurfaceSource {
         let frame = video.frame_for(&scene, Instant::now(), size, open);
         let shown = frame.map(|frame| frame.presentation_seconds);
 
-        let unchanged =
-            last.as_ref()
+        // A message that scrolls is the one thing that looks different from one
+        // frame to the next while the scene itself is identical, so it has to
+        // be named here: otherwise the surface decides nothing changed, skips
+        // the draw, and the marquee stands still on the wall while moving
+        // perfectly well in the preview — which draws continuously.
+        let moving_message = scene.message_overlay.as_ref().is_some_and(|message| {
+            matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
+        });
+        let unchanged = !moving_message
+            && last.as_ref()
                 .is_some_and(|(previous_scene, previous_video, previous_size)| {
                     *previous_size == size
                         && *previous_video == shown

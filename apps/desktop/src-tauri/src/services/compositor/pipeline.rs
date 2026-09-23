@@ -132,7 +132,22 @@ pub struct SceneCompositor {
 struct OverlayKey {
     message: Option<crate::services::output::MessageOverlay>,
     props: Vec<crate::services::output::PropsOverlayItem>,
+    /// Which frame of a moving message this layer holds.
+    ///
+    /// The layer is cached and only redrawn when this key changes, which is
+    /// what a scrolling message needs to defeat: its contents are identical
+    /// from one frame to the next and only its position differs. A message
+    /// that does not move keeps this at zero and the layer is drawn once, as
+    /// before.
+    scroll_step: u64,
 }
+
+/// How many times a second a moving message is redrawn.
+///
+/// The whole overlay layer is rebuilt at each step, so this is a cost as well
+/// as a smoothness: thirty is smooth to the eye and leaves the rest of the
+/// frame budget alone.
+const MARQUEE_STEPS_PER_SECOND: f64 = 30.0;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct OverlayCounts {
@@ -382,9 +397,30 @@ impl SceneCompositor {
         scene: &OutputScene,
         loader: &dyn MediaLoader,
     ) -> Option<(&Pixmap, OverlayCounts)> {
+        // Wall clock rather than the monotonic one: `shown_at_ms` is when the
+        // operator sent the message, which is a time of day.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
+        let elapsed_seconds = scene
+            .message_overlay
+            .as_ref()
+            .map_or(0.0, |message| (now_ms - message.shown_at_ms).max(0.0) / 1000.0);
+        let moving = scene
+            .message_overlay
+            .as_ref()
+            .is_some_and(|message| {
+                matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
+            });
+
         let key = OverlayKey {
             message: scene.message_overlay.clone(),
             props: scene.props_overlay.clone(),
+            scroll_step: if moving {
+                (elapsed_seconds * MARQUEE_STEPS_PER_SECOND) as u64
+            } else {
+                0
+            },
         };
         if key.message.is_none() && key.props.is_empty() {
             return None;
@@ -399,7 +435,7 @@ impl SceneCompositor {
                 counts.drawn += props.drawn;
                 counts.deferred += props.deferred;
                 if let Some(message) = scene.message_overlay.as_ref() {
-                    super::overlays::draw_message(&mut view, message);
+                    super::overlays::draw_message(&mut view, message, elapsed_seconds);
                     counts.drawn += 1;
                 }
             }
