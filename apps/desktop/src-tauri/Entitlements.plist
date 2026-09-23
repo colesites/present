@@ -13,10 +13,20 @@
   This is the entitlement Apple provides for exactly that case: an app that
   ships a third party's signed library. It does not disable the signature
   check on our own code, and it does not weaken the runtime in any other way.
+
+  The microphone is the same story. `NSMicrophoneUsageDescription` in
+  `Info.plist` is what the operator is shown when macOS asks, but under the
+  hardened runtime the ask never happens without this entitlement: the app is
+  refused before anyone sees a prompt, and the scripture agent reports the
+  microphone blocked with nothing the operator can do about it. An unsigned
+  build has no hardened runtime to enforce either of these, which is why both
+  only appear once the app is signed.
 -->
 <plist version="1.0">
 <dict>
 	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
 	<true/>
 </dict>
 </plist>
