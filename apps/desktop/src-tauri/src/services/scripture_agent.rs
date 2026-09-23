@@ -177,10 +177,26 @@ pub async fn ask(
 ) -> Option<Understanding> {
     // Everything that was heard, whatever it looks like. What it meant is the
     // model's question to answer, not this file's to pre-judge.
-    if session_token.trim().is_empty() || heard.trim().is_empty() || books.is_empty() {
+    //
+    // Each way of giving up says so out loud. An agent that hears the preacher
+    // and puts nothing on the screen looks identical from the operator's seat
+    // whether it was never asked, was refused, or answered something that did
+    // not resolve — and at `debug!` the log said nothing at all.
+    if session_token.trim().is_empty() {
+        tracing::info!("heard something, but nobody is signed in to ask about it");
         return None;
     }
-    let url = ask_url(web_app_base_url)?;
+    if heard.trim().is_empty() {
+        return None;
+    }
+    if books.is_empty() {
+        tracing::info!("heard something, but no Bible is installed to read it against");
+        return None;
+    }
+    let Some(url) = ask_url(web_app_base_url) else {
+        tracing::warn!(web_app_base_url, "no address to ask the scripture agent at");
+        return None;
+    };
     let names: Vec<&str> = books.iter().map(|book| book.name.as_str()).collect();
 
     let client = reqwest::Client::builder()
@@ -193,17 +209,41 @@ pub async fn ask(
         .json(&serde_json::json!({ "heard": heard.trim(), "books": names }))
         .send()
         .await
-        .map_err(|error| tracing::debug!(%error, "the scripture agent could not be reached"))
+        .map_err(|error| tracing::warn!(%error, "the scripture agent could not be reached"))
         .ok()?;
-    if !response.status().is_success() {
-        tracing::debug!(status = %response.status(), "the scripture agent had nothing");
+    let status = response.status();
+    if !status.is_success() {
+        // 401 is the common one and means the desktop's credential was not
+        // accepted, which is a sign-in problem wearing an agent's clothes.
+        tracing::warn!(%status, "the scripture agent refused the request");
         return None;
     }
 
-    let body: serde_json::Value = response.json().await.ok()?;
-    let content = body.get("content")?.as_str()?;
-    let answer = answer_from_json(content)?;
-    Some(understand(&answer, books))
+    let body: serde_json::Value = match response.json::<serde_json::Value>().await {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(%error, "the scripture agent's answer was not JSON");
+            return None;
+        }
+    };
+    let Some(content) = body.get("content").and_then(|value| value.as_str()) else {
+        tracing::warn!("the scripture agent answered without any content");
+        return None;
+    };
+    let Some(answer) = answer_from_json(content) else {
+        tracing::info!(heard, content, "the model did not name a reference");
+        return None;
+    };
+    let understanding = understand(&answer, books);
+    tracing::info!(
+        heard,
+        book = ?understanding.reference.book,
+        chapter = ?understanding.reference.chapter,
+        verse = ?understanding.reference.verse_start,
+        will_project = understanding.may_project(),
+        "the scripture agent read what was said"
+    );
+    Some(understanding)
 }
 
 #[cfg(test)]
