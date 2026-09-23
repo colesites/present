@@ -39,7 +39,6 @@ import { WorshipStageDisplayWindow } from "../../features/stage/WorshipStageDisp
 import { LooksWindow } from "../../features/looks/LooksWindow";
 import { ScreenComposerWindow } from "../../features/screen-composer";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
-import { SpeechScriptureOverlayHost } from "../../features/scripture/components/SpeechScriptureOverlayHost";
 import { MiniLyricsWindow } from "../../features/editor";
 import { areDisplayListsEqual } from "../shared/lib/display-list";
 
@@ -944,7 +943,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
         speechInputDeviceId={settings.settingsSpeechInputDeviceId}
         speechLang={settings.settingsLang}
       />
-      <SpeechScriptureOverlayHost />
     </div>
   );
 }

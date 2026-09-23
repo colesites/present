@@ -21,14 +21,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::services::scripture::{self, Book, Reference};
 
-/// How sure the model has to be before a reference is projected without
-/// anybody confirming it.
-///
-/// Wrong scripture on the wall is worse than none, and the cost of being shy
-/// is one click. Tuned to be generous to a plain reference and reluctant with
-/// a sentence it half-heard.
-pub const CONFIDENT_ENOUGH: f64 = 0.8;
-
 /// What the model is asked for, and all it may answer with.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,9 +47,20 @@ pub struct Understanding {
 
 impl Understanding {
     /// Whether this can go to the screen without being asked about.
+    ///
+    /// A reference the model resolved to a book the operator actually has,
+    /// with a chapter and nothing wrong with it, is projected. There is no
+    /// confidence threshold: one was tried, and the model reported plain
+    /// references like "john three sixteen" well below it, so a reading that
+    /// was right sat in a suggestion list waiting for a click that the person
+    /// running the service has no hand free to give.
+    ///
+    /// What still stops a projection is the reading itself — an invented book,
+    /// a missing chapter, a range that runs backwards. Those are checked in
+    /// `understand`, against the books installed here rather than against the
+    /// model's word for it.
     pub fn may_project(&self) -> bool {
-        self.confidence >= CONFIDENT_ENOUGH
-            && self.reference.book.is_some()
+        self.reference.book.is_some()
             && self.reference.chapter.is_some()
             && self.reference.errors.is_empty()
     }
@@ -330,7 +333,10 @@ mod tests {
     }
 
     #[test]
-    fn an_unsure_answer_becomes_a_suggestion_rather_than_a_slide() {
+    fn a_reading_that_resolves_is_projected_whatever_the_model_says_about_itself() {
+        // The model's own confidence is recorded and ignored. It scored plain
+        // references far lower than they deserved, and an operator mid-service
+        // cannot click to confirm what was already right.
         let unsure = Answer {
             book: "John".to_owned(),
             chapter: 3,
@@ -340,10 +346,7 @@ mod tests {
         };
         let understanding = understand(&unsure, &books());
         assert_eq!(understanding.reference.book.as_deref(), Some("john"));
-        assert!(
-            !understanding.may_project(),
-            "it is still offered, not sent"
-        );
+        assert!(understanding.may_project(), "it resolved, so it goes up");
 
         let sure = Answer {
             confidence: 0.95,
@@ -388,7 +391,9 @@ mod tests {
     }
 
     #[test]
-    fn nonsense_confidence_is_no_confidence() {
+    fn nonsense_confidence_is_recorded_as_none() {
+        // Confidence no longer decides anything, but it is carried back and
+        // shown, so a NaN or an infinity must not travel any further.
         for confidence in [f64::NAN, f64::INFINITY, -5.0] {
             let answer = Answer {
                 book: "John".to_owned(),
@@ -397,7 +402,12 @@ mod tests {
                 verse_end: None,
                 confidence,
             };
-            assert!(!understand(&answer, &books()).may_project(), "{confidence}");
+            let understanding = understand(&answer, &books());
+            assert_eq!(understanding.confidence, 0.0, "{confidence}");
+            assert!(
+                understanding.may_project(),
+                "the reading is sound whatever the model said about itself",
+            );
         }
     }
 }
