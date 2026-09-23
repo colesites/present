@@ -118,6 +118,10 @@ export default defineSchema({
     name: v.string(),
     date: v.optional(v.string()),
     order: v.optional(v.number()),
+    // When the service was archived, or absent while it is in use. Archiving
+    // keeps last year's Christmas service without it crowding this Sunday's
+    // list, and is not deletion: everything in it is still there.
+    archivedAt: v.optional(v.number()),
     groups: v.optional(
       v.array(
         v.object({
@@ -340,6 +344,10 @@ export default defineSchema({
     name: v.string(),
     date: v.optional(v.string()),
     order: v.optional(v.number()),
+    // When the service was archived, or absent while it is in use. Archiving
+    // keeps last year's Christmas service without it crowding this Sunday's
+    // list, and is not deletion: everything in it is still there.
+    archivedAt: v.optional(v.number()),
     groups: v.optional(
       v.array(
         v.object({

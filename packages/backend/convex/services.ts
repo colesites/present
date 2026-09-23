@@ -10,23 +10,34 @@ const getServiceLayoutItemKey = (item: {
 }) => [item.type, item.refId, item.addedAt, item.groupId ?? "standalone"].join(":");
 
 export const list = query({
-  args: { workspaceId: v.optional(v.string()) },
+  args: {
+    workspaceId: v.optional(v.string()),
+    // Archived services are kept but out of the way. The sidebar asks for them
+    // only when the operator goes looking.
+    includeArchived: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     try {
       const workspace = await validateWorkspace(ctx, args.workspaceId);
+      const wanted = <T extends { archivedAt?: number; order?: number }>(
+        services: T[],
+      ): T[] =>
+        services
+          .filter((service) => args.includeArchived || !service.archivedAt)
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
       if (workspace.type === "personal") {
         const services = await ctx.db
           .query("personalServices")
           .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
           .collect();
-        return services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        return wanted(services);
       } else {
         const services = await ctx.db
           .query("services")
           .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
           .collect();
-        return services.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        return wanted(services);
       }
     } catch (error) {
       // Return empty array if user is not authenticated yet
@@ -247,6 +258,9 @@ export const update = mutation({
     serviceId: v.string(),
     name: v.optional(v.string()),
     date: v.optional(v.string()),
+    // `null` un-archives; omitted leaves the archive state alone, so an
+    // ordinary rename does not quietly bring a service back into the list.
+    archivedAt: v.optional(v.union(v.number(), v.null())),
     groups: v.optional(
       v.array(
         v.object({
@@ -287,6 +301,9 @@ export const update = mutation({
     if (args.date !== undefined) updates.date = args.date;
     if (args.groups !== undefined) updates.groups = args.groups;
     if (args.layout !== undefined) updates.layout = args.layout;
+    if (args.archivedAt !== undefined) {
+      updates.archivedAt = args.archivedAt ?? undefined;
+    }
 
     await ctx.db.patch(serviceId, updates);
     return serviceId;
@@ -336,6 +353,62 @@ export const remove = mutation({
     if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) throw new Error("Unauthorized");
 
     await ctx.db.delete(serviceId);
+  },
+});
+
+/**
+ * Archive a service, or bring it back.
+ *
+ * Not deletion: a church keeps last year's Carol Service and wants it out of
+ * this Sunday's list, not gone. Everything in it stays.
+ */
+export const setArchived = mutation({
+  args: {
+    workspaceId: v.optional(v.string()),
+    serviceIds: v.array(v.string()),
+    archived: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    const archivedAt = args.archived ? Date.now() : undefined;
+
+    for (const id of args.serviceIds) {
+      const serviceId = id as any;
+      const service = await ctx.db.get(serviceId);
+      if (!service) continue;
+      if (workspace.type === "personal" && (service as any).userId !== workspace.userId) continue;
+      if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) continue;
+      await ctx.db.patch(serviceId, { archivedAt });
+    }
+  },
+});
+
+/**
+ * Delete several services at once.
+ *
+ * One at a time meant one confirmation each, which is how a tidy-up becomes
+ * twenty clicks. A service that is not the operator's is skipped rather than
+ * failing the whole run — the rest of the selection was still meant.
+ */
+export const removeMany = mutation({
+  args: {
+    workspaceId: v.optional(v.string()),
+    serviceIds: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    let removed = 0;
+
+    for (const id of args.serviceIds) {
+      const serviceId = id as any;
+      const service = await ctx.db.get(serviceId);
+      if (!service) continue;
+      if (workspace.type === "personal" && (service as any).userId !== workspace.userId) continue;
+      if (workspace.type === "organization" && (service as any).orgId !== workspace.orgId) continue;
+      await ctx.db.delete(serviceId);
+      removed += 1;
+    }
+    return removed;
   },
 });
 

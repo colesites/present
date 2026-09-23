@@ -331,6 +331,11 @@ interface MainViewProps {
       newName: string
     ) => Promise<void>;
     onDeleteService: (serviceId: Id<"services">) => Promise<void>;
+    onDeleteServices: (serviceIds: Id<"services">[]) => Promise<void>;
+    onArchiveServices: (
+      serviceIds: Id<"services">[],
+      archived: boolean,
+    ) => Promise<void>;
     onReorderServiceItems: (from: number, to: number) => Promise<void>;
     onReorderServices: (from: number, to: number) => Promise<void>;
     onAddScriptureToService: (
@@ -534,6 +539,8 @@ export function MainView({
     onCreateService: createNewService,
     onRenameService: renameExistingService,
     onDeleteService: deleteService,
+    onDeleteServices: deleteServices,
+    onArchiveServices: archiveServices,
     onReorderServiceItems: reorderServiceItems,
     onReorderServices: reorderServices,
     onAddScriptureToService,
@@ -895,12 +902,16 @@ export function MainView({
       onCreateService: createNewService,
       onRenameService: renameExistingService,
       onDeleteService: deleteService,
+      onDeleteServices: deleteServices,
+      onArchiveServices: archiveServices,
       onReorderServiceItems: handleReorderServiceItemsSafe,
       onReorderServices: reorderServices,
     }),
     [
       createNewService,
       deleteService,
+      deleteServices,
+      archiveServices,
       enterService,
       exitService,
       handleDoubleClickServiceItem,
