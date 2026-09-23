@@ -123,6 +123,7 @@ export const ScripturePanel = memo(
     const allBooks = useMemo(() => liveBooks ?? [], [liveBooks]);
     const liveVersions = useLiveQuery(() => db.versions.toArray());
     const availableVersions = useMemo(() => liveVersions ?? [], [liveVersions]);
+
     const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
     const webAppBaseUrl = useMemo(() => desktopWebBaseUrl(), []);
 
@@ -139,6 +140,28 @@ export const ScripturePanel = memo(
       isHostedCatalogLoading,
       refreshHostedCatalog,
     } = useScripture();
+    /**
+     * The catalog, minus what is already here.
+     *
+     * The list above this one is what the operator has installed; without this
+     * the same Bible appears in both, the second time still offering to
+     * download it. Matched on the version code rather than the id, because a
+     * bundled file's id comes from the catalog and an imported one's comes
+     * from the file — the same Bible arrives under two ids, and only the code
+     * is the same on both sides.
+     */
+    const installableVersions = useMemo(() => {
+      const installed = new Set(
+        availableVersions.flatMap((version) =>
+          [version.code, version.id].filter(Boolean).map((value) => value.toLowerCase()),
+        ),
+      );
+      return hostedVersions.filter(
+        (version) =>
+          !installed.has(version.code.toLowerCase())
+          && !installed.has(version.id.toLowerCase()),
+      );
+    }, [availableVersions, hostedVersions]);
 
     const lookupValue = useScripturePanelStore((state) => state.lookupValue);
     const setLookupValue = useScripturePanelStore((state) => state.setLookupValue);
@@ -989,8 +1012,14 @@ export const ScripturePanel = memo(
               <DropdownMenuSeparator />
               {isHostedCatalogLoading ? (
                 <div className="px-2 py-2 text-xs text-muted-foreground">Loading versions…</div>
+              ) : installableVersions.length === 0 ? (
+                <div className="px-2 py-2 text-xs text-muted-foreground">
+                  {hostedVersions.length === 0
+                    ? "No other versions available."
+                    : "Every available version is installed."}
+                </div>
               ) : (
-                hostedVersions.map((version) => (
+                installableVersions.map((version) => (
                   <DropdownMenuItem
                     key={version.id}
                     onClick={() => {

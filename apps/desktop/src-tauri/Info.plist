@@ -3,11 +3,41 @@
 <plist version="1.0">
 <dict>
 	<!--
-	  Merged into the generated Info.plist by tauri-bundler. Mirrors the
-	  extendInfo/extendHelperInfo entries in forge.config.ts so the Tauri build
-	  asks for microphone access with the same wording as the Electron build.
+	  Merged into the generated Info.plist by tauri-bundler.
+
+	  Every one of these is something the app already does. macOS will not ask
+	  on the app's behalf without a reason to show, and for the camera it does
+	  not merely refuse — it kills the process the moment the API is called.
+	  The wording is what the operator reads in the prompt, so it says what the
+	  church gets, not what the code wants.
 	-->
+
+	<!-- The listening scripture agent (`services/scripture_agent.rs`). -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Present uses the microphone for voice scripture search and speech controls.</string>
+
+	<!-- Camera and capture devices: the screen composer, and HDMI capture
+	     boxes, which macOS presents as cameras. Missing this key is a crash,
+	     not a denial. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Present uses cameras and HDMI capture devices to show a live picture on the audience screen.</string>
+
+	<!-- NDI finds and sends to other machines over the local network, which
+	     macOS 15 asks about separately from any other networking. Without it
+	     NDI sees no sources and no one sees Present's output. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Present sends and receives video over NDI with other machines on your network.</string>
+
+	<!-- Media libraries live wherever the church keeps them. Documents is the
+	     common case, a USB drive carried to the projector is the other one,
+	     and both are asked about separately. -->
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Present opens the images and videos in your media folders.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Present opens the images and videos in your media folders.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Present opens the images and videos in your media folders.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Present opens media from USB drives and other removable disks.</string>
 </dict>
 </plist>
