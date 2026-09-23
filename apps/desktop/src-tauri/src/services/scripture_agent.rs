@@ -157,7 +157,7 @@ const ASK_PATH: &str = "/api/ai/scripture";
 /// Shorter than the route's own timeout, because a reference that arrives
 /// after the preacher has moved on is worse than none: the operator is
 /// already doing it by hand.
-const ASK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const ASK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(7);
 
 pub fn ask_url(web_app_base_url: &str) -> Option<String> {
     let trimmed = web_app_base_url.trim().trim_end_matches('/');
