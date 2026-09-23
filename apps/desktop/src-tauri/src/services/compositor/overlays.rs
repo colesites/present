@@ -322,7 +322,37 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
     else {
         return;
     };
+    let ink = layout
+        .and_then(|l| color::parse(&l.name_color))
+        .unwrap_or(Color::WHITE);
+    let name_font = layout.map_or(24.0, |l| clamp(l.name_font_px, 8.0, 200.0));
+    let above = layout.is_some_and(|l| l.title_position == "top");
+
+    // Without the banner the name still belongs on the screen, next to the
+    // clock it names. It used to return here instead, so the name and the size
+    // chosen for it only ever appeared if the operator also turned the banner
+    // on — the size control looked broken because the thing it sized was not
+    // being drawn.
     if !banner_enabled {
+        let clock_box = clock_font * 1.6;
+        let name_box = name_font * 1.6;
+        let centre_y = frame_height * y_percent / 100.0;
+        let gap = name_font * 0.3;
+        let top = if above {
+            centre_y - clock_box / 2.0 - gap - name_box
+        } else {
+            centre_y + clock_box / 2.0 + gap
+        };
+        let spec = text::TextBox::new(
+            (frame_width * x_percent / 100.0) - frame_width / 2.0,
+            top,
+            frame_width,
+            name_box,
+            name_font,
+        )
+        .centred()
+        .with_color(ink);
+        text::draw_box(pixmap, label, &spec);
         return;
     }
 
@@ -331,7 +361,7 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
         return;
     }
 
-    let top = if layout.is_some_and(|l| l.title_position == "top") {
+    let top = if above {
         0.0
     } else {
         (frame_height - banner_height).max(0.0)
@@ -353,11 +383,6 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
             );
         }
     }
-
-    let ink = layout
-        .and_then(|l| color::parse(&l.name_color))
-        .unwrap_or(Color::WHITE);
-    let name_font = layout.map_or(24.0, |l| clamp(l.name_font_px, 8.0, 200.0));
 
     let spec = text::TextBox::new(0.0, top, frame_width, banner_height, name_font)
         .centred()
@@ -778,6 +803,29 @@ mod tests {
             name_banner_color: "#000000".to_owned(),
             title_position: "bottom".to_owned(),
         }
+    }
+
+    #[test]
+    fn the_timer_name_is_drawn_without_a_banner() {
+        // The name used to be skipped entirely unless the banner was on, so
+        // the size chosen for it appeared to do nothing.
+        let scene = timer_scene(true, "00:05:00", "Pre-Service");
+        let mut layout = layout();
+        layout.name_banner_enabled = false;
+
+        let mut frame = Frame::new(320, 180).expect("frame");
+        draw_timer(&mut frame.pixmap_mut(), &scene, Some(&layout));
+        let with_name = ink_in_rows(&frame, 0, 180);
+
+        let mut nameless = Frame::new(320, 180).expect("frame");
+        let no_label = timer_scene(true, "00:05:00", "");
+        draw_timer(&mut nameless.pixmap_mut(), &no_label, Some(&layout));
+        let clock_only = ink_in_rows(&nameless, 0, 180);
+
+        assert!(
+            with_name > clock_only,
+            "the name adds ink of its own: {clock_only} then {with_name}"
+        );
     }
 
     #[test]

@@ -600,8 +600,14 @@ export function SettingsScreen({
   } | null>(null);
   const minClockFont = 12;
   const maxClockFont = 400;
+  // Matching the core's own clamps (`compositor::overlays::draw_timer`), so a
+  // slider cannot ask for something that will be quietly pulled back into
+  // range. 220 here was above the core's 200 and silently lost the top of the
+  // range.
   const minNameFont = 8;
-  const maxNameFont = 220;
+  const maxNameFont = 200;
+  const minBannerHeight = 24;
+  const maxBannerHeight = 400;
   const normalizePercent = (value: number) => Number(value.toFixed(2));
   const clampTimerLayout = (layout: { xPercent: number; yPercent: number }) => {
     const xPercent = Math.min(Math.max(layout.xPercent, 0), 100);
@@ -1420,7 +1426,7 @@ export function SettingsScreen({
                   />
                 </label>
                 <label className="space-y-1 text-[11px] text-muted-foreground">
-                  <span>Timer font size</span>
+                  <span>Timer font size ({timerClockFontPx}px)</span>
                   <input
                     type="range"
                     min={minClockFont}
@@ -1434,33 +1440,37 @@ export function SettingsScreen({
                     className="w-full accent-primary"
                   />
                 </label>
+                {/*
+                  Sliders, like the clock's above. These were dropdowns of
+                  fixed steps, which made two controls that do the same kind of
+                  thing behave differently — and the name's size is no longer a
+                  banner setting, because the name is drawn with or without one.
+                */}
                 <label className="space-y-1 text-[11px] text-muted-foreground">
-                  <span>Banner text size</span>
-                  <select
+                  <span>Timer name text size ({timerTitleFontPx}px)</span>
+                  <input
+                    type="range"
+                    min={minNameFont}
+                    max={maxNameFont}
                     value={timerTitleFontPx}
                     onChange={(event) =>
                       updateTimerDraft({ nameFontPx: Number(event.target.value) })
                     }
-                    className="h-8 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
-                  >
-                    {[12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 56, 64].map((size) => (
-                      <option key={size} value={size}>{size} px</option>
-                    ))}
-                  </select>
+                    className="w-full accent-primary"
+                  />
                 </label>
                 <label className="space-y-1 text-[11px] text-muted-foreground">
-                  <span>Banner height</span>
-                  <select
+                  <span>Banner height ({draftTimerNameBannerHeightPx}px)</span>
+                  <input
+                    type="range"
+                    min={minBannerHeight}
+                    max={maxBannerHeight}
                     value={draftTimerNameBannerHeightPx}
                     onChange={(event) =>
                       updateTimerDraft({ nameBannerHeightPx: Number(event.target.value) })
                     }
-                    className="h-8 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
-                  >
-                    {[36, 48, 64, 80, 96, 120, 160].map((height) => (
-                      <option key={height} value={height}>{height} px</option>
-                    ))}
-                  </select>
+                    className="w-full accent-primary"
+                  />
                 </label>
               </div>
               <div className="flex flex-wrap items-center gap-2">
