@@ -2355,7 +2355,10 @@ function RowBoundaryDropZone({
           onDrop={(event) => {
             void onDrop(event, layoutIndex);
           }}
-          className="absolute inset-x-0 -top-1 z-10 h-2"
+          // 16px band straddling the line. Rows are ~39px, so this stays a
+          // clear minority of a row — enough to aim at without starving the
+          // group section underneath, which claims the rest as "drop into me".
+          className="absolute inset-x-0 -top-2 z-10 h-4"
         />
       ) : null}
     </div>
