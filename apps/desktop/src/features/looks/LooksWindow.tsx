@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Monitor, Plus, RadioTower, Tv2 } from "lucide-react";
+import { Check, Monitor, Plus, RadioTower, Trash2, Tv2 } from "lucide-react";
 import { cn } from "../../renderer/shared/lib/utils";
 import { useLooksConfig } from "../../renderer/shared/hooks";
 import { Input } from "../../renderer/shared/components/ui/input";
@@ -31,6 +31,7 @@ export function LooksWindow() {
     setSelectedLook,
     setSelectedTarget,
     addLook,
+    removeLook,
     setLookName,
     setLayerEnabledForLook,
     setTextPositionForLook,
@@ -72,6 +73,7 @@ export function LooksWindow() {
           <div className="space-y-1 text-sm">
             {looksConfig.looks.map((look) => {
               const isSelected = look.id === looksConfig.selectedLookId;
+              const isOnlyLook = looksConfig.looks.length <= 1;
               return (
                 <div
                   key={look.id}
@@ -82,18 +84,45 @@ export function LooksWindow() {
                       : "border-border bg-transparent"
                   )}
                 >
-                  <Input
-                    value={look.name ?? ""}
-                    onFocus={() => setSelectedLook(look.id)}
-                    onChange={(event) =>
-                      setLookName(look.id, event.target.value)
-                    }
-                    className={cn(
-                      "h-7 border-none bg-transparent px-1 text-[12px] font-medium shadow-none focus-visible:ring-1",
-                      isSelected ? "text-primary" : "text-foreground"
-                    )}
-                    aria-label="Look name"
-                  />
+                  <div className="flex items-center gap-1">
+                    <Input
+                      value={look.name ?? ""}
+                      onFocus={() => setSelectedLook(look.id)}
+                      onChange={(event) =>
+                        setLookName(look.id, event.target.value)
+                      }
+                      className={cn(
+                        "h-7 flex-1 border-none bg-transparent px-1 text-[12px] font-medium shadow-none focus-visible:ring-1",
+                        isSelected ? "text-primary" : "text-foreground"
+                      )}
+                      aria-label="Look name"
+                    />
+                    {/*
+                      The last look has no delete: every destination reads its
+                      layers from one, so there is always a look. Disabled
+                      rather than hidden, so it is clear the button exists and
+                      why it cannot be used.
+                    */}
+                    <button
+                      type="button"
+                      onClick={() => removeLook(look.id)}
+                      disabled={isOnlyLook}
+                      title={
+                        isOnlyLook
+                          ? "The last look cannot be removed"
+                          : `Remove ${look.name || "this look"}`
+                      }
+                      aria-label={`Remove ${look.name || "look"}`}
+                      className={cn(
+                        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded transition",
+                        isOnlyLook
+                          ? "cursor-not-allowed text-muted-foreground/30"
+                          : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      )}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })}

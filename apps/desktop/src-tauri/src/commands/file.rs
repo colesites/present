@@ -31,6 +31,17 @@ pub async fn select_folder(
     Ok(folder)
 }
 
+#[tauri::command]
+pub async fn select_folders(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, FileState>,
+) -> AppResult<Vec<MediaFolder>> {
+    let folders = dialog::select_folders(&app, &state, Some(&window))?;
+    watch_media_folders(&app, &state);
+    Ok(folders)
+}
+
 /// Keep the live watch on the folders the scope now holds.
 fn watch_media_folders(app: &AppHandle, state: &FileState) {
     use tauri::Manager;

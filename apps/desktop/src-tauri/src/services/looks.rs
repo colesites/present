@@ -630,6 +630,36 @@ pub fn add_look(
     id
 }
 
+/// Remove a look, unless it is the only one left.
+///
+/// There is always a look: every destination reads its layers from one, and a
+/// configuration with none would leave the audience screen with nothing to
+/// draw. The last one therefore cannot be removed — which is also why there is
+/// nothing special about "Default" beyond being first. A church that renames
+/// and rebuilds its looks should not be left with one it cannot get rid of.
+///
+/// Removing the look that is selected, or the one on air, moves both to the
+/// first of what remains rather than leaving a dangling id behind.
+pub fn remove_look(config: &mut LooksConfig, look_id: &str, now: i64) -> bool {
+    if config.looks.len() <= 1 {
+        return false;
+    }
+    let Some(index) = config.looks.iter().position(|look| look.id == look_id) else {
+        return false;
+    };
+    config.looks.remove(index);
+
+    let fallback = config.looks[0].id.clone();
+    if config.selected_look_id == look_id {
+        config.selected_look_id = fallback.clone();
+    }
+    if config.live_look_id == look_id {
+        config.live_look_id = fallback;
+    }
+    config.updated_at = now;
+    true
+}
+
 pub fn set_look_name(config: &mut LooksConfig, look_id: &str, name: &str, now: i64) {
     let trimmed = name.trim();
     let next = if trimmed.is_empty() {
@@ -940,6 +970,40 @@ mod tests {
             !config.looks[1].targets.program.layers.media,
             "the copy inherits the edit"
         );
+    }
+
+    #[test]
+    fn the_last_look_cannot_be_removed() {
+        let mut config = LooksConfig::default_config(NOW);
+        assert_eq!(config.looks.len(), 1);
+        assert!(
+            !remove_look(&mut config, "default", NOW),
+            "there is always a look for a destination to read"
+        );
+        assert_eq!(config.looks.len(), 1);
+    }
+
+    #[test]
+    fn removing_the_look_on_air_falls_back_to_what_remains() {
+        let mut config = LooksConfig::default_config(NOW);
+        let mut new_id = fixed_id();
+        let second = add_look(&mut config, Some("Evening"), NOW, &mut new_id);
+        set_selected_look(&mut config, &second, NOW);
+        assert_eq!(config.live_look_id, second);
+
+        assert!(remove_look(&mut config, &second, NOW));
+        assert_eq!(config.looks.len(), 1);
+        assert_eq!(config.selected_look_id, "default", "nothing dangles");
+        assert_eq!(config.live_look_id, "default", "and the screen keeps drawing");
+    }
+
+    #[test]
+    fn a_look_that_is_not_there_is_not_removed() {
+        let mut config = LooksConfig::default_config(NOW);
+        let mut new_id = fixed_id();
+        add_look(&mut config, Some("Evening"), NOW, &mut new_id);
+        assert!(!remove_look(&mut config, "no-such-look", NOW));
+        assert_eq!(config.looks.len(), 2);
     }
 
     #[test]

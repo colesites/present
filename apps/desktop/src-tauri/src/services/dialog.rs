@@ -114,6 +114,42 @@ pub fn select_folder(
     Ok(Some(state.add_folder(&path)?))
 }
 
+/// Choose several media folders at once.
+///
+/// A church's media does not arrive one folder at a time — backgrounds,
+/// countdowns, announcements and a term's sermon series are picked together,
+/// and adding them one dialog at a time is four dialogs. The single-folder
+/// picker stays for the places that genuinely want one, such as choosing where
+/// to import a library from.
+///
+/// A folder that cannot be added does not stop the others: the operator picked
+/// all of them on purpose, and losing the rest because one was unreadable is
+/// the wrong answer.
+pub fn select_folders(
+    app: &AppHandle,
+    state: &FileState,
+    requester: Option<&WebviewWindow>,
+) -> AppResult<Vec<MediaFolder>> {
+    let Some(picked) = builder(app, requester).blocking_pick_folders() else {
+        return Ok(Vec::new());
+    };
+    let mut added = Vec::with_capacity(picked.len());
+    for folder in picked {
+        let path = match to_path(folder) {
+            Ok(path) => path,
+            Err(error) => {
+                tracing::warn!(%error, "a chosen media folder could not be read");
+                continue;
+            }
+        };
+        match state.add_folder(&path) {
+            Ok(folder) => added.push(folder),
+            Err(error) => tracing::warn!(%error, "a chosen media folder could not be added"),
+        }
+    }
+    Ok(added)
+}
+
 /// Choose where to write a library export. The destination is outside every
 /// media folder by nature, so it gets a session grant.
 pub fn select_library_export_destination(

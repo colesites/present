@@ -169,6 +169,7 @@ interface ElectronAPI {
   onMediaStageWindowClosed: (callback: () => void) => () => void;
   onWorshipStageWindowClosed: (callback: () => void) => () => void;
   selectFolder: () => Promise<{ id: string; name: string; path: string } | null>;
+  selectFolders?: () => Promise<{ id: string; name: string; path: string }[]>;
   selectLibraryExportDestination: (suggestedName?: string) => Promise<string | null>;
   readFolder: (folderPath: string) => Promise<{ name: string; lastModified: number }[]>;
   exportLibraryBundle: (

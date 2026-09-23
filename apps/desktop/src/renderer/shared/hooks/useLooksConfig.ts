@@ -113,6 +113,18 @@ export function useLooksConfig() {
     [apply],
   );
 
+  /**
+   * Remove a look. Rust refuses to remove the last one — a destination always
+   * has a look to read its layers from — so the button is disabled rather than
+   * silently doing nothing.
+   */
+  const removeLook = useCallback(
+    (lookId: string) => {
+      apply((core) => core.removeLook(lookId));
+    },
+    [apply],
+  );
+
   const setLayerEnabledForLook = useCallback(
     (lookId: string, target: LookTargetKey, layer: LookLayerKey, enabled: boolean) => {
       apply((core) => core.setLookLayer(lookId, target, layer, enabled));
@@ -177,6 +189,7 @@ export function useLooksConfig() {
     setSelectedTarget,
     addLook,
     setLookName,
+    removeLook,
     setLayerEnabled,
     setLayerEnabledForLook,
     setLayersEnabledForLook,

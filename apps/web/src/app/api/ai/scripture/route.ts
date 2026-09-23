@@ -23,7 +23,7 @@ import { resolveRequestAuthContext } from "@/lib/server/request-auth";
 const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
 
 /** Fast and cheap matters more than clever: this answers in one short object. */
-const DEFAULT_MODEL = "minimax/minimax-m2.7-highspeed";
+const DEFAULT_MODEL = "openai/gpt-5.6-luna-fast";
 
 /** A model that has not answered in this long will not answer usefully. */
 // Measured against the gateway with this prompt: the chosen model answers in
