@@ -1,0 +1,13 @@
+# The compiler this app is built with, everywhere.
+#
+# CI used `stable`, which is whatever stable is on the day, while a developer
+# has whatever they last installed. The two drifted two releases apart, and the
+# result was clippy failing in CI on lints that do not exist on the machine the
+# code was written on — a full three-platform run to discover a one-line fix.
+#
+# Pinned means the build is reproducible and a compiler change is a commit
+# somebody made on purpose. Bump it deliberately: change the version here, run
+# `rustup update`, and fix whatever the newer clippy has learned to see.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]

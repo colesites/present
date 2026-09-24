@@ -70,8 +70,10 @@ jobs:
       - name: Build FFmpeg
         run: bash apps/desktop/scripts/build-ffmpeg.sh
 
+      # The version comes from `src-tauri/rust-toolchain.toml`, so CI and a
+      # developer's machine run the same clippy and see the same lints.
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: rustfmt, clippy
 
@@ -188,7 +190,7 @@ jobs:
         run: '"LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV'
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.96.0
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
