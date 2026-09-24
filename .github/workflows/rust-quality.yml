@@ -25,6 +25,7 @@ on:
 jobs:
   rust-quality:
     name: Rust quality
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     # The Rust build links the FFmpeg built below, so the tests run against
     # what ships rather than the distribution's GPL one (ADR-003).

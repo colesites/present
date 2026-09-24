@@ -256,8 +256,20 @@ opt-level = 1
 opt-level = 2
 
 [profile.release]
-codegen-units = 1
-lto = true
+# Thin LTO rather than fat, and codegen split into units that can be built at
+# the same time.
+#
+# `lto = true` optimises the whole program as one unit and `codegen-units = 1`
+# forbids doing any of it in parallel — together, the slowest combination
+# cargo offers, on a tree of 706 crates. On a two-core runner that is hours,
+# most of it one core linking. Thin LTO keeps nearly all of the size and speed
+# benefit and is parallel, which is why it is the usual choice for anything
+# that has to be built more than occasionally.
+#
+# If a release ever needs the last few percent of binary size, `lto = true`
+# and `codegen-units = 1` are what to put back, knowing what they cost.
+codegen-units = 16
+lto = "thin"
 opt-level = "s"
 panic = "abort"
 strip = true

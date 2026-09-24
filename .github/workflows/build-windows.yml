@@ -25,6 +25,9 @@ on:
 jobs:
   build:
     name: Windows
+    # A build that has not finished in an hour and a half is stuck, not slow.
+    # Without this a hung job keeps a runner for six hours.
+    timeout-minutes: 90
     runs-on: windows-latest
     steps:
       - name: Checkout repository

@@ -25,6 +25,9 @@ on:
 jobs:
   build:
     name: Linux
+    # A build that has not finished in an hour and a half is stuck, not slow.
+    # Without this a hung job keeps a runner for six hours.
+    timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
