@@ -55,6 +55,24 @@ jobs:
           path-type: inherit
           install: make diffutils nasm tar xz
 
+      # Everything this build needs, checked before forty minutes of FFmpeg.
+      # A missing prerequisite otherwise shows up as a confusing failure deep
+      # inside configure or as a linker error at the very end.
+      - name: Check the toolchain is here
+        shell: pwsh
+        run: |
+          $ok = $true
+          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+            Write-Host "::error::cl.exe is not on PATH — MSVC did not set up"
+            $ok = $false
+          }
+          if (-not (Test-Path "C:\Program Files\LLVM\bin\libclang.dll")) {
+            Write-Host "::error::libclang.dll not found — bindgen cannot run"
+            $ok = $false
+          }
+          if (-not $ok) { exit 1 }
+          Write-Host "MSVC and LLVM are both present"
+
       - name: Cache the FFmpeg build
         uses: actions/cache@v4
         with:
@@ -72,9 +90,14 @@ jobs:
           mv -f /usr/bin/link.exe /usr/bin/link-msys.exe || true
           bash apps/desktop/scripts/build-ffmpeg.sh
 
+      # `Add-Content` rather than `>>`: the redirect's encoding depends on the
+      # PowerShell edition, and a UTF-16 line in this file is not read back as
+      # an environment variable.
       - name: Point the build at LLVM
         shell: pwsh
-        run: '"LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV'
+        run: |
+          Add-Content -Path $env:GITHUB_ENV -Encoding utf8 `
+            -Value "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.96.0
