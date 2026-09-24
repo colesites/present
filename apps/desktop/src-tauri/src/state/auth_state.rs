@@ -25,8 +25,19 @@ use crate::services::auth::{self, StoredSession};
 /// constant fails CI's `clippy -D warnings`.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const KEYCHAIN_SERVICE: &str = "space.multivrs.present";
+/// The account the session is stored under.
+///
+/// A development build uses its own, for the same reason it uses its own data
+/// folder: it signs in against a different web app and a different Convex
+/// deployment, and sharing one slot meant whichever ran last decided which
+/// session both of them saw — a development sign-in silently replacing the
+/// installed app's, with a token the other side could not verify.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-const KEYCHAIN_ACCOUNT: &str = "desktop-auth-session";
+const KEYCHAIN_ACCOUNT: &str = if cfg!(debug_assertions) {
+    "desktop-auth-session.dev"
+} else {
+    "desktop-auth-session"
+};
 /// The Linux fallback, and the migration source on every platform.
 const SESSION_FILE: &str = "desktop-auth-session.json";
 

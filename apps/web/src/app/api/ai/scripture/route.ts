@@ -23,10 +23,16 @@ import { resolveRequestAuthContext } from "@/lib/server/request-auth";
 const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
 
 /** Fast and cheap matters more than clever: this answers in one short object. */
-const DEFAULT_MODEL = "google/gemini-2.0-flash";
+const DEFAULT_MODEL = "openai/gpt-5.6-luna-fast";
 
 /** A model that has not answered in this long will not answer usefully. */
-const TIMEOUT_MS = 4_000;
+// Measured against the gateway with this prompt: the chosen model answers in
+// 3.2–3.9s, so 4s cut off roughly nothing on a good run and everything on a
+// slow one. Six gives it room without letting a stale reference reach the
+// screen — by then the preacher has moved on, and a late verse is worse than
+// none. The desktop's own limit sits just above this one so the server is
+// always the one that gives up first and can say why.
+const TIMEOUT_MS = 6_000;
 
 type Body = {
   /** What the microphone heard. One sentence. */

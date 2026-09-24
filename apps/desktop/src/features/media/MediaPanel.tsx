@@ -382,9 +382,11 @@ export const MediaPanel = memo(
 
     const handleAddFolder = async () => {
       try {
-        const folder = await addFolder();
-        if (folder) {
-          toast.success(`Added folder: ${folder.name}`);
+        const added = await addFolder();
+        if (added.length === 1) {
+          toast.success(`Added folder: ${added[0].name}`);
+        } else if (added.length > 1) {
+          toast.success(`Added ${added.length} folders`);
         }
       } catch (error) {
         toast.error(

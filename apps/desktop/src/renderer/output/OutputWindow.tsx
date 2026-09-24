@@ -1,7 +1,7 @@
 "use client";
 
-import { createElement, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, HTMLAttributes } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { Camera } from "lucide-react";
 import type { OutputState } from "../../shared/types/output-window";
 import type {
@@ -51,7 +51,6 @@ const DEFAULT_SCREEN_LAYOUT: ScreenComposerLayout = {
   ],
 };
 
-const YOUTUBE_EMBED_REFERRER = "https://present.app/";
 const YOUTUBE_EMBED_ORIGIN = "https://present.app";
 
 export function OutputWindow() {
@@ -868,13 +867,6 @@ function YouTubePropLayer({
   shownAtMs?: number;
   style: React.CSSProperties;
 }) {
-  type WebviewProps = HTMLAttributes<HTMLElement> & {
-    allow?: string;
-    allowpopups?: string;
-    httpreferrer?: string;
-    partition?: string;
-    src: string;
-  };
   const src = useMemo(
     () => getYouTubeEmbedUrl(youtubeUrl, getElapsedSeconds(shownAtMs)),
     [shownAtMs, youtubeUrl],
@@ -882,15 +874,21 @@ function YouTubePropLayer({
 
   if (!src) return null;
 
-  return createElement("webview", {
-    src,
-    className: "pointer-events-none absolute z-40 border-0",
-    style: { ...style, aspectRatio: "16 / 9" },
-    partition: "persist:present-youtube-props",
-    allow: "autoplay; encrypted-media; picture-in-picture",
-    allowpopups: "false",
-    httpreferrer: YOUTUBE_EMBED_REFERRER,
-  } satisfies WebviewProps);
+  // An `<iframe>`, not Electron's `<webview>`. The `<webview>` tag exists only
+  // in Electron; under this shell it is an unknown element that renders
+  // nothing, which is why a YouTube prop that worked before the migration went
+  // blank on every screen. Its Electron-only attributes — `partition`,
+  // `allowpopups`, `httpreferrer` — went with it.
+  return (
+    <iframe
+      src={src}
+      title="YouTube"
+      className="pointer-events-none absolute z-40 border-0"
+      style={{ ...style, aspectRatio: "16 / 9" }}
+      allow="autoplay; encrypted-media; picture-in-picture"
+      referrerPolicy="strict-origin-when-cross-origin"
+    />
+  );
 }
 
 function NdiPropLayer({

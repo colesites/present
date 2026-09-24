@@ -439,6 +439,8 @@ export function PresentContainer({
     deleteServiceTemplate,
     renameExistingService,
     deleteService,
+    deleteServices,
+    archiveServices,
     addLibraryItemToService: addLibraryToService,
     addPresentationToService,
     addGroupToService,
@@ -2082,6 +2084,8 @@ export function PresentContainer({
           },
           onRenameService: renameExistingService,
           onDeleteService: deleteService,
+          onDeleteServices: deleteServices,
+          onArchiveServices: archiveServices,
           onReorderServiceItems: selectedServiceId
             ? (from: number, to: number) =>
                 reorderServiceItems(selectedServiceId, from, to)

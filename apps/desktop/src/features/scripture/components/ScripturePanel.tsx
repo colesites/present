@@ -97,6 +97,18 @@ export const ScripturePanel = memo(
     const textSearchRequestRef = useRef(0);
     const [downloadingHostedId, setDownloadingHostedId] = useState<string | null>(null);
     const [removingVersionId, setRemovingVersionId] = useState<string | null>(null);
+    /**
+     * The last sentence the speaker actually finished.
+     *
+     * Speech arrives as a stream of guesses that are revised until the speaker
+     * stops, and asking the model about each one asks it about half a
+     * sentence, several times over, with the answers racing each other back.
+     * On a metered plan it is also the difference between one request per
+     * reference and a dozen — enough to be rate-limited part way through a
+     * service, which looks from the operator's seat exactly like the agent
+     * not working.
+     */
+    const [heardSentence, setHeardSentence] = useState("");
 
     useImperativeHandle(ref, () => ({
       focusSearch: () => {
@@ -377,6 +389,9 @@ export const ScripturePanel = memo(
           return;
         }
 
+        // Finished, so it is worth asking about.
+        setHeardSentence(transcript);
+
         // What happens next is the transcript effect's, which asks the model
         // about everything that was heard. Asking here as well would ask
         // twice about the same sentence and race its own answer.
@@ -508,7 +523,7 @@ export const ScripturePanel = memo(
         identifyTimeoutRef.current = null;
       }
 
-      const text = liveTranscript.trim();
+      const text = heardSentence.trim();
       if (!text) {
         return;
       }
@@ -553,7 +568,7 @@ export const ScripturePanel = memo(
       };
     }, [
       isActive,
-      liveTranscript,
+      heardSentence,
       availableBooks,
       isListening,
       webAppBaseUrl,

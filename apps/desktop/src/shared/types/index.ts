@@ -293,6 +293,13 @@ export type Service = {
   orgId: Id<"organizations"> | string;
   name: string;
   date?: string;
+  /**
+   * When the service was archived, absent while it is in use.
+   *
+   * Archiving is not deletion: last year's Carol Service stays, with
+   * everything in it, and simply leaves this Sunday's list.
+   */
+  archivedAt?: number;
   groups?: ServiceGroup[];
   layout?: ServiceLayoutEntry[];
   items: Array<{

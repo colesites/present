@@ -1099,6 +1099,47 @@ export function useServices(
     }
   };
 
+  /**
+   * Delete several services in one go.
+   *
+   * One at a time meant one confirmation each, which is how a tidy-up after a
+   * season becomes twenty clicks.
+   */
+  const deleteServices = async (serviceIds: Id<"services">[]) => {
+    for (const serviceId of serviceIds) {
+      await deleteService(serviceId);
+    }
+  };
+
+  /**
+   * Archive services, or bring them back.
+   *
+   * Not deletion: last year's Carol Service keeps everything in it and simply
+   * leaves this Sunday's list. Written locally first and queued like every
+   * other change, so it works in a building with no network.
+   */
+  const archiveServices = async (
+    serviceIds: Id<"services">[],
+    archived: boolean,
+  ) => {
+    const archivedAt = archived ? Date.now() : undefined;
+    for (const serviceId of serviceIds) {
+      const existing = services.find(
+        (service) => String(service._id) === String(serviceId),
+      );
+      if (!existing) continue;
+      upsertService(workspaceId, { ...existing, archivedAt });
+      enqueueSyncOperation(workspaceId, "service", String(serviceId), "update", {
+        id: serviceId,
+      });
+      if (archived && selectedServiceId === serviceId) {
+        setSelectedServiceId(null);
+        setIsInsideService(false);
+      }
+    }
+    setServices(readOrgServices(workspaceId));
+  };
+
   const addLibraryItemToService = async (
     serviceId: Id<"services">,
     libraryItemId: string
@@ -1706,6 +1747,8 @@ export function useServices(
     renameServiceTemplate,
     addGroupToServiceTemplate,
     renameServiceTemplateGroup,
+    deleteServices,
+    archiveServices,
     deleteServiceTemplateGroup,
     addItemToServiceTemplate,
     removeItemFromServiceTemplate,

@@ -494,6 +494,7 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
               serviceId: remoteServiceId,
               name: localService.name,
               date: localService.date,
+              archivedAt: localService.archivedAt ?? null,
               groups: localService.groups ?? [],
               layout: toSyncableServiceLayout(
                 localService,

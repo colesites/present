@@ -113,6 +113,10 @@ interface ServicesSidebarProps {
   onCreateService: (name: string, templateId?: string | null) => Promise<unknown>;
   onRenameService: (id: Id<"services">, name: string) => Promise<void>;
   onDeleteService: (id: Id<"services">) => Promise<void>;
+  /** Delete a whole selection at once. */
+  onDeleteServices?: (ids: Id<"services">[]) => Promise<void>;
+  /** Archive a selection, or bring it back. */
+  onArchiveServices?: (ids: Id<"services">[], archived: boolean) => Promise<void>;
   onReorderServiceItems?: (fromIndex: number, toIndex: number) => Promise<void>;
   onReorderServices?: (fromIndex: number, toIndex: number) => Promise<void>;
 }
@@ -158,6 +162,8 @@ export const ServicesSidebar = memo(function ServicesSidebar({
   onCreateService,
   onRenameService,
   onDeleteService,
+  onDeleteServices,
+  onArchiveServices,
   onReorderServiceItems,
   onReorderServices,
 }: ServicesSidebarProps) {
@@ -321,6 +327,13 @@ export const ServicesSidebar = memo(function ServicesSidebar({
             onRename={(id, name) => setRenameTarget({ id, name })}
             onDelete={(id, name) => setDeleteTarget({ id, name })}
             onReorder={onReorderServices}
+            onDeleteMany={
+              onDeleteServices ??
+              (async (ids) => {
+                for (const id of ids) await onDeleteService(id);
+              })
+            }
+            onArchiveMany={onArchiveServices}
           />
         )}
       </div>
@@ -1500,6 +1513,8 @@ const ServiceList = memo(function ServiceList({
   onRename,
   onDelete,
   onReorder,
+  onDeleteMany,
+  onArchiveMany,
 }: {
   services: Service[];
   selectedId: Id<"services"> | null;
@@ -1507,7 +1522,52 @@ const ServiceList = memo(function ServiceList({
   onRename: (id: Id<"services">, name: string) => void;
   onDelete: (id: Id<"services">, name: string) => void;
   onReorder?: (fromIndex: number, toIndex: number) => Promise<void>;
+  onDeleteMany?: (ids: Id<"services">[]) => Promise<void>;
+  onArchiveMany?: (ids: Id<"services">[], archived: boolean) => Promise<void>;
 }) {
+  /**
+   * The services ticked for a bulk action.
+   *
+   * Belongs to this list rather than to the panel around it: it describes what
+   * is on screen, not the services themselves, so leaving the list forgets it.
+   */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [showArchived, setShowArchived] = useState(false);
+  const [deleteSelectionOpen, setDeleteSelectionOpen] = useState(false);
+
+  const archivedCount = services.filter((service) => service.archivedAt).length;
+  const visibleServices = services.filter((service) =>
+    showArchived ? service.archivedAt : !service.archivedAt,
+  );
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+  const selectedServiceIds = () => [...selectedIds] as unknown as Id<"services">[];
+
+  const handleArchiveSelection = async (archived: boolean) => {
+    if (selectedIds.size === 0 || !onArchiveMany) return;
+    await onArchiveMany(selectedServiceIds(), archived);
+    clearSelection();
+  };
+
+  const handleDeleteSelection = async () => {
+    if (selectedIds.size === 0 || !onDeleteMany) return;
+    await onDeleteMany(selectedServiceIds());
+    clearSelection();
+    setDeleteSelectionOpen(false);
+  };
+
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const dragDataKey = "application/x-present-service-index";
@@ -1553,12 +1613,93 @@ const ServiceList = memo(function ServiceList({
 
   return (
     <div className="space-y-1">
-      {services.length === 0 ? (
+      {/*
+        Archived services are kept, not deleted, so they need somewhere to be
+        seen. Offered only once there is something archived to look at.
+      */}
+      {archivedCount > 0 ? (
+        <button
+          type="button"
+          onClick={() => setShowArchived((value) => !value)}
+          className="w-full px-2 py-1 text-left text-[10px] text-muted-foreground hover:text-foreground"
+        >
+          {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
+        </button>
+      ) : null}
+
+      {/*
+        What can be done to a selection. Appears only when something is
+        selected, so the ordinary list does not carry a toolbar it never uses.
+      */}
+      {selectedIds.size > 0 ? (
+        <div className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-secondary/60 px-2 py-1.5">
+          <span className="mr-auto text-[10px] font-medium">
+            {selectedIds.size} selected
+          </span>
+          {onArchiveMany ? (
+            <button
+              type="button"
+              onClick={() => void handleArchiveSelection(!showArchived)}
+              className="rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-background hover:text-foreground"
+            >
+              {showArchived ? "Restore" : "Archive"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setDeleteSelectionOpen(true)}
+            className="rounded px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
+          >
+            Delete
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-background"
+          >
+            Clear
+          </button>
+        </div>
+      ) : null}
+
+      {deleteSelectionOpen ? (
+        <Dialog
+          title={`Delete ${selectedIds.size} service${selectedIds.size === 1 ? "" : "s"}`}
+          onClose={() => setDeleteSelectionOpen(false)}
+        >
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              This cannot be undone. To keep them out of the way without losing
+              anything, archive them instead.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteSelectionOpen(false)}
+                className="flex-1 rounded-md border border-input py-2 text-xs font-medium text-foreground hover:bg-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteSelection()}
+                className="flex-1 rounded-md bg-destructive py-2 text-xs font-semibold text-white hover:bg-destructive/90"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      ) : null}
+
+      {visibleServices.length === 0 ? (
         <p className="px-2 py-1 text-[10px] text-muted-foreground">
-          No services yet. Create one to get started.
+          {showArchived
+            ? "Nothing archived."
+            : "No services yet. Create one to get started."}
         </p>
       ) : null}
-      {services.map((service, index) => (
+      {visibleServices.map((service, index) => (
         <ContextMenu key={service._id}>
           <ContextMenuTrigger asChild>
             <div
@@ -1583,6 +1724,24 @@ const ServiceList = memo(function ServiceList({
                   <GripIcon />
                 </span>
               )}
+              {/*
+                Visible once a selection has started, and on hover before that:
+                a checkbox on every row all the time would make the ordinary job
+                of opening a service look like a job of ticking boxes.
+              */}
+              <input
+                type="checkbox"
+                checked={selectedIds.has(String(service._id))}
+                onChange={() => toggleSelected(String(service._id))}
+                onClick={(event) => event.stopPropagation()}
+                aria-label={`Select ${service.name}`}
+                className={cn(
+                  "h-3 w-3 shrink-0 accent-primary",
+                  selectedIds.size > 0
+                    ? "opacity-100"
+                    : "opacity-0 group-hover:opacity-100"
+                )}
+              />
               <button
                 type="button"
                 onClick={() => onEnter(service._id)}

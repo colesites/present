@@ -22,6 +22,13 @@ use super::scene::MediaLoader;
 use super::{color, images, shapes, text};
 
 /// The banner's vertical padding, as the React layer's `py-4` in a 1080p frame.
+/// The screen the operator's pixel sizes are chosen against.
+///
+/// Everything drawn at a size in pixels is scaled by this frame's height over
+/// this, so the same settings look the same on a preview, a 1080 projector and
+/// a 4K wall.
+const REFERENCE_HEIGHT: f32 = 1080.0;
+
 const MESSAGE_PADDING_RATIO: f32 = 16.0 / 1080.0;
 
 /// `min(6vw, 64px)` at 1080p, the static banner's font size.
@@ -53,7 +60,27 @@ fn theme_colors(theme_key: &str) -> (Option<Color>, Color) {
 }
 
 /// Draw the message banner, if there is one.
-pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay) {
+/// How far a marquee has travelled, 0 at the right edge and 1 fully off the
+/// left. `None` for a message that does not move.
+///
+/// The text crosses twice the frame's width — in from the right, out past the
+/// left — so a message is legible for roughly half its cycle whatever its
+/// length. `speed_seconds` is how long one crossing takes; a nonsense or
+/// missing speed falls back to ten seconds rather than dividing by zero.
+fn marquee_progress(overlay: &MessageOverlay, elapsed_seconds: f64) -> Option<f64> {
+    if !matches!(overlay.animation.as_str(), "marquee-left" | "marquee-right") {
+        return None;
+    }
+    let seconds = if overlay.speed_seconds.is_finite() && overlay.speed_seconds > 0.1 {
+        overlay.speed_seconds
+    } else {
+        10.0
+    };
+    let elapsed = elapsed_seconds.max(0.0);
+    Some((elapsed / seconds).rem_euclid(1.0))
+}
+
+pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay, elapsed_seconds: f64) {
     if overlay.text.trim().is_empty() {
         return;
     }
@@ -61,13 +88,28 @@ pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay) {
     let width = pixmap.width() as f32;
     let height = pixmap.height() as f32;
 
-    let font_size = (width * MESSAGE_FONT_VW).min(
-        height * MESSAGE_FONT_MAX_RATIO * 1080.0 / 1080.0 * 64.0 / 64.0
-            * (height * MESSAGE_FONT_MAX_RATIO),
-    );
-    let font_size = font_size.max(12.0);
+    // Six percent of the width, capped at the height's share — 64px on a
+    // 1080-tall frame. The cap used to multiply the two terms together, which
+    // squares a number already in pixels: on any real frame it came out in the
+    // thousands, so the cap never bound and every message was drawn at the
+    // full six percent of the width. At 1920 that is 115px before the
+    // operator's own scale is applied on top.
+    let font_size = (width * MESSAGE_FONT_VW)
+        .min(height * MESSAGE_FONT_MAX_RATIO)
+        .max(12.0);
+
+    let scale = if overlay.font_scale.is_finite() && overlay.font_scale > 0.0 {
+        overlay.font_scale as f32
+    } else {
+        1.0
+    };
+    // The band is sized around the text that actually goes in it. It used to
+    // be measured from the unscaled size, so an operator who set the font to
+    // 140% got text 40% taller than the colour behind it — the banner looked
+    // like it was covering the wrong height because the text had outgrown it.
+    let scaled_font = font_size * scale;
     let padding = height * MESSAGE_PADDING_RATIO;
-    let band_height = font_size * 1.4 + padding * 2.0;
+    let band_height = scaled_font * 1.4 + padding * 2.0;
 
     let top = if overlay.position == "top" {
         0.0
@@ -94,20 +136,35 @@ pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay) {
         }
     }
 
-    let scale = if overlay.font_scale.is_finite() && overlay.font_scale > 0.0 {
-        overlay.font_scale as f32
-    } else {
-        1.0
-    };
-
-    let spec = text::TextBox::new(
-        padding,
-        top + padding,
-        (width - padding * 2.0).max(1.0),
-        (band_height - padding * 2.0).max(1.0),
-        font_size * scale,
-    )
-    .centred()
+    let spec = match marquee_progress(overlay, elapsed_seconds) {
+        // Standing still: centred in the band, as before.
+        None => text::TextBox::new(
+            padding,
+            top + padding,
+            (width - padding * 2.0).max(1.0),
+            (band_height - padding * 2.0).max(1.0),
+            scaled_font,
+        )
+        .centred(),
+        // Moving: the box itself travels, and the text sits at its left edge.
+        // Left to right is the same journey read backwards.
+        Some(progress) => {
+            let travel = width * 2.0;
+            let offset = travel * progress as f32;
+            let x = if overlay.animation == "marquee-right" {
+                -width + offset
+            } else {
+                width - offset
+            };
+            text::TextBox::new(
+                x,
+                top + padding,
+                width.max(1.0),
+                (band_height - padding * 2.0).max(1.0),
+                scaled_font,
+            )
+        }
+    }
     .with_color(ink)
     .with_weight(cosmic_text::Weight::SEMIBOLD);
 
@@ -277,7 +334,15 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
 
     let x_percent = layout.map_or(50.0, |l| clamp(l.x_percent, 0.0, 100.0));
     let y_percent = layout.map_or(50.0, |l| clamp(l.y_percent, 0.0, 100.0));
-    let clock_font = layout.map_or(96.0, |l| clamp(l.clock_font_px, 12.0, 400.0));
+    // Sizes are chosen against a 1080-tall screen and drawn in proportion to
+    // whatever frame this is. The preview is the same picture at a fraction of
+    // the size, so an absolute 96px clock filled it while looking modest on
+    // the wall — the operator could not judge from the preview what the
+    // congregation would see. It also means a 4K output scales up rather than
+    // shrinking into a corner.
+    let of_reference = frame_height / REFERENCE_HEIGHT;
+    let clock_font =
+        layout.map_or(96.0, |l| clamp(l.clock_font_px, 12.0, 400.0)) * of_reference;
 
     let clock_color = layout
         .and_then(|l| color::parse(&l.clock_color))
@@ -313,16 +378,47 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
     else {
         return;
     };
+    let ink = layout
+        .and_then(|l| color::parse(&l.name_color))
+        .unwrap_or(Color::WHITE);
+    let name_font = layout.map_or(24.0, |l| clamp(l.name_font_px, 8.0, 200.0)) * of_reference;
+    let above = layout.is_some_and(|l| l.title_position == "top");
+
+    // Without the banner the name still belongs on the screen, next to the
+    // clock it names. It used to return here instead, so the name and the size
+    // chosen for it only ever appeared if the operator also turned the banner
+    // on — the size control looked broken because the thing it sized was not
+    // being drawn.
     if !banner_enabled {
+        let clock_box = clock_font * 1.6;
+        let name_box = name_font * 1.6;
+        let centre_y = frame_height * y_percent / 100.0;
+        let gap = name_font * 0.3;
+        let top = if above {
+            centre_y - clock_box / 2.0 - gap - name_box
+        } else {
+            centre_y + clock_box / 2.0 + gap
+        };
+        let spec = text::TextBox::new(
+            (frame_width * x_percent / 100.0) - frame_width / 2.0,
+            top,
+            frame_width,
+            name_box,
+            name_font,
+        )
+        .centred()
+        .with_color(ink);
+        text::draw_box(pixmap, label, &spec);
         return;
     }
 
-    let banner_height = layout.map_or(48.0, |l| clamp(l.name_banner_height_px, 0.0, 400.0));
+    let banner_height =
+        layout.map_or(48.0, |l| clamp(l.name_banner_height_px, 0.0, 400.0)) * of_reference;
     if banner_height <= 0.0 {
         return;
     }
 
-    let top = if layout.is_some_and(|l| l.title_position == "top") {
+    let top = if above {
         0.0
     } else {
         (frame_height - banner_height).max(0.0)
@@ -344,11 +440,6 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
             );
         }
     }
-
-    let ink = layout
-        .and_then(|l| color::parse(&l.name_color))
-        .unwrap_or(Color::WHITE);
-    let name_font = layout.map_or(24.0, |l| clamp(l.name_font_px, 8.0, 200.0));
 
     let spec = text::TextBox::new(0.0, top, frame_width, banner_height, name_font)
         .centred()
@@ -536,16 +627,97 @@ mod tests {
         draw_message(
             &mut top.pixmap_mut(),
             &message("top", "info", "Cry room open"),
+            0.0,
         );
 
         let mut bottom = Frame::new(640, 360).expect("frame");
         draw_message(
             &mut bottom.pixmap_mut(),
             &message("bottom", "info", "Cry room open"),
+            0.0,
         );
 
         assert!(ink_in_rows(&top, 0, 90) > ink_in_rows(&top, 270, 360));
         assert!(ink_in_rows(&bottom, 270, 360) > ink_in_rows(&bottom, 0, 90));
+    }
+
+    #[test]
+    fn the_banner_grows_with_the_font_the_operator_chose() {
+        // The colour behind the text is sized from the text that goes in it.
+        // Measured from the unscaled size, a message set to 140% had text
+        // taller than its own banner, which read as the banner covering the
+        // wrong height.
+        let band_rows = |scale: f64| {
+            let mut frame = Frame::new(320, 180).expect("frame");
+            let mut overlay = message("top", "info", "Offering is by transfer");
+            overlay.font_scale = scale;
+            draw_message(&mut frame.pixmap_mut(), &overlay, 0.0);
+            // The frame starts opaque black, so the plate is found by colour:
+            // every row at the left edge that is no longer black is banner.
+            (0..180)
+                .filter(|row| {
+                    frame
+                        .pixel_at(2, *row)
+                        .is_some_and(|(r, g, b, _)| r > 0 || g > 0 || b > 0)
+                })
+                .count()
+        };
+        let plain = band_rows(1.0);
+        let larger = band_rows(1.4);
+        assert!(plain > 0, "a banner is drawn at all");
+        assert!(
+            larger > plain,
+            "a larger font needs a taller banner: {plain} then {larger}"
+        );
+    }
+
+    #[test]
+    fn a_marquee_moves_across_the_frame_over_time() {
+        // Same message, three moments: the text must be somewhere different
+        // each time, or it is not scrolling.
+        let ink_at = |elapsed: f64| {
+            let mut frame = Frame::new(320, 180).expect("frame");
+            let mut overlay = message("top", "transparent", "Offering by transfer");
+            overlay.animation = "marquee-left".to_owned();
+            overlay.speed_seconds = 6.0;
+            draw_message(&mut frame.pixmap_mut(), &overlay, elapsed);
+            (0..320)
+                .filter(|column| {
+                    (0..40).any(|row| {
+                        frame
+                            .pixel_at(*column, row)
+                            .is_some_and(|(r, g, b, _)| r > 40 || g > 40 || b > 40)
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let early = ink_at(0.5);
+        let later = ink_at(3.0);
+        assert!(!early.is_empty() && !later.is_empty(), "the text is drawn");
+        assert_ne!(early, later, "and it is somewhere else a moment later");
+    }
+
+    #[test]
+    fn a_still_message_does_not_move() {
+        let ink_at = |elapsed: f64| {
+            let mut frame = Frame::new(320, 180).expect("frame");
+            draw_message(
+                &mut frame.pixmap_mut(),
+                &message("top", "transparent", "Offering by transfer"),
+                elapsed,
+            );
+            (0..320)
+                .filter(|column| {
+                    (0..40).any(|row| {
+                        frame
+                            .pixel_at(*column, row)
+                            .is_some_and(|(r, g, b, _)| r > 40 || g > 40 || b > 40)
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ink_at(0.0), ink_at(30.0), "a static message stays put");
     }
 
     #[test]
@@ -556,8 +728,11 @@ mod tests {
         draw_message(
             &mut warning.pixmap_mut(),
             &message("top", "warning", "Move your car"),
+            0.0,
         );
-        let (r, g, b, _) = warning.pixel_at(160, 10).expect("pixel");
+        // Sampled at the band's left edge, inside the padding: the centre is
+        // where the text goes, and the band is only as tall as the text now.
+        let (r, g, b, _) = warning.pixel_at(2, 2).expect("pixel");
         assert!(
             r > 200 && g > 120 && b < 80,
             "amber expected, got {r},{g},{b}"
@@ -567,8 +742,9 @@ mod tests {
         draw_message(
             &mut danger.pixmap_mut(),
             &message("top", "danger", "Evacuate"),
+            0.0,
         );
-        let (r, g, b, _) = danger.pixel_at(160, 10).expect("pixel");
+        let (r, g, b, _) = danger.pixel_at(2, 2).expect("pixel");
         assert!(r > 180 && g < 90 && b < 90, "red expected, got {r},{g},{b}");
     }
 
@@ -578,6 +754,7 @@ mod tests {
         draw_message(
             &mut frame.pixmap_mut(),
             &message("top", "transparent", "Quiet"),
+            0.0,
         );
 
         // The corner of the banner band, away from where the centred text goes.
@@ -592,6 +769,7 @@ mod tests {
         draw_message(
             &mut frame.pixmap_mut(),
             &message("top", "seafoam", "Notice"),
+            0.0,
         );
 
         assert!(ink_in_rows(&frame, 0, 60) > 0, "nothing was drawn");
@@ -601,7 +779,7 @@ mod tests {
     fn an_empty_message_draws_nothing() {
         for text in ["", "   "] {
             let mut frame = Frame::new(320, 180).expect("frame");
-            draw_message(&mut frame.pixmap_mut(), &message("top", "info", text));
+            draw_message(&mut frame.pixmap_mut(), &message("top", "info", text), 0.0);
             assert_eq!(ink_in_rows(&frame, 0, 180), 0, "{text:?} drew something");
         }
     }
@@ -737,6 +915,55 @@ mod tests {
             name_banner_color: "#000000".to_owned(),
             title_position: "bottom".to_owned(),
         }
+    }
+
+    #[test]
+    fn the_timer_name_is_drawn_without_a_banner() {
+        // The name used to be skipped entirely unless the banner was on, so
+        // the size chosen for it appeared to do nothing.
+        let scene = timer_scene(true, "00:05:00", "Pre-Service");
+        let mut layout = layout();
+        layout.name_banner_enabled = false;
+
+        let mut frame = Frame::new(320, 180).expect("frame");
+        draw_timer(&mut frame.pixmap_mut(), &scene, Some(&layout));
+        let with_name = ink_in_rows(&frame, 0, 180);
+
+        let mut nameless = Frame::new(320, 180).expect("frame");
+        let no_label = timer_scene(true, "00:05:00", "");
+        draw_timer(&mut nameless.pixmap_mut(), &no_label, Some(&layout));
+        let clock_only = ink_in_rows(&nameless, 0, 180);
+
+        assert!(
+            with_name > clock_only,
+            "the name adds ink of its own: {clock_only} then {with_name}"
+        );
+    }
+
+    #[test]
+    fn the_timer_keeps_its_proportions_at_any_frame_size() {
+        // The same settings drawn twice, one frame a third the size of the
+        // other. The clock should cover about the same share of each; drawn at
+        // an absolute pixel size it covered nine times as much of the small
+        // one, which is why it swamped the preview.
+        let share = |width: u32, height: u32| {
+            let mut frame = Frame::new(width, height).expect("frame");
+            draw_timer(
+                &mut frame.pixmap_mut(),
+                &timer_scene(true, "00:14:44", ""),
+                Some(&layout()),
+            );
+            ink_in_rows(&frame, 0, height) as f64 / f64::from(width * height)
+        };
+
+        let large = share(960, 540);
+        let small = share(320, 180);
+        assert!(large > 0.0 && small > 0.0, "the clock is drawn on both");
+        let ratio = small / large;
+        assert!(
+            (0.5..2.0).contains(&ratio),
+            "the clock covers a comparable share of each frame: {ratio}"
+        );
     }
 
     #[test]

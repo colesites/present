@@ -87,6 +87,16 @@ pub async fn add_look(
 }
 
 #[tauri::command]
+pub async fn remove_look(
+    app: AppHandle,
+    state: State<'_, LooksState>,
+    look_id: String,
+) -> AppResult<LooksConfig> {
+    let changed = state.update(|config| looks::remove_look(config, &look_id, now_ms()))?;
+    broadcast(&app, &state, changed)
+}
+
+#[tauri::command]
 pub async fn set_look_name(
     app: AppHandle,
     state: State<'_, LooksState>,

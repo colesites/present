@@ -287,6 +287,7 @@ const bridge = {
 
   // --- Stage 3: files, dialogs, menu, shortcut, deep links ---------------
   selectFolder: () => invoke<MediaFolder | null>("select_folder"),
+  selectFolders: () => invoke<MediaFolder[]>("select_folders"),
   selectLibraryExportDestination: (suggestedName?: string) =>
     invoke<string | null>("select_library_export_destination", {
       suggestedName: suggestedName ?? null,

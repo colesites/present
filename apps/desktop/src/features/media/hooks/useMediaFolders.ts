@@ -201,30 +201,50 @@ export function useMediaFolders() {
     return allMediaItems.filter((item) => item.folderId === selectedFolderId);
   }, [allMediaItems, selectedFolderId]);
 
+  /**
+   * Add every folder the operator picked.
+   *
+   * A church's media is not organised one folder at a time — backgrounds,
+   * countdowns and a term's sermon series get added together — so the picker
+   * takes as many as they select. Returns all of them; the last becomes the
+   * selected one, which is the one they just finished choosing.
+   *
+   * Falls back to the single-folder picker on a build whose core predates the
+   * plural one, so an older core does not leave the button doing nothing.
+   */
   const addFolder = useCallback(async () => {
     try {
-      const result = await window.electronAPI.selectFolder();
-      if (!result) return null; // Cancelled
+      const picked = window.electronAPI.selectFolders
+        ? await window.electronAPI.selectFolders()
+        : [await window.electronAPI.selectFolder()].filter(
+            (folder): folder is MediaFolder => Boolean(folder),
+          );
+      if (!picked || picked.length === 0) return []; // Cancelled
 
-      const { id, name, path } = result;
+      const added: MediaFolder[] = [];
+      setFolders((previous) => {
+        const next = [...previous];
+        for (const { id, name, path } of picked) {
+          const existing = next.find((folder) => folder.path === path);
+          if (existing) {
+            added.push(existing);
+            continue;
+          }
+          const folder: MediaFolder = { id, name, path };
+          next.push(folder);
+          added.push(folder);
+        }
+        return next;
+      });
 
-      // Check if folder already exists
-      const existingInState = folders.find((f) => f.path === path);
-      if (existingInState) {
-        setSelectedFolderId(existingInState.id);
-        return existingInState;
-      }
-
-      const newFolder: MediaFolder = { id, name, path };
-      setFolders((prev) => [...prev, newFolder]);
-      setSelectedFolderId(id);
-
-      return newFolder;
+      const last = added[added.length - 1] ?? picked[picked.length - 1];
+      if (last) setSelectedFolderId(last.id);
+      return added;
     } catch (error) {
       console.error("Add folder error:", error);
       throw error;
     }
-  }, [folders]);
+  }, []);
 
   const removeFolder = useCallback(
     async (folderId: string) => {

@@ -35,6 +35,10 @@ export const setSelectedLook = (lookId: string): Promise<LooksConfig> =>
 export const addLook = (name?: string): Promise<LooksConfig> =>
   invoke("add_look", { name: name ?? null });
 
+/** Remove a look. The core refuses to remove the last one. */
+export const removeLook = (lookId: string): Promise<LooksConfig> =>
+  invoke("remove_look", { lookId });
+
 export const setLookName = (lookId: string, name: string): Promise<LooksConfig> =>
   invoke("set_look_name", { lookId, name });
 

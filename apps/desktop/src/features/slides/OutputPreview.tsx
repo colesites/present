@@ -1,14 +1,12 @@
 "use client";
 
 import {
-  createElement,
   memo,
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type HTMLAttributes,
 } from "react";
 import { cn } from "../../renderer/shared/lib/utils";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
@@ -63,7 +61,6 @@ export type OutputPreviewTarget = "audience" | "media" | "worship";
 
 const OUTPUT_BASE_WIDTH = 1280;
 const OUTPUT_BASE_HEIGHT = 720;
-const YOUTUBE_EMBED_REFERRER = "https://present.app/";
 const YOUTUBE_EMBED_ORIGIN = "https://present.app";
 
 interface OutputPreviewProps {
@@ -383,29 +380,6 @@ export const OutputPreview = memo(function OutputPreview({
   const timerTextForOutput = activeTimer
     ? getTimerDisplay(activeTimer)
     : "00:00:00";
-  // The operator preview is intentionally more compact than the audience
-  // output, so a large projected timer does not dominate the control screen.
-  const operatorTimerScale = previewScale * 0.65;
-  const timerClockFontPx = useMemo(
-    () =>
-      Math.max(
-        6,
-        Math.round(
-          Math.min(Math.max(timerLayout.clockFontPx, 12), 400) * operatorTimerScale
-        )
-      ),
-    [operatorTimerScale, timerLayout.clockFontPx]
-  );
-  const timerTitleFontPx = useMemo(
-    () =>
-      Math.max(
-        5,
-        Math.round(
-          Math.min(Math.max(timerLayout.nameFontPx, 8), 220) * previewScale
-        )
-      ),
-    [timerLayout.nameFontPx, previewScale]
-  );
   const previewTextPositionStyle = useMemo(
     () => ({
       left: `${textPosition.xPercent}%`,
@@ -642,69 +616,14 @@ export const OutputPreview = memo(function OutputPreview({
               </div>
             )}
 
-            {isTimerLayerEnabled &&
-            timerLabelForOutput &&
-            timerLayout.nameBannerEnabled ? (
-              <div
-                style={{
-                  fontSize: `${timerTitleFontPx}px`,
-                  color: timerLayout.nameColor,
-                  backgroundColor: timerLayout.nameBannerColor,
-                  height: `${Math.round(
-                    (timerLayout.nameBannerHeightPx ?? 48) * previewScale,
-                  )}px`,
-                }}
-                className="absolute inset-x-0 top-0 z-20 flex items-center justify-center px-2 text-center font-medium uppercase tracking-wider"
-              >
-                {timerLabelForOutput}
-              </div>
-            ) : null}
-
-            {isTimerLayerEnabled && timerTextForOutput && (
-              <div
-                style={{
-                  left: `${timerLayout.xPercent}%`,
-                  top: `${timerLayout.yPercent}%`,
-                  transform: "translate(-50%, -50%)",
-                }}
-                className="absolute z-20 box-border rounded-md bg-black/65 px-2 py-0 text-[9px] font-semibold tracking-wide text-white"
-              >
-                {timerLabelForOutput &&
-                !timerLayout.nameBannerEnabled &&
-                timerLayout.titlePosition === "top" ? (
-                  <div
-                    style={{
-                      fontSize: `${timerTitleFontPx}px`,
-                      color: timerLayout.nameColor,
-                    }}
-                    className="whitespace-nowrap overflow-hidden text-ellipsis font-medium uppercase tracking-wider"
-                  >
-                    {timerLabelForOutput}
-                  </div>
-                ) : null}
-                <div
-                  style={{
-                    fontSize: `${timerClockFontPx}px`,
-                    color: timerLayout.clockColor,
-                  }}
-                >
-                  {timerTextForOutput}
-                </div>
-                {timerLabelForOutput &&
-                !timerLayout.nameBannerEnabled &&
-                timerLayout.titlePosition !== "top" ? (
-                  <div
-                    style={{
-                      fontSize: `${timerTitleFontPx}px`,
-                      color: timerLayout.nameColor,
-                    }}
-                    className="whitespace-nowrap overflow-hidden text-ellipsis font-medium uppercase tracking-wider"
-                  >
-                    {timerLabelForOutput}
-                  </div>
-                ) : null}
-              </div>
-            )}
+            {/*
+              The timer is not drawn here. It arrives already composited, in
+              the frame this preview is showing — the same picture the audience
+              sees, drawn once by `compositor::overlays::draw_timer`, name
+              banner and all. Drawing a second one over it put two timers on
+              the preview at different sizes, and the one drawn here was the
+              older design.
+            */}
 
             {activeMessageOverlay ? (
               <PreviewMessageOverlay overlay={activeMessageOverlay} />
@@ -1643,13 +1562,6 @@ function PreviewYouTubeLayer({
   shownAtMs?: number;
   style: CSSProperties;
 }) {
-  type WebviewProps = HTMLAttributes<HTMLElement> & {
-    allow?: string;
-    allowpopups?: string;
-    httpreferrer?: string;
-    partition?: string;
-    src: string;
-  };
   const src = useMemo(
     () => getPreviewYouTubeEmbedUrl(youtubeUrl, getElapsedSeconds(shownAtMs)),
     [shownAtMs, youtubeUrl],
@@ -1657,15 +1569,17 @@ function PreviewYouTubeLayer({
 
   if (!src) return null;
 
-  return createElement("webview", {
-    src,
-    className: "absolute z-30 border-0 bg-black",
-    style: { ...style, aspectRatio: "16 / 9" },
-    partition: "persist:present-youtube-props",
-    allow: "autoplay; encrypted-media; picture-in-picture",
-    allowpopups: "false",
-    httpreferrer: YOUTUBE_EMBED_REFERRER,
-  } satisfies WebviewProps);
+  // See `OutputWindow`: `<webview>` is Electron's, and renders nothing here.
+  return (
+    <iframe
+      src={src}
+      title="YouTube"
+      className="absolute z-30 border-0 bg-black"
+      style={{ ...style, aspectRatio: "16 / 9" }}
+      allow="autoplay; encrypted-media; picture-in-picture"
+      referrerPolicy="strict-origin-when-cross-origin"
+    />
+  );
 }
 
 function getPreviewYouTubeEmbedUrl(
