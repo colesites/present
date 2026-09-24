@@ -18,8 +18,36 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Present",
-  description: "Church presentation software for worship services",
+  // "Present" alone is an English word competing with millions of pages, so
+  // the title says what the thing is as well as what it is called. The
+  // template gives every other page the same suffix without repeating it.
+  title: {
+    default: "Present — Presentation software for churches and live events",
+    template: "%s — Present",
+  },
+  description:
+    "Present is presentation software for churches, conferences and live events. Cloud libraries, real-time collaboration, instant scripture search, and a confidence view built for running a service live.",
+  applicationName: "Present",
+  keywords: [
+    // Brand first: the terms someone types when they are looking for this
+    // specific thing, not for a category it competes in.
+    "Present app",
+    "Present multivrs",
+    "ProPresenter alternative",
+    "presentation software",
+    "church presentation software",
+    "worship presentation software",
+    "live event presentation",
+    "lyrics projection",
+    "scripture projection",
+  ],
+  openGraph: {
+    title: "Present — Presentation software for churches and live events",
+    description:
+      "Cloud libraries, real-time collaboration, instant scripture search, and a confidence view built for running a service live.",
+    siteName: "Present",
+    type: "website",
+  },
 };
 
 export default function RootLayout({

@@ -9,9 +9,25 @@ import { Navbar, Footer } from "@/components/home/Layout";
 import { MessageSquare } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Present | Cinematic Church Presentation & Stage Display",
-  description: "Experience the next generation of church worship software. Dynamic lyrics, cloud synchronization, and stunning motion graphics for ministries like RCCG, Global Harvest, and elevation.",
-  keywords: ["church software", "worship presentation", "lyrics projection", "stage display", "presenter software", "RCCG tech", "GHL present", "church tech Nigeria", "christian visuals"],
+  // Overrides the layout's default for the home page only. Named ministries
+  // were removed: naming a church as a user is a claim that needs their
+  // agreement, and it narrowed the software to one kind of room.
+  title: "Present — Presentation software for churches and live events",
+  description:
+    "Presentation software for churches, conferences and live events. Cloud libraries, real-time collaboration, instant scripture search, and a confidence view built for running something live.",
+  keywords: [
+    "Present app",
+    "Present multivrs",
+    "ProPresenter alternative",
+    "presentation software",
+    "church presentation software",
+    "worship presentation software",
+    "conference presentation software",
+    "live event presentation",
+    "lyrics projection",
+    "scripture projection",
+    "stage display",
+  ],
 };
 
 export default function Home() {
@@ -21,7 +37,12 @@ export default function Home() {
 
       <main className="flex flex-col">
         <Hero />
-        <LogosWithBlurFlip />
+        {/*
+          "Trusted by churches around the world" and the logo wall, commented
+          out rather than deleted: the claim needs churches who have agreed to
+          be named, and the component is ready for when there are some.
+        */}
+        {/* <LogosWithBlurFlip /> */}
         <Features />
         <Testimonials />
         <Pricing />
