@@ -154,6 +154,10 @@ impl OutputSurfaceState {
     }
 }
 
+/// Only the native macOS view reports that it started or stopped presenting;
+/// the other platforms have nothing to announce yet, so this would be dead
+/// code there and `-D warnings` says so.
+#[cfg(target_os = "macos")]
 fn emit(app: &AppHandle, status: SurfaceStatus) {
     if let Err(error) = app.emit(SURFACE_CHANGED_EVENT, status) {
         tracing::warn!(%error, "could not announce the audience surface");

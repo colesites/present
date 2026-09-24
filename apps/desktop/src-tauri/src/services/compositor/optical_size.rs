@@ -164,9 +164,9 @@ impl OpticalSizes {
             return None;
         };
 
-        let (post_script_name, style, stretch) = match system.db().face(id) {
-            Some(face) => (face.post_script_name.clone(), face.style, face.stretch),
-            None => return None,
+        let (post_script_name, style, stretch) = {
+            let face = system.db().face(id)?;
+            (face.post_script_name.clone(), face.style, face.stretch)
         };
         let alias = format!("{family}\u{1f}opsz{optical_size}\u{1f}wght{}", weight.0);
         system.db_mut().push_face_info(FaceInfo {
