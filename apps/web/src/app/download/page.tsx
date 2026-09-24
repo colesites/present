@@ -6,6 +6,13 @@ import {
   type DesktopDownloadVariant,
   type DesktopDownloadTarget,
 } from "@/lib/download.server";
+import {
+  fetchReleaseManifest,
+  humanSize,
+  latestRelease,
+  previousReleases,
+  type Release,
+} from "@/lib/releases";
 
 export const metadata: Metadata = {
   title: "Download Present Desktop",
@@ -84,8 +91,70 @@ function DownloadPlatformCard({ target }: { target: DesktopDownloadTarget }) {
   );
 }
 
-export default function DownloadPage() {
-  const targets = getDesktopDownloadTargets();
+/**
+ * Everything published before the current release.
+ *
+ * A church that has standardised on a version, or one that hit a problem with
+ * the newest, needs the one they had back — and a bucket cannot be browsed
+ * from a page, so the list comes from the manifest. Collapsed by default: it
+ * is a way out, not the thing most people came for.
+ */
+function PreviousVersions({ releases }: { releases: Release[] }) {
+  return (
+    <details className="mt-12 w-full max-w-3xl text-left">
+      <summary className="cursor-pointer list-none text-center text-[0.9rem] text-white/60 transition hover:text-white">
+        Previous versions ({releases.length})
+      </summary>
+      <div className="mt-6 space-y-6">
+        {releases.map((release) => (
+          <div
+            key={release.version}
+            className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-[0.95rem] font-semibold text-white">
+                {release.version}
+              </span>
+              <span className="text-[0.75rem] text-white/45">
+                {new Date(release.publishedAt).toLocaleDateString(undefined, {
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                })}
+              </span>
+            </div>
+            <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+              {release.files
+                .filter((file) => file.platform !== "source")
+                .map((file) => (
+                  <li key={file.url}>
+                    <a
+                      href={file.url}
+                      className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[0.82rem] text-white/70 transition hover:bg-white/5 hover:text-white"
+                    >
+                      <span className="truncate">{file.name}</span>
+                      <span className="shrink-0 text-white/40">
+                        {humanSize(file.size)}
+                      </span>
+                    </a>
+                  </li>
+                ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+export default async function DownloadPage() {
+  // The manifest the release job writes to R2. Downloads come from it, so a
+  // release needs no redeploy; the environment variables still answer for
+  // anything it does not carry.
+  const manifest = await fetchReleaseManifest();
+  const latest = latestRelease(manifest);
+  const targets = getDesktopDownloadTargets(latest);
+  const previous = previousReleases(manifest);
 
   return (
     <div className="min-h-screen bg-[#000000] text-foreground selection:bg-[#5865F2]/30">
@@ -118,6 +187,14 @@ export default function DownloadPage() {
                   />
                 ))}
               </div>
+
+              {latest ? (
+                <p className="mt-6 text-[0.85rem] text-white/60">
+                  Version {latest.version}
+                </p>
+              ) : null}
+
+              {previous.length > 0 ? <PreviousVersions releases={previous} /> : null}
             </div>
 
           </div>
