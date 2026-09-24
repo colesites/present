@@ -247,7 +247,9 @@ pub fn blur(
     // Box radius for three passes approximating `sigma`, from
     // w = sqrt(12 * sigma^2 / n + 1).
     let ideal = (12.0 * sigma * sigma / 3.0 + 1.0).sqrt();
-    let radius = ((ideal - 1.0) / 2.0).round().max(1.0) as usize;
+    // Capped where `Divider` stops being exact. A box four thousand pixels
+    // wide is already the whole picture's average.
+    let radius = ((ideal - 1.0) / 2.0).round().clamp(1.0, 2047.0) as usize;
 
     let mut channels: Vec<[u32; 4]> = pixels
         .iter()
@@ -296,12 +298,48 @@ where
     });
 }
 
-fn divide(sum: u32, window: u32) -> u32 {
-    (sum + window / 2) / window
+/// Division by a box's width, rounded, as a multiply.
+///
+/// Four divisions a pixel a pass, six passes, was most of a blur's cost —
+/// a division is some twenty-five times a multiply. `m = ceil(2^32 / window)`
+/// makes `(x * m) >> 32` exactly `x / window` for every `x` below
+/// `2^32 / window`, which a sum of 8-bit samples over a window of fewer than
+/// four thousand pixels always is: the answers are the ones the division
+/// gave, not approximations of them.
+#[derive(Clone, Copy)]
+struct Divider {
+    half: u32,
+    reciprocal: u64,
+}
+
+impl Divider {
+    fn new(window: u32) -> Self {
+        Self {
+            half: window / 2,
+            reciprocal: (1u64 << 32).div_ceil(u64::from(window)),
+        }
+    }
+
+    #[inline(always)]
+    fn divide(self, sum: u32) -> u32 {
+        ((u64::from(sum + self.half) * self.reciprocal) >> 32) as u32
+    }
+
+    /// Every channel of a sum. Written out rather than with `map`, which
+    /// compiled to a call for every pixel.
+    #[inline(always)]
+    fn each(self, sums: [u32; 4]) -> [u32; 4] {
+        [
+            self.divide(sums[0]),
+            self.divide(sums[1]),
+            self.divide(sums[2]),
+            self.divide(sums[3]),
+        ]
+    }
 }
 
 fn box_rows(source: &[[u32; 4]], destination: &mut [[u32; 4]], width: usize, radius: usize) {
-    let window = (2 * radius + 1) as u32;
+    let divider = Divider::new((2 * radius + 1) as u32);
     row_bands(destination, width, |band, first_row| {
         for (offset, out_row) in band.chunks_exact_mut(width).enumerate() {
             let row_start = (first_row + offset) * width;
@@ -313,7 +351,7 @@ fn box_rows(source: &[[u32; 4]], destination: &mut [[u32; 4]], width: usize, rad
                 }
             }
             for (x, out) in out_row.iter_mut().enumerate() {
-                *out = sums.map(|sum| divide(sum, window));
+                *out = divider.each(sums);
                 if let Some(entering) = row.get(x + radius + 1) {
                     for channel in 0..4 {
                         sums[channel] += entering[channel];
@@ -337,7 +375,7 @@ fn box_columns(
     height: usize,
     radius: usize,
 ) {
-    let window = (2 * radius + 1) as u32;
+    let divider = Divider::new((2 * radius + 1) as u32);
     row_bands(destination, width, |band, first_row| {
         // A running sum per column, started afresh for this band's first row so
         // bands are independent.
@@ -356,7 +394,7 @@ fn box_columns(
         for (offset, out_row) in band.chunks_exact_mut(width).enumerate() {
             let y = first_row + offset;
             for (out, sum) in out_row.iter_mut().zip(sums.iter()) {
-                *out = sum.map(|value| divide(value, window));
+                *out = divider.each(*sum);
             }
             if y + radius + 1 < height {
                 let row = &source[(y + radius + 1) * width..(y + radius + 2) * width];
@@ -381,6 +419,22 @@ fn box_columns(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_divider_gives_exactly_what_dividing_did() {
+        // Every window a blur can use, and every sum a window of 8-bit
+        // samples can reach.
+        for window in (1..=301u32).step_by(2).chain([1023, 4095]) {
+            let divider = Divider::new(window);
+            for sum in (0..=255 * window).step_by(if window > 301 { 97 } else { 1 }) {
+                assert_eq!(
+                    divider.divide(sum),
+                    (sum + window / 2) / window,
+                    "{sum} / {window}"
+                );
+            }
+        }
+    }
 
     fn pixel(r: u8, g: u8, b: u8) -> PremultipliedColorU8 {
         ColorU8::from_rgba(r, g, b, 255).premultiply()

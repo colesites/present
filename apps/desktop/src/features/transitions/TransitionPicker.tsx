@@ -225,6 +225,7 @@ export function TransitionPicker({ className }: { className?: string }) {
                       <TransitionTile
                         key={preset.id}
                         preset={preset}
+                        mode={chosen.mode}
                         selected={preset.id === chosen.type}
                         onChoose={() => pick(preset)}
                       />

@@ -62,10 +62,18 @@ pub struct MacPresenter {
     /// label, before this is dropped, and an address alone would then point at
     /// a freed webview.
     webview: ViewAddress,
-    /// A frame is on its way to the main thread. The next is dropped rather
-    /// than queued: a busy main thread must not build up a backlog of
-    /// eight-megabyte images, and the newest frame is the one worth showing.
+    /// A job is on its way to the main thread to show whatever is in
+    /// [`Self::mailbox`].
     in_flight: Arc<AtomicBool>,
+    /// The newest frame not yet shown. One slot, replaced by each new frame, so
+    /// a busy main thread never builds a backlog of nine-megabyte images — and
+    /// it is the newest frame that lands when the main thread gets to it.
+    ///
+    /// It used to keep the frame already in flight and drop the one that
+    /// arrived after it, which is the opposite: any moment the operator's own
+    /// window kept the main thread busy cost the audience a frame of video
+    /// that was never retried, because the loop had already counted it shown.
+    mailbox: Arc<std::sync::Mutex<Option<SendImage>>>,
     /// The window's size and when it was read. Reading it is a round trip to
     /// the main thread; sixty of those a second is load the main thread does
     /// not need for a window that is fullscreen on a projector and never
@@ -130,6 +138,7 @@ impl MacPresenter {
             view: ViewAddress(view),
             webview: ViewAddress(webview),
             in_flight: Arc::new(AtomicBool::new(false)),
+            mailbox: Arc::new(std::sync::Mutex::new(None)),
             size: Cell::new(None),
         })
     }
@@ -194,17 +203,32 @@ fn image_from(width: u32, height: u32, bgra: Vec<u8>) -> Option<CFRetained<CGIma
 
 impl Presenter for MacPresenter {
     fn present(&mut self, width: u32, height: u32, bgra: Vec<u8>) -> Result<(), String> {
-        if self.in_flight.load(Ordering::Relaxed) {
+        let image = SendImage(image_from(width, height, bgra).ok_or("could not wrap the frame")?);
+        // Newest wins: this replaces a frame the main thread has not got to.
+        *self
+            .mailbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(image);
+        // A job already on its way will show it; only start one if none is.
+        if self.in_flight.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        let image = SendImage(image_from(width, height, bgra).ok_or("could not wrap the frame")?);
         let view = self.view;
         let in_flight = self.in_flight.clone();
-        in_flight.store(true, Ordering::Relaxed);
+        let mailbox = self.mailbox.clone();
 
         self.app
             .run_on_main_thread(move || {
-                let image = image;
+                // Cleared before the frame is taken, so a frame arriving while
+                // this runs starts a job of its own rather than being stranded.
+                in_flight.store(false, Ordering::Release);
+                let Some(image) = mailbox
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take()
+                else {
+                    return;
+                };
                 // SAFETY: the view was retained in `attach` and is released
                 // only by `Drop`, also on the main thread, after this.
                 let view = unsafe { &*(view.0 as *const NSView) };
@@ -219,7 +243,6 @@ impl Presenter for MacPresenter {
                     }
                     CATransaction::commit();
                 }
-                in_flight.store(false, Ordering::Relaxed);
             })
             .map_err(|error| {
                 self.in_flight.store(false, Ordering::Relaxed);

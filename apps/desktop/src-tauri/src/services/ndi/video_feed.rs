@@ -34,8 +34,19 @@ pub const ADVANCE_WHEN_BEHIND: f64 = 1.0 / 60.0;
 /// Further behind than this, seeking is cheaper than decoding forward.
 pub const SEEK_WHEN_BEHIND: f64 = 1.0;
 
-/// The most frames decoded for one stream frame before seeking instead. Bounds
-/// what one frame can cost.
+/// The most frames decoded for one stream frame. Bounds what one frame can
+/// cost; reaching it is not a reason to seek.
+///
+/// It used to be: eight decodes and still behind, and the feed sought instead.
+/// But being a few frames behind after one poll is what a consumer that paused
+/// for one slow tick looks like, and the frames it missed are already decoded
+/// and waiting. Seeking threw them away and then held the picture while the
+/// decoder found its place — up to [`SEEK_PATIENCE`] — during which the video
+/// fell further behind, which asked for another seek. The audience window
+/// played three frames a second like that, with freezes of a second and a
+/// half, while the preview of the same video was smooth. The rest is caught up
+/// on the next poll. A feed that is genuinely lost, more than
+/// [`SEEK_WHEN_BEHIND`] away, still seeks.
 pub const MAX_DECODES_PER_FRAME: usize = 8;
 
 /// Where the video was known to be, and when.
@@ -421,9 +432,8 @@ fn advance(playing: &mut Playing, now: Instant, target: f64) -> Result<Advanced,
         match next_step(shown, target) {
             Step::Hold => return Ok(Advanced::UpToDate),
             Step::Seek(seconds) => return seek_and_take(playing, now, seconds),
-            Step::Advance if decodes == MAX_DECODES_PER_FRAME => {
-                return seek_and_take(playing, now, target)
-            }
+            // Enough for one poll. What is left is caught up on the next.
+            Step::Advance if decodes == MAX_DECODES_PER_FRAME => return Ok(Advanced::UpToDate),
             Step::Advance => {
                 decodes += 1;
                 match take_one(playing)? {

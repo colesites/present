@@ -72,7 +72,12 @@ impl SurfaceSource for AppSurfaceSource {
         let moving_message = scene.message_overlay.as_ref().is_some_and(|message| {
             matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
         });
+        // A transition moves while the scene stands still, exactly as a
+        // scrolling message does, and has to be drawn every tick for the same
+        // reason — or the audience sees its first frame and then a cut.
+        let animating = compositor.is_animating();
         let unchanged = !moving_message
+            && !animating
             && last
                 .as_ref()
                 .is_some_and(|(previous_scene, previous_video, previous_size)| {

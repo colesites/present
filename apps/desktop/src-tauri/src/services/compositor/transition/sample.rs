@@ -5,70 +5,221 @@
 //! the same code that will run in front of the congregation, so a preset
 //! cannot look like one thing in the menu and be another on the screen.
 //!
-//! The two slides are canned and deliberately plain — a colour and a bar where
-//! the words would be — because a thumbnail is forty pixels tall and the thing
-//! being judged is the movement.
+//! And what crosses is what an operator actually puts on a screen: two lines
+//! of a hymn over a moving background, the words drawn by the compositor that
+//! draws the audience output. The background plays through the tile, so a
+//! changed-elements transition shows what it is for — the words change while
+//! the video carries on — and a whole-slide one crosses the whole picture.
+//! It replaced two flat colours with a white bar where the words would be,
+//! which showed the movement and nothing of what it would look like.
 
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Transform};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use super::config::Direction;
+use tiny_skia::{Color, FilterQuality, IntSize, Pixmap, PixmapPaint, Transform};
+
+use super::config::{Direction, Mode};
 use super::registry;
+use crate::services::compositor::SceneCompositor;
+use crate::services::output::OutputScene;
 
 /// The largest a sample is drawn. A tile, not a projector.
 pub const MAX_SIDE: u32 = 480;
 
-/// What the outgoing slide looks like.
-const BEFORE: (u8, u8, u8) = (28, 32, 54);
-/// And the incoming one.
-const AFTER: (u8, u8, u8) = (86, 44, 132);
+/// The footage: a motion background, its frames one under another.
+///
+/// Made by `scripts/make-transition-sample.sh`. Generated rather than filmed,
+/// so there is nobody's footage in the app, and it can be made again.
+const FOOTAGE: &[u8] = include_bytes!("../../../../assets/transition-sample.jpg");
 
-/// One moment of `id`, at `progress`, as premultiplied BGRA.
+/// How many frames it holds: one for every step of a tile's play
+/// (`TransitionTile.tsx`'s `STEPS`, and the last).
+const FOOTAGE_FRAMES: u32 = 17;
+
+/// The words on each side of the change: the first lines of "Amazing Grace"
+/// (John Newton, 1779), the hymn most likely to be on a screen somewhere.
+const BEFORE: &str = "Amazing grace,\nhow sweet the sound";
+const AFTER: &str = "That saved a wretch\nlike me";
+
+/// One moment of `id`, at `progress`, as the operator's `mode` would draw it.
 ///
 /// `None` for a preset nothing knows about.
-pub fn draw(id: &str, progress: f64, width: u32, height: u32) -> Option<Pixmap> {
+pub fn draw(id: &str, progress: f64, width: u32, height: u32, mode: Mode) -> Option<Pixmap> {
     let preset = registry::find(id)?;
     let primitive = preset.primitive.fallback();
     let direction = preset.direction.unwrap_or(Direction::Left);
     let width = width.clamp(16, MAX_SIDE);
     let height = height.clamp(16, MAX_SIDE);
 
-    let from = slide(width, height, BEFORE, 0.30);
-    let to = slide(width, height, AFTER, 0.55);
+    let stock = stock(width, height)?;
+    let playing = stock.frames.get(step_of(progress))?;
+
+    match mode {
+        Mode::ChangedElements => {
+            // Only the words cross, drawn on nothing and laid over the video
+            // as it plays — as the compositor draws them on the audience
+            // screen.
+            let mut moving = Pixmap::new(width, height)?;
+            super::draw::draw(
+                &mut moving.as_mut(),
+                &stock.before,
+                &stock.after,
+                primitive,
+                direction,
+                progress,
+            );
+            let mut out = playing.clone();
+            lay_over(&mut out, &moving);
+            Some(out)
+        }
+        Mode::FullSlide => {
+            // The picture as it stood the moment the slide changed, crossing
+            // to the picture now.
+            let mut from = stock.frames.first()?.clone();
+            lay_over(&mut from, &stock.before);
+            let mut to = playing.clone();
+            lay_over(&mut to, &stock.after);
+
+            let mut out = Pixmap::new(width, height)?;
+            out.fill(Color::BLACK);
+            super::draw::draw(
+                &mut out.as_mut(),
+                &from,
+                &to,
+                primitive,
+                direction,
+                progress,
+            );
+            Some(out)
+        }
+    }
+}
+
+/// Which frame of the footage belongs at `progress`.
+fn step_of(progress: f64) -> usize {
+    // `NaN` clamps to `NaN`, which `as` makes the first frame.
+    (progress.clamp(0.0, 1.0) * f64::from(FOOTAGE_FRAMES - 1)).round() as usize
+}
+
+/// Everything a sample of one size is drawn from.
+struct Stock {
+    size: (u32, u32),
+    frames: Vec<Pixmap>,
+    before: Pixmap,
+    after: Pixmap,
+}
+
+/// The stock for this size, made the first time it is asked for.
+///
+/// A picker asks for seventeen frames of each of a hundred and eight presets,
+/// all at one size, all at once. Laying the words out and scaling the footage
+/// for every one of those would be the cost of opening the menu; this does it
+/// once, and each frame after that is only the transition itself.
+fn stock(width: u32, height: u32) -> Option<Arc<Stock>> {
+    static STOCK: Mutex<Option<Arc<Stock>>> = Mutex::new(None);
+
+    let mut held = STOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(stock) = held.as_ref().filter(|stock| stock.size == (width, height)) {
+        return Some(Arc::clone(stock));
+    }
+    let stock = Arc::new(Stock {
+        size: (width, height),
+        frames: footage()?
+            .iter()
+            .map(|frame| filled(frame, width, height))
+            .collect::<Option<_>>()?,
+        before: words(BEFORE, width, height)?,
+        after: words(AFTER, width, height)?,
+    });
+    *held = Some(Arc::clone(&stock));
+    Some(stock)
+}
+
+/// The footage's frames, decoded once.
+fn footage() -> Option<&'static [Pixmap]> {
+    static FRAMES: OnceLock<Option<Vec<Pixmap>>> = OnceLock::new();
+    FRAMES
+        .get_or_init(|| {
+            let sheet = image::load_from_memory_with_format(FOOTAGE, image::ImageFormat::Jpeg)
+                .ok()?
+                .to_rgba8();
+            let (width, height) = (sheet.width(), sheet.height() / FOOTAGE_FRAMES);
+            let size = IntSize::from_wh(width, height)?;
+            let frame_bytes = width as usize * height as usize * 4;
+            // A JPEG is opaque, and an opaque pixel is its own premultiplied
+            // form, so the bytes go in as they come out.
+            sheet
+                .as_raw()
+                .chunks_exact(frame_bytes)
+                .take(FOOTAGE_FRAMES as usize)
+                .map(|bytes| Pixmap::from_vec(bytes.to_vec(), size))
+                .collect()
+        })
+        .as_deref()
+}
+
+/// A frame of footage filling `width` by `height`, cropped rather than
+/// letterboxed, as a background fills a screen.
+fn filled(frame: &Pixmap, width: u32, height: u32) -> Option<Pixmap> {
+    if (frame.width(), frame.height()) == (width, height) {
+        return Some(frame.clone());
+    }
+    let (from_width, from_height) = (frame.width() as f32, frame.height() as f32);
+    let scale = (width as f32 / from_width).max(height as f32 / from_height);
     let mut out = Pixmap::new(width, height)?;
-    super::draw::draw(
-        &mut out.as_mut(),
-        &from,
-        &to,
-        primitive,
-        direction,
-        progress,
+    out.draw_pixmap(
+        0,
+        0,
+        frame.as_ref(),
+        &PixmapPaint {
+            quality: FilterQuality::Bilinear,
+            ..PixmapPaint::default()
+        },
+        Transform::from_translate(
+            (width as f32 - from_width * scale) / 2.0,
+            (height as f32 - from_height * scale) / 2.0,
+        )
+        .pre_scale(scale, scale),
+        None,
     );
     Some(out)
 }
 
-/// A slide: a flat colour with a bar across it where the words would be.
-fn slide(width: u32, height: u32, colour: (u8, u8, u8), bar_at: f32) -> Pixmap {
-    let mut pixmap =
-        Pixmap::new(width, height).unwrap_or_else(|| Pixmap::new(1, 1).expect("a pixel"));
-    pixmap.fill(Color::from_rgba8(colour.0, colour.1, colour.2, 255));
+/// Lines of a hymn as a slide sets them: large, white, centred, on nothing.
+fn words(text: &str, width: u32, height: u32) -> Option<Pixmap> {
+    let scene = OutputScene {
+        show_text: true,
+        slide_canvas_size: Some("1920x1080".to_owned()),
+        slide_elements: Some(serde_json::json!([{
+            "id": "lyrics",
+            "type": "text",
+            "x": 120.0, "y": 290.0, "width": 1680.0, "height": 500.0,
+            "content": text,
+            "style": {
+                "fontSize": 124.0,
+                "fontWeight": "700",
+                "color": "#ffffff",
+                "textAlign": "center",
+                "verticalAlign": "middle",
+                "shadow": "0 6px 24px rgba(0, 0, 0, 0.55)"
+            }
+        }])),
+        ..OutputScene::default()
+    };
+    SceneCompositor::new(width, height).slide_layer(&scene)
+}
 
-    let (w, h) = (width as f32, height as f32);
-    let bar = Rect::from_xywh(w * 0.18, h * bar_at, w * 0.64, h * 0.14);
-    if let Some(bar) = bar {
-        let mut paint = Paint {
-            anti_alias: true,
-            ..Paint::default()
-        };
-        paint.set_color(Color::from_rgba8(255, 255, 255, 210));
-        pixmap.fill_path(
-            &PathBuilder::from_rect(bar),
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
-    }
-    pixmap
+/// Lay one picture over another. Sample-sized, so tiny-skia's own blend.
+fn lay_over(out: &mut Pixmap, layer: &Pixmap) {
+    out.draw_pixmap(
+        0,
+        0,
+        layer.as_ref(),
+        &PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
 }
 
 /// Whether this preset is one the engine draws, or one standing in as a fade.
@@ -86,23 +237,84 @@ fn primitive_of(id: &str) -> Option<super::registry::Primitive> {
 mod tests {
     use super::*;
 
-    fn pixel(pixmap: &Pixmap, x: u32, y: u32) -> (u8, u8, u8) {
-        let pixel = pixmap.pixel(x, y).expect("a pixel");
-        (pixel.red(), pixel.green(), pixel.blue())
+    const W: u32 = 320;
+    const H: u32 = 180;
+
+    /// A frame of the footage with a side's words over it, as either end of
+    /// a sample should be.
+    fn still(frame: usize, words: &Pixmap) -> Pixmap {
+        let mut picture = footage().expect("the footage")[frame].clone();
+        lay_over(&mut picture, words);
+        picture
+    }
+
+    #[test]
+    fn the_footage_is_a_frame_for_every_step_of_a_play() {
+        let frames = footage().expect("the footage decodes");
+        assert_eq!(frames.len(), FOOTAGE_FRAMES as usize);
+        assert!(frames
+            .iter()
+            .all(|frame| (frame.width(), frame.height()) == (W, H)));
+        // It moves: a sample over a still picture would not be footage.
+        assert_ne!(frames[0].data(), frames[16].data(), "the background plays");
+    }
+
+    #[test]
+    fn the_words_are_real_words() {
+        let stock = stock(W, H).expect("the stock");
+        let drawn = |layer: &Pixmap| {
+            layer
+                .pixels()
+                .iter()
+                .filter(|pixel| pixel.alpha() > 128)
+                .count()
+        };
+        // Two lines of 124-pixel type at a sixth of the size: a few thousand
+        // pixels each, and not the same ones.
+        assert!(drawn(&stock.before) > 1_500, "the first lines are drawn");
+        assert!(drawn(&stock.after) > 1_500, "the next lines are drawn");
+        assert_ne!(stock.before.data(), stock.after.data());
     }
 
     #[test]
     fn a_sample_starts_on_one_slide_and_ends_on_the_other() {
-        let start = draw("fade", 0.0, 80, 45).expect("a sample");
-        let end = draw("fade", 1.0, 80, 45).expect("a sample");
-        assert_eq!(pixel(&start, 4, 4), BEFORE);
-        assert_eq!(pixel(&end, 4, 4), AFTER);
+        let stock = stock(W, H).expect("the stock");
+        for mode in [Mode::ChangedElements, Mode::FullSlide] {
+            let start = draw("fade", 0.0, W, H, mode).expect("a sample");
+            let end = draw("fade", 1.0, W, H, mode).expect("a sample");
+            assert_eq!(
+                start.data(),
+                still(0, &stock.before).data(),
+                "{mode:?} at 0"
+            );
+            assert_eq!(end.data(), still(16, &stock.after).data(), "{mode:?} at 1");
+        }
+    }
+
+    #[test]
+    fn changing_only_the_words_leaves_the_video_playing_beneath_them() {
+        // A corner holds no words, so there the sample is the footage itself,
+        // frame for frame, all the way through — which is the difference
+        // between the two modes an operator is choosing between.
+        let frames = footage().expect("the footage");
+        let corner = |pixmap: &Pixmap| pixmap.pixel(4, 4).expect("a pixel");
+        for (step, progress) in [(0, 0.0), (8, 0.5), (16, 1.0)] {
+            let sample =
+                draw("push-left", progress, W, H, Mode::ChangedElements).expect("a sample");
+            assert_eq!(corner(&sample), corner(&frames[step]), "at {progress}");
+        }
+        let whole = draw("push-left", 0.5, W, H, Mode::FullSlide).expect("a sample");
+        assert_ne!(
+            corner(&whole),
+            corner(&frames[8]),
+            "a whole-slide push moves the background as well"
+        );
     }
 
     #[test]
     fn every_transition_in_the_library_can_be_shown() {
         for preset in registry::PRESETS {
-            let sample = draw(preset.id, 0.5, 64, 36);
+            let sample = draw(preset.id, 0.5, 64, 36, Mode::ChangedElements);
             assert!(sample.is_some(), "{} has no picture", preset.id);
             assert_eq!(
                 primitive_of(preset.id).map(super::registry::Primitive::is_drawn),
@@ -115,14 +327,14 @@ mod tests {
 
     #[test]
     fn a_name_from_somewhere_else_has_no_picture() {
-        assert!(draw("invented-later", 0.5, 64, 36).is_none());
+        assert!(draw("invented-later", 0.5, 64, 36, Mode::ChangedElements).is_none());
     }
 
     #[test]
     fn a_sample_is_a_tile_however_big_it_is_asked_for() {
-        let huge = draw("fade", 0.5, 4000, 4000).expect("a sample");
+        let huge = draw("fade", 0.5, 4000, 4000, Mode::ChangedElements).expect("a sample");
         assert_eq!((huge.width(), huge.height()), (MAX_SIDE, MAX_SIDE));
-        let tiny = draw("fade", 0.5, 1, 1).expect("a sample");
+        let tiny = draw("fade", 0.5, 1, 1, Mode::ChangedElements).expect("a sample");
         assert_eq!((tiny.width(), tiny.height()), (16, 16));
     }
 

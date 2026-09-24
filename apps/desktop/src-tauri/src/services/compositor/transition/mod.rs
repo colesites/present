@@ -54,8 +54,16 @@ pub fn sample_response(uri: &str) -> tauri::http::Response<Vec<u8>> {
     let progress = number("p").unwrap_or(0.5);
     let width = number("w").unwrap_or(160.0).max(1.0) as u32;
     let height = number("h").unwrap_or(90.0).max(1.0) as u32;
+    // The mode the operator has chosen, so a tile shows what that choice
+    // will do: the words alone, or the whole picture.
+    let full_slide = query.split('&').any(|pair| pair == "m=full-slide");
+    let mode = if full_slide {
+        Mode::FullSlide
+    } else {
+        Mode::ChangedElements
+    };
 
-    let drawn = sample::draw(&id, progress, width, height).and_then(|pixmap| {
+    let drawn = sample::draw(&id, progress, width, height, mode).and_then(|pixmap| {
         let mut bgra = Vec::with_capacity(pixmap.data().len());
         for pixel in pixmap.pixels() {
             bgra.extend_from_slice(&[pixel.blue(), pixel.green(), pixel.red(), pixel.alpha()]);

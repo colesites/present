@@ -79,15 +79,18 @@ export const getTransitions = (): Promise<TransitionLibrary> => invoke("get_tran
  * One moment of a transition, drawn by the engine that runs it for real.
  *
  * `progress` is 0 to 1. The tiles show a still at the middle of the movement
- * and step through these on hover.
+ * and step through these on hover. `mode` is the operator's choice, so a tile
+ * shows what it will do: the words crossing over a video that plays on, or the
+ * whole picture crossing.
  */
 export const transitionSampleUrl = (
   id: string,
   progress: number,
   width: number,
   height: number,
+  mode: TransitionMode = "changed-elements",
 ): string => {
-  const query = `p=${progress.toFixed(3)}&w=${Math.round(width)}&h=${Math.round(height)}`;
+  const query = `p=${progress.toFixed(3)}&w=${Math.round(width)}&h=${Math.round(height)}&m=${mode}`;
   const isWindows =
     typeof navigator !== "undefined" && /Windows|Win32|Win64/.test(navigator.userAgent);
   return isWindows

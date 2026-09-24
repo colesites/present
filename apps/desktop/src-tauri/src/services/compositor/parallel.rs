@@ -61,6 +61,41 @@ where
     });
 }
 
+/// Run `work` over whole rows of `destination`, in parallel bands, with the
+/// index of each band's first row.
+///
+/// For work that reads a source at an offset, and needs to know which row it
+/// is on without dividing every pixel's index back into a row and a column.
+/// A `destination` that is not a whole number of rows is left alone.
+///
+/// `width` is in elements, whatever they are — pixels, or a pixmap's bytes —
+/// and whether the work is worth the threads is judged on the size of the
+/// buffer in bytes, so the same picture decides the same way either way.
+pub fn for_each_row_band<T, F>(destination: &mut [T], width: usize, work: F)
+where
+    T: Send,
+    F: Fn(&mut [T], usize) + Sync,
+{
+    if width == 0 || destination.len() % width != 0 {
+        return;
+    }
+    let rows = destination.len() / width;
+    let bands = bands().min(rows.max(1));
+
+    if bands <= 1 || std::mem::size_of_val(destination) < MINIMUM_PARALLEL_PIXELS * 4 {
+        work(destination, 0);
+        return;
+    }
+
+    let rows_per_band = rows.div_ceil(bands);
+    std::thread::scope(|scope| {
+        for (index, band) in destination.chunks_mut(rows_per_band * width).enumerate() {
+            let work = &work;
+            scope.spawn(move || work(band, index * rows_per_band));
+        }
+    });
+}
+
 /// Run `work` over a source and destination of the same length, in parallel.
 ///
 /// The pairing is the common shape: read one pixel, write the matching one.
@@ -185,6 +220,28 @@ mod tests {
         assert!(
             values.iter().all(|value| *value == 1),
             "a pixel was missed or repeated"
+        );
+    }
+
+    #[test]
+    fn row_bands_cut_between_rows_and_say_which_row_they_start_on() {
+        // A band starting part-way along a row would read every pixel of it
+        // from the row above — the picture sheared at each band boundary.
+        let width = 1921;
+        let rows = MINIMUM_PARALLEL_PIXELS / width + 40;
+        let mut values = vec![usize::MAX; width * rows];
+        for_each_row_band(&mut values, width, |band, first_row| {
+            assert_eq!(band.len() % width, 0, "a band ends part-way along a row");
+            for (offset, row) in band.chunks_exact_mut(width).enumerate() {
+                row.fill(first_row + offset);
+            }
+        });
+        assert!(
+            values
+                .chunks_exact(width)
+                .enumerate()
+                .all(|(row, pixels)| pixels.iter().all(|value| *value == row)),
+            "a row was missed, repeated or misnumbered"
         );
     }
 
