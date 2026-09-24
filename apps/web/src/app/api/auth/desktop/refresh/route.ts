@@ -7,7 +7,7 @@ import {
   verifyDesktopSessionToken,
 } from "../../../../../lib/server/desktop-auth";
 import {
-  isDesktopJwtConfigured,
+  isDesktopJwtTrusted,
   signConvexAccessToken,
 } from "../../../../../lib/server/desktop-jwt";
 
@@ -50,11 +50,12 @@ export async function POST(request: Request) {
     // The desktop's own credential: signed here from the account, not from the
     // browser session that started it, so a computer stays signed in until it
     // is signed out (`lib/server/desktop-jwt.ts`). Until a signing key is
-    // configured this is skipped and Clerk's session is used, as before.
+    // configured, and published where Convex looks for it, this is skipped
+    // and Clerk's session is used, as before.
     let accessToken: string | null = null;
     let accessTokenExpiresAt: number | null = null;
 
-    if (isDesktopJwtConfigured()) {
+    if (await isDesktopJwtTrusted()) {
       const user = await client.users.getUser(claims.userId).catch(() => null);
       if (!user || user.banned || user.locked) {
         return NextResponse.json(

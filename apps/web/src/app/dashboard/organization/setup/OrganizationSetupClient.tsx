@@ -10,11 +10,14 @@ import { useWorkspaceStore } from "../../../../../../../packages/shared/src/stor
 
 interface OrganizationSetupClientProps {
   desktopSessionToken?: string | null;
+  /** The loopback address a development desktop is listening on, if any. */
+  desktopComeBackTo?: string | null;
   source?: string | null;
 }
 
 export default function OrganizationSetupClient({
   desktopSessionToken,
+  desktopComeBackTo,
   source,
 }: OrganizationSetupClientProps) {
   const router = useRouter();
@@ -69,16 +72,15 @@ export default function OrganizationSetupClient({
     }
   }, [isLoading, isUserLoaded, router, user]);
 
+  // Handed back the way every sign-in is: the launch page opens `present://`
+  // for an installed app, or the loopback address a development one is
+  // listening on — which it checks, since this came in on the URL.
   const completeDesktopFlow = (sessionToken: string) => {
-    window.location.href = `present://auth?sessionToken=${encodeURIComponent(
-      sessionToken
-    )}`;
-    window.setTimeout(() => {
-      window.close();
-    }, 350);
-    window.setTimeout(() => {
-      router.replace("/dashboard?setup=1");
-    }, 900);
+    const launch = new URLSearchParams({ sessionToken });
+    if (desktopComeBackTo) {
+      launch.set("redirect", desktopComeBackTo);
+    }
+    router.replace(`/auth/desktop/launch?${launch.toString()}`);
   };
 
   const inviteMemberByEmail = async (

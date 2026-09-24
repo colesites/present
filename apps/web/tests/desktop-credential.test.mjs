@@ -190,3 +190,44 @@ test("a token nobody signed is still refused", () => {
   assert.equal(verifyDesktopSessionToken(`${payload}.not-the-signature`), null);
   assert.equal(verifyDesktopSessionToken("nonsense"), null);
 });
+
+test("tokens are signed only once the issuer publishes this key", async (t) => {
+  // A development site signs with its own copy of the key under the deployed
+  // site's name. If the deployed site does not publish that key, Convex
+  // refuses every token and the desktop waits on "Loading…" for good — so
+  // until it does, the refresh route must use Clerk's session instead.
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  const fresh = () => import(`../src/lib/server/desktop-jwt.ts?trust=${Math.random()}`);
+  const silenced = t.mock.method(console, "warn", () => {});
+
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    asked.push(String(url));
+    return new Response(JSON.stringify({ keys: [] }), { status: 200 });
+  };
+  const unpublished = await fresh();
+  assert.equal(await unpublished.isDesktopJwtTrusted(), false, "production publishes no key");
+  assert.equal(await unpublished.isDesktopJwtTrusted(), false, "and the answer is remembered");
+  assert.deepEqual(asked, ["https://present.multivrs.space/.well-known/jwks.json"]);
+  assert.equal(silenced.mock.callCount(), 1, "said once, not on every refresh");
+
+  const published = await fresh();
+  const ourKeys = await published.desktopJwks();
+  globalThis.fetch = async () => new Response(JSON.stringify(ourKeys), { status: 200 });
+  assert.equal(await published.isDesktopJwtTrusted(), true, "the issuer publishes this very key");
+
+  const otherKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).publicKey.export({ format: "jwk" });
+  const imposter = await fresh();
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ keys: [{ ...otherKey, kid: ourKeys.keys[0].kid }] }), { status: 200 });
+  assert.equal(await imposter.isDesktopJwtTrusted(), false, "the same name on a different key is not this key");
+
+  const offline = await fresh();
+  globalThis.fetch = async () => {
+    throw new Error("unreachable");
+  };
+  assert.equal(await offline.isDesktopJwtTrusted(), false, "an issuer nobody can reach vouches for nothing");
+});
