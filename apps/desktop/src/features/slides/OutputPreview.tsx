@@ -50,6 +50,7 @@ import type {
   ScriptureVerticalAlign,
 } from "../../shared/types/output-window";
 import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
+import { youtubeEmbedUrl } from "../../shared/lib/youtube-embed.mjs";
 import { CompositorPreviewLayer } from "./components/CompositorPreviewLayer";
 
 interface SlideGroup {
@@ -61,7 +62,6 @@ export type OutputPreviewTarget = "audience" | "media" | "worship";
 
 const OUTPUT_BASE_WIDTH = 1280;
 const OUTPUT_BASE_HEIGHT = 720;
-const YOUTUBE_EMBED_ORIGIN = "https://present.app";
 
 interface OutputPreviewProps {
   text: string | null;
@@ -1563,7 +1563,11 @@ function PreviewYouTubeLayer({
   style: CSSProperties;
 }) {
   const src = useMemo(
-    () => getPreviewYouTubeEmbedUrl(youtubeUrl, getElapsedSeconds(shownAtMs)),
+    () =>
+      youtubeEmbedUrl(youtubeUrl, {
+        startSeconds: getElapsedSeconds(shownAtMs),
+        controls: true,
+      }),
     [shownAtMs, youtubeUrl],
   );
 
@@ -1580,50 +1584,6 @@ function PreviewYouTubeLayer({
       referrerPolicy="strict-origin-when-cross-origin"
     />
   );
-}
-
-function getPreviewYouTubeEmbedUrl(
-  value: string,
-  startSeconds = 0,
-): string | null {
-  try {
-    const url = new URL(value.trim());
-    let videoId: string | null = null;
-    if (url.hostname === "youtu.be") {
-      videoId = url.pathname.split("/").filter(Boolean)[0] ?? null;
-    } else if (url.hostname.endsWith("youtube.com")) {
-      if (url.pathname === "/watch") {
-        videoId = url.searchParams.get("v");
-      } else {
-        const parts = url.pathname.split("/").filter(Boolean);
-        if (["embed", "shorts", "live"].includes(parts[0] ?? "")) {
-          videoId = parts[1] ?? null;
-        }
-      }
-    }
-
-    if (!videoId) return null;
-    const params = new URLSearchParams({
-      autoplay: "1",
-      controls: "1",
-      disablekb: "1",
-      fs: "0",
-      iv_load_policy: "3",
-      loop: "1",
-      modestbranding: "1",
-      mute: "1",
-      origin: YOUTUBE_EMBED_ORIGIN,
-      playsinline: "1",
-      playlist: videoId,
-      rel: "0",
-    });
-    if (startSeconds > 0) {
-      params.set("start", String(startSeconds));
-    }
-    return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
-  } catch {
-    return null;
-  }
 }
 
 function getElapsedSeconds(startedAtMs?: number): number {
