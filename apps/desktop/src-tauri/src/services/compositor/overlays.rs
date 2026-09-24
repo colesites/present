@@ -22,6 +22,13 @@ use super::scene::MediaLoader;
 use super::{color, images, shapes, text};
 
 /// The banner's vertical padding, as the React layer's `py-4` in a 1080p frame.
+/// The screen the operator's pixel sizes are chosen against.
+///
+/// Everything drawn at a size in pixels is scaled by this frame's height over
+/// this, so the same settings look the same on a preview, a 1080 projector and
+/// a 4K wall.
+const REFERENCE_HEIGHT: f32 = 1080.0;
+
 const MESSAGE_PADDING_RATIO: f32 = 16.0 / 1080.0;
 
 /// `min(6vw, 64px)` at 1080p, the static banner's font size.
@@ -327,7 +334,15 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
 
     let x_percent = layout.map_or(50.0, |l| clamp(l.x_percent, 0.0, 100.0));
     let y_percent = layout.map_or(50.0, |l| clamp(l.y_percent, 0.0, 100.0));
-    let clock_font = layout.map_or(96.0, |l| clamp(l.clock_font_px, 12.0, 400.0));
+    // Sizes are chosen against a 1080-tall screen and drawn in proportion to
+    // whatever frame this is. The preview is the same picture at a fraction of
+    // the size, so an absolute 96px clock filled it while looking modest on
+    // the wall — the operator could not judge from the preview what the
+    // congregation would see. It also means a 4K output scales up rather than
+    // shrinking into a corner.
+    let of_reference = frame_height / REFERENCE_HEIGHT;
+    let clock_font =
+        layout.map_or(96.0, |l| clamp(l.clock_font_px, 12.0, 400.0)) * of_reference;
 
     let clock_color = layout
         .and_then(|l| color::parse(&l.clock_color))
@@ -366,7 +381,7 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
     let ink = layout
         .and_then(|l| color::parse(&l.name_color))
         .unwrap_or(Color::WHITE);
-    let name_font = layout.map_or(24.0, |l| clamp(l.name_font_px, 8.0, 200.0));
+    let name_font = layout.map_or(24.0, |l| clamp(l.name_font_px, 8.0, 200.0)) * of_reference;
     let above = layout.is_some_and(|l| l.title_position == "top");
 
     // Without the banner the name still belongs on the screen, next to the
@@ -397,7 +412,8 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
         return;
     }
 
-    let banner_height = layout.map_or(48.0, |l| clamp(l.name_banner_height_px, 0.0, 400.0));
+    let banner_height =
+        layout.map_or(48.0, |l| clamp(l.name_banner_height_px, 0.0, 400.0)) * of_reference;
     if banner_height <= 0.0 {
         return;
     }
@@ -921,6 +937,32 @@ mod tests {
         assert!(
             with_name > clock_only,
             "the name adds ink of its own: {clock_only} then {with_name}"
+        );
+    }
+
+    #[test]
+    fn the_timer_keeps_its_proportions_at_any_frame_size() {
+        // The same settings drawn twice, one frame a third the size of the
+        // other. The clock should cover about the same share of each; drawn at
+        // an absolute pixel size it covered nine times as much of the small
+        // one, which is why it swamped the preview.
+        let share = |width: u32, height: u32| {
+            let mut frame = Frame::new(width, height).expect("frame");
+            draw_timer(
+                &mut frame.pixmap_mut(),
+                &timer_scene(true, "00:14:44", ""),
+                Some(&layout()),
+            );
+            ink_in_rows(&frame, 0, height) as f64 / f64::from(width * height)
+        };
+
+        let large = share(960, 540);
+        let small = share(320, 180);
+        assert!(large > 0.0 && small > 0.0, "the clock is drawn on both");
+        let ratio = small / large;
+        assert!(
+            (0.5..2.0).contains(&ratio),
+            "the clock covers a comparable share of each frame: {ratio}"
         );
     }
 

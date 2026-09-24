@@ -54,6 +54,31 @@ fn init_tracing() {
     }
 }
 
+/// Where a development build keeps its own copy of everything.
+///
+/// Both builds carry the same bundle identifier, so macOS hands them the same
+/// folder — and a development build talks to a different Convex deployment.
+/// Sharing the folder meant the development app read services and ids written
+/// by the installed one and sent them to a deployment that has never seen
+/// them, which comes back as a validation error on every org-scoped query and
+/// takes the window down with it.
+///
+/// A packaged build is untouched and keeps the folder it has always used, so
+/// nothing an operator owns moves. A development build starts empty, which is
+/// the point: it is not the church's data.
+fn development_aware(dir: std::path::PathBuf) -> std::path::PathBuf {
+    if cfg!(debug_assertions) {
+        let mut name = dir
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "present".to_owned());
+        name.push_str(".dev");
+        dir.with_file_name(name)
+    } else {
+        dir
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_tracing();
@@ -387,16 +412,18 @@ pub fn run() {
             // Display preferences need the resolved app config directory, which
             // only exists once the app handle does — hence managing this here
             // rather than before the builder.
-            let config_dir = app
-                .path()
-                .app_config_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let config_dir = development_aware(
+                app.path()
+                    .app_config_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            );
             // The redacted local error log, first, so a panic in anything set up
             // after it is written down before the release build aborts.
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| config_dir.clone());
+            let data_dir = development_aware(
+                app.path()
+                    .app_data_dir()
+                    .unwrap_or_else(|_| config_dir.clone()),
+            );
             let error_log = std::sync::Arc::new(services::error_log::ErrorLog::new(
                 &data_dir,
                 env!("CARGO_PKG_VERSION"),
