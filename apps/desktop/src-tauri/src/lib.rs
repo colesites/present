@@ -151,8 +151,7 @@ pub fn run() {
                     tracing::error!("local-media request before the file scope was registered");
                     return;
                 };
-                let response =
-                    services::media_protocol::respond(&state, &uri, range.as_deref());
+                let response = services::media_protocol::respond(&state, &uri, range.as_deref());
 
                 // The answer goes back on the main thread, because that is
                 // where WebKit both starts and stops a scheme task. Answering
@@ -170,8 +169,7 @@ pub fn run() {
                 // handing over moves — the disk read above stays here.
                 #[cfg(target_os = "macos")]
                 {
-                    if let Err(error) =
-                        app.run_on_main_thread(move || responder.respond(response))
+                    if let Err(error) = app.run_on_main_thread(move || responder.respond(response))
                     {
                         tracing::warn!(%error, "could not answer a local-media request");
                     }

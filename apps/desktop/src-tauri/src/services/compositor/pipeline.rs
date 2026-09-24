@@ -402,16 +402,12 @@ impl SceneCompositor {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
-        let elapsed_seconds = scene
-            .message_overlay
-            .as_ref()
-            .map_or(0.0, |message| (now_ms - message.shown_at_ms).max(0.0) / 1000.0);
-        let moving = scene
-            .message_overlay
-            .as_ref()
-            .is_some_and(|message| {
-                matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
-            });
+        let elapsed_seconds = scene.message_overlay.as_ref().map_or(0.0, |message| {
+            (now_ms - message.shown_at_ms).max(0.0) / 1000.0
+        });
+        let moving = scene.message_overlay.as_ref().is_some_and(|message| {
+            matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
+        });
 
         let key = OverlayKey {
             message: scene.message_overlay.clone(),
