@@ -24,11 +24,25 @@ on:
 
 jobs:
   build:
-    name: macOS
+    name: macOS (${{ matrix.label }})
     # A build that has not finished in an hour and a half is stuck, not slow.
     # Without this a hung job keeps a runner for six hours.
     timeout-minutes: 90
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            label: Apple Silicon
+            key: macos-arm64
+          # Built on an Intel runner rather than cross-compiled, because the
+          # bundle carries an FFmpeg built from source and that has to match
+          # the architecture it ships with. If this label is ever retired,
+          # `macos-13` is the other Intel runner.
+          - runner: macos-15-intel
+            label: Intel
+            key: macos-x64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -53,7 +67,7 @@ jobs:
           path: |
             apps/desktop/src-tauri/ffmpeg/prefix
             apps/desktop/src-tauri/ffmpeg/cache
-          key: ffmpeg-macos-latest-${{ hashFiles('apps/desktop/scripts/build-ffmpeg.sh') }}
+          key: ffmpeg-${{ matrix.key }}-${{ hashFiles('apps/desktop/scripts/build-ffmpeg.sh') }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.96.0
@@ -62,7 +76,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
-          key: macos-latest
+          key: ${{ matrix.key }}
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -82,7 +96,7 @@ jobs:
       - name: Upload bundles
         uses: actions/upload-artifact@v6
         with:
-          name: present-tauri-macos
+          name: present-tauri-${{ matrix.key }}
           path: |
             apps/desktop/src-tauri/ffmpeg/cache/ffmpeg-*.tar.xz
             apps/desktop/src-tauri/target/release/bundle/**/*.dmg

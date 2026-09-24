@@ -31,11 +31,23 @@ export async function GET(
     });
   }
 
-  const desktopDownloadUrl = getDesktopDownloadUrl(platform);
+  // A published release is the whole truth about what exists. A slug it does
+  // not carry is missing, not served from an environment variable pointing at
+  // some earlier upload — that is how the Intel link ended up fetching a file
+  // that had been deleted and reporting it as "temporarily unavailable" when
+  // in fact it had never been built.
+  const manifest = await fetchReleaseManifest();
+  const release = latestRelease(manifest);
+  const desktopDownloadUrl = release
+    ? fileForSlug(release, platform)?.url ?? ""
+    : getDesktopDownloadUrl(platform);
   if (!desktopDownloadUrl) {
-    return new Response(`${platform} download is not configured.`, {
-      status: 503,
-    });
+    return new Response(
+      release
+        ? `${platform} is not part of the ${release.version} release.`
+        : `${platform} download is not configured.`,
+      { status: 404 },
+    );
   }
 
   const upstream = await fetch(desktopDownloadUrl, {

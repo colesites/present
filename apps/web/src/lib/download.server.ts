@@ -126,7 +126,16 @@ const buildVariant = (
   const { envKeys, fallbackFileName, label, note } =
     DOWNLOAD_VARIANT_CONFIG[slug];
   const published = fileForSlug(release ?? null, slug);
-  const downloadUrl = published?.url ?? readFirstConfiguredEnvValue(envKeys);
+
+  // Once a release is published it is the whole truth about what exists. A
+  // variant it does not carry is not offered at all, rather than falling back
+  // to an environment variable pointing at some earlier upload — that is how
+  // an "Intel" button ended up linking to a file that had been deleted, and
+  // telling the operator the download was "temporarily unavailable" when in
+  // fact it had never been built.
+  const downloadUrl = release
+    ? published?.url ?? ""
+    : readFirstConfiguredEnvValue(envKeys);
   if (!downloadUrl) {
     return null;
   }
