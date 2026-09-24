@@ -29,15 +29,17 @@ export const metadata: Metadata = {
     "Present is presentation software for churches, conferences and live events. Cloud libraries, real-time collaboration, instant scripture search, and a confidence view built for running a service live.",
   applicationName: "Present",
   keywords: [
+    // Brand first: the terms someone types when they are looking for this
+    // specific thing, not for a category it competes in.
+    "Present app",
+    "Present multivrs",
+    "ProPresenter alternative",
     "presentation software",
     "church presentation software",
     "worship presentation software",
     "live event presentation",
-    "ProPresenter alternative",
     "lyrics projection",
     "scripture projection",
-    "Present app",
-    "Present multivrs",
   ],
   openGraph: {
     title: "Present — Presentation software for churches and live events",

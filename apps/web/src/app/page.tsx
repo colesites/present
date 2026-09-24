@@ -16,17 +16,17 @@ export const metadata: Metadata = {
   description:
     "Presentation software for churches, conferences and live events. Cloud libraries, real-time collaboration, instant scripture search, and a confidence view built for running something live.",
   keywords: [
+    "Present app",
+    "Present multivrs",
+    "ProPresenter alternative",
     "presentation software",
     "church presentation software",
     "worship presentation software",
     "conference presentation software",
     "live event presentation",
-    "ProPresenter alternative",
     "lyrics projection",
     "scripture projection",
     "stage display",
-    "Present app",
-    "Present multivrs",
   ],
 };
 
