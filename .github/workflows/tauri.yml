@@ -239,9 +239,11 @@ jobs:
     runs-on: ubuntu-24.04
     # A tag publishes itself; a manual run only when asked. Without this a
     # test build would overwrite the manifest the download page reads.
+    # `github.event.inputs` rather than `inputs`: the latter only exists for a
+    # workflow_dispatch, and referencing it on a tag push is an error.
     if: >-
       startsWith(github.ref, 'refs/tags/desktop-v') ||
-      inputs.publish
+      github.event.inputs.publish == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
