@@ -1,3 +1,4 @@
+import { fileForSlug, type Release } from "@/lib/releases";
 import {
   getDesktopDownloadPath,
   getDesktopPlatformDownloadPath,
@@ -109,12 +110,23 @@ const readFirstConfiguredEnvValue = (keys: string[]): string => {
   return "";
 };
 
+/**
+ * Where one download comes from.
+ *
+ * The release manifest first: it is written by the job that built the files,
+ * so it is right by construction and a new release needs no redeploy. The
+ * environment variables stay as a fallback for anything the manifest has not
+ * got — a hand-uploaded build, or the period before the first published
+ * release.
+ */
 const buildVariant = (
-  slug: DesktopDownloadSlug
+  slug: DesktopDownloadSlug,
+  release?: Release | null
 ): DesktopDownloadVariant | null => {
   const { envKeys, fallbackFileName, label, note } =
     DOWNLOAD_VARIANT_CONFIG[slug];
-  const downloadUrl = readFirstConfiguredEnvValue(envKeys);
+  const published = fileForSlug(release ?? null, slug);
+  const downloadUrl = published?.url ?? readFirstConfiguredEnvValue(envKeys);
   if (!downloadUrl) {
     return null;
   }
@@ -123,7 +135,7 @@ const buildVariant = (
     downloadPath: getDesktopDownloadPath(slug),
     downloadUrl,
     envKeys,
-    fileName: fallbackFileName,
+    fileName: published?.name ?? fallbackFileName,
     label,
     note,
     slug,
@@ -131,29 +143,30 @@ const buildVariant = (
 };
 
 const getPlatformVariants = (
-  platform: DesktopDownloadPlatform
+  platform: DesktopDownloadPlatform,
+  release?: Release | null
 ): DesktopDownloadVariant[] => {
   if (platform === "mac") {
     const splitVariants = [
-      buildVariant("mac-apple-silicon"),
-      buildVariant("mac-intel"),
+      buildVariant("mac-apple-silicon", release),
+      buildVariant("mac-intel", release),
     ].filter((variant): variant is DesktopDownloadVariant => variant !== null);
 
     if (splitVariants.length > 0) {
       return splitVariants;
     }
 
-    const genericVariant = buildVariant("mac");
+    const genericVariant = buildVariant("mac", release);
     return genericVariant ? [genericVariant] : [];
   }
 
   if (platform === "linux") {
-    return [buildVariant("linux"), buildVariant("linux-rpm")].filter(
+    return [buildVariant("linux", release), buildVariant("linux-rpm", release)].filter(
       (variant): variant is DesktopDownloadVariant => variant !== null
     );
   }
 
-  const windowsVariant = buildVariant("windows");
+  const windowsVariant = buildVariant("windows", release);
   return windowsVariant ? [windowsVariant] : [];
 };
 
@@ -181,9 +194,11 @@ export const getDesktopDownloadFallbackFileName = (
   return DOWNLOAD_VARIANT_CONFIG[slug].fallbackFileName;
 };
 
-export const getDesktopDownloadTargets = (): DesktopDownloadTarget[] => {
+export const getDesktopDownloadTargets = (
+  release?: Release | null
+): DesktopDownloadTarget[] => {
   return (["mac", "windows", "linux"] as const).map((platform) => {
-    const variants = getPlatformVariants(platform);
+    const variants = getPlatformVariants(platform, release);
     const primaryVariant = variants[0];
 
     return {

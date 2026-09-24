@@ -1,3 +1,4 @@
+import { fetchReleaseManifest, fileForSlug, latestRelease } from "@/lib/releases";
 import {
   getDesktopDownloadFallbackFileName,
   getDesktopDownloadUrl,

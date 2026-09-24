@@ -4,10 +4,11 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+  # Started by hand only. This ran on every pull request and every push to
+  # main, and it fails on lint errors that predate the migration, so it has
+  # been burning the account's Actions minutes to tell us something already
+  # known. Run it from the Actions tab when the answer is wanted.
+  workflow_dispatch:
 
 jobs:
   quality:

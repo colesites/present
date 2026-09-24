@@ -154,10 +154,15 @@ impl OutputSurfaceState {
     }
 }
 
-/// Only the native macOS view reports that it started or stopped presenting;
-/// the other platforms have nothing to announce yet, so this would be dead
-/// code there and `-D warnings` says so.
-#[cfg(target_os = "macos")]
+/// Only the native macOS view reports that it started or stopped presenting,
+/// so on the other platforms nothing calls this yet.
+///
+/// Allowed rather than `cfg`-gated: gating the function makes its import
+/// unused on those platforms too, and then the `cfg` has to be repeated on
+/// the import — one platform difference spreading into two places that must
+/// agree. The day another platform grows a native view, this attribute goes
+/// and nothing else changes.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn emit(app: &AppHandle, status: SurfaceStatus) {
     if let Err(error) = app.emit(SURFACE_CHANGED_EVENT, status) {
         tracing::warn!(%error, "could not announce the audience surface");
