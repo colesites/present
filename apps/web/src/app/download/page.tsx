@@ -17,7 +17,7 @@ import {
 export const metadata: Metadata = {
   title: "Download Present Desktop",
   description:
-    "Download Present for macOS, Windows, and Linux. Built for worship teams that need fast scripture search, stable stage output, and cloud-synced presentation control.",
+    "Download Present for macOS, Windows, and Linux. Built for churches, conferences and live events that need fast scripture search, stable stage output, and cloud-synced presentation control.",
 };
 
 function WindowsMark() {
@@ -169,14 +169,14 @@ export default async function DownloadPage() {
             
             {/* Main Content */}
             <div className="flex w-full flex-col items-center pt-8 sm:pt-10">
-              <h1 className="font-stretch text-[2.6rem] leading-[0.95] font-black tracking-tight text-white sm:text-[5rem] lg:text-[6.5rem] uppercase text-center">
+              <h1 className="font-stretch text-[1.75rem] leading-[0.95] font-black tracking-tight text-white sm:text-[4rem] lg:text-[6.5rem] uppercase text-center">
                 Download
                 <br />
                 for Desktop
               </h1>
 
               <p className="mt-6 max-w-[34rem] px-2 text-[0.98rem] leading-relaxed text-white/88 sm:mt-8 sm:text-[1.3rem] sm:text-white font-medium text-center">
-                Present keeps worship teams fast under pressure with cloud-synced libraries, instant scripture search, browser output, and a clean confidence view built for live services.
+                Present keeps a team fast under pressure — cloud-synced libraries, instant scripture search, browser output, and a clean confidence view built for anything running live.
               </p>
 
               <div className="mt-10 grid w-full gap-4 sm:mt-14 sm:gap-6 lg:grid-cols-3">

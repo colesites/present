@@ -202,7 +202,7 @@ export function Hero() {
           className="text-lg md:text-xl text-white/50 leading-relaxed max-w-2xl mb-12 font-medium"
           style={{ opacity: 0 }}
         >
-          The blazing-fast worship presentation software built for the modern church. Store your song library in the cloud, collaborate with your whole team in real time, and find any lyric and Bible verse instantly with speak-to-search.
+          Presentation software for live events — churches, conferences, and anywhere a room is watching a screen. Keep your library in the cloud, work with your whole team in real time, and find any lyric or Bible verse the moment it is spoken.
         </p>
 
         {/* ── CTA buttons ── */}
@@ -232,7 +232,7 @@ export function Hero() {
           <div className="absolute inset-0 opacity-30 md:opacity-100 blur-[4px] md:blur-none transition-all">
             <Image
               src="/present-hero-img.png"
-              alt="Present worship presentation software — live lyrics and Bible display"
+              alt="Present presentation software — live lyrics, scripture and media on an audience screen"
               fill
               className="object-cover object-top md:object-center transition-transform duration-700 md:group-hover:scale-[1.02]"
               priority
