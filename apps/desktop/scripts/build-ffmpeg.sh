@@ -159,6 +159,19 @@ log "building with ${JOBS} jobs"
 make -C "${BUILD}" -j"${JOBS}" >"${BUILD}/make.log" 2>&1 || { tail -40 "${BUILD}/make.log" >&2; exit 1; }
 make -C "${BUILD}" install >>"${BUILD}/make.log" 2>&1 || { tail -40 "${BUILD}/make.log" >&2; exit 1; }
 
+if [[ "${OS}" == windows ]]; then
+  # FFmpeg installs an MSVC build's import libraries (avcodec.lib and the rest)
+  # beside the DLLs in bin/ — `SLIB_INSTALL_EXTRA_SHLIB` in its configure —
+  # while the Rust build, given FFMPEG_DIR, looks for them in lib/ only. The
+  # link then fails with LNK1181 "cannot open input file 'avcodec.lib'", after
+  # the whole of FFmpeg and the whole of the Rust build. A copy goes where it
+  # looks; the DLLs stay in bin/, where staging takes them from.
+  for library in avcodec avformat avutil swscale; do
+    [[ -f "${PREFIX}/bin/${library}.lib" ]] || fail "${library}.lib is missing from ${PREFIX}/bin"
+    cp "${PREFIX}/bin/${library}.lib" "${PREFIX}/lib/${library}.lib"
+  done
+fi
+
 if [[ "${OS}" == linux ]]; then
   # Each library finds the others beside it, wherever the bundle puts them.
   for library in "${PREFIX}"/lib/lib*.so.*; do
