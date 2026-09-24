@@ -146,16 +146,26 @@ try {
   console.log("[publish] no manifest yet — starting one");
 }
 
+// Each platform publishes on its own, so a version's entry is added to
+// rather than replaced: macOS running after Windows must not erase the
+// Windows downloads from the release they both belong to. A file published
+// twice — a re-run of the same platform — replaces its older self.
+const existing = (manifest.versions ?? []).find((each) => each.version === version);
+const published = files.map(({ slug, platform, name, size, url }) => ({
+  slug,
+  platform,
+  name,
+  size,
+  url,
+}));
+const kept = (existing?.files ?? []).filter(
+  (file) => !published.some((each) => each.slug === file.slug),
+);
+
 const entry = {
   version,
-  publishedAt: new Date().toISOString(),
-  files: files.map(({ slug, platform, name, size, url }) => ({
-    slug,
-    platform,
-    name,
-    size,
-    url,
-  })),
+  publishedAt: existing?.publishedAt ?? new Date().toISOString(),
+  files: [...kept, ...published].sort((a, b) => a.slug.localeCompare(b.slug)),
 };
 
 const versions = [
