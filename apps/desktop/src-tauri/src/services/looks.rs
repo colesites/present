@@ -994,7 +994,10 @@ mod tests {
         assert!(remove_look(&mut config, &second, NOW));
         assert_eq!(config.looks.len(), 1);
         assert_eq!(config.selected_look_id, "default", "nothing dangles");
-        assert_eq!(config.live_look_id, "default", "and the screen keeps drawing");
+        assert_eq!(
+            config.live_look_id, "default",
+            "and the screen keeps drawing"
+        );
     }
 
     #[test]

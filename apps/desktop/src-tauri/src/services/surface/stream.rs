@@ -73,7 +73,8 @@ impl SurfaceSource for AppSurfaceSource {
             matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
         });
         let unchanged = !moving_message
-            && last.as_ref()
+            && last
+                .as_ref()
                 .is_some_and(|(previous_scene, previous_video, previous_size)| {
                     *previous_size == size
                         && *previous_video == shown

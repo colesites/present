@@ -341,8 +341,7 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
     // congregation would see. It also means a 4K output scales up rather than
     // shrinking into a corner.
     let of_reference = frame_height / REFERENCE_HEIGHT;
-    let clock_font =
-        layout.map_or(96.0, |l| clamp(l.clock_font_px, 12.0, 400.0)) * of_reference;
+    let clock_font = layout.map_or(96.0, |l| clamp(l.clock_font_px, 12.0, 400.0)) * of_reference;
 
     let clock_color = layout
         .and_then(|l| color::parse(&l.clock_color))
