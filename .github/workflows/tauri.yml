@@ -8,28 +8,16 @@ env:
   CARGO_TERM_COLOR: always
 
 on:
+  # Started by hand, from the Actions tab. Building three platforms takes
+  # tens of minutes and compiles FFmpeg from source, which is not something
+  # every push should spend — and while a build is being fixed, a run per
+  # push is a run per attempt.
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "apps/desktop/**"
-      - "packages/backend/**"
-      - "packages/shared/**"
-      - "bun.lock"
-      - ".github/workflows/tauri.yml"
+  # A release still builds itself: tagging is a deliberate act, and the
+  # installers for that tag should exist without anyone remembering to ask.
   push:
-    branches:
-      # `master` is this repository's default branch; `main` is listed so the
-      # workflow keeps firing if the default is ever renamed.
-      - master
-      - main
     tags:
       - "desktop-v*.*.*"
-    paths:
-      - "apps/desktop/**"
-      - "packages/backend/**"
-      - "packages/shared/**"
-      - "bun.lock"
-      - ".github/workflows/tauri.yml"
 
 jobs:
   rust-quality:
@@ -67,7 +55,9 @@ jobs:
             libva-dev \
             pkg-config \
             clang \
-            libclang-dev
+            libclang-dev \
+            libasound2-dev \
+            libdbus-1-dev
 
       - name: Cache the FFmpeg build
         uses: actions/cache@v4
@@ -152,7 +142,9 @@ jobs:
             libva-dev \
             pkg-config \
             clang \
-            libclang-dev
+            libclang-dev \
+            libasound2-dev \
+            libdbus-1-dev
 
       # The LGPL FFmpeg the bundle carries (ADR-003). `tauri:build` builds it
       # where it can; Windows needs MSYS2 and MSVC, so it is built here.
