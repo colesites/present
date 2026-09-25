@@ -1,80 +1,127 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
-import { BookOpenText, FolderInput, Mic, Music } from "lucide-react";
+import { useDashboard } from "./DashboardShell";
 import { PlanUsageCard, useBillingStatus } from "./usage";
-import { Card, Eyebrow, Page, PageHeader, buttonClass } from "./ui";
+import { Card, EmptyState, List, Page, PageHeader, SectionTitle, SkeletonRows } from "./ui";
 
-const STEPS = [
-  {
-    icon: FolderInput,
-    title: "Bring your Bibles",
-    body: "In the desktop app, open Scripture and import the translations your church is licensed to use. They stay on that computer and work offline.",
-  },
-  {
-    icon: Mic,
-    title: "Turn on the Bible agent",
-    body: "It listens to the preacher through your microphone or sound desk and finds each verse as it is read, asking first when it isn't sure.",
-  },
-  {
-    icon: BookOpenText,
-    title: "Project it",
-    body: "The verse goes on screen in your scripture style, in the translation you picked, without anyone typing a reference.",
-  },
-] as const;
+/** "Matthew 3:2 AMPC" as its reference and its translation. */
+const splitReference = (label: string) => {
+  const match = label.trim().match(/^(.*\d)\s+([A-Z][A-Z0-9]{1,7})$/);
+  return match ? { reference: match[1], translation: match[2] } : { reference: label.trim(), translation: null };
+};
 
 /**
- * Scripture in Present. The Bibles themselves are imported on each computer,
- * so this page is about the AI projection that finds verses, and how much of
- * it is left this month.
+ * Scripture in Present: what the workspace's services put on screen, and the
+ * AI projection that finds a verse as it's read. The Bibles themselves are
+ * imported on each computer, so they aren't listed here.
  */
 export function BibleSection() {
+  const { services } = useDashboard();
   const billing = useBillingStatus();
+
+  const passages = useMemo(() => {
+    if (!services) return null;
+    const byReference = new Map<string, { reference: string; translation: string | null; services: string[] }>();
+    for (const service of [...services].sort((a, b) => (b.order ?? 0) - (a.order ?? 0))) {
+      if (service.archivedAt) continue;
+      for (const item of service.items) {
+        if (item.type !== "scripture") continue;
+        const label = item.label?.trim() || item.refId;
+        const existing = byReference.get(label);
+        if (existing) {
+          if (!existing.services.includes(service.name)) existing.services.push(service.name);
+        } else {
+          byReference.set(label, { ...splitReference(label), services: [service.name] });
+        }
+      }
+    }
+    return [...byReference.values()];
+  }, [services]);
+
+  const translations = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const passage of passages ?? []) {
+      if (passage.translation) counts.set(passage.translation, (counts.get(passage.translation) ?? 0) + 1);
+    }
+    return [...counts].sort((a, b) => b[1] - a[1]);
+  }, [passages]);
+
   return (
-    <Page>
-      <PageHeader
-        eyebrow="Scripture"
-        title="Bible"
-        description="Put a verse on screen the moment it is read, in the translations your church uses."
-      />
+    <Page wide>
+      <PageHeader title="Bible" description="The scripture your services put on screen, and the AI that finds each verse as it's read." />
 
-      <div className="mt-8 grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <Card>
-          <Eyebrow>How it works</Eyebrow>
-          <ol className="mt-5 space-y-6">
-            {STEPS.map((step, index) => (
-              <li key={step.title} className="flex gap-4">
-                <span className="flex h-10 w-10 flex-none items-center justify-center rounded-control bg-primary/10 text-primary">
-                  <step.icon className="h-5 w-5" />
+      <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <section className="min-w-0">
+          <SectionTitle
+            aside={
+              passages && passages.length > 0 ? (
+                <span className="text-sm text-[#9aa1b1]">
+                  {passages.length} {passages.length === 1 ? "passage" : "passages"}
                 </span>
-                <div className="min-w-0">
-                  <p className="font-semibold">
-                    <span className="text-[#9aa3b2]">{index + 1}.</span> {step.title}
-                  </p>
-                  <p className="mt-1 text-sm leading-6 text-[#7d8798]">{step.body}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </Card>
+              ) : null
+            }
+          >
+            In your services
+          </SectionTitle>
+          {!passages ? (
+            <SkeletonRows rows={5} />
+          ) : passages.length === 0 ? (
+            <EmptyState title="No scripture in a service yet">
+              Verses you add to a service in the desktop app are listed here.
+            </EmptyState>
+          ) : (
+            <>
+              {translations.length > 0 ? (
+                <p className="mb-3 text-sm text-[#6b7285]">
+                  {translations.map(([code, count], index) => (
+                    <span key={code}>
+                      {index > 0 ? " · " : ""}
+                      <span className="font-medium text-[#1d2240]">{code}</span> {count}
+                    </span>
+                  ))}
+                </p>
+              ) : null}
+              <List>
+                {passages.map((passage) => (
+                  <li key={`${passage.reference}:${passage.translation}`} className="flex items-center gap-4 px-4 py-3">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{passage.reference}</span>
+                      <span className="block truncate text-sm text-[#9aa1b1]">{passage.services.join(", ")}</span>
+                    </span>
+                    {passage.translation ? <span className="flex-none text-sm text-[#6b7285]">{passage.translation}</span> : null}
+                  </li>
+                ))}
+              </List>
+            </>
+          )}
+        </section>
 
-        <div className="grid content-start gap-4 sm:grid-cols-2 lg:grid-cols-1">
-          <PlanUsageCard status={billing} />
-          {billing && !billing.limits.songAiProjection ? (
-            <Card tone="soft">
-              <span className="flex h-10 w-10 items-center justify-center rounded-control bg-white text-primary">
-                <Music className="h-5 w-5" />
-              </span>
-              <p className="mt-4 font-semibold">Songs too, on Pro</p>
-              <p className="mt-1 text-sm leading-6 text-[#7d8798]">
-                Pro and Power find the song being sung from your library and follow it line by line.
-              </p>
-              <Link href="/dashboard/billing" className={`${buttonClass("primary", "sm")} mt-4 w-full`}>
-                See plans
-              </Link>
+        <aside className="space-y-8">
+          <section>
+            <SectionTitle>AI projection</SectionTitle>
+            <PlanUsageCard status={billing} />
+          </section>
+          <section>
+            <SectionTitle>How it works</SectionTitle>
+            <Card>
+              <ol className="list-decimal space-y-3 pl-4 text-sm leading-6 text-[#6b7285] marker:text-[#9aa1b1]">
+                <li>Import the translations your church is licensed to use in the desktop app&apos;s Scripture panel. They stay on that computer and work offline.</li>
+                <li>Turn on the Bible agent. It listens through your microphone or sound desk and finds each verse as it&apos;s read.</li>
+                <li>The verse goes on screen in your scripture style. When it isn&apos;t sure, it asks the operator first.</li>
+              </ol>
+              {billing && !billing.limits.songAiProjection ? (
+                <p className="mt-4 border-t border-[#eff0f4] pt-4 text-sm text-[#6b7285]">
+                  On Pro and Power, AI projection finds songs from your library by voice too.{" "}
+                  <Link href="/dashboard/billing" className="font-medium text-primary hover:underline">
+                    See plans
+                  </Link>
+                </p>
+              ) : null}
             </Card>
-          ) : null}
-        </div>
+          </section>
+        </aside>
       </div>
     </Page>
   );

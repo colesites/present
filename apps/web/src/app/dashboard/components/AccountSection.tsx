@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useClerk, useUser } from "@clerk/nextjs";
 import { useMutation, useQuery, useConvexAuth } from "convex/react";
-import { Camera, Check, KeyRound, LogOut, Mail, Plus } from "lucide-react";
+import { Camera, Check, LogOut, Mail, Plus } from "lucide-react";
 import { api } from "../../../../../../packages/backend/convex/_generated/api";
 import { workspaceRoleLabel } from "../../../../../../packages/shared/src/workspace-roles";
 import type { DashboardOrganizationListItem } from "../types";
@@ -13,7 +13,6 @@ import {
   Avatar,
   Button,
   Card,
-  Eyebrow,
   Field,
   Notice,
   Page,
@@ -45,7 +44,6 @@ export function AccountSection({
   return (
     <Page>
       <PageHeader
-        eyebrow="You"
         title="Account"
         description="Your profile, how you sign in, and the workspaces you belong to."
         actions={
@@ -57,20 +55,15 @@ export function AccountSection({
 
       <div className="mt-8 grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-4">
-          {isLoaded && user ? <ProfileCard /> : <div className="h-[260px] animate-pulse rounded-card bg-[#f3f4f8]" />}
+          {isLoaded && user ? <ProfileCard /> : <div className="h-[260px] animate-pulse rounded-card bg-[#f1f2f6]" />}
 
           <Card>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 items-start gap-4">
-                <span className="flex h-10 w-10 flex-none items-center justify-center rounded-control bg-primary/10 text-primary">
-                  <KeyRound className="h-5 w-5" />
-                </span>
-                <div className="min-w-0">
-                  <p className="font-semibold">Sign-in and security</p>
-                  <p className="mt-1 text-sm leading-6 text-[#7d8798]">
-                    Email addresses, password, two-step verification and connected Google accounts.
-                  </p>
-                </div>
+              <div className="min-w-0">
+                <p className="font-semibold">Sign-in and security</p>
+                <p className="mt-1 text-sm leading-6 text-[#6b7285]">
+                  Email addresses, password, two-step verification and connected Google accounts.
+                </p>
               </div>
               <Button variant="outline" onClick={() => clerk.openUserProfile()}>
                 Manage
@@ -167,7 +160,7 @@ function ProfileCard() {
           </div>
           <div className="min-w-0">
             <p className="truncate text-lg font-semibold">{name}</p>
-            <p className="flex items-center gap-1.5 truncate text-sm text-[#7d8798]">
+            <p className="flex items-center gap-1.5 truncate text-sm text-[#6b7285]">
               <Mail className="h-3.5 w-3.5 flex-none" />
               <span className="truncate">{user.primaryEmailAddress?.emailAddress}</span>
             </p>
@@ -218,16 +211,16 @@ function InvitationsCard() {
   };
 
   return (
-    <Card tone="soft">
-      <Eyebrow>Invitations</Eyebrow>
-      <ul className="mt-4 space-y-3">
+    <Card>
+      <h2 className="font-semibold">Invitations</h2>
+      <ul className="mt-3 divide-y divide-[#eff0f4]">
         {invitations.map((invitation) => (
-          <li key={invitation.id} className="flex flex-col gap-3 rounded-control bg-white p-3 sm:flex-row sm:items-center">
+          <li key={invitation.id} className="flex flex-col gap-3 py-3 first:pt-1 last:pb-0 sm:flex-row sm:items-center">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <Avatar src={invitation.orgLogo} name={invitation.orgName} size={40} shape="tile" />
               <div className="min-w-0">
                 <p className="truncate font-medium">{invitation.orgName}</p>
-                <p className="truncate text-sm text-[#9aa3b2]">
+                <p className="truncate text-sm text-[#9aa1b1]">
                   {invitation.invitedByName ? `From ${invitation.invitedByName}` : "Invitation"}
                   {invitation.userRole ? ` · ${workspaceRoleLabel(invitation.userRole)}` : ""}
                 </p>
@@ -268,14 +261,14 @@ function OrganizationsCard({ organizations }: { organizations: DashboardOrganiza
         Your organizations
       </SectionTitle>
       {organizations.length === 0 ? (
-        <p className="mt-4 text-sm text-[#7d8798]">You aren&apos;t in an organization yet.</p>
+        <p className="mt-4 text-sm text-[#6b7285]">You aren&apos;t in an organization yet.</p>
       ) : (
         <ul className="mt-4 divide-y divide-[#f0f1f5]">
           {organizations.map((organization) => (
             <li key={organization.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
               <Avatar src={organization.logo} name={organization.name} size={36} shape="tile" />
               <p className="min-w-0 flex-1 truncate font-medium">{organization.name}</p>
-              <span className="flex-none rounded-full bg-[#f3f4f8] px-3 py-1 text-xs font-medium text-[#5b6478]">
+              <span className="flex-none text-sm text-[#6b7285]">
                 {roleOf.get(organization.id) === "admin" ? "Admin" : "Member"}
               </span>
             </li>

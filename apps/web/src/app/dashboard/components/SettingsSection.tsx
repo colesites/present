@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { Building2, ImagePlus, LogOut, ShieldCheck, Trash2, UsersRound } from "lucide-react";
+import { ImagePlus, LogOut, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "../../../../../../packages/backend/convex/_generated/api";
 import type { Id } from "../../../../../../packages/backend/convex/_generated/dataModel";
 import {
@@ -22,7 +22,6 @@ import {
   Button,
   Card,
   EmptyState,
-  Eyebrow,
   Field,
   Notice,
   Page,
@@ -62,7 +61,6 @@ export function SettingsSection({
   return (
     <Page>
       <PageHeader
-        eyebrow="Workspace"
         title="Settings"
         description={
           currentOrg
@@ -73,7 +71,6 @@ export function SettingsSection({
       <div className="mt-8">
         {!currentOrg && !isLoading ? (
           <EmptyState
-            icon={Building2}
             title="No organization selected"
             action={
               <Link href="/dashboard/organization/setup" className={buttonClass()}>
@@ -106,11 +103,8 @@ function SettingsBody({ organization }: { organization: Organization }) {
       </div>
       <div className="grid content-start gap-4">
         <Card>
-          <span className="flex h-10 w-10 items-center justify-center rounded-control bg-primary/10 text-primary">
-            <UsersRound className="h-5 w-5" />
-          </span>
-          <p className="mt-4 text-2xl font-semibold tracking-[-0.03em]">{organization.memberCount}</p>
-          <p className="text-sm text-[#7d8798]">
+          <p className="text-2xl font-semibold tracking-[-0.03em]">{organization.memberCount}</p>
+          <p className="text-sm text-[#6b7285]">
             {organization.memberCount === 1 ? "person" : "people"}, {organization.adminCount}{" "}
             {organization.adminCount === 1 ? "admin" : "admins"}
           </p>
@@ -118,11 +112,17 @@ function SettingsBody({ organization }: { organization: Organization }) {
             {isAdmin ? "Invite and manage" : "See members"}
           </Link>
         </Card>
-        <Card tone="soft">
-          <Eyebrow>Created</Eyebrow>
-          <p className="mt-1.5 font-medium">{formatDate(organization.createdAt)}</p>
-          <Eyebrow className="mt-4">You joined</Eyebrow>
-          <p className="mt-1.5 font-medium">{formatDate(organization.me.joinedAt)}</p>
+        <Card>
+          <dl className="space-y-3 text-sm">
+            <div className="flex justify-between gap-3">
+              <dt className="text-[#6b7285]">Created</dt>
+              <dd>{formatDate(organization.createdAt)}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-[#6b7285]">You joined</dt>
+              <dd>{formatDate(organization.me.joinedAt)}</dd>
+            </div>
+          </dl>
         </Card>
       </div>
     </div>
@@ -182,7 +182,7 @@ function GeneralCard({ organization, isAdmin }: { organization: Organization; is
           <Avatar src={organization.logo} name={organization.name} size={64} shape="tile" />
           <div className="min-w-0 flex-1">
             <p className="font-semibold">Logo</p>
-            <p className="text-sm text-[#7d8798]">Shown in the app and on invitations. Square works best.</p>
+            <p className="text-sm text-[#6b7285]">Shown in the app and on invitations. Square works best.</p>
           </div>
           {isAdmin ? (
             <div className="flex gap-2">
@@ -239,7 +239,7 @@ function GeneralCard({ organization, isAdmin }: { organization: Organization; is
             {notice ? (
               <Notice kind={notice.kind}>{notice.text}</Notice>
             ) : !isAdmin ? (
-              <p className="flex items-center gap-1.5 text-sm text-[#9aa3b2]">
+              <p className="flex items-center gap-1.5 text-sm text-[#9aa1b1]">
                 <ShieldCheck className="h-4 w-4" /> Only admins can change these.
               </p>
             ) : null}
@@ -279,7 +279,7 @@ function YourRoleCard({ organization }: { organization: Organization }) {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="font-semibold">Your role</p>
-          <p className="mt-1 text-sm text-[#7d8798]">
+          <p className="mt-1 text-sm text-[#6b7285]">
             What you do here. Your team sees it on the Members page.
             {organization.me.role === "admin" ? " You're an admin of this workspace." : ""}
           </p>
@@ -327,11 +327,11 @@ function LeaveCard({ organization }: { organization: Organization }) {
   };
 
   return (
-    <Card className="border-red-100">
+    <Card>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="font-semibold">Leave {organization.name}</p>
-          <p className="mt-1 text-sm text-[#7d8798]">
+          <p className="mt-1 text-sm text-[#6b7285]">
             You lose access to its library and services. An admin can invite you back.
           </p>
         </div>

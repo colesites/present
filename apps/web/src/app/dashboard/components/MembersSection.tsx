@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery } from "convex/react";
-import { Building2, Check, Copy, Mail, MoreHorizontal, ShieldCheck, UserPlus, X } from "lucide-react";
+import { Check, Copy, Mail, MoreHorizontal, ShieldCheck, X } from "lucide-react";
 
 import { api } from "../../../../../../packages/backend/convex/_generated/api";
 import type { Id } from "../../../../../../packages/backend/convex/_generated/dataModel";
@@ -15,12 +15,12 @@ import {
   type WorkspaceRole,
 } from "../../../../../../packages/shared/src/workspace-roles";
 import type { DashboardOrganization } from "../types";
+import { useMembers, type WorkspaceMember as Member } from "./use-members";
 import {
   Avatar,
   Button,
   Card,
   EmptyState,
-  Eyebrow,
   Notice,
   Page,
   PageHeader,
@@ -34,16 +34,6 @@ import {
   friendlyError,
 } from "./ui";
 
-type Member = {
-  userId: string;
-  name: string | null;
-  email: string | null;
-  imageUrl: string | null;
-  role: string;
-  userRole: string | null;
-  joinedAt: number;
-  isYou: boolean;
-};
 
 const expiresIn = (at: number) => {
   const days = Math.max(0, Math.ceil((at - Date.now()) / 86_400_000));
@@ -72,29 +62,11 @@ export function MembersSection({
   const removeMember = useMutation(api.users.removeUserFromOrganization);
   const updateMember = useMutation(api.users.updateMember);
 
-  const [members, setMembers] = useState<Member[] | null>(null);
-  const [membersError, setMembersError] = useState<string | null>(null);
+  const { members, error: membersError, reload: loadMembers } = useMembers(orgId);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
   const isAdmin = invitations !== null && invitations !== undefined;
-
-  const loadMembers = useCallback(async () => {
-    if (!orgId) return;
-    setMembersError(null);
-    try {
-      const response = await fetch(`/api/organizations/members?orgId=${encodeURIComponent(orgId)}`, { cache: "no-store" });
-      if (!response.ok) throw new Error(await response.text());
-      setMembers(((await response.json()) as { members: Member[] }).members);
-    } catch {
-      setMembersError("Couldn't load the members. Refresh to try again.");
-    }
-  }, [orgId]);
-
-  useEffect(() => {
-    setMembers(null);
-    void loadMembers();
-  }, [loadMembers]);
 
   const copy = async (url: string, id: string) => {
     await navigator.clipboard.writeText(url).catch(() => undefined);
@@ -117,13 +89,12 @@ export function MembersSection({
   if (!currentOrg) {
     return (
       <Page>
-        <PageHeader eyebrow="Team" title="Members" description="The people you present with." />
+        <PageHeader title="Members" description="The people you present with." />
         <div className="mt-8">
           {isLoading ? (
             <SkeletonRows rows={3} />
           ) : (
             <EmptyState
-              icon={Building2}
               title="Members belong to an organization"
               action={
                 <Link href="/dashboard/organization/setup" className={buttonClass()}>
@@ -146,27 +117,30 @@ export function MembersSection({
   return (
     <Page>
       <PageHeader
-        eyebrow="Team"
         title="Members"
-        description={`The people who share ${currentOrg.name}'s songs, services and themes.`}
+        description={
+          seats ? (
+            <span>
+              {seats.members} of {seats.limit} people on {seats.planLabel}
+              {seats.pendingInvites > 0
+                ? `, ${seats.pendingInvites} ${seats.pendingInvites === 1 ? "invitation" : "invitations"} open`
+                : ""}
+            </span>
+          ) : (
+            `The people who share ${currentOrg.name}'s songs and services.`
+          )
+        }
       />
 
-      {seats ? (
-        <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-card border border-primary/10 bg-primary/[0.035] px-5 py-3.5 text-sm">
-          <span className="font-semibold">
-            {seats.members} of {seats.limit} people
-          </span>
-          <span className="text-[#7d8798]">{seats.planLabel} plan</span>
-          {seats.pendingInvites > 0 ? (
-            <span className="text-[#7d8798]">
-              {seats.pendingInvites} {seats.pendingInvites === 1 ? "invitation" : "invitations"} open
-            </span>
-          ) : null}
-          {full ? (
-            <Link href="/dashboard/billing" className="font-semibold text-primary hover:underline sm:ml-auto">
+      {full ? (
+        <div className="mt-6">
+          <Notice kind="info">
+            This workspace is full on its plan.{" "}
+            <Link href="/dashboard/billing" className="font-medium underline">
               Upgrade for more people
-            </Link>
-          ) : null}
+            </Link>{" "}
+            or revoke an invitation to add someone.
+          </Notice>
         </div>
       ) : null}
 
@@ -180,19 +154,19 @@ export function MembersSection({
 
       {isAdmin && invitations.invites.length > 0 ? (
         <section className="mt-10">
-          <SectionTitle aside={<span className="text-sm text-[#9aa3b2]">{invitations.invites.length}</span>}>
+          <SectionTitle aside={<span className="text-sm text-[#9aa1b1]">{invitations.invites.length}</span>}>
             Waiting to accept
           </SectionTitle>
-          <ul className="mt-3 divide-y divide-[#f0f1f5] rounded-card border border-[#ececf2]">
+          <ul className="mt-3 divide-y divide-[#eff0f4] overflow-hidden rounded-card border border-[#e7e9ef] bg-white">
             {invitations.invites.map((invite) => (
               <li key={invite.id} className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:px-5">
                 <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[#f1f2f6] text-[#9aa1b1]">
                     <Mail className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">
                     <p className="truncate font-medium">{invite.email}</p>
-                    <p className="truncate text-sm text-[#9aa3b2]">
+                    <p className="truncate text-sm text-[#9aa1b1]">
                       {workspaceRoleLabel(invite.userRole)}
                       {invite.role === "admin" ? " · Admin" : ""} ·{" "}
                       {invite.emailError ? "Email not sent" : invite.emailSent ? "Email sent" : "Sending"} ·{" "}
@@ -221,7 +195,7 @@ export function MembersSection({
       ) : null}
 
       <section className="mt-10">
-        <SectionTitle aside={members ? <span className="text-sm text-[#9aa3b2]">{members.length}</span> : null}>
+        <SectionTitle aside={members ? <span className="text-sm text-[#9aa1b1]">{members.length}</span> : null}>
           Members
         </SectionTitle>
         <div className="mt-3">
@@ -230,7 +204,7 @@ export function MembersSection({
           ) : members === null ? (
             <SkeletonRows rows={3} />
           ) : (
-            <ul className="divide-y divide-[#f0f1f5] rounded-card border border-[#ececf2]">
+            <ul className="divide-y divide-[#eff0f4] overflow-hidden rounded-card border border-[#e7e9ef] bg-white">
               {members.map((member) => {
                 const who = member.name ?? member.email ?? "They";
                 return (
@@ -301,12 +275,10 @@ function InviteForm({ orgId, full }: { orgId: Id<"organizations">; full: boolean
   return (
     <Card className="mt-6">
       <form onSubmit={onSubmit}>
-        <Eyebrow className="flex items-center gap-2">
-          <UserPlus className="h-4 w-4" /> Invite someone
-        </Eyebrow>
-        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_200px_auto]">
+        <h2 className="font-semibold">Invite someone</h2>
+        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_200px_auto]">
           <div className="relative">
-            <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9aa3b2]" />
+            <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9aa1b1]" />
             <input
               type="email"
               value={email}
@@ -339,7 +311,7 @@ function InviteForm({ orgId, full }: { orgId: Id<"organizations">; full: boolean
           {notice ? (
             <Notice kind={notice.kind}>{notice.text}</Notice>
           ) : (
-            <p className="text-sm text-[#9aa3b2]">
+            <p className="text-sm text-[#9aa1b1]">
               They get an email with a link, and see the invitation in the desktop app when they sign in.
             </p>
           )}
@@ -381,9 +353,9 @@ function MemberRow({
         <Avatar src={member.imageUrl} name={name} size={40} />
         <div className="min-w-0">
           <p className="truncate font-medium">
-            {name} {member.isYou ? <span className="font-normal text-[#9aa3b2]">(you)</span> : null}
+            {name} {member.isYou ? <span className="font-normal text-[#9aa1b1]">(you)</span> : null}
           </p>
-          <p className="truncate text-sm text-[#9aa3b2]">{member.email}</p>
+          <p className="truncate text-sm text-[#9aa1b1]">{member.email}</p>
         </div>
       </div>
 
@@ -403,7 +375,7 @@ function MemberRow({
             ))}
           </Select>
         ) : (
-          <span className="rounded-full bg-[#f3f4f8] px-3 py-1 text-xs font-medium text-[#5b6478]">
+          <span className="rounded-[6px] bg-[#f1f2f6] px-2 py-0.5 text-xs text-[#6b7285]">
             {workspaceRoleLabel(member.userRole)}
           </span>
         )}
@@ -411,7 +383,7 @@ function MemberRow({
         {/* A fixed slot, so the role pickers line up whether or not the row has the badge. */}
         <span className="flex flex-none sm:w-[76px] sm:justify-end">
           {isAdmin ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+            <span className="inline-flex items-center gap-1 rounded-[6px] bg-[#eceefb] px-2 py-0.5 text-xs font-medium text-[#3c418f]">
               <ShieldCheck className="h-3.5 w-3.5" /> Admin
             </span>
           ) : null}
@@ -437,16 +409,16 @@ function MemberRow({
                 }}
                 aria-label={`Manage ${name}`}
                 aria-expanded={menuOpen}
-                className="flex h-9 w-9 items-center justify-center rounded-full text-[#7d8798] transition hover:bg-[#f3f4f8] hover:text-[#232946]"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-[#6b7285] transition hover:bg-[#f1f2f6] hover:text-[#1d2240]"
               >
                 <MoreHorizontal className="h-4 w-4" />
               </button>
               {menuOpen ? (
-                <div className="absolute right-0 top-10 z-20 w-52 rounded-control border border-[#ececf2] bg-white p-1 shadow-[0_16px_40px_rgba(35,41,70,0.12)]">
+                <div className="absolute right-0 top-10 z-20 w-52 rounded-[10px] border border-[#e7e9ef] bg-white p-1 shadow-[0_12px_32px_rgba(20,24,50,0.12)]">
                   <button
                     type="button"
                     onClick={() => onAccess(isAdmin ? "user" : "admin")}
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-[#f3f4f8]"
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-[#f1f2f6]"
                   >
                     {isAdmin ? "Remove admin access" : "Make admin"}
                   </button>

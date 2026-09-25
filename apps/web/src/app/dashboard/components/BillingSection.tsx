@@ -2,32 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  CalendarClock,
-  Check,
-  Cloud,
-  CreditCard,
-  ExternalLink,
-  FileText,
-  Sparkles,
-  UsersRound,
-  Wand2,
-} from "lucide-react";
+import { Check, ExternalLink } from "lucide-react";
 import { isUnlimitedSpeechQuota } from "../../../../../../packages/shared/src/billing";
 import { formatBytes, formatDate, formatDuration } from "./format";
 import { Meter, useBillingStatus } from "./usage";
-import {
-  Button,
-  Card,
-  Eyebrow,
-  Notice,
-  Page,
-  PageHeader,
-  SectionTitle,
-  SkeletonRows,
-  buttonClass,
-  cx,
-} from "./ui";
+import { Button, Card, List, Notice, Page, PageHeader, SectionTitle, SkeletonRows, buttonClass, cx } from "./ui";
 
 type Plan = {
   slug: string;
@@ -145,11 +124,7 @@ export function BillingSection() {
 
   return (
     <Page>
-      <PageHeader
-        eyebrow="Billing"
-        title="Plan and billing"
-        description="Your plan, what you've used of it this period, and changing it. Payments are handled by Stripe."
-      />
+      <PageHeader title="Billing" description="Your plan and what you've used of it this period. Payments are handled by Stripe." />
 
       {notice ? (
         <div className="mt-6">
@@ -183,7 +158,7 @@ export function BillingSection() {
       <section className="mt-10">
         <SectionTitle
           aside={
-            <div className="inline-flex rounded-full border border-[#e4e6ee] p-1" role="radiogroup" aria-label="Billing period">
+            <div className="inline-flex gap-1" role="radiogroup" aria-label="Billing period">
               {(["month", "year"] as const).map((option) => (
                 <button
                   key={option}
@@ -192,8 +167,8 @@ export function BillingSection() {
                   aria-checked={interval === option}
                   onClick={() => setBillingInterval(option)}
                   className={cx(
-                    "h-8 rounded-full px-3.5 text-[0.8rem] font-medium transition",
-                    interval === option ? "bg-[#232946] text-white" : "text-[#5b6478] hover:text-[#232946]",
+                    "h-7 rounded-[7px] px-3 text-[0.82rem] transition-colors",
+                    interval === option ? "bg-[#f1f2f6] font-medium text-[#1d2240]" : "text-[#6b7285] hover:text-[#1d2240]",
                   )}
                 >
                   {option === "month" ? "Monthly" : "Yearly"}
@@ -244,25 +219,21 @@ export function BillingSection() {
       {overview && (overview.card || subscription) ? (
         <section className="mt-10">
           <SectionTitle>Payment method</SectionTitle>
-          <Card className="mt-4">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-4">
-                <span className="flex h-10 w-14 flex-none items-center justify-center rounded-control border border-[#e4e6ee] bg-[#fafbfd] text-[#5b6478]">
-                  <CreditCard className="h-5 w-5" />
-                </span>
-                {overview.card ? (
-                  <div>
-                    <p className="font-medium">
-                      {CARD_BRANDS[overview.card.brand] ?? overview.card.brand} ending in {overview.card.last4}
-                    </p>
-                    <p className="text-sm text-[#9aa3b2]">
-                      Expires {String(overview.card.expMonth).padStart(2, "0")}/{String(overview.card.expYear).slice(-2)}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-sm text-[#7d8798]">No card on file.</p>
-                )}
-              </div>
+          <Card>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              {overview.card ? (
+                <p className="text-sm">
+                  <span className="font-medium">
+                    {CARD_BRANDS[overview.card.brand] ?? overview.card.brand} ending {overview.card.last4}
+                  </span>
+                  <span className="text-[#9aa1b1]">
+                    {" "}
+                    · expires {String(overview.card.expMonth).padStart(2, "0")}/{String(overview.card.expYear).slice(-2)}
+                  </span>
+                </p>
+              ) : (
+                <p className="text-sm text-[#6b7285]">No card on file.</p>
+              )}
               <Link href="/checkout?mode=card" className={buttonClass("outline", "sm")}>
                 {overview.card ? "Update card" : "Add a card"}
               </Link>
@@ -274,21 +245,13 @@ export function BillingSection() {
       {overview && overview.invoices.length > 0 ? (
         <section className="mt-10">
           <SectionTitle>Invoices</SectionTitle>
-          <ul className="mt-4 divide-y divide-[#f0f1f5] rounded-card border border-[#ececf2]">
+          <List>
             {overview.invoices.map((invoice) => (
-              <li key={invoice.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3.5 sm:px-5">
-                <FileText className="h-4 w-4 flex-none text-[#9aa3b2]" />
-                <span className="min-w-[7rem] font-medium">{formatDate(invoice.date)}</span>
-                <span className="text-[#5b6478]">{money(invoice.amount, invoice.currency)}</span>
-                <span
-                  className={cx(
-                    "rounded-full px-2.5 py-0.5 text-xs font-medium capitalize",
-                    invoice.status === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700",
-                  )}
-                >
-                  {invoice.status ?? "open"}
-                </span>
-                <span className="ml-auto flex gap-3 text-sm">
+              <li key={invoice.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-0.5 px-4 py-3 text-sm sm:grid-cols-[8rem_7rem_6rem_minmax(0,1fr)]">
+                <span className="font-medium">{formatDate(invoice.date)}</span>
+                <span className="tabular-nums text-[#6b7285] sm:text-[#1d2240]">{money(invoice.amount, invoice.currency)}</span>
+                <span className={cx("capitalize", invoice.status === "paid" ? "text-emerald-700" : "text-amber-700")}>{invoice.status ?? "open"}</span>
+                <span className="flex gap-3 sm:justify-end">
                   {invoice.url ? (
                     <a href={invoice.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
                       View <ExternalLink className="h-3.5 w-3.5" />
@@ -302,7 +265,7 @@ export function BillingSection() {
                 </span>
               </li>
             ))}
-          </ul>
+          </List>
         </section>
       ) : null}
     </Page>
@@ -357,37 +320,30 @@ function CurrentPlan({
   const pastDue = subscription?.status === "past_due" || subscription?.status === "incomplete";
 
   return (
-    <Card tone="soft">
-      <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-4">
-          <span className="flex h-12 w-12 flex-none items-center justify-center rounded-control bg-white text-primary">
-            <Sparkles className="h-5 w-5" />
-          </span>
-          <div className="min-w-0">
-            <Eyebrow>Current plan</Eyebrow>
-            <p className="mt-1 text-2xl font-semibold tracking-[-0.03em]">
-              {planLabel}
-              {subscription ? (
-                <span className="ml-2 text-base font-normal text-[#7d8798]">
-                  {money(subscription.amount, subscription.currency)} / {subscription.interval}
-                </span>
-              ) : null}
-            </p>
-            <p className="mt-1 flex items-center gap-1.5 text-sm text-[#7d8798]">
-              <CalendarClock className="h-4 w-4 flex-none" />
-              {complimentary
-                ? "Included with your account at no charge."
-                : !subscription
-                  ? `Usage resets ${formatDate(periodEndMs)}.`
-                  : pastDue
-                    ? "Your last payment didn't go through. Update your card to keep your plan."
-                    : ending
-                      ? `Ends ${formatDate(subscription.cancelAt ?? subscription.currentPeriodEnd)}, then moves to Free.`
-                      : upcoming
-                        ? `Renews ${formatDate(upcoming.date ?? subscription.currentPeriodEnd)} for ${money(upcoming.amountDue, upcoming.currency)}.`
-                        : `Renews ${formatDate(subscription.currentPeriodEnd)}.`}
-            </p>
-          </div>
+    <Card>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[1.15rem] font-semibold tracking-[-0.02em]">
+            {planLabel}
+            {subscription ? (
+              <span className="ml-2 text-[0.95rem] font-normal text-[#6b7285]">
+                {money(subscription.amount, subscription.currency)} / {subscription.interval}
+              </span>
+            ) : null}
+          </p>
+          <p className={cx("mt-1 text-sm", pastDue ? "text-amber-700" : "text-[#6b7285]")}>
+            {complimentary
+              ? "Included with your account at no charge."
+              : !subscription
+                ? `Usage resets ${formatDate(periodEndMs)}.`
+                : pastDue
+                  ? "Your last payment didn't go through. Update your card to keep your plan."
+                  : ending
+                    ? `Ends ${formatDate(subscription.cancelAt ?? subscription.currentPeriodEnd)}, then moves to Free.`
+                    : upcoming
+                      ? `Renews ${formatDate(upcoming.date ?? subscription.currentPeriodEnd)} for ${money(upcoming.amountDue, upcoming.currency)}.`
+                      : `Renews ${formatDate(subscription.currentPeriodEnd)}.`}
+          </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -408,7 +364,7 @@ function CurrentPlan({
           ) : subscription ? (
             confirmCancel ? (
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm text-[#5b6478]">Cancel at the end of this period?</span>
+                <span className="text-sm text-[#6b7285]">Cancel at the end of this period?</span>
                 <Button size="sm" variant="danger" busy={busy} onClick={() => void act("cancel")}>
                   Cancel plan
                 </Button>
@@ -457,17 +413,17 @@ function PlanCard({
   const rank = { free: 0, pro: 1, power: 2 } as Record<string, number>;
   let action: React.ReactNode = null;
   if (!ready) {
-    action = <div className="h-11 animate-pulse rounded-full bg-[#f3f4f8]" aria-hidden="true" />;
+    action = <div className="h-10 animate-pulse rounded-[10px] bg-[#f1f2f6]" aria-hidden="true" />;
   } else if (complimentary) {
     // On the allowlist: their plan costs nothing, so nothing here is for sale.
     action = isCurrentPlan ? (
       <Current />
     ) : (rank[plan.slug] ?? 0) < (rank[currentPlanKey ?? "free"] ?? 0) ? (
-      <p className="text-center text-[0.8rem] text-[#9aa3b2]">Included in your plan.</p>
+      <p className="text-center text-[0.8rem] text-[#9aa1b1]">Included in your plan.</p>
     ) : null;
   } else if (isFree) {
     action = isCurrentPlan ? <Current /> : hasSubscription ? (
-      <p className="text-center text-[0.8rem] text-[#9aa3b2]">Cancel your plan above to move to Free.</p>
+      <p className="text-center text-[0.8rem] text-[#9aa1b1]">Cancel your plan above to move to Free.</p>
     ) : null;
   } else if (!lookupKey) {
     action = null;
@@ -491,23 +447,23 @@ function PlanCard({
     <div
       className={cx(
         "flex flex-col rounded-card border bg-white p-5 sm:p-6",
-        isCurrentPlan ? "border-primary/40 ring-1 ring-primary/20" : "border-[#ececf2]",
+        isCurrentPlan ? "border-primary/50" : "border-[#e7e9ef]",
       )}
     >
       <div className="flex items-center justify-between gap-2">
         <p className="text-lg font-semibold">{plan.name}</p>
         {featured && !isCurrentPlan ? (
-          <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">Popular</span>
+          <span className="text-xs font-medium text-primary">Most chosen</span>
         ) : null}
       </div>
       <p className="mt-3">
         <span className="text-3xl font-semibold tracking-[-0.03em]">{price == null ? "–" : wholeDollars(price)}</span>
-        <span className="text-sm text-[#7d8798]"> / {interval}</span>
+        <span className="text-sm text-[#6b7285]"> / {interval}</span>
       </p>
-      {plan.description ? <p className="mt-2 text-sm leading-6 text-[#7d8798]">{plan.description}</p> : null}
+      {plan.description ? <p className="mt-2 text-sm leading-6 text-[#6b7285]">{plan.description}</p> : null}
       <ul className="mt-5 flex-1 space-y-2.5">
         {plan.features.map((feature) => (
-          <li key={feature} className="flex items-start gap-2 text-sm leading-5 text-[#3d4460]">
+          <li key={feature} className="flex items-start gap-2 text-sm leading-5 text-[#1d2240]">
             <Check className="mt-0.5 h-4 w-4 flex-none text-primary" />
             {feature}
           </li>
@@ -520,7 +476,7 @@ function PlanCard({
 
 function Current() {
   return (
-    <span className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-primary/[0.06] text-sm font-semibold text-primary">
+    <span className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-[10px] bg-[#f1f2f6] text-sm font-medium text-[#1d2240]">
       <Check className="h-4 w-4" /> Current plan
     </span>
   );
@@ -597,7 +553,7 @@ function SwitchPanel({
           <p className="font-semibold">
             {preview ? `Switch to ${preview.planLabel}, billed ${preview.interval}ly` : "Working out the price…"}
           </p>
-          {summary ? <p className="mt-1 text-sm leading-6 text-[#7d8798]">{summary}</p> : null}
+          {summary ? <p className="mt-1 text-sm leading-6 text-[#6b7285]">{summary}</p> : null}
           {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
         </div>
         <div className="flex flex-none gap-2">
@@ -614,74 +570,50 @@ function SwitchPanel({
 }
 
 function UsageGrid({ status }: { status: NonNullable<ReturnType<typeof useBillingStatus>> }) {
+  const unlimitedSpeech = isUnlimitedSpeechQuota(status.quotaSeconds);
+  const fixes = status.limits.monthlyLyricsFixes;
   return (
     <section className="mt-10">
       <SectionTitle>This period</SectionTitle>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <UsageCard
-          icon={Sparkles}
-          title={status.limits.songAiProjection ? "Bible & song AI projection" : "Bible AI projection"}
-          used={status.usedSeconds}
-          total={isUnlimitedSpeechQuota(status.quotaSeconds) ? null : status.quotaSeconds}
-          format={formatDuration}
+      <List>
+        <UsageRow
+          label={status.limits.songAiProjection ? "Bible & song AI projection" : "Bible AI projection"}
+          value={`${formatDuration(status.usedSeconds)}${unlimitedSpeech ? "" : ` of ${formatDuration(status.quotaSeconds)}`}`}
+          meter={unlimitedSpeech ? null : [status.usedSeconds, status.quotaSeconds]}
+          note={unlimitedSpeech ? "Unlimited" : null}
         />
-        <UsageCard
-          icon={Wand2}
-          title="AI lyrics fixes"
-          used={status.usedLyricsFixes}
-          total={status.limits.monthlyLyricsFixes}
-          format={(count) => String(count)}
+        <UsageRow
+          label="AI lyrics fixes"
+          value={`${status.usedLyricsFixes}${fixes === null ? "" : ` of ${fixes}`}`}
+          meter={fixes === null ? null : [status.usedLyricsFixes, fixes]}
+          note={fixes === null ? "Unlimited" : null}
         />
-        <Card>
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-control bg-primary/10 text-primary">
-              <UsersRound className="h-5 w-5" />
-            </span>
-            <p className="font-semibold">Workspace members</p>
-          </div>
-          <p className="mt-4 text-sm text-[#7d8798]">Up to {status.limits.workspaceMembers} people in each workspace you manage.</p>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-control bg-primary/10 text-primary">
-              <Cloud className="h-5 w-5" />
-            </span>
-            <p className="font-semibold">Cloud storage</p>
-          </div>
-          <p className="mt-4 text-sm text-[#7d8798]">{formatBytes(status.limits.cloudStorageBytes)} for media synced to the cloud.</p>
-        </Card>
-      </div>
+        <UsageRow label="Workspace members" value={`Up to ${status.limits.workspaceMembers}`} note="in each workspace you manage" />
+        <UsageRow label="Cloud storage" value={formatBytes(status.limits.cloudStorageBytes)} note="for media synced to the cloud" />
+      </List>
     </section>
   );
 }
 
-function UsageCard({
-  icon: Icon,
-  title,
-  used,
-  total,
-  format,
+function UsageRow({
+  label,
+  value,
+  meter = null,
+  note = null,
 }: {
-  icon: typeof Sparkles;
-  title: string;
-  used: number;
-  /** `null` for unlimited. */
-  total: number | null;
-  format: (value: number) => string;
+  label: string;
+  value: string;
+  meter?: [number, number] | null;
+  note?: string | null;
 }) {
   return (
-    <Card>
-      <div className="flex items-center gap-3">
-        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-control bg-primary/10 text-primary">
-          <Icon className="h-5 w-5" />
-        </span>
-        <p className="min-w-0 font-semibold">{title}</p>
-      </div>
-      <p className="mt-4 text-sm text-[#7d8798]">
-        <span className="text-lg font-semibold text-[#232946]">{format(used)}</span>
-        {total === null ? " used · unlimited" : ` of ${format(total)} used`}
-      </p>
-      {total === null ? null : <Meter used={used} total={total} className="mt-2" />}
-    </Card>
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_10rem_9rem]">
+      <span className="text-[#6b7285]">{label}</span>
+      <span className="text-right tabular-nums sm:text-left">
+        {value}
+        {note ? <span className="text-[#9aa1b1]"> {note}</span> : null}
+      </span>
+      <span className="col-span-2 sm:col-span-1">{meter ? <Meter used={meter[0]} total={meter[1]} /> : null}</span>
+    </li>
   );
 }
