@@ -109,7 +109,7 @@ function useLineReveal(ref: React.RefObject<HTMLElement | null>, delay = 0) {
   }, [ref, delay]);
 }
 
-// ─── Feature Row — full-width alternating layout ──────────────────────────────
+// ─── Feature Row: full-width alternating layout ──────────────────────────────
 interface FeatureRowProps {
   num: string;
   label: string;
@@ -242,7 +242,7 @@ const hCards: HCardProps[] = [
   { num: 1, label: "Group Display", description: "Drive 1–4 independent screens simultaneously. Each audience sees exactly what they need.", image: IMAGES.groupDisplay },
   { num: 2, label: "Remote Control", description: "Control your show from any device on the network. Walk the stage, lead the song.", image: IMAGES.remoteControl },
   { num: 3, label: "Media Stage", description: "A dedicated stage for video loops, motion backgrounds, and live camera feeds.", image: IMAGES.mediaStage },
-  { num: 4, label: "Worship Stage", description: "Lyrics, chord charts, and notes — surfaced beautifully for every musician on stage.", image: IMAGES.worshipStage },
+  { num: 4, label: "Worship Stage", description: "Lyrics, chord charts, and notes, surfaced beautifully for every musician on stage.", image: IMAGES.worshipStage },
   { num: 5, label: "Live Streaming", description: "Stream directly to YouTube, Facebook, and RTMP with zero extra software.", image: IMAGES.liveStreaming },
   { num: 6, label: "Search Songs Online", description: "Tap into a global worship library. Search, preview, and add to your set in seconds.", image: IMAGES.searchOnline },
   { num: 7, label: "AI Fix Lyrics", description: "Paste scattered lyrics and AI restructures them into perfectly cued slides instantly.", image: IMAGES.fixLyrics },
@@ -484,7 +484,7 @@ function SectionIntro() {
       </h2>
       <p className="line-clip">
         <span className="line-inner text-lg text-white/40 leading-relaxed">
-          Present combines blazing performance with an intuitive interface — so every volunteer
+          Present combines blazing performance with an intuitive interface, so every volunteer
           can run a world‑class production.
         </span>
       </p>
@@ -498,7 +498,7 @@ const featureRows = [
     num: "01",
     label: "Speak to Search",
     description:
-      "Just say the song title or Bible verse. Present hears you and pulls it up instantly — no typing, no hunting, just flow.",
+      "Just say the song title or Bible verse. Present hears you and pulls it up instantly. No typing, no hunting, just flow.",
     image: IMAGES.speakSearch,
     tag: "AI Voice",
   },

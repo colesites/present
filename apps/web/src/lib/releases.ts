@@ -6,7 +6,7 @@ import type { DesktopDownloadSlug } from "@/lib/download";
  * A public bucket serves objects but will not let a browser list one, so the
  * release job writes this file next to the uploads: the newest version, and
  * every version before it. The download page reads this and nothing else,
- * which is why a release needs no redeploy of the site — previously every
+ * which is why a release needs no redeploy of the site. Previously every
  * download URL was an environment variable somebody had to change by hand.
  *
  * Written by `apps/desktop/scripts/publish-to-r2.mjs`; keep the two in step.

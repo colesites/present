@@ -194,7 +194,7 @@ test("a token nobody signed is still refused", () => {
 test("tokens are signed only once the issuer publishes this key", async (t) => {
   // A development site signs with its own copy of the key under the deployed
   // site's name. If the deployed site does not publish that key, Convex
-  // refuses every token and the desktop waits on "Loading…" for good — so
+  // refuses every token and the desktop waits on "Loading…" for good, so
   // until it does, the refresh route must use Clerk's session instead.
   const realFetch = globalThis.fetch;
   t.after(() => {

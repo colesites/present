@@ -74,7 +74,7 @@ export default function OrganizationSetupClient({
 
   // Handed back the way every sign-in is: the launch page opens `present://`
   // for an installed app, or the loopback address a development one is
-  // listening on — which it checks, since this came in on the URL.
+  // listening on, which it checks, since this came in on the URL.
   const completeDesktopFlow = (sessionToken: string) => {
     const launch = new URLSearchParams({ sessionToken });
     if (desktopComeBackTo) {

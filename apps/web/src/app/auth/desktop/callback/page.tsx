@@ -29,7 +29,7 @@ function loopbackRedirect(value: string | undefined): string | null {
 }
 
 /**
- * Organisation setup, for an account with none yet — carrying the loopback
+ * Organisation setup, for an account with none yet, carrying the loopback
  * address with it. Without it a development desktop that sent someone through
  * setup was handed the session by `present://`, which is the installed app's,
  * and never signed in.

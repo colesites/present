@@ -9,7 +9,7 @@
  *
  * It takes a video id and nothing that could become markup. The desktop half
  * is `apps/desktop/src/shared/lib/youtube-embed.mjs`; the player address is
- * built the same way on both sides — keep the two in step.
+ * built the same way on both sides, so keep the two in step.
  */
 
 /** What a YouTube video id looks like. Anything else is refused. */

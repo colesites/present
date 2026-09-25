@@ -14,7 +14,7 @@ function DesktopLaunchContent() {
    * Where to hand the session back.
    *
    * A `present://` link belongs to whichever Present is installed, which in
-   * development is not the one being worked on — so a development desktop
+   * development is not the one being worked on. So a development desktop
    * opens a listener and asks to be handed the session there instead. Only a
    * loopback address, and only the path it listens on: this is a session
    * token, and anything else here would be somewhere to send it. And only in

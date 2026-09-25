@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   // Overrides the layout's default for the home page only. Named ministries
   // were removed: naming a church as a user is a claim that needs their
   // agreement, and it narrowed the software to one kind of room.
-  title: "Present — Presentation software for churches and live events",
+  title: "Present | Presentation software for churches and live events",
   description:
     "Presentation software for churches, conferences and live events. Cloud libraries, real-time collaboration, instant scripture search, and a confidence view built for running something live.",
   keywords: [

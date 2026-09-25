@@ -202,7 +202,7 @@ export function Hero() {
           className="text-lg md:text-xl text-white/50 leading-relaxed max-w-2xl mb-12 font-medium"
           style={{ opacity: 0 }}
         >
-          Presentation software for live events — churches, conferences, and anywhere a room is watching a screen. Keep your library in the cloud, work with your whole team in real time, and find any lyric or Bible verse the moment it is spoken.
+          Presentation software for live events: churches, conferences, and anywhere a room is watching a screen. Keep your library in the cloud, work with your whole team in real time, and find any lyric or Bible verse the moment it is spoken.
         </p>
 
         {/* ── CTA buttons ── */}
@@ -224,15 +224,15 @@ export function Hero() {
         </div>
       </div>
 
-      {/* ── Hero image — responsive layouts ── */}
+      {/* ── Hero image: responsive layouts ── */}
       <div ref={imgContainerRef} className="hero-img-card" style={{ opacity: 0 }}>
         <div className="hero-img-inner bg-black md:bg-transparent">
           
-          {/* Base image wrapper — blurred and dimmed on mobile for atmospheric effect */}
+          {/* Base image wrapper, blurred and dimmed on mobile for atmospheric effect */}
           <div className="absolute inset-0 opacity-30 md:opacity-100 blur-[4px] md:blur-none transition-all">
             <Image
               src="/present-hero-img.png"
-              alt="Present presentation software — live lyrics, scripture and media on an audience screen"
+              alt="Present presentation software showing live lyrics, scripture and media on an audience screen"
               fill
               className="object-cover object-top md:object-center transition-transform duration-700 md:group-hover:scale-[1.02]"
               priority

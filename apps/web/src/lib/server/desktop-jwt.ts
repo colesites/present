@@ -9,8 +9,8 @@ import { calculateJwkThumbprint, exportJWK, SignJWT, type JWK } from "jose";
  * **Why this exists at all.** Signing in on the desktop opens a browser, as
  * Claude's and ProPresenter's do. What the desktop keeps afterwards used to be
  * tied to that browser session: every refresh asked Clerk whether the session
- * was still active, so when Clerk ended it — a lifetime, an inactivity timeout
- * — the desktop signed the operator out, sometimes on a Sunday morning. A
+ * was still active, so when Clerk ended it (a lifetime, an inactivity timeout)
+ * the desktop signed the operator out, sometimes on a Sunday morning. A
  * presentation app cannot do that.
  *
  * So the desktop keeps a credential of its own. This mints the short-lived
@@ -57,7 +57,7 @@ const privateKeyPem = (): string | null => {
  * cannot be an issuer however the app is being run: Convex cannot reach it. A
  * development web app signs with the same key as the deployed one and claims
  * the deployed one's name, and the development Convex deployment trusts that
- * name — the tokens verify against the keys production publishes.
+ * name, and the tokens verify against the keys production publishes.
  */
 export const desktopJwtIssuer = (): string | null => {
   const configured =
@@ -86,7 +86,7 @@ export const isDesktopJwtConfigured = (): boolean => {
     console.warn(
       "[Desktop Auth] a signing key is set but no issuer is, so the desktop " +
         "credential is off and Clerk's session is being used instead. Set " +
-        "DESKTOP_JWT_ISSUER (or WEB_APP_URL) to this app's public URL — the " +
+        "DESKTOP_JWT_ISSUER (or WEB_APP_URL) to this app's public URL, the " +
         "same one Convex has as DESKTOP_JWT_ISSUER_DOMAIN.",
     );
   }
@@ -165,7 +165,7 @@ let trust: { trusted: boolean; until: number } | null = null;
  * Configured is not enough. A development app signs with its own copy of the
  * key and claims the deployed site's name ([`desktopJwtIssuer`]), so its
  * tokens verify only if the deployed site publishes that same key. When it
- * does not — no key in production yet, or a different one — Convex refuses
+ * does not (no key in production yet, or a different one), Convex refuses
  * every token, the desktop never learns who is signed in, and it sits on
  * "Loading…" for good. So the issuer's published keys are asked, and until
  * they include this one the refresh route uses Clerk's session, which always

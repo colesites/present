@@ -116,7 +116,7 @@ const readFirstConfiguredEnvValue = (keys: string[]): string => {
  * The release manifest first: it is written by the job that built the files,
  * so it is right by construction and a new release needs no redeploy. The
  * environment variables stay as a fallback for anything the manifest has not
- * got — a hand-uploaded build, or the period before the first published
+ * got: a hand-uploaded build, or the period before the first published
  * release.
  */
 const buildVariant = (
@@ -129,7 +129,7 @@ const buildVariant = (
 
   // Once a release is published it is the whole truth about what exists. A
   // variant it does not carry is not offered at all, rather than falling back
-  // to an environment variable pointing at some earlier upload — that is how
+  // to an environment variable pointing at some earlier upload. That is how
   // an "Intel" button ended up linking to a file that had been deleted, and
   // telling the operator the download was "temporarily unavailable" when in
   // fact it had never been built.

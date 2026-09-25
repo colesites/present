@@ -5,7 +5,7 @@ import { resolveRequestAuthContext } from "@/lib/server/request-auth";
  *
  * **Why this is here and not on the machine.** Speech goes straight from the
  * desktop to AssemblyAI, because AssemblyAI issues a short-lived token that is
- * safe to hand out. A model gateway has no such thing — it authenticates with
+ * safe to hand out. A model gateway has no such thing: it authenticates with
  * a key, and a key shipped inside an application is a key anybody can read out
  * of it. So the key stays here and the desktop calls this.
  *
@@ -29,7 +29,7 @@ const DEFAULT_MODEL = "openai/gpt-5.6-luna-fast";
 // Measured against the gateway with this prompt: the chosen model answers in
 // 3.2–3.9s, so 4s cut off roughly nothing on a good run and everything on a
 // slow one. Six gives it room without letting a stale reference reach the
-// screen — by then the preacher has moved on, and a late verse is worse than
+// screen. By then the preacher has moved on, and a late verse is worse than
 // none. The desktop's own limit sits just above this one so the server is
 // always the one that gives up first and can say why.
 const TIMEOUT_MS = 6_000;
@@ -116,8 +116,8 @@ export async function POST(request: Request) {
     }
 
     // Handed back as the model wrote it. What it means is decided on the
-    // desktop, against the books that are actually installed there —
-    // `services/scripture_agent.rs`.
+    // desktop, against the books that are actually installed there
+    // (`services/scripture_agent.rs`).
     return json({ content, userId });
   } catch (error) {
     const aborted = error instanceof Error && error.name === "AbortError";

@@ -27,7 +27,7 @@ test("the page frames the player from this site's origin, so YouTube has a refer
 
 test("the app can frame it: nothing forbids being framed", () => {
   // The app frames it from `tauri://localhost`, which a `frame-ancestors`
-  // list cannot name — any such list would refuse the one page it is for.
+  // list cannot name: any such list would refuse the one page it is for.
   const { headers } = page("?v=dQw4w9WgXcQ");
   const names = Object.keys(headers).map((name) => name.toLowerCase());
   assert.ok(!names.includes("x-frame-options"));
