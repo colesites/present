@@ -1,21 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
-  Check,
-  Lock,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Check, Lock, Plus, Redo2, RotateCcw, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { ConvexError } from "convex/values";
-import type { PresentThemeTier } from "@present/shared";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
-import { FontFamilySelect } from "../../renderer/shared/components/FontFamilySelect";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../renderer/shared/components/ui/dropdown-menu";
+import { Segmented, fillSwatchCss } from "../../renderer/shared/components/style-controls";
 import { cn } from "../../renderer/shared/lib/utils";
 import { desktopWebBaseUrl } from "../../renderer/shared/store/desktopSession";
 import {
@@ -28,15 +32,18 @@ import {
   getCanvasSizeDimensions,
   normalizeLibrarySlide,
 } from "../library/lib/library-items";
+import { DesignCanvas, MEDIA_STAND_IN, type DesignTarget } from "./DesignCanvas";
+import { nudgeFrame } from "./design-frames.mjs";
+import { ThemeInspector } from "./ThemeInspector";
 import {
   BUILT_IN_THEMES,
   applyLookToSlide,
   lookFromSlide,
+  normalizeLook,
   tierIncludes,
-  type ThemeLayout,
+  tierOfLook,
+  type ThemeFrame,
   type ThemeLook,
-  type ThemeShadow,
-  type ThemeText,
   type ThemeTier,
 } from "./theme-look.mjs";
 import { useSavedThemes, type SavedTheme } from "./useSavedThemes";
@@ -45,58 +52,27 @@ type Entry = {
   id: string;
   name: string;
   look: ThemeLook;
-  /** What it needs: a built-in's tier, or a saved theme's. */
+  /** What using it needs. */
   tier: ThemeTier;
   description?: string;
   saved: boolean;
+  /** A built-in theme changed here and not saved as a theme of its own. */
+  edited: boolean;
 };
 
-/** How many of a song's slides the panel draws under the preview. */
+/** How many of a song's slides the panel draws under the canvas. */
 const MAX_STRIP_SLIDES = 12;
+/** Changes closer together than this are one step to undo. */
+const UNDO_BURST_MS = 600;
+/** How long after the last change a saved theme is written. */
+const SAVE_AFTER_MS = 600;
 
 const SAMPLE_SLIDE: LibrarySlide = {
   id: "theme-sample",
   text: "Amazing grace, how sweet the sound\nThat saved a wretch like me",
 };
 
-/** Standing in for a video or image where a theme leaves the slide clear. */
-const MEDIA_STAND_IN =
-  "radial-gradient(120% 90% at 20% 15%, #3b3f6b 0%, transparent 55%), radial-gradient(90% 80% at 85% 90%, #5a3a2e 0%, transparent 60%), #15161f";
-
-const WEIGHTS: Array<[string, string]> = [
-  ["300", "Light"],
-  ["400", "Regular"],
-  ["500", "Medium"],
-  ["600", "Semibold"],
-  ["700", "Bold"],
-  ["800", "Extra bold"],
-  ["900", "Black"],
-];
-
-const SHADOW_OPTIONS: Array<[ThemeShadow, string]> = [
-  ["none", "None"],
-  ["soft", "Soft"],
-  ["strong", "Strong"],
-  ["glow", "Glow"],
-];
-
-const SHADOW_LABELS: Record<ThemeShadow, string> = {
-  none: "No shadow",
-  soft: "Soft shadow",
-  strong: "Strong shadow",
-  glow: "Glow",
-};
-
-const LAYOUT_OPTIONS: Array<[ThemeLayout, string]> = [
-  ["full", "Full"],
-  ["lower-third", "Lower third"],
-  ["upper-third", "Upper third"],
-];
-
 const planName = (tier: ThemeTier) => (tier === "advanced" ? "Power" : "Pro");
-
-/** What a saved theme needs: Power for a gradient, Pro for the rest. */
-const tierOfSaved = (look: ThemeLook): ThemeTier => (look.text.gradient ? "advanced" : "pro");
 
 const errorText = (error: unknown, fallback: string) =>
   error instanceof ConvexError && typeof error.data === "string"
@@ -105,38 +81,9 @@ const errorText = (error: unknown, fallback: string) =>
       ? error.message.replace(/^.*ConvexError:\s*/, "").split("\n")[0]
       : fallback;
 
-// ---------------------------------------------------------------------------
-// Colours
-// ---------------------------------------------------------------------------
-
-const splitColor = (value: string | null | undefined): { hex: string; alpha: number } => {
-  const text = (value ?? "").trim();
-  const rgba = text.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i);
-  if (rgba) {
-    const hex = `#${[rgba[1], rgba[2], rgba[3]]
-      .map((part) => Math.min(255, Number(part)).toString(16).padStart(2, "0"))
-      .join("")}`;
-    return { hex, alpha: rgba[4] === undefined ? 1 : Math.min(1, Number(rgba[4])) };
-  }
-  if (/^#[0-9a-f]{6}$/i.test(text)) return { hex: text.toLowerCase(), alpha: 1 };
-  if (/^#[0-9a-f]{8}$/i.test(text)) {
-    return { hex: text.slice(0, 7).toLowerCase(), alpha: parseInt(text.slice(7), 16) / 255 };
-  }
-  if (/^#[0-9a-f]{3}$/i.test(text)) {
-    return { hex: `#${[...text.slice(1)].map((c) => c + c).join("")}`.toLowerCase(), alpha: 1 };
-  }
-  return { hex: "#000000", alpha: 1 };
-};
-
-const joinColor = (hex: string, alpha: number) => {
-  if (alpha >= 0.995) return hex;
-  const channel = (start: number) => parseInt(hex.slice(start, start + 2), 16);
-  return `rgba(${channel(1)},${channel(3)},${channel(5)},${Math.round(alpha * 100) / 100})`;
-};
-
-// ---------------------------------------------------------------------------
-// The panel
-// ---------------------------------------------------------------------------
+const isTyping = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 
 interface ThemesPanelProps {
   /** The organization, or `null` for the personal workspace. */
@@ -144,9 +91,9 @@ interface ThemesPanelProps {
 }
 
 /**
- * The Themes panel: the themes on the left, the one chosen drawn in the
- * middle by the renderer the output uses, and what it is made of on the
- * right. It applies to the song open in Edit, or the one showing in Show.
+ * The Themes panel: the themes on the left, the chosen one on the song's
+ * slide in the middle, to drag and resize, and everything it is made of on
+ * the right. It applies to the song open in Edit, or the one in Show.
  */
 export function ThemesPanel({ workspaceId }: ThemesPanelProps) {
   const isOpen = useThemesModalStore((state) => state.isOpen);
@@ -168,33 +115,48 @@ export function ThemesPanel({ workspaceId }: ThemesPanelProps) {
 function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: () => void }) {
   const target = useThemesModalStore(selectThemeTarget);
   const dispatchApply = useThemesModalStore((state) => state.dispatchApply);
+  const drafts = useThemesModalStore((state) => state.drafts);
+  const setDraft = useThemesModalStore((state) => state.setDraft);
   // Offline, Convex doesn't answer and the copy kept on this computer shows.
   const saved = useSavedThemes({ workspaceId, enabled: true });
-  const canCustom = tierIncludes(saved.tier, "pro");
+  const canCustomize = tierIncludes(saved.tier, "pro");
+  const canGradient = tierIncludes(saved.tier, "advanced");
 
-  const [selectedId, setSelectedId] = useState<string>(
-    () => target?.themeId ?? BUILT_IN_THEMES[0].id,
-  );
+  const [selectedId, setSelectedId] = useState<string>(() => target?.themeId ?? BUILT_IN_THEMES[0].id);
   const [scope, setScope] = useState<"song" | "slide">("song");
-  // Edits to saved themes, shown at once and saved a moment later.
+  const [designTarget, setDesignTarget] = useState<DesignTarget | null>("words");
+  // Changes to saved themes, shown at once and written a moment later.
   const [edits, setEdits] = useState<Record<string, ThemeLook>>({});
   const saveTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const pendingSaves = useRef(new Map<string, () => Promise<unknown>>());
+  const [saving, setSaving] = useState(0);
+  const history = useRef(new Map<string, { past: ThemeLook[]; future: ThemeLook[]; lastAt: number }>());
+  const [historyTick, setHistoryTick] = useState(0);
 
   const entries = useMemo(() => {
-    const builtIns: Entry[] = BUILT_IN_THEMES.map((theme) => ({ ...theme, saved: false }));
+    const builtIns: Entry[] = BUILT_IN_THEMES.map((theme) => {
+      const draft = drafts[theme.id] ? normalizeLook(drafts[theme.id]) : null;
+      return {
+        ...theme,
+        look: draft ?? theme.look,
+        tier: draft ? (theme.tier === "advanced" ? "advanced" : tierOfLook(draft)) : theme.tier,
+        saved: false,
+        edited: Boolean(draft),
+      };
+    });
     const mine: Entry[] = (saved.themes ?? []).map((theme: SavedTheme) => {
       const look = edits[theme.id] ?? theme.look;
-      return { id: theme.id, name: theme.name, look, tier: tierOfSaved(look), saved: true };
+      return { id: theme.id, name: theme.name, look, tier: tierOfLook(look), saved: true, edited: false };
     });
     return { builtIns, mine };
-  }, [edits, saved.themes]);
+  }, [drafts, edits, saved.themes]);
 
   const all = useMemo(() => [...entries.builtIns, ...entries.mine], [entries]);
   const selected = all.find((entry) => entry.id === selectedId) ?? all[0];
   const locked = !tierIncludes(saved.tier, selected.tier);
+  const editable = canCustomize && (!selected.saved || saved.canSave);
 
-  // Anything waiting to save goes when the panel closes.
+  // Anything waiting to be written goes when the panel closes.
   useEffect(() => {
     const timers = saveTimers.current;
     const waiting = pendingSaves.current;
@@ -204,51 +166,145 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
     };
   }, []);
 
-  const editLook = useCallback(
-    (id: string, look: ThemeLook) => {
-      setEdits((current) => ({ ...current, [id]: look }));
-      const save = () => saved.update(id, { look });
-      pendingSaves.current.set(id, save);
-      const previous = saveTimers.current.get(id);
+  /** Put a look on an entry: a saved theme is written soon, a built-in kept as a draft. */
+  const writeLook = useCallback(
+    (entry: Entry, look: ThemeLook) => {
+      if (!entry.saved) {
+        setDraft(entry.id, look);
+        return;
+      }
+      setEdits((current) => ({ ...current, [entry.id]: look }));
+      const save = () => saved.update(entry.id, { look });
+      pendingSaves.current.set(entry.id, save);
+      const previous = saveTimers.current.get(entry.id);
       if (previous) clearTimeout(previous);
+      else setSaving((count) => count + 1);
       saveTimers.current.set(
-        id,
+        entry.id,
         setTimeout(() => {
-          saveTimers.current.delete(id);
-          pendingSaves.current.delete(id);
+          saveTimers.current.delete(entry.id);
+          pendingSaves.current.delete(entry.id);
+          setSaving((count) => Math.max(0, count - 1));
           save().catch((error) => toast.error(errorText(error, "That theme couldn't be saved.")));
-        }, 500),
+        }, SAVE_AFTER_MS),
       );
     },
-    [saved],
+    [saved, setDraft],
   );
 
-  const canvasSize = target?.canvasSize ?? DEFAULT_CANVAS_SIZE;
+  /** A change from the inspector or the canvas, as one step to undo. */
+  const change = useCallback(
+    (look: ThemeLook, options: { endsStep?: boolean } = {}) => {
+      if (!editable) return;
+      const steps = history.current.get(selected.id) ?? { past: [], future: [], lastAt: 0 };
+      const now = Date.now();
+      if (now - steps.lastAt > UNDO_BURST_MS) steps.past = [...steps.past.slice(-49), selected.look];
+      steps.future = [];
+      steps.lastAt = options.endsStep ? 0 : now;
+      history.current.set(selected.id, steps);
+      setHistoryTick((tick) => tick + 1);
+      writeLook(selected, look);
+    },
+    [editable, selected, writeLook],
+  );
+
+  const steps = useMemo(
+    () => {
+      const entry = history.current.get(selected.id);
+      return { canUndo: Boolean(entry?.past.length), canRedo: Boolean(entry?.future.length) };
+    },
+    // Read again whenever the history changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [historyTick, selected.id],
+  );
+  const undo = useCallback(() => {
+    const entry = history.current.get(selected.id);
+    const previous = entry?.past.at(-1);
+    if (!entry || !previous) return;
+    entry.past = entry.past.slice(0, -1);
+    entry.future = [selected.look, ...entry.future];
+    entry.lastAt = 0;
+    setHistoryTick((tick) => tick + 1);
+    writeLook(selected, previous);
+  }, [selected, writeLook]);
+  const redo = useCallback(() => {
+    const entry = history.current.get(selected.id);
+    const next = entry?.future[0];
+    if (!entry || !next) return;
+    entry.future = entry.future.slice(1);
+    entry.past = [...entry.past, selected.look];
+    entry.lastAt = 0;
+    setHistoryTick((tick) => tick + 1);
+    writeLook(selected, next);
+  }, [selected, writeLook]);
+
+  const onFrameChange = useCallback(
+    (which: DesignTarget, frame: ThemeFrame, done: boolean) => {
+      const look = selected.look;
+      const next =
+        which === "words" ? { ...look, frame } : look.box ? { ...look, box: { ...look.box, frame } } : look;
+      change(next, { endsStep: done });
+    },
+    [change, selected.look],
+  );
+
+  // Undo, redo and nudging with the keyboard, outside text fields.
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (isTyping(event.target)) return;
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (!designTarget || !editable) return;
+      const frame = designTarget === "words" ? selected.look.frame : selected.look.box?.frame;
+      const nudged = frame ? nudgeFrame(frame, event.key, event.shiftKey) : null;
+      if (nudged) {
+        event.preventDefault();
+        onFrameChange(designTarget, nudged, false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [designTarget, editable, onFrameChange, redo, selected.look, undo]);
+
+  // The song, and the slide the canvas shows.
+  const canvasSize: CanvasSizePreset = target?.canvasSize ?? DEFAULT_CANVAS_SIZE;
   const canvas = useMemo(() => getCanvasSizeDimensions(canvasSize), [canvasSize]);
   const songSlides = useMemo(
-    () => (target ? target.slides.map((slide) => normalizeLibrarySlide(slide, canvasSize)) : []),
+    () =>
+      target
+        ? target.slides.map((slide, index) =>
+            normalizeLibrarySlide({ ...slide, id: slide.id ?? `slide-${index}` }, canvasSize),
+          )
+        : [],
     [canvasSize, target],
   );
-  // The slide in the big preview, which "This slide" means: the one picked
-  // below, else the one selected in Edit or live in Show, else the first
-  // with words.
-  const [pickedSlideId, setPickedSlideId] = useState<string | null>(null);
-  const targetSlide =
-    songSlides.find((slide) => slide.id === pickedSlideId) ??
-    songSlides.find((slide) => slide.id === target?.slideId) ??
-    songSlides.find((slide) => slide.text.trim()) ??
-    songSlides[0] ??
-    null;
-
-  const preview = useMemo(
-    () =>
-      applyLookToSlide(
-        targetSlide && targetSlide.text.trim() ? targetSlide : normalizeLibrarySlide(SAMPLE_SLIDE, canvasSize),
-        selected.look,
-        canvas,
-      ) as LibrarySlide,
-    [canvas, canvasSize, selected.look, targetSlide],
+  const [pickedIndex, setPickedIndex] = useState<number | null>(null);
+  const firstWithWords = songSlides.findIndex((slide) => slide.text.trim());
+  const slideIndex =
+    pickedIndex !== null && pickedIndex < songSlides.length
+      ? pickedIndex
+      : target?.slideIndex !== null && target?.slideIndex !== undefined && target.slideIndex < songSlides.length
+        ? target.slideIndex
+        : firstWithWords >= 0
+          ? firstWithWords
+          : songSlides.length > 0
+            ? 0
+            : null;
+  const shownSlide = slideIndex !== null ? songSlides[slideIndex] : null;
+  const slideForCanvas = useMemo(
+    () => (shownSlide && shownSlide.text.trim() ? shownSlide : normalizeLibrarySlide(SAMPLE_SLIDE, canvasSize)),
+    [canvasSize, shownSlide],
   );
+  const designed = useMemo(
+    () => applyLookToSlide(slideForCanvas, selected.look, canvas) as LibrarySlide,
+    [canvas, selected.look, slideForCanvas],
+  );
+  const stripLook = useDeferredValue(selected.look);
 
   const openPlans = () => {
     void window.electronAPI?.openExternalBrowser?.(`${desktopWebBaseUrl()}/dashboard/billing`);
@@ -260,26 +316,28 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
       return;
     }
     if (!target) return;
-    const onlySlideId = scope === "slide" ? targetSlide?.id ?? null : null;
     dispatchApply({
       surface: target.surface,
       libraryId: target.libraryId,
-      theme: { id: entry.id, name: entry.name, look: entry.look },
-      onlySlideId,
+      theme: { id: entry.id, name: entry.edited ? `${entry.name} (edited)` : entry.name, look: entry.look },
+      onlySlideIndex: scope === "slide" ? slideIndex : null,
     });
   };
 
   const [isCreating, setIsCreating] = useState(false);
-  const createFrom = async (name: string, look: ThemeLook) => {
+  const createFrom = async (name: string, look: ThemeLook, clearDraftOf?: string) => {
+    if (!saved.canSave) {
+      toast.error(saved.signedIn ? "You're offline. Themes can be saved once you're back online." : "Sign in to save your own themes.");
+      return;
+    }
     setIsCreating(true);
     try {
-      // Pro can save everything but a gradient; the words keep their colour.
-      const allowed =
-        look.text.gradient && !tierIncludes(saved.tier, "advanced")
-          ? { ...look, text: { ...look.text, gradient: null } }
-          : look;
+      // Pro saves everything but gradients; they become their first colour.
+      const allowed = canGradient ? look : withoutGradients(look);
       const id = await saved.create(name, allowed);
+      if (clearDraftOf) setDraft(clearDraftOf, null);
       setSelectedId(String(id));
+      toast.success(`Saved ${name}`);
     } catch (error) {
       toast.error(errorText(error, "That theme couldn't be saved."));
     } finally {
@@ -289,7 +347,10 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
 
   const remove = async (entry: Entry) => {
     const timer = saveTimers.current.get(entry.id);
-    if (timer) clearTimeout(timer);
+    if (timer) {
+      clearTimeout(timer);
+      setSaving((count) => Math.max(0, count - 1));
+    }
     saveTimers.current.delete(entry.id);
     pendingSaves.current.delete(entry.id);
     try {
@@ -300,22 +361,30 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
     }
   };
 
-  const savingBlocked = !saved.signedIn
-    ? "Sign in to save your own themes."
-    : !saved.canSave
-      ? "You're offline. Your themes can be changed once you're back online."
-      : null;
+  const status = !canCustomize
+    ? null
+    : selected.saved
+      ? !saved.canSave
+        ? "Offline: changes wait until you're back online"
+        : saving > 0
+          ? "Saving…"
+          : "Saved"
+      : selected.edited
+        ? "Edited, not saved as a theme yet"
+        : "Built in. Change anything to make it yours.";
+
+  const tierOfBuiltIn = (id: string) => BUILT_IN_THEMES.find((theme) => theme.id === id)?.tier;
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-3 backdrop-blur-[2px]"
       role="dialog"
       aria-modal="true"
       aria-label="Themes"
       onMouseDown={onClose}
     >
       <div
-        className="flex h-[min(640px,90vh)] w-[min(1060px,96vw)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
+        className="flex h-[min(860px,95vh)] w-[min(1380px,98vw)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="flex h-11 flex-none items-center gap-3 border-b border-border/70 px-4">
@@ -333,39 +402,24 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
           </button>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[210px_minmax(0,1fr)_280px]">
+        <div className="grid min-h-0 flex-1 grid-cols-[212px_minmax(0,1fr)_316px]">
           {/* The themes */}
           <nav className="min-h-0 overflow-y-auto border-r border-border/70 py-2" aria-label="Themes">
-            <ListSection title="Built in">
-              {entries.builtIns
-                .filter((entry) => entry.tier === "basic")
-                .map((entry) => (
-                  <ThemeRow
-                    key={entry.id}
-                    entry={entry}
-                    isSelected={entry.id === selected.id}
-                    isOnSong={entry.id === target?.themeId}
-                    isLocked={false}
-                    onSelect={() => setSelectedId(entry.id)}
-                    onApply={() => apply(entry)}
-                  />
-                ))}
-            </ListSection>
-            {(["pro", "advanced"] as const).map((tier) => (
+            {(["basic", "pro", "advanced"] as const).map((tier) => (
               <ListSection
                 key={tier}
-                title={planName(tier)}
-                badge={tierIncludes(saved.tier, tier) ? null : planName(tier)}
+                title={tier === "basic" ? "Built in" : planName(tier)}
+                badge={tier === "basic" || tierIncludes(saved.tier, tier) ? null : planName(tier)}
               >
                 {entries.builtIns
-                  .filter((entry) => entry.tier === tier)
+                  .filter((entry) => tierOfBuiltIn(entry.id) === tier)
                   .map((entry) => (
                     <ThemeRow
                       key={entry.id}
                       entry={entry}
                       isSelected={entry.id === selected.id}
                       isOnSong={entry.id === target?.themeId}
-                      isLocked={!tierIncludes(saved.tier, tier)}
+                      isLocked={!tierIncludes(saved.tier, entry.tier)}
                       onSelect={() => setSelectedId(entry.id)}
                       onApply={() => apply(entry)}
                     />
@@ -375,17 +429,30 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
             <ListSection
               title="Your themes"
               action={
-                canCustom && !savingBlocked ? (
-                  <button
-                    type="button"
-                    disabled={isCreating}
-                    onClick={() => void createFrom(`${selected.name} copy`, selected.look)}
-                    className="rounded p-0.5 text-muted-foreground transition hover:bg-foreground/5 hover:text-foreground disabled:opacity-40"
-                    aria-label="New theme from the one selected"
-                    title="New theme from the one selected"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
+                canCustomize ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      disabled={isCreating}
+                      className="rounded p-0.5 text-muted-foreground transition hover:bg-foreground/5 hover:text-foreground disabled:opacity-40"
+                      aria-label="New theme"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="z-[200] w-56">
+                      <DropdownMenuItem onSelect={() => void createFrom(`${selected.name} copy`, selected.look)}>
+                        A copy of {selected.name}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={!shownSlide?.text.trim()}
+                        onSelect={() =>
+                          shownSlide &&
+                          void createFrom(`${target?.title ?? "Slide"} look`, lookFromSlide(shownSlide, canvas))
+                        }
+                      >
+                        {slideIndex !== null ? `The look of slide ${slideIndex + 1}` : "The look of this slide"}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 ) : null
               }
             >
@@ -395,7 +462,7 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
                 </p>
               ) : entries.mine.length === 0 ? (
                 <p className="px-4 py-1.5 text-[11px] leading-4 text-muted-foreground">
-                  {canCustom
+                  {canCustomize
                     ? workspaceId
                       ? "Themes you save are shared with everyone in this workspace."
                       : "Themes you save are kept with your account."
@@ -417,68 +484,95 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
             </ListSection>
           </nav>
 
-          {/* The preview */}
-          <section className="flex min-h-0 min-w-0 flex-col gap-3 p-5">
-            <SlidePicture slide={preview} look={selected.look} canvasSize={canvasSize} className="rounded-lg" />
-            <p className="text-[11px] text-muted-foreground">
-              {selected.look.background
-                ? targetSlide?.text.trim()
-                  ? "A slide from this song, as the audience will see it."
-                  : "Sample words, as the audience will see them."
-                : "This theme leaves the background clear, so your video, image or camera shows behind the words."}
+          {/* The slide, to design on */}
+          <section className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto p-5">
+            <div className="mx-auto flex min-h-7 w-full max-w-[880px] items-center gap-2">
+              <p className="min-w-0 truncate text-[13px] font-semibold text-foreground">
+                {selected.name}
+                {selected.edited ? <span className="ml-1.5 font-normal text-muted-foreground">(edited)</span> : null}
+              </p>
+              {status ? <span className="truncate text-[11px] text-muted-foreground">{status}</span> : null}
+              <span className="ml-auto flex items-center gap-1">
+                <ToolButton label="Undo" disabled={!steps.canUndo} onClick={undo}>
+                  <Undo2 className="h-3.5 w-3.5" />
+                </ToolButton>
+                <ToolButton label="Redo" disabled={!steps.canRedo} onClick={redo}>
+                  <Redo2 className="h-3.5 w-3.5" />
+                </ToolButton>
+              </span>
+            </div>
+
+            <div className="mx-auto w-full max-w-[880px] pt-4">
+              <DesignCanvas
+                look={selected.look}
+                slide={designed}
+                canvasSize={canvasSize}
+                selected={designTarget}
+                editable={editable}
+                onSelect={setDesignTarget}
+                onFrameChange={onFrameChange}
+              />
+            </div>
+            <p className="mx-auto w-full max-w-[880px] text-[11px] text-muted-foreground">
+              {editable
+                ? "Drag the words or the box to move them, and their corners to resize. The arrow keys nudge the one selected."
+                : canCustomize
+                  ? "You're offline. Your themes can be changed once you're back online."
+                  : "Changing and saving themes comes with Pro and Power."}
             </p>
 
             {songSlides.length > 1 ? (
-              <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  In this song
-                </p>
-                <div className="grid grid-cols-4 gap-2">
-                  {songSlides.slice(0, MAX_STRIP_SLIDES).map((slide) => (
+              <div className="mx-auto w-full max-w-[880px]">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">In this song</p>
+                <div className="grid grid-cols-6 gap-2">
+                  {songSlides.slice(0, MAX_STRIP_SLIDES).map((slide, index) => (
                     <button
-                      key={slide.id}
+                      key={`${slide.id}-${index}`}
                       type="button"
-                      onClick={() => setPickedSlideId(slide.id ?? null)}
+                      onClick={() => setPickedIndex(index)}
                       className={cn(
-                        "overflow-hidden rounded-md ring-offset-2 ring-offset-card transition",
-                        slide.id === targetSlide?.id ? "ring-2 ring-primary" : "opacity-80 hover:opacity-100",
+                        "relative overflow-hidden rounded-md ring-offset-2 ring-offset-card transition",
+                        index === slideIndex ? "ring-2 ring-primary" : "opacity-75 hover:opacity-100",
                       )}
-                      aria-label={slide.label || slide.text.split("\n")[0] || "Slide"}
+                      aria-label={`Slide ${index + 1}`}
                     >
                       <SlidePicture
-                        slide={applyLookToSlide(slide, selected.look, canvas) as LibrarySlide}
-                        look={selected.look}
+                        slide={applyLookToSlide(slide, stripLook, canvas) as LibrarySlide}
+                        look={stripLook}
                         canvasSize={canvasSize}
                       />
+                      <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[9px] font-semibold text-white">
+                        {index + 1}
+                      </span>
                     </button>
                   ))}
                 </div>
                 {songSlides.length > MAX_STRIP_SLIDES ? (
-                  <p className="mt-2 text-[11px] text-muted-foreground">
-                    And {songSlides.length - MAX_STRIP_SLIDES} more
-                  </p>
+                  <p className="mt-2 text-[11px] text-muted-foreground">And {songSlides.length - MAX_STRIP_SLIDES} more</p>
                 ) : null}
               </div>
-            ) : (
-              <div className="flex-1" />
-            )}
+            ) : null}
 
-            <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-4">
+            <div className="mx-auto mt-auto flex w-full max-w-[880px] flex-wrap items-center gap-3 border-t border-border/60 pt-4">
               <Segmented
                 label="Apply to"
                 value={scope}
                 disabled={!target}
-                options={[
-                  ["song", "Whole song"],
-                  ["slide", "This slide", !targetSlide],
-                ]}
                 onChange={(value) => setScope(value as "song" | "slide")}
+                options={[
+                  { value: "song", label: "Whole song" },
+                  {
+                    value: "slide",
+                    label: slideIndex !== null ? `Slide ${slideIndex + 1} only` : "This slide",
+                    disabled: slideIndex === null,
+                  },
+                ]}
               />
               <button
                 type="button"
                 disabled={!target && !locked}
                 onClick={() => apply()}
-                className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3.5 text-[12px] font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-4 text-[12px] font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {locked ? (
                   <>
@@ -492,62 +586,35 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
           </section>
 
           {/* What it is made of */}
-          <aside className="min-h-0 overflow-y-auto border-l border-border/70">
-            {selected.saved && !locked ? (
-              <ThemeEditor
+          <aside className="flex min-h-0 min-w-0 flex-col border-l border-border/70">
+            <ThemeHeader
+              entry={selected}
+              canCustomize={canCustomize}
+              canSave={saved.canSave}
+              isCreating={isCreating}
+              onRename={(name) =>
+                void saved
+                  .update(selected.id, { name })
+                  .catch((error) => toast.error(errorText(error, "That name couldn't be saved.")))
+              }
+              onDelete={() => void remove(selected)}
+              onSaveDraft={() => void createFrom(selected.name, selected.look, selected.id)}
+              onResetDraft={() => {
+                history.current.delete(selected.id);
+                setHistoryTick((tick) => tick + 1);
+                setDraft(selected.id, null);
+              }}
+              onOpenPlans={openPlans}
+            />
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <ThemeInspector
                 key={selected.id}
-                entry={selected}
-                tier={saved.tier}
-                blocked={savingBlocked}
-                onChange={(look) => editLook(selected.id, look)}
-                onRename={(name) =>
-                  void saved
-                    .update(selected.id, { name })
-                    .catch((error) => toast.error(errorText(error, "That name couldn't be saved.")))
-                }
-                onDelete={() => void remove(selected)}
+                look={selected.look}
+                disabled={!editable}
+                canGradient={canGradient}
+                onChange={(look) => change(look)}
               />
-            ) : (
-              <ThemeSummary
-                entry={selected}
-                locked={locked}
-                footer={
-                  locked ? (
-                    <UpgradeNote tier={selected.tier} onOpen={openPlans} />
-                  ) : !canCustom ? (
-                    <UpgradeNote tier="pro" onOpen={openPlans} saving />
-                  ) : savingBlocked ? (
-                    <p className="text-[11px] leading-4 text-muted-foreground">{savingBlocked}</p>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      <button
-                        type="button"
-                        disabled={isCreating}
-                        onClick={() => void createFrom(`${selected.name} copy`, selected.look)}
-                        className="h-8 rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:border-primary/50 disabled:opacity-50"
-                      >
-                        Make a copy to change
-                      </button>
-                      {targetSlide?.text.trim() ? (
-                        <button
-                          type="button"
-                          disabled={isCreating}
-                          onClick={() =>
-                            void createFrom(
-                              `${target?.title ?? "Slide"} look`,
-                              lookFromSlide(targetSlide, canvas) as ThemeLook,
-                            )
-                          }
-                          className="h-8 rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:border-primary/50 disabled:opacity-50"
-                        >
-                          Save this slide&apos;s look
-                        </button>
-                      ) : null}
-                    </div>
-                  )
-                }
-              />
-            )}
+            </div>
           </aside>
         </div>
       </div>
@@ -555,40 +622,157 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
   );
 }
 
-/** A slide drawn by the renderer the output uses, over its background. */
-function SlidePicture({
-  slide,
-  look,
-  canvasSize,
-  className,
+/** A look with its gradients as their first colours, for a plan without them. */
+function withoutGradients(look: ThemeLook): ThemeLook {
+  const plain = (fill: ThemeLook["background"]): ThemeLook["background"] =>
+    fill && fill.kind !== "color"
+      ? { kind: "color", color: fill.kind === "gradient" ? fill.from : fill.base }
+      : fill;
+  return {
+    ...look,
+    text: { ...look.text, gradient: null, color: look.text.gradient?.from ?? look.text.color },
+    background: plain(look.background),
+    box: look.box ? { ...look.box, fill: plain(look.box.fill) ?? look.box.fill } : null,
+  };
+}
+
+function ToolButton({
+  label,
+  disabled,
+  onClick,
+  children,
 }: {
-  slide: LibrarySlide;
-  look: ThemeLook;
-  canvasSize: CanvasSizePreset;
-  className?: string;
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
 }) {
-  const { width, height } = getCanvasSizeDimensions(canvasSize);
   return (
-    <div
-      className={cn("relative w-full overflow-hidden border border-border/60", className)}
-      style={{
-        aspectRatio: `${width} / ${height}`,
-        background: slide.useBackgroundColor && slide.backgroundColor ? slide.backgroundColor : MEDIA_STAND_IN,
-      }}
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-foreground/5 hover:text-foreground disabled:opacity-30"
     >
-      <CanvasSlideLayer
-        text={slide.text}
-        elements={(slide.elements ?? []) as SlideElement[]}
-        canvasSize={canvasSize}
-        className="absolute inset-0"
-        libraryStyle={{
-          fontFamily: look.text.fontFamily,
-          fontSize: look.text.fontSize,
-          fontBold: false,
-          fontItalic: false,
-          fontUnderline: false,
-        }}
-      />
+      {children}
+    </button>
+  );
+}
+
+/** The chosen theme's name and what can be done with it. */
+function ThemeHeader({
+  entry,
+  canCustomize,
+  canSave,
+  isCreating,
+  onRename,
+  onDelete,
+  onSaveDraft,
+  onResetDraft,
+  onOpenPlans,
+}: {
+  entry: Entry;
+  canCustomize: boolean;
+  canSave: boolean;
+  isCreating: boolean;
+  onRename: (name: string) => void;
+  onDelete: () => void;
+  onSaveDraft: () => void;
+  onResetDraft: () => void;
+  onOpenPlans: () => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const description = BUILT_IN_THEMES.find((theme) => theme.id === entry.id)?.description;
+  return (
+    <div className="flex flex-col gap-2 border-b border-border/70 px-4 py-3">
+      {entry.saved ? (
+        <div className="flex items-center gap-2">
+          <input
+            key={entry.id}
+            type="text"
+            defaultValue={entry.name}
+            maxLength={60}
+            aria-label="Theme name"
+            disabled={!canSave}
+            onBlur={(event) => {
+              const name = event.target.value.trim();
+              if (name && name !== entry.name) onRename(name);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+            className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background/40 px-2 text-[12px] font-medium text-foreground outline-none focus:border-primary/60"
+          />
+          {confirmDelete ? (
+            <span className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={onDelete}
+                className="h-8 rounded-md bg-red-500/15 px-2 text-[11px] font-semibold text-red-400 hover:bg-red-500/25"
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="h-8 rounded-md px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                Keep
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              disabled={!canSave}
+              onClick={() => setConfirmDelete(true)}
+              className="rounded-md p-2 text-muted-foreground hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40"
+              aria-label="Delete theme"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      ) : (
+        <div>
+          <p className="text-[13px] font-semibold text-foreground">{entry.name}</p>
+          {description ? <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{description}</p> : null}
+        </div>
+      )}
+      {!canCustomize ? (
+        <div className="flex items-center gap-2 rounded-md bg-primary/10 px-2.5 py-2">
+          <p className="min-w-0 flex-1 text-[11px] leading-4 text-muted-foreground">
+            Changing and saving themes comes with Pro and Power.
+          </p>
+          <button
+            type="button"
+            onClick={onOpenPlans}
+            className="flex-none rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground"
+          >
+            See plans
+          </button>
+        </div>
+      ) : entry.edited ? (
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            disabled={isCreating || !canSave}
+            onClick={onSaveDraft}
+            className="h-8 flex-1 rounded-md bg-primary text-[12px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            Save as my theme
+          </button>
+          <button
+            type="button"
+            onClick={onResetDraft}
+            className="flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-[12px] text-muted-foreground hover:text-foreground"
+            title="Put this built-in theme back as it was"
+          >
+            <RotateCcw className="h-3 w-3" /> Reset
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -612,9 +796,7 @@ function ListSection({
     <div className="pb-2">
       <div className="flex h-7 items-center gap-2 px-4">
         <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</span>
-        {badge ? (
-          <span className="rounded bg-primary/15 px-1.5 py-px text-[9px] font-semibold text-primary">{badge}</span>
-        ) : null}
+        {badge ? <span className="rounded bg-primary/15 px-1.5 py-px text-[9px] font-semibold text-primary">{badge}</span> : null}
         <span className="ml-auto">{action}</span>
       </div>
       <ul>{children}</ul>
@@ -650,7 +832,10 @@ function ThemeRow({
         )}
       >
         <Swatch look={entry.look} />
-        <span className={cn("min-w-0 flex-1 truncate", isLocked && "text-muted-foreground")}>{entry.name}</span>
+        <span className={cn("min-w-0 flex-1 truncate", isLocked && "text-muted-foreground")}>
+          {entry.name}
+          {entry.edited ? <span className="text-muted-foreground"> (edited)</span> : null}
+        </span>
         {isOnSong ? <Check className="h-3.5 w-3.5 flex-none text-primary" aria-label="On this song" /> : null}
         {isLocked ? <Lock className="h-3 w-3 flex-none text-muted-foreground" aria-label="Locked" /> : null}
       </button>
@@ -658,41 +843,47 @@ function ThemeRow({
   );
 }
 
-/** A theme in miniature: its background, a band if it has one, and "Aa". */
+/** A theme in miniature: its background, its box, and "Aa" in its words' style. */
 function Swatch({ look }: { look: ThemeLook }) {
   const { text } = look;
-  const band = look.band && look.layout !== "full";
   return (
     <span
-      className="relative flex h-[22px] w-[38px] flex-none items-center justify-center overflow-hidden rounded-[4px] border border-white/10"
-      style={{ background: look.background ?? MEDIA_STAND_IN }}
+      className="relative flex h-[24px] w-[42px] flex-none overflow-hidden rounded-[4px] border border-white/10"
+      style={{ background: look.background ? fillSwatchCss(look.background) : MEDIA_STAND_IN }}
       aria-hidden
     >
-      {band ? (
+      {look.box ? (
         <span
-          className={cn("absolute inset-x-0 h-[9px]", look.layout === "upper-third" ? "top-0" : "bottom-0")}
-          style={{ background: look.band?.color }}
+          className="absolute"
+          style={{
+            left: `${look.box.frame.x * 100}%`,
+            top: `${look.box.frame.y * 100}%`,
+            width: `${look.box.frame.width * 100}%`,
+            height: `${look.box.frame.height * 100}%`,
+            background: fillSwatchCss(look.box.fill),
+            borderRadius: Math.min(4, look.box.radius / 10),
+          }}
         />
       ) : null}
       <span
-        className={cn(
-          "relative text-[10px] leading-none",
-          look.layout === "lower-third" && "mt-auto mb-[1px]",
-          look.layout === "upper-third" && "mb-auto mt-[1px]",
-        )}
+        className="absolute flex items-center justify-center text-[10px] leading-none"
         style={{
+          left: `${look.frame.x * 100}%`,
+          top: `${look.frame.y * 100}%`,
+          width: `${look.frame.width * 100}%`,
+          height: `${look.frame.height * 100}%`,
           fontFamily: text.fontFamily,
           fontWeight: Number(text.fontWeight),
           fontStyle: text.italic ? "italic" : "normal",
-          textTransform: text.uppercase ? "uppercase" : "none",
+          textTransform: text.case === "upper" ? "uppercase" : text.case === "lower" ? "lowercase" : "none",
           color: text.gradient ? "transparent" : text.color,
+          opacity: text.opacity,
           backgroundImage: text.gradient
             ? `linear-gradient(${text.gradient.angle}deg, ${text.gradient.from}, ${text.gradient.to})`
             : undefined,
           WebkitBackgroundClip: text.gradient ? "text" : undefined,
           backgroundClip: text.gradient ? "text" : undefined,
           WebkitTextStroke: text.outline ? `0.6px ${text.outline.color}` : undefined,
-          textShadow: text.shadow === "glow" ? "0 0 4px rgba(140,120,255,0.9)" : undefined,
         }}
       >
         Aa
@@ -701,488 +892,38 @@ function Swatch({ look }: { look: ThemeLook }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// What a theme is made of
-// ---------------------------------------------------------------------------
-
-const weightLabel = (weight: string) => WEIGHTS.find(([value]) => value === weight)?.[1] ?? weight;
-
-function describeFont(text: ThemeText) {
-  return [
-    `${text.fontFamily}, ${text.fontSize}`,
-    weightLabel(text.fontWeight).toLowerCase(),
-    text.italic ? "italic" : null,
-    text.uppercase ? "capitals" : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
-}
-
-function ThemeSummary({ entry, locked, footer }: { entry: Entry; locked: boolean; footer: ReactNode }) {
-  const { look } = entry;
-  const { text } = look;
-  const rows: Array<[string, string]> = [
-    ["Font", describeFont(text)],
-    ["Colour", text.gradient ? `Gradient, ${text.gradient.from} to ${text.gradient.to}` : text.color],
-    [
-      "Shadow and outline",
-      SHADOW_LABELS[text.shadow] + (text.outline ? `, ${Math.round(text.outline.width)} px outline` : ""),
-    ],
-    [
-      "Position",
-      `${LAYOUT_OPTIONS.find(([value]) => value === look.layout)?.[1] ?? "Full"}, ${text.align === "center" ? "centred" : `${text.align} aligned`}`,
-    ],
-    ["Background", look.background ? look.background : "Clear, so your media shows"],
-  ];
-  return (
-    <div className="flex flex-col gap-4 p-4">
-      <div>
-        <p className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
-          {entry.name}
-          {locked ? <Lock className="h-3 w-3 text-muted-foreground" /> : null}
-        </p>
-        {entry.description ? (
-          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{entry.description}</p>
-        ) : null}
-      </div>
-      <dl className="flex flex-col gap-3">
-        {rows.map(([label, value]) => (
-          <div key={label}>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</dt>
-            <dd className="mt-0.5 text-[12px] text-foreground/90">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <div className="border-t border-border/60 pt-4">{footer}</div>
-    </div>
-  );
-}
-
-function UpgradeNote({ tier, onOpen, saving }: { tier: ThemeTier; onOpen: () => void; saving?: boolean }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-[11px] leading-4 text-muted-foreground">
-        {saving
-          ? "Saving and changing your own themes comes with Pro and Power."
-          : tier === "advanced"
-            ? "Gradient themes come with Power."
-            : "This theme comes with Pro and Power."}
-      </p>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="h-8 rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:border-primary/50"
-      >
-        See plans
-      </button>
-    </div>
-  );
-}
-
-function ThemeEditor({
-  entry,
-  tier,
-  blocked,
-  onChange,
-  onRename,
-  onDelete,
+/** A slide drawn by the renderer the output uses, over its background. */
+function SlidePicture({
+  slide,
+  look,
+  canvasSize,
 }: {
-  entry: Entry;
-  tier: PresentThemeTier;
-  blocked: string | null;
-  onChange: (look: ThemeLook) => void;
-  onRename: (name: string) => void;
-  onDelete: () => void;
+  slide: LibrarySlide;
+  look: ThemeLook;
+  canvasSize: CanvasSizePreset;
 }) {
-  const { look } = entry;
-  const { text } = look;
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const disabled = Boolean(blocked);
-  const canGradient = tierIncludes(tier, "advanced");
-
-  const setText = (patch: Partial<ThemeText>) => onChange({ ...look, text: { ...text, ...patch } });
-  const band = splitColor(look.band?.color ?? "rgba(0,0,0,0.6)");
-
-  return (
-    <fieldset disabled={disabled} className="flex min-w-0 flex-col gap-5 p-4 disabled:opacity-60">
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          defaultValue={entry.name}
-          maxLength={60}
-          aria-label="Theme name"
-          onBlur={(event) => {
-            const name = event.target.value.trim();
-            if (name && name !== entry.name) onRename(name);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-          className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background/40 px-2 text-[12px] font-medium text-foreground outline-none focus:border-primary/60"
-        />
-        {confirmDelete ? (
-          <span className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={onDelete}
-              className="h-8 rounded-md bg-red-500/15 px-2 text-[11px] font-semibold text-red-400 hover:bg-red-500/25"
-            >
-              Delete
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmDelete(false)}
-              className="h-8 rounded-md px-2 text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              Keep
-            </button>
-          </span>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfirmDelete(true)}
-            className="rounded-md p-2 text-muted-foreground hover:bg-red-500/10 hover:text-red-400"
-            aria-label="Delete theme"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-      {blocked ? <p className="-mt-2 text-[11px] leading-4 text-muted-foreground">{blocked}</p> : null}
-
-      <Group title="Words">
-        <FontFamilySelect value={text.fontFamily} onChange={(fontFamily) => setText({ fontFamily })} />
-        <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
-          <NumberField
-            label="Size"
-            value={text.fontSize}
-            min={12}
-            max={240}
-            onChange={(fontSize) => setText({ fontSize })}
-          />
-          <select
-            value={text.fontWeight}
-            onChange={(event) => setText({ fontWeight: event.target.value })}
-            aria-label="Weight"
-            className="h-8 rounded-md border border-border bg-background/40 px-2 text-[12px] text-foreground outline-none focus:border-primary/60"
-          >
-            {WEIGHTS.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex gap-2">
-          <Toggle label="Italic" checked={text.italic} onChange={(italic) => setText({ italic })} />
-          <Toggle label="Capitals" checked={text.uppercase} onChange={(uppercase) => setText({ uppercase })} />
-        </div>
-      </Group>
-
-      <Group title="Colour">
-        <div className="flex items-center gap-2">
-          <ColorSwatch
-            label="Words"
-            value={text.gradient ? text.gradient.from : text.color}
-            onChange={(color) =>
-              text.gradient ? setText({ gradient: { ...text.gradient, from: color } }) : setText({ color })
-            }
-          />
-          {text.gradient ? (
-            <ColorSwatch
-              label="Gradient end"
-              value={text.gradient.to}
-              onChange={(to) => text.gradient && setText({ gradient: { ...text.gradient, to } })}
-            />
-          ) : null}
-          <Toggle
-            label="Gradient"
-            checked={Boolean(text.gradient)}
-            disabled={!canGradient && !text.gradient}
-            title={canGradient ? undefined : "Gradient themes come with Power"}
-            onChange={(on) =>
-              setText({ gradient: on ? { from: text.color, to: "#9ca3af", angle: 135 } : null, color: text.gradient?.from ?? text.color })
-            }
-          />
-        </div>
-        {!canGradient && !text.gradient ? (
-          <p className="text-[10px] text-muted-foreground">Gradients come with Power.</p>
-        ) : null}
-      </Group>
-
-      <Group title="Shadow and outline">
-        <Segmented
-          value={text.shadow}
-          options={SHADOW_OPTIONS}
-          onChange={(shadow) => setText({ shadow: shadow as ThemeShadow })}
-        />
-        <div className="flex items-center gap-2">
-          <Toggle
-            label="Outline"
-            checked={Boolean(text.outline)}
-            onChange={(on) => setText({ outline: on ? { color: "#000000", width: 4 } : null })}
-          />
-          {text.outline ? (
-            <>
-              <ColorSwatch
-                label="Outline colour"
-                value={text.outline.color}
-                onChange={(color) => text.outline && setText({ outline: { ...text.outline, color } })}
-              />
-              <input
-                type="range"
-                min={1}
-                max={24}
-                step={1}
-                value={Math.round(text.outline.width)}
-                aria-label="Outline width"
-                onChange={(event) =>
-                  text.outline && setText({ outline: { ...text.outline, width: Number(event.target.value) } })
-                }
-                className="min-w-0 flex-1 accent-primary"
-              />
-            </>
-          ) : null}
-        </div>
-      </Group>
-
-      <Group title="Position">
-        <Segmented
-          value={look.layout}
-          options={LAYOUT_OPTIONS}
-          onChange={(layout) =>
-            onChange({
-              ...look,
-              layout: layout as ThemeLayout,
-              band: layout === "full" ? null : look.band ?? { color: "rgba(0,0,0,0.6)" },
-            })
-          }
-        />
-        <div className="flex items-center gap-2">
-          <Segmented
-            value={text.align}
-            label="Alignment"
-            options={[
-              ["left", <AlignLeft key="l" className="h-3.5 w-3.5" aria-label="Left" />],
-              ["center", <AlignCenter key="c" className="h-3.5 w-3.5" aria-label="Centre" />],
-              ["right", <AlignRight key="r" className="h-3.5 w-3.5" aria-label="Right" />],
-            ]}
-            onChange={(align) => setText({ align: align as ThemeText["align"] })}
-          />
-          <Segmented
-            value={text.verticalAlign}
-            label="Vertical position"
-            options={[
-              ["top", "Top"],
-              ["middle", "Middle"],
-              ["bottom", "Bottom"],
-            ]}
-            onChange={(verticalAlign) => setText({ verticalAlign: verticalAlign as ThemeText["verticalAlign"] })}
-          />
-        </div>
-        {look.layout !== "full" ? (
-          <div className="flex items-center gap-2">
-            <Toggle
-              label="Band"
-              checked={Boolean(look.band)}
-              onChange={(on) => onChange({ ...look, band: on ? { color: "rgba(0,0,0,0.6)" } : null })}
-            />
-            {look.band ? (
-              <>
-                <ColorSwatch
-                  label="Band colour"
-                  value={band.hex}
-                  onChange={(hex) => onChange({ ...look, band: { color: joinColor(hex, band.alpha) } })}
-                />
-                <input
-                  type="range"
-                  min={0.1}
-                  max={1}
-                  step={0.05}
-                  value={band.alpha}
-                  aria-label="Band opacity"
-                  onChange={(event) =>
-                    onChange({ ...look, band: { color: joinColor(band.hex, Number(event.target.value)) } })
-                  }
-                  className="min-w-0 flex-1 accent-primary"
-                />
-              </>
-            ) : null}
-          </div>
-        ) : null}
-      </Group>
-
-      <Group title="Background">
-        <div className="flex items-center gap-2">
-          <Segmented
-            value={look.background ? "colour" : "clear"}
-            options={[
-              ["clear", "Clear"],
-              ["colour", "Colour"],
-            ]}
-            onChange={(value) => onChange({ ...look, background: value === "clear" ? null : "#000000" })}
-          />
-          {look.background ? (
-            <ColorSwatch
-              label="Background colour"
-              value={splitColor(look.background).hex}
-              onChange={(background) => onChange({ ...look, background })}
-            />
-          ) : null}
-        </div>
-        <p className="text-[10px] leading-4 text-muted-foreground">
-          {look.background
-            ? "The colour covers any video or image behind the slide."
-            : "Your video, image or camera shows behind the words."}
-        </p>
-      </Group>
-    </fieldset>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Controls
-// ---------------------------------------------------------------------------
-
-function Group({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-2">
-      <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-function Segmented({
-  value,
-  options,
-  onChange,
-  label,
-  disabled,
-}: {
-  value: string;
-  options: Array<[string, ReactNode] | [string, ReactNode, boolean]>;
-  onChange: (value: string) => void;
-  label?: string;
-  disabled?: boolean;
-}) {
+  const { width, height } = getCanvasSizeDimensions(canvasSize);
   return (
     <div
-      role="radiogroup"
-      aria-label={label}
-      className={cn("flex rounded-md border border-border bg-background/40 p-0.5", disabled && "opacity-40")}
-    >
-      {options.map(([option, content, optionDisabled]) => (
-        <button
-          key={option}
-          type="button"
-          role="radio"
-          aria-checked={value === option}
-          disabled={disabled || optionDisabled}
-          onClick={() => onChange(option)}
-          className={cn(
-            "flex h-7 flex-1 items-center justify-center whitespace-nowrap rounded-[5px] px-2 text-[11px] font-medium transition disabled:cursor-not-allowed",
-            value === option ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground",
-            optionDisabled && "opacity-40",
-          )}
-        >
-          {content}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Toggle({
-  label,
-  checked,
-  onChange,
-  disabled,
-  title,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  disabled?: boolean;
-  title?: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={checked}
-      disabled={disabled}
-      title={title}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        "h-8 rounded-md border px-2.5 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-40",
-        checked
-          ? "border-primary/60 bg-primary/15 text-foreground"
-          : "border-border bg-background/40 text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
-function ColorSwatch({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  const { hex } = splitColor(value);
-  return (
-    <label
-      className="relative h-8 w-10 flex-none cursor-pointer overflow-hidden rounded-md border border-border"
-      title={label}
-    >
-      <span className="absolute inset-1 rounded-[4px]" style={{ background: hex }} />
-      <input
-        type="color"
-        value={hex}
-        aria-label={label}
-        onChange={(event) => onChange(event.target.value)}
-        className="absolute inset-0 cursor-pointer opacity-0"
-      />
-    </label>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  min,
-  max,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  onChange: (value: number) => void;
-}) {
-  // Typed freely and taken on Enter or leaving the field, so "120" can be
-  // typed through "1" and "12" without either being refused.
-  const commit = (input: HTMLInputElement) => {
-    const next = Number(input.value);
-    if (!Number.isFinite(next) || input.value.trim() === "") {
-      input.value = String(value);
-      return;
-    }
-    const clamped = Math.round(Math.min(max, Math.max(min, next)));
-    input.value = String(clamped);
-    if (clamped !== value) onChange(clamped);
-  };
-  return (
-    <input
-      key={value}
-      type="number"
-      aria-label={label}
-      title={label}
-      defaultValue={value}
-      min={min}
-      max={max}
-      onBlur={(event) => commit(event.currentTarget)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") commit(event.currentTarget);
+      className="relative w-full overflow-hidden border border-border/60"
+      style={{
+        aspectRatio: `${width} / ${height}`,
+        background: slide.useBackgroundColor && slide.backgroundColor ? slide.backgroundColor : MEDIA_STAND_IN,
       }}
-      className="h-8 rounded-md border border-border bg-background/40 px-2 text-[12px] text-foreground outline-none focus:border-primary/60"
-    />
+    >
+      <CanvasSlideLayer
+        text={slide.text}
+        elements={(slide.elements ?? []) as SlideElement[]}
+        canvasSize={canvasSize}
+        className="absolute inset-0"
+        libraryStyle={{
+          fontFamily: look.text.fontFamily,
+          fontSize: look.text.fontSize,
+          fontBold: false,
+          fontItalic: false,
+          fontUnderline: false,
+        }}
+      />
+    </div>
   );
 }

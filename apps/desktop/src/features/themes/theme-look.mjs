@@ -3,130 +3,220 @@
 /**
  * What a theme is, and what applying one does to a song's slides.
  *
- * A theme is a look: the words' font, colour, case, alignment, outline and
- * shadow; the slide's background; and where the words sit (the whole slide,
- * or a band across the lower or upper third). A look with no background
- * leaves the slide clear, so the words sit over the media or camera behind
- * them. Applying it rewrites the text
- * elements' styles, the background, and for a single text box its frame, as
- * the renderers read them (`CanvasSlideLayer`, `compositor/text.rs`).
+ * A theme is a look: how the words are set (font, weight, size, case,
+ * colour or gradient, spacing, shadow, outline), where their box sits on the
+ * slide, an optional box behind them (a band along the bottom, a card in the
+ * middle), and the slide's background: clear, so the media or camera shows
+ * through, or a colour, a gradient or a mix of colours.
  *
- * Kept apart from the React tree so it can be tested, and so the desktop app
- * and anything else that applies themes do it the same way.
+ * Applying it rewrites the text elements' styles, puts the box and the
+ * background on each slide as shapes the renderers draw
+ * (`CanvasSlideLayer`, `compositor/text.rs`, `compositor/fill.rs`), and moves
+ * a slide's lone text box to the theme's place.
+ *
+ * Sizes are in pixels of a 1920 by 1080 slide and scale with the song's
+ * canvas; positions are fractions of the slide.
+ *
+ * Kept apart from React so it can be tested, and so every surface that
+ * applies themes does it the same way.
  */
 
 /**
- * @typedef {"full" | "lower-third" | "upper-third"} ThemeLayout
- * @typedef {"none" | "soft" | "strong" | "glow"} ThemeShadow
+ * @typedef {"none" | "upper" | "lower" | "title" | "lineStart"} ThemeCase
+ * @typedef {{ color: string, blur: number, x: number, y: number }} ThemeShadow
+ * @typedef {{ color: string, width: number }} ThemeOutline
+ * @typedef {{ x: number, y: number, width: number, height: number }} ThemeFrame
+ * @typedef {{ color: string, x: number, y: number, size: number }} ThemeSpot
+ * @typedef {{ kind: "color", color: string }
+ *   | { kind: "gradient", from: string, to: string, angle: number }
+ *   | { kind: "mix", base: string, spots: ThemeSpot[] }} ThemeFill
  * @typedef {{
  *   fontFamily: string,
  *   fontSize: number,
  *   fontWeight: string,
  *   italic: boolean,
- *   uppercase: boolean,
+ *   underline: boolean,
+ *   case: ThemeCase,
  *   color: string,
  *   gradient: { from: string, to: string, angle: number } | null,
+ *   opacity: number,
+ *   letterSpacing: number,
+ *   lineHeight: number,
  *   align: "left" | "center" | "right",
  *   verticalAlign: "top" | "middle" | "bottom",
- *   shadow: ThemeShadow,
- *   outline: { color: string, width: number } | null,
+ *   shadow: ThemeShadow | null,
+ *   outline: ThemeOutline | null,
  * }} ThemeText
+ * @typedef {{ frame: ThemeFrame, fill: ThemeFill, radius: number }} ThemeBox
  * @typedef {{
+ *   version: 2,
  *   text: ThemeText,
- *   background: string | null,
- *   layout: ThemeLayout,
- *   band: { color: string } | null,
+ *   frame: ThemeFrame,
+ *   box: ThemeBox | null,
+ *   background: ThemeFill | null,
  * }} ThemeLook
  * @typedef {"basic" | "pro" | "advanced"} ThemeTier
  * @typedef {{ id: string, name: string, tier: ThemeTier, look: ThemeLook, description?: string }} BuiltInTheme
+ * @typedef {"full" | "lower-third" | "upper-third" | "card"} ThemeLayout
  */
 
-/** The canvas the sizes and frames below are measured on. */
+/** The slide the sizes in a look are measured on. */
 export const THEME_CANVAS = { width: 1920, height: 1080 };
 
-/** Shadows as CSS, in canvas pixels, which both renderers read. */
-export const SHADOWS = /** @type {const} */ ({
-  none: "none",
-  soft: "0 3px 10px rgba(0,0,0,0.55)",
-  strong: "0 6px 18px rgba(0,0,0,0.85)",
-  glow: "0 0 28px rgba(140,120,255,0.85)",
+/** Quick shadows, as the Shadow control offers them. */
+export const SHADOW_PRESETS = /** @type {const} */ ({
+  soft: { color: "rgba(0,0,0,0.55)", blur: 10, x: 0, y: 3 },
+  strong: { color: "rgba(0,0,0,0.85)", blur: 18, x: 0, y: 6 },
+  glow: { color: "rgba(140,120,255,0.85)", blur: 28, x: 0, y: 0 },
 });
 
+/** @param {number} value */
+const round = (value) => Math.round(value * 100) / 100;
+
+/** @param {number} value */
+const round4 = (value) => Math.round(value * 10_000) / 10_000;
+
+/** @param {ThemeShadow} shadow @param {number} [scale] */
+export const shadowCss = (shadow, scale = 1) =>
+  `${round(shadow.x * scale)}px ${round(shadow.y * scale)}px ${round(shadow.blur * scale)}px ${shadow.color}`;
+
 /**
- * @param {string | undefined} value
- * @returns {ThemeShadow}
+ * A CSS shadow (`0 3px 10px rgba(0,0,0,.5)`) as a theme's, if it is one.
+ *
+ * @param {string | null | undefined} value
+ * @param {number} [scale]
+ * @returns {ThemeShadow | null}
  */
-export const shadowName = (value) => {
-  const trimmed = (value ?? "").trim();
-  for (const [name, css] of Object.entries(SHADOWS)) if (css === trimmed) return /** @type {ThemeShadow} */ (name);
-  return !trimmed || trimmed === "none" ? "none" : "soft";
+export function parseShadowCss(value, scale = 1) {
+  const text = String(value ?? "").trim();
+  if (!text || text === "none") return null;
+  const match = text.match(/^(-?[\d.]+)(?:px)?\s+(-?[\d.]+)(?:px)?\s+([\d.]+)(?:px)?\s+(.+)$/i);
+  if (!match) return null;
+  const at = (/** @type {string} */ part) => round(Number(part) / (scale || 1));
+  return { x: at(match[1]), y: at(match[2]), blur: at(match[3]), color: match[4].trim() };
+}
+
+/** Element styles' `capitalization`, for each case. */
+const CAPITALIZATION = /** @type {const} */ ({
+  none: "none",
+  upper: "uppercase",
+  lower: "lowercase",
+  title: "titleCase",
+  lineStart: "lineStart",
+});
+
+/** @param {unknown} value @returns {ThemeCase} */
+const caseOfCapitalization = (value) => {
+  if (value === "uppercase" || value === "allCaps") return "upper";
+  if (value === "lowercase") return "lower";
+  if (value === "titleCase" || value === "capitalize") return "title";
+  if (value === "lineStart") return "lineStart";
+  return "none";
 };
 
 /**
- * The element style a look gives text. Every field a theme owns is set,
- * so applying a plain theme over a styled slide takes the old outline,
- * gradient and shadow away rather than keeping them.
+ * The element style a look gives text, sized for `scale` (the song's canvas
+ * against 1920 by 1080). Every field a theme owns is set, so a plain theme
+ * over a styled slide takes the old outline, gradient and shadow away.
  *
  * @param {ThemeText} text
+ * @param {number} [scale]
  */
-export function styleForText(text) {
+export function styleForText(text, scale = 1) {
   return {
     fontFamily: text.fontFamily,
-    fontSize: text.fontSize,
+    fontSize: Math.max(1, Math.round(text.fontSize * scale)),
     fontWeight: text.fontWeight,
     fontStyle: text.italic ? "italic" : "normal",
-    capitalization: text.uppercase ? "uppercase" : "none",
+    fontUnderline: text.underline,
+    textDecoration: text.underline ? "underline" : "none",
+    capitalization: CAPITALIZATION[text.case] ?? "none",
     color: text.color,
     textFillMode: text.gradient ? "gradient" : "solid",
     gradientFromColor: text.gradient?.from,
     gradientToColor: text.gradient?.to,
     gradientAngle: text.gradient?.angle,
+    opacity: text.opacity,
+    letterSpacing: round(text.letterSpacing * scale),
+    lineHeight: text.lineHeight,
     textAlign: text.align,
     verticalAlign: text.verticalAlign,
-    shadow: SHADOWS[text.shadow] ?? "none",
+    shadow: text.shadow ? shadowCss(text.shadow, scale) : "none",
     strokeColor: text.outline?.color,
-    strokeWidth: text.outline ? text.outline.width : 0,
+    strokeWidth: text.outline ? round(text.outline.width * scale) : 0,
   };
 }
 
 /**
- * Where the words go, on a canvas of `width` by `height`.
+ * Where the words and the box behind them go, for each of the layouts the
+ * designer offers as a starting point.
  *
  * @param {ThemeLayout} layout
- * @param {number} width
- * @param {number} height
+ * @returns {{ frame: ThemeFrame, box: ThemeFrame }}
  */
-export function textFrame(layout, width, height) {
-  const round = (/** @type {number} */ value) => Math.round(value * 100) / 100;
+export function layoutFrames(layout) {
   if (layout === "lower-third") {
-    return { x: round(width * 0.06), y: round(height * 0.67), width: round(width * 0.88), height: round(height * 0.27) };
+    return { frame: { x: 0.06, y: 0.67, width: 0.88, height: 0.27 }, box: { x: 0, y: 0.63, width: 1, height: 0.37 } };
   }
   if (layout === "upper-third") {
-    return { x: round(width * 0.06), y: round(height * 0.06), width: round(width * 0.88), height: round(height * 0.27) };
+    return { frame: { x: 0.06, y: 0.06, width: 0.88, height: 0.27 }, box: { x: 0, y: 0, width: 1, height: 0.37 } };
   }
-  return { x: round(width * 0.06), y: round(height * 0.08), width: round(width * 0.88), height: round(height * 0.84) };
+  if (layout === "card") {
+    return { frame: { x: 0.16, y: 0.26, width: 0.68, height: 0.48 }, box: { x: 0.12, y: 0.2, width: 0.76, height: 0.6 } };
+  }
+  return { frame: { x: 0.06, y: 0.08, width: 0.88, height: 0.84 }, box: { x: 0.03, y: 0.05, width: 0.94, height: 0.9 } };
 }
 
 /**
- * The band behind a third's words.
+ * Which layout a frame is, if it is one of them exactly.
  *
- * @param {ThemeLayout} layout
- * @param {number} width
- * @param {number} height
+ * @param {ThemeFrame} frame
+ * @returns {ThemeLayout | null}
  */
-export function bandFrame(layout, width, height) {
-  const band = Math.round(height * 0.37 * 100) / 100;
-  return layout === "upper-third"
-    ? { x: 0, y: 0, width, height: band }
-    : { x: 0, y: Math.round((height - band) * 100) / 100, width, height: band };
+export function layoutOf(frame) {
+  for (const layout of /** @type {ThemeLayout[]} */ (["full", "lower-third", "upper-third", "card"])) {
+    const preset = layoutFrames(layout).frame;
+    if (
+      Math.abs(preset.x - frame.x) < 0.005 &&
+      Math.abs(preset.y - frame.y) < 0.005 &&
+      Math.abs(preset.width - frame.width) < 0.005 &&
+      Math.abs(preset.height - frame.height) < 0.005
+    ) {
+      return layout;
+    }
+  }
+  return null;
 }
 
-/** The id a theme's band is given on a slide, so the next theme can find it. */
+/** @param {ThemeFrame} frame @param {{ width: number, height: number }} canvas */
+const pixels = (frame, canvas) => ({
+  x: round(frame.x * canvas.width),
+  y: round(frame.y * canvas.height),
+  width: round(frame.width * canvas.width),
+  height: round(frame.height * canvas.height),
+});
+
+/** @param {{ x: number, y: number, width: number, height: number }} element @param {{ width: number, height: number }} canvas */
+const fractions = (element, canvas) => ({
+  x: round4(element.x / canvas.width),
+  y: round4(element.y / canvas.height),
+  width: round4(element.width / canvas.width),
+  height: round4(element.height / canvas.height),
+});
+
+/** The id a theme's box is given on a slide, so the next theme can find it. */
 export const bandIdFor = (/** @type {string | undefined} */ slideId) => `${slideId ?? "slide"}__theme-band`;
-const isThemeBand = (/** @type {any} */ element) => typeof element?.id === "string" && element.id.endsWith("__theme-band");
+/** The id a theme's background is given on a slide. */
+export const backgroundIdFor = (/** @type {string | undefined} */ slideId) => `${slideId ?? "slide"}__theme-bg`;
+const isThemeBand = (/** @type {any} */ element) =>
+  typeof element?.id === "string" && element.id.endsWith("__theme-band");
+const isThemeBackground = (/** @type {any} */ element) =>
+  typeof element?.id === "string" && element.id.endsWith("__theme-bg");
+/** Whether an element is one a theme put on the slide (its box or background). */
+export const isThemeShape = (/** @type {any} */ element) => isThemeBand(element) || isThemeBackground(element);
 
 /** A run's own font, size, colour and weight win over its element's, so a theme clears them. */
-const THEMED_RUN_FIELDS = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "color"];
+const THEMED_RUN_FIELDS = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "color", "letterSpacing"];
 
 /**
  * Rich text keeps its bold, italics and line breaks, but loses the fonts,
@@ -155,41 +245,47 @@ function restyleText(element, style) {
     next.textBody = {
       ...next.textBody,
       verticalAlign: own.verticalAlign,
-      paragraphs: next.textBody.paragraphs.map((/** @type {any} */ paragraph) => ({
-        ...paragraph,
-        alignment: own.textAlign,
-        runs: (paragraph.runs ?? []).map((/** @type {any} */ run) => {
-          const clean = { ...run };
-          for (const field of THEMED_RUN_FIELDS) delete clean[field];
-          return clean;
-        }),
-      })),
+      paragraphs: next.textBody.paragraphs.map((/** @type {any} */ paragraph) => {
+        const rest = { ...paragraph };
+        // A paragraph's own line height wins over the theme's.
+        delete rest.lineHeight;
+        return {
+          ...rest,
+          alignment: own.textAlign,
+          runs: (paragraph.runs ?? []).map((/** @type {any} */ run) => {
+            const clean = { ...run };
+            for (const field of THEMED_RUN_FIELDS) delete clean[field];
+            return clean;
+          }),
+        };
+      }),
     };
   }
   return next;
 }
 
+/** The colour a renderer that paints only colours shows for a fill. */
+export const plainColorOf = (/** @type {ThemeFill} */ fill) =>
+  fill.kind === "color" ? fill.color : fill.kind === "gradient" ? fill.from : fill.base;
+
 /**
  * One slide with `look` applied.
  *
- * A slide with a single text box gets the layout's frame for it, and a
- * third's band behind it: a shape under everything, replaced by the next
- * theme's or removed. A designed slide with several boxes keeps them where
- * they are, with no band, and only their style changes.
+ * A slide with a single text box gets the look's frame for it, and the box
+ * behind it; a designed slide with several boxes keeps them where they are,
+ * with no box behind, and only their style changes. The background goes on
+ * every slide, blank ones too.
  *
  * @param {any} slide
  * @param {ThemeLook} look
- * @param {{ width: number, height: number }} canvas
+ * @param {{ width: number, height: number }} [canvas]
  */
 export function applyLookToSlide(slide, look, canvas = THEME_CANVAS) {
   const scale = Math.min(canvas.width / THEME_CANVAS.width, canvas.height / THEME_CANVAS.height);
-  const text = {
-    ...look.text,
-    fontSize: Math.round(look.text.fontSize * scale),
-    outline: look.text.outline ? { ...look.text.outline, width: look.text.outline.width * scale } : null,
-  };
-  const style = styleForText(text);
-  const kept = Array.isArray(slide.elements) ? slide.elements.filter((/** @type {any} */ element) => !isThemeBand(element)) : [];
+  const style = styleForText(look.text, scale);
+  const kept = Array.isArray(slide.elements)
+    ? slide.elements.filter((/** @type {any} */ element) => !isThemeShape(element))
+    : [];
   // An old slide with words but no boxes gets the box the app would give it.
   const elements =
     kept.length === 0 && !Array.isArray(slide.elements) && typeof slide.text === "string" && slide.text.trim()
@@ -201,47 +297,66 @@ export function applyLookToSlide(slide, look, canvas = THEME_CANVAS) {
   const restyled = elements.map((/** @type {any} */ element) => {
     if (element?.type !== "text") return element;
     const next = restyleText(element, style);
-    return reframe && element === textBoxes[0] ? { ...next, ...textFrame(look.layout, canvas.width, canvas.height) } : next;
+    return reframe && element === textBoxes[0] ? { ...next, ...pixels(look.frame, canvas) } : next;
   });
 
-  const withBand =
-    look.band && look.layout !== "full" && reframe
-      ? [
-          {
-            id: bandIdFor(slide.id),
-            type: "shape",
-            content: "",
-            ...bandFrame(look.layout, canvas.width, canvas.height),
-            style: { backgroundColor: look.band.color, borderRadius: 0 },
-          },
-          ...restyled,
-        ]
-      : restyled;
+  const behind = [];
+  if (look.background && look.background.kind !== "color") {
+    behind.push({
+      id: backgroundIdFor(slide.id),
+      type: "shape",
+      content: "",
+      x: 0,
+      y: 0,
+      width: canvas.width,
+      height: canvas.height,
+      isLocked: true,
+      style: { fill: look.background, backgroundColor: plainColorOf(look.background), borderRadius: 0 },
+    });
+  }
+  if (look.box && reframe) {
+    behind.push({
+      id: bandIdFor(slide.id),
+      type: "shape",
+      content: "",
+      ...pixels(look.box.frame, canvas),
+      style: {
+        fill: look.box.fill,
+        backgroundColor: plainColorOf(look.box.fill),
+        borderRadius: round(look.box.radius * scale),
+      },
+    });
+  }
+  const next = [...behind, ...restyled];
 
   return {
     ...slide,
-    ...(Array.isArray(slide.elements) || withBand.length > 0 ? { elements: withBand } : {}),
-    ...(look.background ? { backgroundColor: look.background, useBackgroundColor: true } : { useBackgroundColor: false }),
+    ...(Array.isArray(slide.elements) || next.length > 0 ? { elements: next } : {}),
+    ...(look.background
+      ? { backgroundColor: plainColorOf(look.background), useBackgroundColor: true }
+      : { useBackgroundColor: false }),
   };
 }
 
 /**
- * A song's slides with `look` applied: all of them, or only `onlySlideId`.
+ * A song's slides with `look` applied: all of them, or only the one at
+ * `onlySlideIndex`.
  *
  * @param {any[]} slides
  * @param {ThemeLook} look
  * @param {{ width: number, height: number }} [canvas]
- * @param {{ onlySlideId?: string | null }} [options]
+ * @param {{ onlySlideIndex?: number | null }} [options]
  */
 export function applyLookToSlides(slides, look, canvas = THEME_CANVAS, options = {}) {
-  return slides.map((slide) =>
-    options.onlySlideId && slide.id !== options.onlySlideId ? slide : applyLookToSlide(slide, look, canvas),
+  const only = options.onlySlideIndex;
+  return slides.map((slide, index) =>
+    typeof only === "number" && only >= 0 && index !== only ? slide : applyLookToSlide(slide, look, canvas),
   );
 }
 
 /**
- * A look read back from a slide, for "Save as theme": its main text box's
- * style, its background, and which third (if any) its box sits in.
+ * A look read back from a slide, for "Save this slide's look": its main text
+ * box's style and place, the box behind it and the background.
  *
  * @param {any} slide
  * @param {{ width: number, height: number }} [canvas]
@@ -253,65 +368,173 @@ export function lookFromSlide(slide, canvas = THEME_CANVAS) {
   const style = box?.style ?? {};
   const scale = Math.min(canvas.width / THEME_CANVAS.width, canvas.height / THEME_CANVAS.height) || 1;
   const band = elements.find(isThemeBand);
-  /** @type {ThemeLayout} */
-  let layout = "full";
-  if (box && typeof box.height === "number" && box.height < canvas.height * 0.5) {
-    const centre = (box.y ?? 0) + box.height / 2;
-    layout = centre > canvas.height * 0.6 ? "lower-third" : centre < canvas.height * 0.4 ? "upper-third" : "full";
-  }
-  const align = style.textAlign === "left" || style.textAlign === "right" ? style.textAlign : "center";
+  const background = elements.find(isThemeBackground);
   return normalizeLook({
+    version: 2,
     text: {
       fontFamily: style.fontFamily || "Arial",
       fontSize: Math.round((style.fontSize || 72) / scale),
       fontWeight: String(style.fontWeight || (style.fontBold ? "700" : "600")),
       italic: style.fontStyle === "italic",
-      uppercase: style.capitalization === "uppercase" || style.capitalization === "allCaps",
+      underline: style.fontUnderline === true || String(style.textDecoration ?? "").includes("underline"),
+      case: caseOfCapitalization(style.capitalization),
       color: style.color || "#ffffff",
       gradient:
         style.textFillMode === "gradient" && style.gradientFromColor && style.gradientToColor
           ? { from: style.gradientFromColor, to: style.gradientToColor, angle: style.gradientAngle ?? 135 }
           : null,
-      align,
-      verticalAlign: style.verticalAlign === "top" || style.verticalAlign === "bottom" ? style.verticalAlign : "middle",
-      shadow: shadowName(style.shadow),
+      opacity: typeof style.opacity === "number" ? style.opacity : 1,
+      letterSpacing: typeof style.letterSpacing === "number" ? style.letterSpacing / scale : 0,
+      lineHeight: typeof style.lineHeight === "number" ? style.lineHeight : 1.2,
+      align: style.textAlign,
+      verticalAlign: style.verticalAlign,
+      shadow: parseShadowCss(style.shadow, scale),
       outline: style.strokeWidth > 0 && style.strokeColor ? { color: style.strokeColor, width: style.strokeWidth / scale } : null,
     },
-    background: slide?.useBackgroundColor && slide?.backgroundColor ? slide.backgroundColor : null,
-    layout,
-    band: band?.style?.backgroundColor ? { color: band.style.backgroundColor } : null,
+    frame: box ? fractions(box, canvas) : layoutFrames("full").frame,
+    box:
+      band && (band.style?.fill || band.style?.backgroundColor)
+        ? {
+            frame: fractions(band, canvas),
+            fill: band.style.fill ?? { kind: "color", color: band.style.backgroundColor },
+            radius: (band.style.borderRadius ?? 0) / scale,
+          }
+        : null,
+    background:
+      background?.style?.fill ??
+      (slide?.useBackgroundColor && slide?.backgroundColor ? { kind: "color", color: slide.backgroundColor } : null),
   });
 }
 
-const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
-const COLOR = (/** @type {unknown} */ value, /** @type {string} */ fallback) =>
-  typeof value === "string" && (HEX.test(value.trim()) || /^rgba?\(/i.test(value.trim())) ? value.trim() : fallback;
-const clamp = (
-  /** @type {unknown} */ value,
-  /** @type {number} */ low,
-  /** @type {number} */ high,
-  /** @type {number} */ fallback,
-) =>
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const RGB = /^rgba?\(\s*[\d.]+%?\s*[, ]\s*[\d.]+%?\s*[, ]\s*[\d.]+%?\s*(?:[,/]\s*[\d.]+%?\s*)?\)$/i;
+/** @param {unknown} value @param {string} fallback */
+const COLOR = (value, fallback) =>
+  typeof value === "string" && (HEX.test(value.trim()) || RGB.test(value.trim())) ? value.trim() : fallback;
+/** @param {unknown} value @param {number} low @param {number} high @param {number} fallback */
+const clamp = (value, low, high, fallback) =>
   typeof value === "number" && Number.isFinite(value) ? Math.min(high, Math.max(low, value)) : fallback;
+
+/** @param {any} value @param {ThemeFrame} fallback @returns {ThemeFrame} */
+function normalizeFrame(value, fallback) {
+  if (!value || typeof value !== "object") return fallback;
+  const width = clamp(value.width, 0.05, 1, fallback.width);
+  const height = clamp(value.height, 0.05, 1, fallback.height);
+  return {
+    x: round4(clamp(value.x, -0.2, 0.95, fallback.x)),
+    y: round4(clamp(value.y, -0.2, 0.95, fallback.y)),
+    width: round4(width),
+    height: round4(height),
+  };
+}
+
+/**
+ * A fill made whole: its colours checked, numbers kept in range. `null`
+ * when there is nothing usable.
+ *
+ * @param {any} value
+ * @returns {ThemeFill | null}
+ */
+export function normalizeFill(value) {
+  if (typeof value === "string") {
+    const color = COLOR(value, "");
+    return color ? { kind: "color", color } : null;
+  }
+  if (!value || typeof value !== "object") return null;
+  if (value.kind === "gradient") {
+    return {
+      kind: "gradient",
+      from: COLOR(value.from, "#1e1b4b"),
+      to: COLOR(value.to, "#0f172a"),
+      angle: Math.round(clamp(value.angle, 0, 360, 90)),
+    };
+  }
+  if (value.kind === "mix") {
+    const spots = Array.isArray(value.spots) ? value.spots.slice(0, 4) : [];
+    return {
+      kind: "mix",
+      base: COLOR(value.base, "#15161f"),
+      spots: spots.map((/** @type {any} */ spot) => ({
+        color: COLOR(spot?.color, "#3b3f6b"),
+        x: round4(clamp(spot?.x, -0.5, 1.5, 0.5)),
+        y: round4(clamp(spot?.y, -0.5, 1.5, 0.5)),
+        size: round4(clamp(spot?.size, 0.05, 2, 0.5)),
+      })),
+    };
+  }
+  if (value.kind === "color" || typeof value.color === "string") {
+    const color = COLOR(value.color, "");
+    return color ? { kind: "color", color } : null;
+  }
+  return null;
+}
+
+/** The shadows the first version of looks named. */
+const OLD_SHADOWS = /** @type {Record<string, ThemeShadow | null>} */ ({ none: null, ...SHADOW_PRESETS });
 
 /**
  * Any stored look made whole and safe: missing fields filled, numbers kept
  * in range, colours checked. Themes come from Convex and from other versions
- * of the app, so nothing about their shape is assumed.
+ * of the app, so nothing about their shape is assumed. The first version
+ * (fixed layouts, named shadows, a `band` colour) is read too.
  *
  * @param {any} value
  * @returns {ThemeLook}
  */
 export function normalizeLook(value) {
   const text = value?.text ?? {};
-  const layout = value?.layout === "lower-third" || value?.layout === "upper-third" ? value.layout : "full";
+  const oldLayout =
+    value?.layout === "lower-third" || value?.layout === "upper-third" ? value.layout : value?.layout ? "full" : null;
+  const presets = layoutFrames(oldLayout ?? "full");
+
+  /** @type {ThemeShadow | null} */
+  let shadow = null;
+  if (typeof text.shadow === "string") shadow = OLD_SHADOWS[text.shadow] ?? OLD_SHADOWS.soft;
+  else if (text.shadow && typeof text.shadow === "object") {
+    shadow = {
+      color: COLOR(text.shadow.color, "rgba(0,0,0,0.55)"),
+      blur: round(clamp(text.shadow.blur, 0, 80, 10)),
+      x: round(clamp(text.shadow.x, -60, 60, 0)),
+      y: round(clamp(text.shadow.y, -60, 60, 3)),
+    };
+  } else if (text.shadow === undefined && value?.version !== 2) shadow = { ...SHADOW_PRESETS.soft };
+  if (shadow) shadow = { ...shadow };
+
+  const textCase = ["none", "upper", "lower", "title", "lineStart"].includes(text.case)
+    ? text.case
+    : text.uppercase === true
+      ? "upper"
+      : "none";
+
+  /** @type {ThemeBox | null} */
+  let box = null;
+  if (value?.box && typeof value.box === "object") {
+    const fill = normalizeFill(value.box.fill);
+    if (fill) {
+      box = {
+        frame: normalizeFrame(value.box.frame, presets.box),
+        fill,
+        radius: round(clamp(value.box.radius, 0, 400, 0)),
+      };
+    }
+  } else if (oldLayout && oldLayout !== "full" && value?.band && typeof value.band === "object") {
+    box = {
+      frame: presets.box,
+      fill: normalizeFill(value.band.color) ?? { kind: "color", color: "rgba(0,0,0,0.55)" },
+      radius: 0,
+    };
+  }
+
+  const weight = String(text.fontWeight);
   return {
+    version: 2,
     text: {
       fontFamily: typeof text.fontFamily === "string" && text.fontFamily.trim() ? text.fontFamily.trim().slice(0, 80) : "Arial",
-      fontSize: Math.round(clamp(text.fontSize, 12, 240, 72)),
-      fontWeight: ["300", "400", "500", "600", "700", "800", "900"].includes(String(text.fontWeight)) ? String(text.fontWeight) : "700",
+      fontSize: Math.round(clamp(text.fontSize, 12, 300, 72)),
+      fontWeight: ["100", "200", "300", "400", "500", "600", "700", "800", "900"].includes(weight) ? weight : "700",
       italic: text.italic === true,
-      uppercase: text.uppercase === true,
+      underline: text.underline === true,
+      case: textCase,
       color: COLOR(text.color, "#ffffff"),
       gradient:
         text.gradient && typeof text.gradient === "object"
@@ -321,18 +544,33 @@ export function normalizeLook(value) {
               angle: Math.round(clamp(text.gradient.angle, 0, 360, 135)),
             }
           : null,
+      opacity: round(clamp(text.opacity, 0.1, 1, 1)),
+      letterSpacing: round(clamp(text.letterSpacing, -10, 60, 0)),
+      lineHeight: round(clamp(text.lineHeight, 0.7, 3, 1.2)),
       align: text.align === "left" || text.align === "right" ? text.align : "center",
       verticalAlign: text.verticalAlign === "top" || text.verticalAlign === "bottom" ? text.verticalAlign : "middle",
-      shadow: ["none", "soft", "strong", "glow"].includes(text.shadow) ? text.shadow : "soft",
+      shadow,
       outline:
         text.outline && typeof text.outline === "object"
-          ? { color: COLOR(text.outline.color, "#000000"), width: clamp(text.outline.width, 1, 24, 4) }
+          ? { color: COLOR(text.outline.color, "#000000"), width: round(clamp(text.outline.width, 0.5, 30, 4)) }
           : null,
     },
-    background: value?.background == null || value.background === "" ? null : COLOR(value.background, "#000000"),
-    layout,
-    band: layout !== "full" && value?.band && typeof value.band === "object" ? { color: COLOR(value.band.color, "rgba(0,0,0,0.55)") } : null,
+    frame: normalizeFrame(value?.frame, presets.frame),
+    box,
+    background: value?.background == null || value.background === "" ? null : normalizeFill(value.background),
   };
+}
+
+/**
+ * What using a look needs. Gradients, in the words or behind them, are
+ * Power's; the rest of a saved theme is Pro's.
+ *
+ * @param {ThemeLook} look
+ * @returns {ThemeTier}
+ */
+export function tierOfLook(look) {
+  const fancy = (/** @type {ThemeFill | null | undefined} */ fill) => Boolean(fill && fill.kind !== "color");
+  return look.text.gradient || fancy(look.background) || fancy(look.box?.fill) ? "advanced" : "pro";
 }
 
 /**
@@ -345,23 +583,22 @@ export function lookFromStoredTheme(row) {
   if (row?.look) return normalizeLook(row.look);
   const style = row?.style ?? {};
   return normalizeLook({
+    version: 2,
     text: {
       fontFamily: style.fontFamily,
       fontSize: style.fontSize,
       fontWeight: style.fontWeight,
       italic: style.fontStyle === "italic",
-      uppercase: style.capitalization === "uppercase" || style.capitalization === "allCaps",
+      case: caseOfCapitalization(style.capitalization),
       color: style.color,
       gradient:
         style.textFillMode === "gradient" ? { from: style.gradientFromColor, to: style.gradientToColor, angle: style.gradientAngle } : null,
       align: style.textAlign,
       verticalAlign: style.verticalAlign,
-      shadow: shadowName(style.shadow),
+      shadow: parseShadowCss(style.shadow),
       outline: style.strokeWidth > 0 ? { color: style.strokeColor, width: style.strokeWidth } : null,
     },
     background: row?.backgroundColor ?? null,
-    layout: "full",
-    band: null,
   });
 }
 
@@ -382,20 +619,43 @@ const t = (text) => ({
   fontSize: 72,
   fontWeight: "700",
   italic: false,
-  uppercase: false,
+  underline: false,
+  case: "none",
   color: "#ffffff",
   gradient: null,
+  opacity: 1,
+  letterSpacing: 0,
+  lineHeight: 1.2,
   align: "center",
   verticalAlign: "middle",
-  shadow: "soft",
+  shadow: { ...SHADOW_PRESETS.soft },
   outline: null,
   ...text,
 });
 
 /**
- * The themes that come with Present. Basic ones are for everyone, signed in
- * or not; Pro ones need Pro or Power; advanced ones need Power. They use
- * fonts every Mac and Windows computer has.
+ * @param {ThemeText} text
+ * @param {{ layout?: ThemeLayout, box?: { fill: ThemeFill, radius?: number } | null, background?: ThemeFill | null }} [rest]
+ * @returns {ThemeLook}
+ */
+const look = (text, rest = {}) => {
+  const frames = layoutFrames(rest.layout ?? "full");
+  return {
+    version: 2,
+    text,
+    frame: frames.frame,
+    box: rest.box ? { frame: frames.box, fill: rest.box.fill, radius: rest.box.radius ?? 0 } : null,
+    background: rest.background ?? null,
+  };
+};
+
+/** @param {string} color @returns {ThemeFill} */
+const solid = (color) => ({ kind: "color", color });
+
+/**
+ * The themes that come with Present. Basic ones are for everyone; Pro ones
+ * need Pro or Power; advanced ones need Power. They use fonts every Mac and
+ * Windows computer has.
  *
  * @type {BuiltInTheme[]}
  */
@@ -405,158 +665,177 @@ export const BUILT_IN_THEMES = [
     name: "Classic",
     tier: "basic",
     description: "White words with a soft shadow, over anything.",
-    look: { text: t({}), background: null, layout: "full", band: null },
+    look: look(t({})),
   },
   {
     id: "builtin:paper",
     name: "Paper",
     tier: "basic",
     description: "Dark words on warm white, for bright rooms.",
-    look: { text: t({ color: "#17181c", fontWeight: "600", shadow: "none" }), background: "#f4f1ea", layout: "full", band: null },
+    look: look(t({ color: "#17181c", fontWeight: "600", shadow: null }), { background: solid("#f4f1ea") }),
   },
   {
     id: "builtin:midnight",
     name: "Midnight",
     tier: "basic",
     description: "Soft white on deep blue.",
-    look: { text: t({ color: "#e9ecff" }), background: "#0b1021", layout: "full", band: null },
+    look: look(t({ color: "#e9ecff" }), { background: solid("#0b1021") }),
   },
   {
     id: "builtin:hymnal",
     name: "Hymnal",
     tier: "basic",
     description: "A serif in gold, for hymns and readings.",
-    look: { text: t({ fontFamily: "Georgia", fontWeight: "400", color: "#f3d27a", fontSize: 68 }), background: "#16110a", layout: "full", band: null },
+    look: look(t({ fontFamily: "Georgia", fontWeight: "400", color: "#f3d27a", fontSize: 68 }), { background: solid("#16110a") }),
   },
   {
     id: "builtin:bold",
     name: "Bold",
     tier: "basic",
     description: "Heavy capitals, for choruses and big rooms.",
-    look: { text: t({ fontFamily: "Arial Black", fontWeight: "900", uppercase: true, fontSize: 84 }), background: null, layout: "full", band: null },
+    look: look(t({ fontFamily: "Arial Black", fontWeight: "900", case: "upper", fontSize: 84 })),
   },
   {
     id: "builtin:lower-third",
     name: "Lower Third",
     tier: "pro",
     description: "Words in a band along the bottom, over video or a camera.",
-    look: {
-      text: t({ fontSize: 58, shadow: "none" }),
-      background: null,
-      layout: "lower-third",
-      band: { color: "rgba(0,0,0,0.62)" },
-    },
+    look: look(t({ fontSize: 58, shadow: null }), { layout: "lower-third", box: { fill: solid("rgba(0,0,0,0.62)") } }),
   },
   {
     id: "builtin:upper-third",
     name: "Upper Third",
     tier: "pro",
     description: "The same band across the top, clear of the stage.",
-    look: {
-      text: t({ fontSize: 56, shadow: "none" }),
-      background: null,
-      layout: "upper-third",
-      band: { color: "rgba(0,0,0,0.62)" },
-    },
+    look: look(t({ fontSize: 56, shadow: null }), { layout: "upper-third", box: { fill: solid("rgba(0,0,0,0.62)") } }),
+  },
+  {
+    id: "builtin:card",
+    name: "Card",
+    tier: "pro",
+    description: "Words on a rounded card in the middle of the slide.",
+    look: look(t({ fontSize: 60, shadow: null, color: "#111827", fontWeight: "600" }), {
+      layout: "card",
+      box: { fill: solid("rgba(255,255,255,0.92)"), radius: 36 },
+    }),
   },
   {
     id: "builtin:outline",
     name: "Outline",
     tier: "pro",
     description: "Outlined capitals that read over any video.",
-    look: {
-      text: t({ fontFamily: "Arial Black", fontWeight: "900", uppercase: true, fontSize: 80, outline: { color: "#000000", width: 5 }, shadow: "strong" }),
-      background: null,
-      layout: "full",
-      band: null,
-    },
+    look: look(
+      t({
+        fontFamily: "Arial Black",
+        fontWeight: "900",
+        case: "upper",
+        fontSize: 80,
+        outline: { color: "#000000", width: 5 },
+        shadow: { ...SHADOW_PRESETS.strong },
+      }),
+    ),
   },
   {
     id: "builtin:stream",
     name: "Stream",
     tier: "pro",
     description: "Lower third, left-aligned, for a livestream.",
-    look: {
-      text: t({ fontSize: 54, align: "left", shadow: "none" }),
-      background: null,
+    look: look(t({ fontSize: 54, align: "left", shadow: null }), {
       layout: "lower-third",
-      band: { color: "rgba(12,14,30,0.78)" },
-    },
+      box: { fill: solid("rgba(12,14,30,0.78)") },
+    }),
   },
   {
     id: "builtin:scripture",
     name: "Scripture",
     tier: "pro",
     description: "Left-aligned reading text on slate.",
-    look: {
-      text: t({ fontFamily: "Georgia", fontWeight: "400", fontSize: 60, align: "left", color: "#f8fafc" }),
-      background: "#111827",
-      layout: "full",
-      band: null,
-    },
+    look: look(t({ fontFamily: "Georgia", fontWeight: "400", fontSize: 60, align: "left", color: "#f8fafc", lineHeight: 1.35 }), {
+      background: solid("#111827"),
+    }),
   },
   {
     id: "builtin:neon",
     name: "Neon",
     tier: "pro",
     description: "Violet with a glow, for youth nights.",
-    look: { text: t({ color: "#b9adff", fontWeight: "800", shadow: "glow" }), background: "#07060f", layout: "full", band: null },
+    look: look(t({ color: "#b9adff", fontWeight: "800", shadow: { ...SHADOW_PRESETS.glow } }), { background: solid("#07060f") }),
   },
   {
     id: "builtin:impact",
     name: "Impact",
     tier: "pro",
     description: "Tall condensed capitals, low on the slide.",
-    look: {
-      text: t({ fontFamily: "Impact", fontWeight: "400", uppercase: true, fontSize: 96, verticalAlign: "bottom", shadow: "strong" }),
-      background: null,
-      layout: "full",
-      band: null,
-    },
+    look: look(
+      t({
+        fontFamily: "Impact",
+        fontWeight: "400",
+        case: "upper",
+        fontSize: 96,
+        verticalAlign: "bottom",
+        letterSpacing: 2,
+        shadow: { ...SHADOW_PRESETS.strong },
+      }),
+    ),
+  },
+  {
+    id: "builtin:dusk",
+    name: "Dusk",
+    tier: "advanced",
+    description: "White words over a soft mix of violet and amber.",
+    look: look(t({}), {
+      background: {
+        kind: "mix",
+        base: "#15161f",
+        spots: [
+          { color: "#3b3f6b", x: 0.2, y: 0.15, size: 0.6 },
+          { color: "#5a3a2e", x: 0.85, y: 0.9, size: 0.55 },
+        ],
+      },
+    }),
+  },
+  {
+    id: "builtin:ocean",
+    name: "Ocean",
+    tier: "advanced",
+    description: "Deep blue into teal, top to bottom.",
+    look: look(t({ fontWeight: "600" }), { background: { kind: "gradient", from: "#0b1a3a", to: "#0e5e6f", angle: 90 } }),
   },
   {
     id: "builtin:aurora",
     name: "Aurora",
     tier: "advanced",
     description: "Words in a violet-to-cyan gradient.",
-    look: {
-      text: t({ fontWeight: "800", fontSize: 80, gradient: { from: "#a78bfa", to: "#22d3ee", angle: 135 }, shadow: "none" }),
-      background: "#05060f",
-      layout: "full",
-      band: null,
-    },
+    look: look(t({ fontWeight: "800", fontSize: 80, gradient: { from: "#a78bfa", to: "#22d3ee", angle: 135 }, shadow: null }), {
+      background: solid("#05060f"),
+    }),
   },
   {
     id: "builtin:sunrise",
     name: "Sunrise",
     tier: "advanced",
     description: "Gold into rose, for Easter mornings.",
-    look: {
-      text: t({ fontFamily: "Georgia", fontWeight: "700", fontSize: 76, gradient: { from: "#fbbf24", to: "#f43f5e", angle: 120 }, shadow: "none" }),
-      background: "#140a06",
-      layout: "full",
-      band: null,
-    },
+    look: look(
+      t({ fontFamily: "Georgia", fontWeight: "700", fontSize: 76, gradient: { from: "#fbbf24", to: "#f43f5e", angle: 120 }, shadow: null }),
+      { background: solid("#140a06") },
+    ),
   },
   {
     id: "builtin:chrome",
     name: "Chrome",
     tier: "advanced",
     description: "Silver capitals with an outline.",
-    look: {
-      text: t({
+    look: look(
+      t({
         fontFamily: "Arial Black",
         fontWeight: "900",
-        uppercase: true,
+        case: "upper",
         fontSize: 80,
         gradient: { from: "#ffffff", to: "#8b95a7", angle: 90 },
         outline: { color: "#0b0c10", width: 3 },
-        shadow: "strong",
+        shadow: { ...SHADOW_PRESETS.strong },
       }),
-      background: null,
-      layout: "full",
-      band: null,
-    },
+    ),
   },
 ];
 

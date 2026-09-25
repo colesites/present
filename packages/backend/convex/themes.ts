@@ -43,10 +43,21 @@ const tierOf = async (ctx: Ctx, workspace: WorkspaceContext) => {
   });
 };
 
-/** What a look needs: a gradient is Power's; anything else, Pro's. */
+/**
+ * What a look needs: a gradient anywhere (in the words, the background or
+ * the box behind the words) is Power's; anything else, Pro's.
+ */
 const tierNeededFor = (look: unknown): PresentThemeTier => {
-  const text = (look as { text?: { gradient?: unknown } } | null)?.text;
-  return text?.gradient ? "advanced" : "custom";
+  const value = look as {
+    text?: { gradient?: unknown };
+    background?: { kind?: unknown } | string | null;
+    box?: { fill?: { kind?: unknown } } | null;
+  } | null;
+  const fancy = (fill: unknown) =>
+    Boolean(fill && typeof fill === "object" && (fill as { kind?: unknown }).kind !== "color");
+  return value?.text?.gradient || fancy(value?.background) || fancy(value?.box?.fill)
+    ? "advanced"
+    : "custom";
 };
 
 const checkLook = (look: unknown) => {
@@ -64,7 +75,7 @@ const requireTierFor = async (ctx: Ctx, workspace: WorkspaceContext, look: unkno
   if (TIER_RANK[tier] < TIER_RANK[needed]) {
     throw new ConvexError(
       needed === "advanced"
-        ? "Gradient themes come with Power."
+        ? "Themes with gradients come with Power."
         : "Saving your own themes comes with Pro and Power.",
     );
   }

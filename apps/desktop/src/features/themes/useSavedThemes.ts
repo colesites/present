@@ -14,6 +14,7 @@ import { useDesktopSessionStore } from "../../renderer/shared/store/desktopSessi
 import {
   isUntouchedOldSeed,
   lookFromStoredTheme,
+  plainColorOf,
   styleForText,
   type ThemeLook,
 } from "./theme-look.mjs";
@@ -130,11 +131,14 @@ export function useSavedThemes({
 
   // Older versions of the app read `style` and `backgroundColor`, so a theme
   // saved here still shows and applies there.
-  const legacyFields = (look: ThemeLook) => ({
-    style: withoutUndefined(styleForText(look.text)),
-    ...(look.background ? { backgroundColor: look.background } : {}),
-    previewColor: look.background ?? "#000000",
-  });
+  const legacyFields = (look: ThemeLook) => {
+    const background = look.background ? plainColorOf(look.background) : null;
+    return {
+      style: withoutUndefined(styleForText(look.text)),
+      ...(background ? { backgroundColor: background } : {}),
+      previewColor: background ?? "#000000",
+    };
+  };
 
   return {
     themes,

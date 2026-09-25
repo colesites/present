@@ -709,7 +709,7 @@ export const LyricsEditor = memo(function LyricsEditor({
       libraryId: themeTargetId,
       title: draft.title.trim() || "this song",
       slides: draft.slides,
-      slideId: selectedSlideId,
+      slideIndex: selectedSlideIndex >= 0 ? selectedSlideIndex : null,
       canvasSize: currentCanvasSize,
       themeId: draft.content?.theme?.id ?? null,
     });
@@ -718,7 +718,7 @@ export const LyricsEditor = memo(function LyricsEditor({
     draft.content?.theme?.id,
     draft.slides,
     draft.title,
-    selectedSlideId,
+    selectedSlideIndex,
     setThemeTarget,
     themeTargetId,
   ]);
@@ -740,7 +740,7 @@ export const LyricsEditor = memo(function LyricsEditor({
     ) {
       return;
     }
-    const { theme, onlySlideId, nonce } = pendingTheme;
+    const { theme, onlySlideIndex, nonce } = pendingTheme;
     consumePendingTheme(nonce);
     applyDraft((previous) => ({
       ...previous,
@@ -748,11 +748,15 @@ export const LyricsEditor = memo(function LyricsEditor({
         previous.slides,
         normalizeLook(theme.look),
         canvasDimensions,
-        { onlySlideId },
+        { onlySlideIndex },
       ) as LibrarySlide[],
-      content: onlySlideId ? previous.content : { ...previous.content, theme },
+      content: onlySlideIndex !== null ? previous.content : { ...previous.content, theme },
     }));
-    toast.success(onlySlideId ? `${theme.name} is on this slide` : `${theme.name} is on the whole song`);
+    toast.success(
+      onlySlideIndex !== null
+        ? `${theme.name} is on slide ${onlySlideIndex + 1}`
+        : `${theme.name} is on the whole song`,
+    );
   }, [applyDraft, canvasDimensions, consumePendingTheme, pendingTheme, themeTargetId]);
 
   const handleSelectSlide = useCallback(

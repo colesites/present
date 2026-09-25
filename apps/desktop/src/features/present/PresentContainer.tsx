@@ -1273,8 +1273,10 @@ export function PresentContainer({
       libraryId: String(themeTargetItem._id),
       title: themeTargetItem.title || "this song",
       slides: themeTargetItem.slides,
-      slideId:
-        themeTargetLiveIndex !== null ? themeTargetItem.slides[themeTargetLiveIndex]?.id ?? null : null,
+      slideIndex:
+        themeTargetLiveIndex !== null && themeTargetLiveIndex < themeTargetItem.slides.length
+          ? themeTargetLiveIndex
+          : null,
       canvasSize: themeTargetItem.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
       themeId: themeTargetItem.content?.theme?.id ?? null,
     });
@@ -1286,7 +1288,7 @@ export function PresentContainer({
   const consumePendingTheme = useThemesModalStore((state) => state.consumePending);
   useEffect(() => {
     if (!pendingTheme || pendingTheme.surface !== "show") return;
-    const { theme, onlySlideId, libraryId, nonce } = pendingTheme;
+    const { theme, onlySlideIndex, libraryId, nonce } = pendingTheme;
     consumePendingTheme(nonce);
     const item = libraryItems.find((candidate) => String(candidate._id) === libraryId);
     if (!item) {
@@ -1298,9 +1300,10 @@ export function PresentContainer({
       item.slides.map((slide) => normalizeLibrarySlide(slide, canvasSize, libraryTextDefaults)),
       normalizeLook(theme.look),
       getCanvasSizeDimensions(canvasSize),
-      { onlySlideId },
+      { onlySlideIndex },
     ) as LibrarySlide[];
-    const content: LibraryContent | undefined = onlySlideId ? item.content : { ...item.content, theme };
+    const content: LibraryContent | undefined =
+      onlySlideIndex !== null ? item.content : { ...item.content, theme };
     void updateExistingLibraryItem(
       libraryId,
       { title: item.title, body: item.body, slides, content },
@@ -1314,7 +1317,11 @@ export function PresentContainer({
           previousSlides: item.slides,
           fallbackIndex: selected?.libraryId === libraryId ? selected.index : null,
         });
-        toast.success(onlySlideId ? `${theme.name} is on this slide` : `${theme.name} is on ${item.title}`);
+        toast.success(
+          onlySlideIndex !== null
+            ? `${theme.name} is on slide ${onlySlideIndex + 1} of ${item.title}`
+            : `${theme.name} is on ${item.title}`,
+        );
       })
       .catch((error: unknown) => {
         toast.error(error instanceof Error ? error.message : "The theme couldn't be applied.");

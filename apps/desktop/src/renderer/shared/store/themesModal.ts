@@ -16,8 +16,11 @@ export interface ThemeTarget {
   libraryId: string;
   title: string;
   slides: LibrarySlide[];
-  /** The slide "This slide" means: the one selected in Edit, or live in Show. */
-  slideId: string | null;
+  /**
+   * Where the slide "This slide" means is in the song: the one selected in
+   * Edit, or live in Show. A place, not an id, which older slides lack.
+   */
+  slideIndex: number | null;
   canvasSize: CanvasSizePreset;
   /** The theme recorded on the song, if one was applied to all of it. */
   themeId: string | null;
@@ -28,14 +31,21 @@ export interface ThemeApplication {
   surface: ThemeSurface;
   libraryId: string;
   theme: LibraryTheme;
-  /** Only this slide, or the whole song when null. */
-  onlySlideId: string | null;
+  /** Only the slide at this place in the song, or the whole song when null. */
+  onlySlideIndex: number | null;
   // Bumped on every dispatch, so the same theme applied twice is two requests.
   nonce: number;
 }
 
 interface ThemesModalState {
   isOpen: boolean;
+  /**
+   * Built-in themes changed in the designer and not saved as themes of
+   * their own, by id. Kept for the session, so closing the panel loses
+   * nothing; a look (`theme-look.mjs`).
+   */
+  drafts: Record<string, unknown>;
+  setDraft: (id: string, look: unknown | null) => void;
   /** Each surface publishes its song while it is in front, and clears it when not. */
   targets: Partial<Record<ThemeSurface, ThemeTarget>>;
   pending: ThemeApplication | null;
@@ -54,6 +64,14 @@ let requests = 0;
 // whichever view is in front without holding its song itself.
 export const useThemesModalStore = create<ThemesModalState>()((set) => ({
   isOpen: false,
+  drafts: {},
+  setDraft: (id, look) =>
+    set((state) => {
+      const drafts = { ...state.drafts };
+      if (look) drafts[id] = look;
+      else delete drafts[id];
+      return { drafts };
+    }),
   targets: {},
   pending: null,
   open: () => set({ isOpen: true }),
