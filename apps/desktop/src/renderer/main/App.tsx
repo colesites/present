@@ -23,10 +23,17 @@ import type { ContentSource, ViewMode } from "../../shared/types";
 import type { OutputTextPosition } from "../../shared/types/output-window";
 import type { HeaderSearchScope } from "../../features/header/AppHeader";
 import {
+  desktopWebBaseUrl,
   ensureFreshDesktopAccessToken,
   useDesktopSessionStore,
 } from "../shared/store/desktopSession";
 import { markStartup } from "../shared/lib/startup-timeline";
+import {
+  runMenuCommand,
+  useMenuChecks,
+  useMenuCommand,
+  useMenuCommandListener,
+} from "../tauri/menu-commands";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { resolveVerifiedOrganizationId } from "../shared/lib/organization-scope-policy.mjs";
@@ -813,6 +820,60 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       console.error("Failed to open screen composer window:", error);
     }
   }, []);
+
+  // The application menu (`services/app_menu.rs`). Each item does what the
+  // header's own button does; the ones that belong to a panel bring the panel
+  // on screen and hand over to it.
+  useMenuCommandListener();
+  useMenuCommand("view.show", () => {
+    setBottomTab("media");
+    setViewMode("show");
+  });
+  useMenuCommand("view.libraries", () => {
+    setBottomTab("shows");
+    setViewMode("show");
+  });
+  useMenuCommand("view.edit", () => setViewMode("edit"));
+  useMenuCommand("view.bible", () => {
+    setBottomTab("scripture");
+    setViewMode("show");
+  });
+  useMenuCommand("view.browser", () => setViewMode("browser"));
+  useMenuCommand("view.themes", () => useThemesModalStore.getState().open());
+  useMenuCommand("file.new-library-item", () => {
+    setBottomTab("shows");
+    setViewMode("show");
+    runMenuCommand("library.new-item");
+  });
+  useMenuCommand("file.new-library", () => {
+    setBottomTab("shows");
+    setViewMode("show");
+    runMenuCommand("library.create");
+  });
+  useMenuCommand("file.new-service", () => {
+    setViewMode("show");
+    runMenuCommand("services.create");
+  });
+  useMenuCommand("file.add-media-folder", () => {
+    setBottomTab("media");
+    setViewMode("show");
+    runMenuCommand("media.add-folder");
+  });
+  useMenuCommand("screens.media-stage", () => {
+    void (isMediaStageLive ? closeMediaStageWindow() : openMediaStageWindow());
+  });
+  useMenuCommand("screens.worship-stage", () => {
+    void (isWorshipStageLive ? closeWorshipStageWindow() : openWorshipStageWindow());
+  });
+  useMenuCommand("screens.looks", () => void openLooksWindow());
+  useMenuCommand("screens.composer", () => void openScreenComposerWindow());
+  useMenuCommand("help.website", () => {
+    void window.electronAPI?.openExternalBrowser?.(desktopWebBaseUrl());
+  });
+  useMenuCommand("help.download", () => {
+    void window.electronAPI?.openExternalBrowser?.(`${desktopWebBaseUrl()}/download`);
+  });
+  useMenuChecks({ mediaStage: isMediaStageLive, worshipStage: isWorshipStageLive });
 
   useGlobalShortcuts({
     enabled: !isSettingsWindow && effectiveViewMode !== "browser",

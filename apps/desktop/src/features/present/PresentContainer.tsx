@@ -85,6 +85,7 @@ import { useScriptureLayoutTemplateStore } from "../scripture/lib/layout-templat
 import { useScreenComposerState } from "../screen-composer";
 import { useGlobalSearchStore } from "../../renderer/shared/store/globalSearchStore";
 import { usePresentAiToolProvider } from "../../renderer/ai-operator/usePresentAiToolProvider";
+import { useMenuChecks } from "../../renderer/tauri/menu-commands";
 
 type EditedOutputSnapshot = {
   slideId: string;
@@ -1569,6 +1570,18 @@ export function PresentContainer({
     setIsMessageLayerEnabled,
     isGridView,
     setIsGridView,
+  });
+
+  // The ticks in the application menu's Presentation and View menus: what is
+  // on the audience output now (`services/app_menu.rs`).
+  useMenuChecks({
+    text: showTextInOutput,
+    media: showMediaInOutput,
+    background: !hideBackgroundInOutput,
+    freeze: isOutputFrozen,
+    timer: isTimerLayerEnabled,
+    messages: isMessageLayerEnabled,
+    grid: isGridView,
   });
 
   // Foot pedals, MIDI and OSC reach the same handlers a click does

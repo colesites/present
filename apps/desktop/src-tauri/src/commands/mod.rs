@@ -18,6 +18,7 @@ pub mod file;
 pub mod fonts;
 pub mod looks;
 pub mod media;
+pub mod menu;
 pub mod mini_lyrics;
 pub mod ndi;
 pub mod offline;

@@ -24,6 +24,7 @@ import {
 import { resolveRowDropLineIndex } from "./lib/service-layout.mjs";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import { Skeleton } from "../../renderer/shared/components/ui/skeleton";
+import { useMenuCommand } from "../../renderer/tauri/menu-commands";
 import { cn } from "../../renderer/shared/lib/utils";
 import {
   ContextMenu,
@@ -217,6 +218,8 @@ export const ServicesSidebar = memo(function ServicesSidebar({
     setNewServiceTemplateId(selectedServiceTemplateId ?? serviceTemplates[0]?.id ?? null);
     setShowNewDialog(true);
   };
+  // File ▸ New Service… in the application menu.
+  useMenuCommand("services.create", openNewServiceDialog);
 
   const handleCreateTemplate = () => {
     if (!templateName.trim()) return;

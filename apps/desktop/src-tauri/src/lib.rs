@@ -276,6 +276,7 @@ pub fn run() {
             commands::window::window_ready,
             commands::window::get_splash_status,
             commands::window::set_splash_status,
+            commands::menu::set_menu_checks,
             commands::file::select_folder,
             commands::file::select_library_export_destination,
             commands::file::select_library_import_source,

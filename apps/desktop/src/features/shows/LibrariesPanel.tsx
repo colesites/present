@@ -25,6 +25,7 @@ import {
 } from "../../renderer/shared/components/ui/select";
 import { Spinner } from "../../renderer/shared/components/ui/spinner";
 import { Skeleton } from "../../renderer/shared/components/ui/skeleton";
+import { useMenuCommand } from "../../renderer/tauri/menu-commands";
 import { cn } from "../../renderer/shared/lib/utils";
 import { useDesktopSessionStore } from "../../renderer/shared/store/desktopSession";
 import { useSpeechRecognition } from "../scripture/hooks/useSpeechRecognition";
@@ -176,6 +177,12 @@ export const LibrariesPanel = memo(
     ref,
   ) {
     const [showNewCategoryDialog, setShowNewCategoryDialog] = useState(false);
+    // File ▸ New Library Item and New Library… in the application menu: the
+    // same as the panel's own buttons.
+    useMenuCommand("library.new-item", () => {
+      void onNewLibraryItem();
+    });
+    useMenuCommand("library.create", () => setShowNewCategoryDialog(true));
     const [showComposeDialog, setShowComposeDialog] = useState(false);
     const [composeEditTarget, setComposeEditTarget] = useState<LibraryItem | null>(
       null,

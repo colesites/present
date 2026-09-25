@@ -29,6 +29,7 @@ import {
 import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
 import { AuthControls } from "../../renderer/shared/components/AuthControls";
 import { ProjectButton } from "../../renderer/shared/components/ProjectButton";
+import { useMenuCommand } from "../../renderer/tauri/menu-commands";
 import { cn } from "../../renderer/shared/lib/utils";
 import type { ViewMode } from "../../shared/types";
 import { useGlobalSearchStore } from "../../renderer/shared/store/globalSearchStore";
@@ -126,6 +127,13 @@ export const AppHeader = memo(function AppHeader({
   // where menus portalled to document.body would be painted underneath it.
   const [searchDialogNode, setSearchDialogNode] =
     useState<HTMLDialogElement | null>(null);
+
+  // Edit ▸ Search… in the application menu opens the same palette ⌘K does.
+  useMenuCommand("edit.search", () => {
+    setIsSearchOpen(true);
+    setQuery("");
+    setActiveIndex(0);
+  });
 
   // ── Keyboard shortcut: Cmd/Ctrl + K ──
   useEffect(() => {
