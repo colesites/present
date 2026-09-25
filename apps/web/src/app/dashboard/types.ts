@@ -3,6 +3,7 @@ export type DashboardSection =
   | "services"
   | "library"
   | "bible"
+  | "members"
   | "pricing"
   | "accounts"
   | "settings";

@@ -10,6 +10,7 @@ import {
   Library,
   Settings,
   UserRoundCog,
+  UsersRound,
 } from "lucide-react";
 import {
   DashboardSection,
@@ -38,6 +39,7 @@ const navItems = [
   { label: "Services", href: "/dashboard/services", section: "services", icon: CalendarRange },
   { label: "Library", href: "/dashboard/library", section: "library", icon: Library },
   { label: "Bible", href: "/dashboard/bible", section: "bible", icon: BookOpenText },
+  { label: "Members", href: "/dashboard/members", section: "members", icon: UsersRound },
   { label: "Pricing", href: "/pricing", section: "pricing", icon: CreditCard },
   { label: "Accounts", href: "/dashboard/accounts", section: "accounts", icon: UserRoundCog },
   { label: "Settings", href: "/dashboard/settings", section: "settings", icon: Settings },

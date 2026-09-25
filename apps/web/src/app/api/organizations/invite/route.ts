@@ -1,8 +1,16 @@
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { ConvexHttpClient } from "convex/browser";
+import { ConvexError } from "convex/values";
 import { api } from "../../../../../../../packages/backend/convex/_generated/api";
 import type { Id } from "../../../../../../../packages/backend/convex/_generated/dataModel";
 
+/**
+ * Invite someone to a workspace by email (`convex/invites.ts`).
+ *
+ * It used to add them outright if they already had an account, without
+ * asking them. Now it sends an invitation they accept themselves, which also
+ * works for someone who has no account yet.
+ */
 export async function POST(request: Request) {
   const authState = await auth();
   if (!authState.userId) {
@@ -32,23 +40,17 @@ export async function POST(request: Request) {
     return new Response("Organization and email are required", { status: 400 });
   }
 
-  const clerk = await clerkClient();
-  const users = await clerk.users.getUserList({
-    emailAddress: [email],
-    limit: 1,
-  });
-  const targetUser = users.data[0];
-  if (!targetUser) {
-    return new Response("No account found for that email", { status: 404 });
-  }
-
   const convex = new ConvexHttpClient(convexUrl, { auth: token });
-  await convex.mutation(api.users.addUserToOrganization, {
-    orgId: orgId as Id<"organizations">,
-    userId: targetUser.id,
-    role: body.role ?? "user",
-    userRole: body.userRole ?? undefined,
-  });
-
-  return Response.json({ ok: true, userId: targetUser.id });
+  try {
+    const invite = await convex.mutation(api.invites.create, {
+      orgId: orgId as Id<"organizations">,
+      email,
+      role: body.role === "admin" ? "admin" : "user",
+      userRole: body.userRole ?? undefined,
+    });
+    return Response.json({ ok: true, invited: email, url: invite.url });
+  } catch (error) {
+    const message = error instanceof ConvexError ? String(error.data) : "Could not send the invitation.";
+    return new Response(message, { status: 400 });
+  }
 }

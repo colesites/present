@@ -8,6 +8,14 @@ import { useRouter } from "next/navigation";
 import { Building2, Check, ImagePlus, Link2, Mail, Users } from "lucide-react";
 import { useWorkspaceStore } from "../../../../../../../packages/shared/src/store/workspace";
 
+/** What a Convex error says, without the transport's prefix. */
+const friendlyError = (error: Error): string => {
+  const data = (error as Error & { data?: unknown }).data;
+  if (typeof data === "string") return data;
+  const match = error.message.match(/ConvexError: (.*?)(?:\n|$)/);
+  return match?.[1] ?? error.message;
+};
+
 interface OrganizationSetupClientProps {
   desktopSessionToken?: string | null;
   /** The loopback address a development desktop is listening on, if any. */
@@ -53,8 +61,10 @@ export default function OrganizationSetupClient({
   const [userRole, setUserRole] = useState("tech-director");
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [logoFileName, setLogoFileName] = useState<string | null>(null);
-  const [joinOrganizationId, setJoinOrganizationId] = useState("");
-  const [joinUserRole, setJoinUserRole] = useState("volunteer");
+  const [invitationLink, setInvitationLink] = useState("");
+  const myInvitations = useQuery(api.invites.listMine, isAuthenticated ? {} : "skip");
+  const acceptInvitation = useMutation(api.invites.accept);
+  const declineInvitation = useMutation(api.invites.decline);
   const [inviteEmails, setInviteEmails] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("volunteer");
@@ -181,45 +191,44 @@ export default function OrganizationSetupClient({
     }
   };
 
-  const handleJoinOrganization = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!joinOrganizationId.trim()) {
-      setError("Organization ID is required to join.");
-      return;
-    }
-
+  // Workspaces are joined by invitation now: an admin invites an email, and
+  // the person signed in with it accepts (`convex/invites.ts`). Joining by a
+  // pasted workspace id, with nobody's say-so, is gone.
+  const handleAcceptInvitation = async (token: string) => {
     setIsSubmitting(true);
     setError(null);
     setSuccess(null);
-
     try {
-      const response = await fetch("/api/organizations/join", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orgId: joinOrganizationId.trim(),
-          userRole: joinUserRole,
-        }),
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || "Unable to join organization");
-      }
-      const payload = (await response.json()) as { orgId: string };
-      setWorkspace("organization", payload.orgId);
-
+      const joined = await acceptInvitation({ token });
+      setWorkspace("organization", joined.orgId);
       if (isDesktopSource && desktopSessionToken) {
         completeDesktopFlow(desktopSessionToken);
         return;
       }
-
       router.replace("/dashboard");
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to join organization"
-      );
+      setError(err instanceof Error ? friendlyError(err) : "Couldn't accept the invitation.");
       setIsSubmitting(false);
     }
+  };
+
+  const handleDeclineInvitation = async (token: string) => {
+    setError(null);
+    try {
+      await declineInvitation({ token });
+    } catch (err) {
+      setError(err instanceof Error ? friendlyError(err) : "Couldn't decline the invitation.");
+    }
+  };
+
+  const handleOpenInvitationLink = (e: React.FormEvent) => {
+    e.preventDefault();
+    const token = invitationLink.trim().split("/invite/").pop()?.split(/[?#]/)[0]?.trim();
+    if (!token) {
+      setError("Paste the invitation link from your email.");
+      return;
+    }
+    router.push(`/invite/${encodeURIComponent(token)}`);
   };
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -243,7 +252,7 @@ export default function OrganizationSetupClient({
         inviteRole
       );
       setInviteEmail("");
-      setSuccess("Invitation sent. The user was added if their account exists.");
+      setSuccess("Invitation sent. They join once they accept it.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to invite member");
     } finally {
@@ -346,7 +355,7 @@ export default function OrganizationSetupClient({
               mode === "join" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
             }`}
           >
-            Join Organization
+            Join with an invitation
           </button>
         </div>
 
@@ -441,43 +450,73 @@ export default function OrganizationSetupClient({
             </button>
           </form>
         ) : (
-          <form onSubmit={handleJoinOrganization} className="space-y-4 rounded-xl border border-border bg-background/60 p-4">
-            <div className="space-y-2">
+          <div className="space-y-4 rounded-xl border border-border bg-background/60 p-4">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold">Your invitations</h2>
+              <p className="text-xs text-muted-foreground">
+                Workspaces are joined by invitation. Ask an admin to invite {user?.primaryEmailAddress?.emailAddress ?? "your email"}.
+              </p>
+            </div>
+            {myInvitations === undefined ? (
+              <p className="text-sm text-muted-foreground">Looking for invitations…</p>
+            ) : myInvitations.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
+                No invitations for you yet.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {myInvitations.map((invitation) => (
+                  <li key={invitation.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{invitation.orgName}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {invitation.invitedByName ? `From ${invitation.invitedByName}` : "Invitation"}
+                        {invitation.role === "admin" ? " · as an admin" : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleDeclineInvitation(invitation.token)}
+                        className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:text-foreground"
+                      >
+                        Decline
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isSubmitting}
+                        onClick={() => void handleAcceptInvitation(invitation.token)}
+                        className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
+                      >
+                        {isSubmitting ? "Joining…" : "Accept"}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <form onSubmit={handleOpenInvitationLink} className="space-y-2 border-t border-border pt-4">
               <label className="flex items-center gap-2 text-sm font-medium">
                 <Link2 className="h-4 w-4" />
-                Organization ID
+                Have an invitation link?
               </label>
-              <input
-                type="text"
-                value={joinOrganizationId}
-                onChange={(event) => setJoinOrganizationId(event.target.value)}
-                placeholder="Paste organization ID shared by your admin"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Your Role</label>
-              <select
-                value={joinUserRole}
-                onChange={(event) => setJoinUserRole(event.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <option value="tech-director">Tech Director</option>
-                <option value="pastor">Pastor</option>
-                <option value="worship-leader">Worship Leader</option>
-                <option value="volunteer">Volunteer</option>
-                <option value="admin">Administrator</option>
-              </select>
-            </div>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isSubmitting ? "Joining..." : "Join Organization"}
-            </button>
-          </form>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={invitationLink}
+                  onChange={(event) => setInvitationLink(event.target.value)}
+                  placeholder="https://present.multivrs.space/invite/…"
+                  className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <button
+                  type="submit"
+                  className="rounded-md border border-border px-4 py-2 text-sm font-medium transition hover:bg-muted"
+                >
+                  Open
+                </button>
+              </div>
+            </form>
+          </div>
         )}
       </div>
     </div>

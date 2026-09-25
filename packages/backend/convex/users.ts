@@ -7,7 +7,6 @@ import {
   calendarMonth,
   entitlementsFor,
   identityEmail,
-  workspaceMemberLimit,
 } from "./entitlements";
 
 /**
@@ -50,25 +49,6 @@ const recordAllowlist = async (ctx: MutationCtx, userId: string, email: string |
   });
 };
 
-/** Refuse to add someone to a workspace that is already full for its plan. */
-const assertWorkspaceHasRoom = async (
-  ctx: MutationCtx,
-  orgId: Id<"organizations">,
-  caller: { userId: string; email: string | null },
-) => {
-  const [{ limit, planLabel }, members] = await Promise.all([
-    workspaceMemberLimit(ctx, orgId, caller),
-    ctx.db
-      .query("userProfiles")
-      .withIndex("by_org", (q) => q.eq("orgId", orgId))
-      .collect(),
-  ]);
-  if (members.length >= limit) {
-    throw new ConvexError(
-      `This workspace already has its ${limit} members on ${planLabel}. Upgrade to add more people.`,
-    );
-  }
-};
 
 const isOrganizationDocument = (
   value: unknown,
@@ -497,106 +477,6 @@ export const createOrganization = mutation({
     });
 
     return { userId, orgId, profileId };
-  },
-});
-
-// Add a user to an existing organization (by Clerk user ID)
-export const addUserToOrganization = mutation({
-  args: {
-    orgId: v.id("organizations"),
-    userId: v.string(), // Clerk user ID
-    role: v.optional(v.string()), // "admin" or "user"
-    userRole: v.optional(v.string()), // functional role like "tech-director"
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new ConvexError("Not authenticated");
-    }
-
-    const currentUserId = identity.subject;
-
-    // Check if current user is an admin of this organization
-    const currentUserProfile = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_user", (q) => q.eq("userId", currentUserId))
-      .filter((q) => q.eq(q.field("orgId"), args.orgId))
-      .first();
-
-    if (!currentUserProfile || currentUserProfile.role !== "admin") {
-      throw new ConvexError("Only organization admins can add users");
-    }
-
-    // Check if user is already in the organization
-    const existingProfile = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .filter((q) => q.eq(q.field("orgId"), args.orgId))
-      .first();
-
-    if (existingProfile) {
-      throw new ConvexError("User is already a member of this organization");
-    }
-
-    await assertWorkspaceHasRoom(ctx, args.orgId, {
-      userId: currentUserId,
-      email: identityEmail(identity),
-    });
-
-    // Add user to organization
-    const profileId = await ctx.db.insert("userProfiles", {
-      userId: args.userId,
-      orgId: args.orgId,
-      role: args.role || "user",
-      userRole: args.userRole ?? undefined,
-      createdAt: Date.now(),
-    });
-
-    return { profileId, userId: args.userId };
-  },
-});
-
-export const joinOrganizationById = mutation({
-  args: {
-    orgId: v.id("organizations"),
-    userRole: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new ConvexError("Not authenticated");
-    }
-
-    const userId = identity.subject;
-    const organization = await ctx.db.get(args.orgId);
-    if (!organization) {
-      throw new ConvexError("Organization not found");
-    }
-
-    const existingProfile = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("orgId"), args.orgId))
-      .first();
-
-    if (existingProfile) {
-      return { orgId: args.orgId, alreadyMember: true };
-    }
-
-    await assertWorkspaceHasRoom(ctx, args.orgId, {
-      userId,
-      email: identityEmail(identity),
-    });
-
-    await ctx.db.insert("userProfiles", {
-      userId,
-      orgId: args.orgId,
-      role: "user",
-      userRole: args.userRole ?? undefined,
-      createdAt: Date.now(),
-    });
-
-    return { orgId: args.orgId, alreadyMember: false };
   },
 });
 

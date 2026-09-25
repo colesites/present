@@ -73,6 +73,30 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
 
+  // An invitation to join a workspace, sent to an email address. Accepting
+  // it — on the website or in the desktop app — is the only way into a
+  // workspace besides creating one (`invites.ts`).
+  workspaceInvites: defineTable({
+    orgId: v.id("organizations"),
+    // Lower-cased; only someone signed in with this address can accept.
+    email: v.string(),
+    role: v.string(), // "admin" or "user"
+    userRole: v.optional(v.string()),
+    // The secret in the invitation link.
+    token: v.string(),
+    invitedBy: v.string(),
+    invitedByName: v.optional(v.string()),
+    status: v.string(), // "pending", "accepted", "declined" or "revoked"
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    respondedAt: v.optional(v.number()),
+    emailSentAt: v.optional(v.number()),
+    emailError: v.optional(v.string()),
+  })
+    .index("by_token", ["token"])
+    .index("by_org", ["orgId"])
+    .index("by_email", ["email"]),
+
   // AI lyrics fixes used, a row per person per billing period.
   aiLyricsFixUsage: defineTable({
     userId: v.string(),

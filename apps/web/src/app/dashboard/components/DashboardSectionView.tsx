@@ -15,14 +15,14 @@ import {
 import { DashboardOrganization, DashboardSection, DashboardLibraryItem } from "../types";
 
 interface DashboardSectionViewProps {
-  section: Exclude<DashboardSection, "dashboard">;
+  section: Exclude<DashboardSection, "dashboard" | "members">;
   currentOrg: DashboardOrganization | null;
   libraryItems: DashboardLibraryItem[];
   servicesCount: number;
 }
 
 const sectionConfig: Record<
-  Exclude<DashboardSection, "dashboard">,
+  Exclude<DashboardSection, "dashboard" | "members">,
   {
     title: string;
     eyebrow: string;

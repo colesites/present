@@ -14,6 +14,7 @@ import type * as categories from "../categories.js";
 import type * as debug from "../debug.js";
 import type * as entitlements from "../entitlements.js";
 import type * as http from "../http.js";
+import type * as invites from "../invites.js";
 import type * as libraries from "../libraries.js";
 import type * as lyrics from "../lyrics.js";
 import type * as messages from "../messages.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   debug: typeof debug;
   entitlements: typeof entitlements;
   http: typeof http;
+  invites: typeof invites;
   libraries: typeof libraries;
   lyrics: typeof lyrics;
   messages: typeof messages;

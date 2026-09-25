@@ -218,3 +218,29 @@ export const workspaceMemberLimit = async (
   const plan = getPresentPlanDefinition(best);
   return { limit: plan.workspaceMembers, planLabel: plan.label };
 };
+
+/**
+ * How full a workspace is: its members, the invitations still open, and how
+ * many its plan allows. Open invitations count, so an admin cannot invite
+ * past the limit and leave the last people to find it full.
+ */
+export const workspaceSeats = async (
+  ctx: Reader,
+  orgId: string,
+  caller: { userId: string; email: string | null },
+  now = Date.now(),
+) => {
+  const [{ limit, planLabel }, members, invites] = await Promise.all([
+    workspaceMemberLimit(ctx, orgId, caller),
+    ctx.db
+      .query("userProfiles")
+      .withIndex("by_org", (q) => q.eq("orgId", orgId as never))
+      .collect(),
+    ctx.db
+      .query("workspaceInvites")
+      .withIndex("by_org", (q) => q.eq("orgId", orgId as never))
+      .collect(),
+  ]);
+  const pending = invites.filter((invite) => invite.status === "pending" && invite.expiresAt > now);
+  return { limit, planLabel, members: members.length, pendingInvites: pending.length };
+};

@@ -10,6 +10,7 @@ import { useWorkspaceStore } from "../../../../../packages/shared/src/store/work
 import { DashboardSidebar } from "./components/DashboardSidebar";
 import { DashboardOverview } from "./components/DashboardOverview";
 import { DashboardSectionView } from "./components/DashboardSectionView";
+import { MembersSection } from "./components/MembersSection";
 import {
   DashboardClientProps,
   DashboardLibraryItem,
@@ -238,6 +239,11 @@ export function DashboardClient({
                 onOpenDesktopApp={() => {
                   void openDesktopApp();
                 }}
+              />
+            ) : section === "members" ? (
+              <MembersSection
+                currentOrg={currentOrg}
+                isLoading={nativeOrganizations === undefined}
               />
             ) : (
               <DashboardSectionView
