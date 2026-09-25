@@ -4,7 +4,7 @@ export type DashboardSection =
   | "library"
   | "bible"
   | "members"
-  | "pricing"
+  | "billing"
   | "accounts"
   | "settings";
 
@@ -34,11 +34,14 @@ export interface DashboardOrganizationListItem {
 export interface DashboardServiceItem {
   _id: string;
   _creationTime: number;
-  date: number;
-  title: string;
+  name: string;
+  /** As the desktop app writes it: an ISO date, "YYYY-MM-DD". */
+  date?: string;
   order?: number;
+  archivedAt?: number;
+  items: Array<{ type: string; refId: string; label?: string }>;
+  createdAt: number;
 }
-
 
 export interface DashboardClientProps {
   org: DashboardOrganization | null;

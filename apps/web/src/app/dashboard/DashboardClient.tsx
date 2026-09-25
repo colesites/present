@@ -8,9 +8,15 @@ import { api } from "../../../../../packages/backend/convex/_generated/api";
 import { usePathname, useRouter } from "next/navigation";
 import { useWorkspaceStore } from "../../../../../packages/shared/src/store/workspace";
 import { DashboardSidebar } from "./components/DashboardSidebar";
+import { DashboardFrame } from "./components/DashboardFrame";
 import { DashboardOverview } from "./components/DashboardOverview";
-import { DashboardSectionView } from "./components/DashboardSectionView";
 import { MembersSection } from "./components/MembersSection";
+import { ServicesSection } from "./components/ServicesSection";
+import { LibrarySection } from "./components/LibrarySection";
+import { BibleSection } from "./components/BibleSection";
+import { BillingSection } from "./components/BillingSection";
+import { AccountSection } from "./components/AccountSection";
+import { SettingsSection } from "./components/SettingsSection";
 import {
   DashboardClientProps,
   DashboardLibraryItem,
@@ -44,6 +50,9 @@ export function DashboardClient({
   ) as DashboardLibraryItem[] | undefined;
 
   const activeLibraryData = libraryData ?? libraryItems;
+  // Still arriving, as opposed to empty: the pages show skeletons meanwhile.
+  const isLoadingWorkspaceData = !isAuthenticated || !activeWorkspaceId;
+  const libraryLoaded = !isLoadingWorkspaceData && libraryData !== undefined;
 
   const servicesData = useQuery(
     api.services.list,
@@ -193,69 +202,84 @@ export function DashboardClient({
 
   if (!isUserLoaded || isLoading) {
     return (
-      <div className="fixed inset-0 box-border overflow-hidden bg-[#111111] px-6 py-8 text-white">
-        <div className="flex h-full items-center justify-center rounded-[36px] bg-[#191919]">
-          <div className="rounded-full bg-white/6 px-5 py-3 text-sm text-white/72">
-            Verifying session...
-          </div>
-        </div>
+      <div className="flex min-h-dvh items-center justify-center bg-[#111111] p-4 text-white">
+        <div className="rounded-full bg-white/[0.06] px-5 py-3 text-sm text-white/70">Verifying session…</div>
       </div>
     );
   }
 
-  return (
-    <div className="fixed inset-0 box-border overflow-hidden bg-[#111111] px-10 py-10">
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1700px] items-stretch overflow-hidden">
-        <div className="flex w-full min-h-0 items-stretch gap-14 overflow-hidden">
-          <DashboardSidebar
-            currentSection={section}
-            currentOrganization={currentOrg}
-            organizations={organizations}
-            activeWorkspaceId={activeWorkspaceId}
-            isAccountSwitcherOpen={isAccountSwitcherOpen}
-            isSwitchingWorkspace={isSwitchingWorkspace}
-            isSigningOut={isSigningOut}
-            onToggleAccountSwitcher={() =>
-              setIsAccountSwitcherOpen((open) => !open)
-            }
-            onCloseAccountSwitcher={() => setIsAccountSwitcherOpen(false)}
-            onCreateOrganization={() => {
-              setIsAccountSwitcherOpen(false);
-              router.push("/dashboard/organization/setup");
+  const sidebar = (onNavigate?: () => void) => (
+    <DashboardSidebar
+      currentSection={section}
+      currentOrganization={currentOrg}
+      organizations={organizations}
+      activeWorkspaceId={activeWorkspaceId}
+      isAccountSwitcherOpen={isAccountSwitcherOpen}
+      isSwitchingWorkspace={isSwitchingWorkspace}
+      isSigningOut={isSigningOut}
+      onToggleAccountSwitcher={() => setIsAccountSwitcherOpen((open) => !open)}
+      onCloseAccountSwitcher={() => setIsAccountSwitcherOpen(false)}
+      onCreateOrganization={() => {
+        setIsAccountSwitcherOpen(false);
+        router.push("/dashboard/organization/setup");
+      }}
+      onSwitchContext={handleSwitchContext}
+      onSignOut={() => {
+        void handleSignOut();
+      }}
+      onNavigate={onNavigate}
+    />
+  );
+
+  const isLoadingOrganizations = nativeOrganizations === undefined;
+  const page = (() => {
+    switch (section) {
+      case "dashboard":
+        return (
+          <DashboardOverview
+            currentOrg={currentOrg}
+            organizationsCount={organizations.length}
+            libraryItems={libraryLoaded ? sortedLibrary : undefined}
+            services={servicesData}
+            shouldAutoOpen={shouldAutoOpen}
+            onOpenDesktopApp={() => {
+              void openDesktopApp();
             }}
-            onSwitchContext={handleSwitchContext}
+          />
+        );
+      case "services":
+        return <ServicesSection currentOrg={currentOrg} services={servicesData} />;
+      case "library":
+        return (
+          <LibrarySection
+            currentOrg={currentOrg}
+            libraryItems={libraryLoaded ? sortedLibrary : undefined}
+          />
+        );
+      case "bible":
+        return <BibleSection />;
+      case "members":
+        return <MembersSection currentOrg={currentOrg} isLoading={isLoadingOrganizations} />;
+      case "billing":
+        return <BillingSection />;
+      case "accounts":
+        return (
+          <AccountSection
+            organizations={organizations}
             onSignOut={() => {
               void handleSignOut();
             }}
+            isSigningOut={isSigningOut}
           />
-          <main className="h-full max-h-full min-h-0 min-w-0 max-w-[1320px] flex-1 self-stretch overflow-y-auto overflow-x-hidden overscroll-contain rounded-[56px] border border-[#e8e8e8] bg-white shadow-[0_28px_76px_rgba(0,0,0,0.08)] [scrollbar-gutter:stable]">
-            {section === "dashboard" ? (
-              <DashboardOverview
-                currentOrg={currentOrg}
-                organizationsCount={organizations.length}
-                libraryItems={sortedLibrary}
-                servicesCount={servicesData?.length ?? 0}
-                shouldAutoOpen={shouldAutoOpen}
-                onOpenDesktopApp={() => {
-                  void openDesktopApp();
-                }}
-              />
-            ) : section === "members" ? (
-              <MembersSection
-                currentOrg={currentOrg}
-                isLoading={nativeOrganizations === undefined}
-              />
-            ) : (
-              <DashboardSectionView
-                section={section}
-                currentOrg={currentOrg}
-                libraryItems={sortedLibrary}
-                servicesCount={servicesData?.length ?? 0}
-              />
-            )}
-          </main>
-        </div>
-      </div>
-    </div>
+        );
+      case "settings":
+        return <SettingsSection currentOrg={currentOrg} isLoading={isLoadingOrganizations} />;
+    }
+  })();
+
+  return (
+    <DashboardFrame section={section} currentOrg={currentOrg} sidebar={sidebar}>
+      {page}
+    </DashboardFrame>
   );
 }

@@ -5,6 +5,13 @@ import { Check, Copy, Mail, UserPlus } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
 import { ConvexError } from "convex/values";
 import { toast } from "sonner";
+import {
+  WORKSPACE_ROLES,
+  defaultAccessFor,
+  normalizeWorkspaceRole,
+  workspaceRoleLabel,
+  type WorkspaceRole,
+} from "@present/shared";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import {
@@ -95,7 +102,7 @@ export function InvitationRow({
         <p className="truncate text-xs font-medium">{invitation.orgName}</p>
         <p className="truncate text-[10px] text-muted-foreground">
           {invitation.invitedByName ? `From ${invitation.invitedByName}` : "Invitation"}
-          {invitation.role === "admin" ? " · as admin" : ""}
+          {` · ${workspaceRoleLabel(invitation.userRole)}`}
         </p>
       </div>
       <Button
@@ -138,7 +145,8 @@ export function InvitePeopleDialog({
   const workspace = useWorkspaceInvitations(open ? orgId : null);
   const create = useMutation(api.invites.create);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"user" | "admin">("user");
+  const [userRole, setUserRole] = useState<WorkspaceRole>("member");
+  const [admin, setAdmin] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<{ email: string; url: string } | null>(null);
@@ -149,7 +157,8 @@ export function InvitePeopleDialog({
 
   const reset = () => {
     setEmail("");
-    setRole("user");
+    setUserRole("member");
+    setAdmin(false);
     setError(null);
     setSent(null);
     setCopied(false);
@@ -162,7 +171,12 @@ export function InvitePeopleDialog({
     setSending(true);
     setError(null);
     try {
-      const result = await create({ orgId: orgId as Id<"organizations">, email: address, role });
+      const result = await create({
+        orgId: orgId as Id<"organizations">,
+        email: address,
+        role: admin ? "admin" : "user",
+        userRole,
+      });
       setSent({ email: address, url: result.url });
       setEmail("");
     } catch (failure) {
@@ -221,15 +235,36 @@ export function InvitePeopleDialog({
                 />
               </div>
               <select
-                value={role}
-                onChange={(event) => setRole(event.target.value === "admin" ? "admin" : "user")}
+                value={userRole}
+                onChange={(event) => {
+                  const next = normalizeWorkspaceRole(event.target.value);
+                  setUserRole(next);
+                  setAdmin(defaultAccessFor(next) === "admin");
+                }}
                 aria-label="Role"
                 className="h-8 rounded-md border border-input bg-transparent px-2 text-xs outline-none focus-visible:border-ring"
               >
-                <option value="user">Member</option>
-                <option value="admin">Admin</option>
+                {WORKSPACE_ROLES.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
+            <label className="flex cursor-pointer items-start gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={admin}
+                onChange={(event) => setAdmin(event.target.checked)}
+                className="mt-0.5 accent-[var(--primary)]"
+              />
+              <span>
+                <span className="font-medium text-foreground">Admin access</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Can invite and remove people, change roles and edit the workspace.
+                </span>
+              </span>
+            </label>
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
             {full && !error ? (
               <p className="text-xs text-muted-foreground">This workspace is full on its plan. Upgrade or revoke an invitation to add someone.</p>

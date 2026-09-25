@@ -19,6 +19,7 @@ import { internal } from "./_generated/api";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { identityEmail, normalizeEmail, workspaceSeats } from "./entitlements";
+import { normalizeWorkspaceRole } from "../../shared/src/workspace-roles";
 
 /** How long an invitation can be accepted for. */
 const INVITE_LIFETIME_MS = 14 * 24 * 60 * 60 * 1000;
@@ -86,6 +87,7 @@ export const create = mutation({
       throw new ConvexError("You're already in this workspace.");
     }
     const role = args.role === "admin" ? "admin" : "user";
+    const userRole = normalizeWorkspaceRole(args.userRole);
     const now = Date.now();
 
     const existing = (
@@ -98,7 +100,7 @@ export const create = mutation({
     if (existing) {
       await ctx.db.patch(existing._id, {
         role,
-        userRole: args.userRole ?? existing.userRole,
+        userRole,
         expiresAt: now + INVITE_LIFETIME_MS,
         emailError: undefined,
       });
@@ -120,7 +122,7 @@ export const create = mutation({
       orgId: args.orgId,
       email,
       role,
-      userRole: args.userRole,
+      userRole,
       token,
       invitedBy: me.userId,
       invitedByName: me.name ?? undefined,
@@ -215,6 +217,7 @@ export const listMine = query({
           orgLogo: organization.logo ?? null,
           invitedByName: invite.invitedByName ?? null,
           role: invite.role,
+          userRole: invite.userRole ?? null,
           createdAt: invite.createdAt,
         };
       }),
@@ -243,6 +246,7 @@ export const getByToken = query({
       orgLogo: organization?.logo ?? null,
       invitedByName: invite.invitedByName ?? null,
       role: invite.role,
+      userRole: invite.userRole ?? null,
       emailHint: maskEmail(invite.email),
       state:
         invite.status !== "pending"

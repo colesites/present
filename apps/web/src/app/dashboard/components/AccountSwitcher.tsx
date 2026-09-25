@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import Image from "next/image";
-import { ChevronDown, Check, LogOut, Plus } from "lucide-react";
-import { DashboardOrganizationListItem, getInitials } from "../types";
+import { Check, ChevronsUpDown, LogOut, Plus } from "lucide-react";
+import { DashboardOrganizationListItem } from "../types";
+import { Avatar, cx } from "./ui";
 
 interface AccountSwitcherProps {
   currentOrganization: { id: string; name: string; logo?: string } | null;
@@ -19,6 +19,7 @@ interface AccountSwitcherProps {
   onSignOut: () => void;
 }
 
+/** The workspace in use, and every other one this person is in. */
 export function AccountSwitcher({
   currentOrganization,
   organizations,
@@ -63,138 +64,73 @@ export function AccountSwitcher({
   }, [isOpen, onClose]);
 
   return (
-    <div ref={containerRef} className="relative mt-6">
+    <div ref={containerRef} className="relative">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-4 rounded-[24px] border border-white/10 bg-white/4 px-4 py-4 text-left shadow-[0_18px_40px_rgba(0,0,0,0.18)] backdrop-blur-sm transition hover:bg-white/7"
-
+        aria-expanded={isOpen}
+        className="flex w-full items-center gap-3 rounded-card border border-white/10 bg-white/[0.04] p-2.5 pr-3 text-left transition hover:bg-white/[0.07]"
       >
-        <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[18px] bg-white/10">
-          {currentOrganization?.logo ? (
-            currentOrganization.logo.startsWith("data:") ? (
-              <Image
-                src={currentOrganization.logo}
-                alt={currentOrganization.name}
-                width={48}
-                height={48}
-                className="h-12 w-12 object-cover"
-                unoptimized
-              />
-            ) : (
-              <Image
-                src={currentOrganization.logo}
-                alt={currentOrganization.name}
-                width={48}
-                height={48}
-                className="h-12 w-12 object-cover"
-              />
-            )
-          ) : (
-            <span className="text-sm font-semibold text-white">
-              {getInitials(currentOrganization?.name ?? "Org")}
-            </span>
-          )}
-        </div>
+        <Avatar
+          src={currentOrganization?.logo}
+          name={currentOrganization?.name ?? "Organization"}
+          size={40}
+          shape="tile"
+        />
         <div className="min-w-0 flex-1">
-          <p className="text-[0.68rem] uppercase tracking-[0.24em] text-white/38">
+          <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-white/40">
             Organization
           </p>
-          <p className="truncate text-[0.98rem] font-semibold text-white">
+          <p className="truncate text-sm font-semibold text-white">
             {currentOrganization?.name ?? "No organization"}
           </p>
         </div>
-        <ChevronDown
-          className={`h-4 w-4 text-white/45 transition ${isOpen ? "rotate-180" : ""}`}
-        />
+        <ChevronsUpDown className="h-4 w-4 flex-none text-white/45" />
       </button>
 
       {isOpen ? (
-        <div className="absolute bottom-[calc(100%+1rem)] left-0 right-0 z-40 rounded-[30px] border border-white/10 bg-[#171717]/96 p-3 shadow-[0_34px_100px_rgba(0,0,0,0.58)] backdrop-blur-xl">
-          <div className="px-3 pb-3 pt-2">
-            <p className="text-[0.66rem] uppercase tracking-[0.28em] text-white/34">
-              Organization
-            </p>
-            <p className="mt-2 text-[1.02rem] font-semibold tracking-[-0.03em] text-white">
-              Switch organization
-            </p>
-          </div>
+        <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-40 rounded-card border border-white/10 bg-[#1a1a1a] p-2 shadow-[0_24px_60px_rgba(0,0,0,0.55)]">
+          <p className="px-2.5 pb-2 pt-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-white/40">
+            Switch organization
+          </p>
 
-          <div className="space-y-2">
+          <div className="max-h-[min(50vh,320px)] space-y-1 overflow-y-auto">
             {organizations.length === 0 ? (
-              <div className="rounded-[22px] border border-white/6 bg-white/3 px-4 py-4 text-sm text-white/56">
-
-                No organizations yet.
-              </div>
+              <p className="rounded-control px-2.5 py-3 text-sm text-white/55">No organizations yet.</p>
             ) : (
               organizations.map((organization) => {
                 const isActive = organization.id === activeWorkspaceId;
-
                 return (
                   <button
                     key={organization.id}
                     type="button"
-                    onClick={() => {
-                      onSwitchContext(organization.id);
-                    }}
+                    onClick={() => onSwitchContext(organization.id)}
                     disabled={isSwitching}
-                    className={`flex w-full items-center gap-3 rounded-[22px] border px-4 py-3 text-left transition ${
-                      isActive
-                        ? "border-white/12 bg-white/8 text-white"
-                        : "border-transparent text-white/70 hover:border-white/8 hover:bg-white/5 hover:text-white"
-                    }`}
-
+                    className={cx(
+                      "flex w-full items-center gap-3 rounded-control px-2.5 py-2 text-left transition",
+                      isActive ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/5 hover:text-white",
+                    )}
                   >
-                    <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[14px] bg-white/10">
-                      {organization.logo ? (
-                        organization.logo.startsWith("data:") ? (
-                          <Image
-                            src={organization.logo}
-                            alt={organization.name}
-                            width={40}
-                            height={40}
-                            className="h-10 w-10 object-cover"
-                            unoptimized
-                          />
-                        ) : (
-                          <Image
-                            src={organization.logo}
-                            alt={organization.name}
-                            width={40}
-                            height={40}
-                            className="h-10 w-10 object-cover"
-                          />
-                        )
-                      ) : (
-                        <span className="text-xs font-semibold text-white">
-                          {getInitials(organization.name)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{organization.name}</p>
-                      <p className="truncate text-[0.68rem] uppercase tracking-[0.2em] text-white/38">
-                        {organization.slug}
-                      </p>
-                    </div>
-                    {isActive ? <Check className="h-4 w-4 text-white" /> : null}
+                    <Avatar src={organization.logo} name={organization.name} size={32} shape="tile" />
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{organization.name}</span>
+                    {isActive ? <Check className="h-4 w-4 flex-none text-white" /> : null}
                   </button>
                 );
               })
             )}
           </div>
 
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <div className="mt-2 space-y-1 border-t border-white/10 pt-2">
             <button
               type="button"
               onClick={() => {
                 onClose();
                 onCreateOrganization();
               }}
-              className="flex w-full items-center justify-center gap-2 rounded-[22px] bg-white px-4 py-3 text-sm font-semibold text-[#141414] transition hover:bg-white/90"
+              className="flex w-full items-center gap-3 rounded-control px-2.5 py-2 text-sm font-medium text-white/80 transition hover:bg-white/5 hover:text-white"
             >
               <Plus className="h-4 w-4" />
-              Create organization
+              Create or join an organization
             </button>
             <button
               type="button"
@@ -203,11 +139,10 @@ export function AccountSwitcher({
                 await onSignOut();
                 onClose();
               }}
-              className="flex w-full items-center justify-center gap-2 rounded-[22px] border border-white/15 bg-white/4 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
-
+              className="flex w-full items-center gap-3 rounded-control px-2.5 py-2 text-sm font-medium text-white/80 transition hover:bg-white/5 hover:text-white disabled:opacity-60"
             >
               <LogOut className="h-4 w-4" />
-              {isSigningOut ? "Signing out..." : "Log out"}
+              {isSigningOut ? "Signing out…" : "Sign out"}
             </button>
           </div>
         </div>

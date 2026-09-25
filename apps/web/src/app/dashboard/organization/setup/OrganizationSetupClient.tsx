@@ -5,8 +5,10 @@ import { useUser } from "@clerk/nextjs";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "../../../../../../../packages/backend/convex/_generated/api";
 import { useRouter } from "next/navigation";
-import { Building2, Check, ImagePlus, Link2, Mail, Users } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Building2, Check, ImagePlus, Link2, Users } from "lucide-react";
 import { useWorkspaceStore } from "../../../../../../../packages/shared/src/store/workspace";
+import { WORKSPACE_ROLES, WORKSPACE_TYPES } from "../../../../../../../packages/shared/src/workspace-roles";
 
 /** What a Convex error says, without the transport's prefix. */
 const friendlyError = (error: Error): string => {
@@ -31,7 +33,7 @@ export default function OrganizationSetupClient({
   const router = useRouter();
   const { user, isLoaded: isUserLoaded } = useUser();
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const { type: workspaceType, id: workspaceId, setWorkspace } =
+  const { setWorkspace } =
     useWorkspaceStore();
   const createOrganization = useMutation(api.users.createOrganization);
   const organizationsData = useQuery(
@@ -49,10 +51,6 @@ export default function OrganizationSetupClient({
     | undefined;
 
   const organizations = useMemo(() => organizationsData ?? [], [organizationsData]);
-  const activeOrganizationId =
-    workspaceType === "organization" && workspaceId
-      ? workspaceId
-      : organizations[0]?.id ?? null;
   const isDesktopSource = source === "desktop";
 
   const [mode, setMode] = useState<"create" | "join">("create");
@@ -66,10 +64,7 @@ export default function OrganizationSetupClient({
   const acceptInvitation = useMutation(api.invites.accept);
   const declineInvitation = useMutation(api.invites.decline);
   const [inviteEmails, setInviteEmails] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("volunteer");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isInviting, setIsInviting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -172,7 +167,7 @@ export default function OrganizationSetupClient({
         .map((value) => value.trim())
         .filter(Boolean);
       for (const email of requestedInvites) {
-        await inviteMemberByEmail(nextOrgId, email, userRole);
+        await inviteMemberByEmail(nextOrgId, email, "member");
       }
 
       if (isDesktopSource && desktopSessionToken) {
@@ -231,35 +226,6 @@ export default function OrganizationSetupClient({
     router.push(`/invite/${encodeURIComponent(token)}`);
   };
 
-  const handleInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeOrganizationId) {
-      setError("No organization selected.");
-      return;
-    }
-    if (!inviteEmail.trim()) {
-      setError("Member email is required.");
-      return;
-    }
-
-    setIsInviting(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      await inviteMemberByEmail(
-        activeOrganizationId,
-        inviteEmail.trim().toLowerCase(),
-        inviteRole
-      );
-      setInviteEmail("");
-      setSuccess("Invitation sent. They join once they accept it.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to invite member");
-    } finally {
-      setIsInviting(false);
-    }
-  };
-
   if (!isUserLoaded || isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -296,46 +262,18 @@ export default function OrganizationSetupClient({
         )}
 
         {organizations.length > 0 ? (
-          <div className="rounded-xl border border-border bg-background/60 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-base font-semibold">Invite members</h2>
-              <span className="text-xs text-muted-foreground">
-                Share org ID: {activeOrganizationId}
+          <Link
+            href="/dashboard/members"
+            className="flex items-center justify-between gap-3 rounded-xl border border-border bg-background/60 p-4 transition hover:border-primary/40"
+          >
+            <span className="min-w-0">
+              <span className="block text-base font-semibold">Invite your team</span>
+              <span className="block text-xs text-muted-foreground">
+                Send invitations with a role from the Members page. They join once they accept.
               </span>
-            </div>
-            <form onSubmit={handleInvite} className="grid gap-3 md:grid-cols-[1fr_220px_150px]">
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={(event) => setInviteEmail(event.target.value)}
-                placeholder="member@email.com"
-                className="rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                required
-              />
-              <select
-                value={inviteRole}
-                onChange={(event) => setInviteRole(event.target.value)}
-                className="rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <option value="tech-director">Tech Director</option>
-                <option value="pastor">Pastor</option>
-                <option value="worship-leader">Worship Leader</option>
-                <option value="volunteer">Volunteer</option>
-                <option value="admin">Administrator</option>
-              </select>
-              <button
-                type="submit"
-                disabled={isInviting}
-                className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Mail className="h-4 w-4" />
-                {isInviting ? "Inviting..." : "Invite"}
-              </button>
-            </form>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Invitees must already have an account. They can also join using the org ID above.
-            </p>
-          </div>
+            </span>
+            <ArrowRight className="h-4 w-4 flex-none text-muted-foreground" />
+          </Link>
         ) : null}
 
         <div className="inline-flex rounded-lg border border-border bg-background p-1">
@@ -384,11 +322,11 @@ export default function OrganizationSetupClient({
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   required
                 >
-                  <option value="church">Church</option>
-                  <option value="school">School</option>
-                  <option value="business">Business</option>
-                  <option value="nonprofit">Non-Profit</option>
-                  <option value="other">Other</option>
+                  {WORKSPACE_TYPES.map((type) => (
+                    <option key={type.value} value={type.value}>
+                      {type.label}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="space-y-2">
@@ -402,12 +340,11 @@ export default function OrganizationSetupClient({
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   required
                 >
-                  <option value="tech-director">Tech Director</option>
-                  <option value="pastor">Pastor</option>
-                  <option value="worship-leader">Worship Leader</option>
-                  <option value="volunteer">Volunteer</option>
-                  <option value="admin">Administrator</option>
-                  <option value="other">Other</option>
+                  {WORKSPACE_ROLES.map((role) => (
+                    <option key={role.value} value={role.value}>
+                      {role.label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

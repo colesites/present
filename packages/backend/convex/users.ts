@@ -2,6 +2,7 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { getPresentPlanDefinition } from "../../shared/src/billing";
+import { normalizeWorkspaceRole } from "../../shared/src/workspace-roles";
 import {
   billingSummary,
   calendarMonth,
@@ -570,6 +571,68 @@ export const removeUserFromOrganization = mutation({
     }
 
     await ctx.db.delete(profileToRemove._id);
+    return { success: true };
+  },
+});
+
+/**
+ * Change what someone does in a workspace, or what they may change in it.
+ *
+ * Anyone can say what they do themselves (`userRole`). Changing anyone
+ * else's, or anyone's admin access (`role`), takes an admin; and the last
+ * admin cannot give theirs up, or nobody could manage the workspace again.
+ */
+export const updateMember = mutation({
+  args: {
+    orgId: v.id("organizations"),
+    userId: v.string(),
+    userRole: v.optional(v.string()),
+    role: v.optional(v.union(v.literal("admin"), v.literal("user"))),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("Not authenticated");
+    }
+    const profileOf = (userId: string) =>
+      ctx.db
+        .query("userProfiles")
+        .withIndex("by_user_org", (q) => q.eq("userId", userId).eq("orgId", args.orgId))
+        .first();
+
+    const mine = await profileOf(identity.subject);
+    if (!mine) {
+      throw new ConvexError("You are not a member of this organization");
+    }
+    const isSelf = args.userId === identity.subject;
+    const target = isSelf ? mine : await profileOf(args.userId);
+    if (!target) {
+      throw new ConvexError("User is not a member of this organization");
+    }
+    if ((!isSelf || args.role !== undefined) && mine.role !== "admin") {
+      throw new ConvexError("Only organization admins can change someone's role or access");
+    }
+
+    const patch: { userRole?: string; role?: string } = {};
+    if (args.userRole !== undefined) {
+      patch.userRole = normalizeWorkspaceRole(args.userRole);
+    }
+    if (args.role !== undefined && args.role !== target.role) {
+      if (target.role === "admin" && args.role !== "admin") {
+        const admins = await ctx.db
+          .query("userProfiles")
+          .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
+          .filter((q) => q.eq(q.field("role"), "admin"))
+          .collect();
+        if (admins.length <= 1) {
+          throw new ConvexError("Make someone else an admin first. A workspace needs at least one.");
+        }
+      }
+      patch.role = args.role;
+    }
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(target._id, patch);
+    }
     return { success: true };
   },
 });

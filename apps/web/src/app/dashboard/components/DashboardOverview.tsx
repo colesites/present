@@ -1,240 +1,215 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, Building2, CalendarRange, Download, Library } from "lucide-react";
-import { DashboardOrganization, DashboardLibraryItem } from "../types";
+import { useUser } from "@clerk/nextjs";
+import { ArrowUpRight, Building2, CalendarRange, ChevronRight, Download, Library, Monitor } from "lucide-react";
+import { DashboardOrganization, DashboardLibraryItem, DashboardServiceItem } from "../types";
+import { formatDate, formatRelative, parseServiceDate } from "./format";
+import { PlanUsageCard, useBillingStatus } from "./usage";
+import { Button, Card, EmptyState, Eyebrow, Page, PageHeader, SectionTitle, SkeletonRows, StatCard, buttonClass } from "./ui";
 
 interface DashboardOverviewProps {
   currentOrg: DashboardOrganization | null;
   organizationsCount: number;
-  libraryItems: DashboardLibraryItem[];
-  servicesCount: number;
+  /** `undefined` while it loads. */
+  libraryItems: DashboardLibraryItem[] | undefined;
+  services: DashboardServiceItem[] | undefined;
   shouldAutoOpen: boolean;
   onOpenDesktopApp: () => void;
 }
+
+/** Services from today on, soonest first; then the latest past ones. */
+const upcomingFirst = (services: DashboardServiceItem[]) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dated = services.map((service) => ({ service, date: parseServiceDate(service.date) }));
+  const upcoming = dated
+    .filter((entry) => entry.date && entry.date >= today)
+    .sort((a, b) => a.date!.getTime() - b.date!.getTime());
+  const rest = dated
+    .filter((entry) => !entry.date || entry.date < today)
+    .sort((a, b) => (b.date?.getTime() ?? b.service.createdAt) - (a.date?.getTime() ?? a.service.createdAt));
+  return { upcoming: upcoming.length, ordered: [...upcoming, ...rest] };
+};
 
 export function DashboardOverview({
   currentOrg,
   organizationsCount,
   libraryItems,
-  servicesCount,
+  services,
   shouldAutoOpen,
   onOpenDesktopApp,
 }: DashboardOverviewProps) {
-  const recentItems = libraryItems.slice(0, 5);
-  const hasOrganization = Boolean(currentOrg);
-  const summaryItems = [
-    {
-      label: "Organizations",
-      value: String(organizationsCount),
-      detail: hasOrganization ? "Active workspace connected" : "No organization created",
-      icon: Building2,
-    },
-    {
-      label: "Library",
-      value: String(libraryItems.length),
-      detail: libraryItems.length > 0 ? "Library content available" : "No items in this workspace",
-      icon: Library,
-    },
-    {
-      label: "Services",
-      value: String(servicesCount),
-      detail: servicesCount > 0 ? "Service plans available" : "No service plans yet",
-      icon: CalendarRange,
-    },
-  ] as const;
+  const { user } = useUser();
+  const billing = useBillingStatus();
+  const firstName = user?.firstName?.trim();
+  const schedule = services ? upcomingFirst(services) : null;
 
   return (
-    <div className="flex min-h-full flex-col text-[#232946] xl:items-start xl:flex-row">
-      <section className="min-w-0 flex-1 px-[4.5rem] py-14">
-        <div className="flex items-start justify-between gap-8">
-          <div className="max-w-3xl">
-            <h1 className="text-[4.1rem] font-semibold leading-none tracking-[-0.07em] text-[#232946]">
-              Dashboard
-            </h1>
-            <p className="mt-5 text-[1.1rem] text-[#9f9f9f]">
-              {currentOrg?.name ?? "No organization yet"}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={onOpenDesktopApp}
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-primary px-6 text-sm font-semibold text-primary-foreground transition hover:opacity-92"
-            >
-              Open app
-              <ArrowUpRight className="h-4 w-4" />
-            </button>
-            <Link
-              href="/"
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-primary/15 bg-primary/[0.05] px-6 text-sm font-semibold text-primary transition hover:bg-primary/[0.09]"
-            >
-              Download app
-              <Download className="h-4 w-4" />
+    <Page wide>
+      <PageHeader
+        eyebrow={currentOrg?.name ?? "Personal workspace"}
+        title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
+        description="What your team has ready, and what is coming up."
+        actions={
+          <>
+            <Button onClick={onOpenDesktopApp}>
+              Open app <ArrowUpRight className="h-4 w-4" />
+            </Button>
+            <Link href="/download" className={buttonClass("secondary")}>
+              Download <Download className="h-4 w-4" />
             </Link>
-          </div>
+          </>
+        }
+      />
+
+      {shouldAutoOpen ? (
+        <p className="mt-6 rounded-card bg-primary/[0.06] px-4 py-3 text-sm text-primary">
+          Opening Present on this computer…
+        </p>
+      ) : null}
+
+      <div className="mt-8 grid gap-3 sm:grid-cols-3">
+        <StatCard
+          icon={Library}
+          label="Library"
+          value={libraryItems ? libraryItems.length : "–"}
+          detail={libraryItems?.length === 1 ? "song or presentation" : "songs and presentations"}
+        />
+        <StatCard
+          icon={CalendarRange}
+          label="Services"
+          value={services ? services.length : "–"}
+          detail={schedule ? `${schedule.upcoming} coming up` : "Loading"}
+        />
+        <StatCard
+          icon={Building2}
+          label="Organizations"
+          value={organizationsCount}
+          detail={organizationsCount === 1 ? "workspace you're in" : "workspaces you're in"}
+        />
+      </div>
+
+      <div className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-8">
+          <section>
+            <SectionTitle
+              aside={
+                <Link href="/dashboard/services" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+                  All services <ChevronRight className="h-4 w-4" />
+                </Link>
+              }
+            >
+              Services
+            </SectionTitle>
+            <div className="mt-3">
+              {!schedule ? (
+                <SkeletonRows rows={3} height="h-16" />
+              ) : schedule.ordered.length === 0 ? (
+                <EmptyState icon={CalendarRange} title="No services yet">
+                  Plan a service in the desktop app and it shows up here for the whole team.
+                </EmptyState>
+              ) : (
+                <ul className="divide-y divide-[#f0f1f5] rounded-card border border-[#ececf2]">
+                  {schedule.ordered.slice(0, 4).map(({ service, date }) => (
+                    <li key={service._id} className="flex items-center gap-4 px-4 py-3.5 sm:px-5">
+                      <DateTile date={date} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium">{service.name}</p>
+                        <p className="text-sm text-[#9aa3b2]">
+                          {service.items.length} {service.items.length === 1 ? "item" : "items"}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+
+          <section>
+            <SectionTitle
+              aside={
+                <Link href="/dashboard/library" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+                  Library <ChevronRight className="h-4 w-4" />
+                </Link>
+              }
+            >
+              Recently edited
+            </SectionTitle>
+            <div className="mt-3">
+              {!libraryItems ? (
+                <SkeletonRows rows={4} height="h-16" />
+              ) : libraryItems.length === 0 ? (
+                <EmptyState icon={Library} title="Nothing in the library yet">
+                  Songs and presentations you add in the desktop app appear here.
+                </EmptyState>
+              ) : (
+                <ul className="divide-y divide-[#f0f1f5] rounded-card border border-[#ececf2]">
+                  {libraryItems.slice(0, 5).map((item) => (
+                    <li key={item._id} className="flex items-center gap-4 px-4 py-3.5 sm:px-5">
+                      <span className="flex h-10 w-10 flex-none items-center justify-center rounded-control bg-primary/10 text-primary">
+                        <Library className="h-[18px] w-[18px]" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium">{item.title}</p>
+                        <p className="text-sm text-[#9aa3b2]">
+                          {item.slides.length} {item.slides.length === 1 ? "slide" : "slides"}
+                        </p>
+                      </div>
+                      <p className="hidden flex-none text-sm text-[#7d8798] sm:block">
+                        {formatRelative(item.updatedAt ?? item._creationTime)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
         </div>
 
-        <div className="mt-14 rounded-[34px] border border-primary/10 bg-primary/[0.04] px-8 py-8">
-          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-2xl">
-              <p className="text-[0.72rem] font-semibold uppercase tracking-[0.32em] text-primary/65">
-                Workspace status
-              </p>
-              <h2 className="mt-4 text-[2.2rem] font-semibold tracking-[-0.06em] text-[#232946]">
-                {hasOrganization
-                  ? "Your workspace is ready for content and services"
-                  : "Create your organization to start the workspace"}
-              </h2>
-              <p className="mt-4 max-w-xl text-[1rem] leading-7 text-[#7d8798]">
-                {hasOrganization
-                  ? "This dashboard summarizes the current organization, its content state, and the next actions for the team."
-                  : "Use the organization switcher in the sidebar footer to create the first workspace, then the rest of the dashboard will begin filling with real data."}
-              </p>
-            </div>
-
-            <div className="rounded-[24px] border border-primary/10 bg-white px-5 py-4">
-              <p className="text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-primary/60">
-                Active organization
-              </p>
-              <p className="mt-3 text-[1.2rem] font-semibold tracking-[-0.04em] text-[#232946]">
-                {currentOrg?.name ?? "No organization"}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-8 grid gap-4 md:grid-cols-3">
-            {summaryItems.map((item) => (
-              <div
-                key={item.label}
-                className="rounded-[24px] border border-primary/10 bg-white px-5 py-5"
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-[0.72rem] font-semibold uppercase tracking-[0.28em] text-primary/60">
-                      {item.label}
-                    </p>
-                    <p className="mt-4 text-[2.55rem] font-semibold leading-none tracking-[-0.08em] text-[#232946]">
-                      {item.value}
-                    </p>
-                  </div>
-                  <div className="flex h-11 w-11 items-center justify-center rounded-[16px] bg-primary/10 text-primary">
-                    <item.icon className="h-5 w-5" />
-                  </div>
-                </div>
-                <p className="mt-4 text-[0.95rem] text-[#7f8898]">{item.detail}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-14">
-          <div className="flex items-center justify-between gap-4">
-            <h3 className="text-[2rem] font-semibold tracking-[-0.04em] text-[#232946]">
-              Recent library items
-            </h3>
-            <span className="rounded-full bg-primary/[0.08] px-4 py-2 text-sm font-medium text-primary">
-              {libraryItems.length} total
+        <aside className="grid content-start gap-4 sm:grid-cols-2 xl:grid-cols-1">
+          <PlanUsageCard status={billing} />
+          <Card tone="soft">
+            <span className="flex h-10 w-10 items-center justify-center rounded-control bg-white text-primary">
+              <Monitor className="h-5 w-5" />
             </span>
-          </div>
-
-          <div className="mt-4 divide-y divide-[#efefef] border-t border-[#efefef]">
-            {recentItems.length === 0 ? (
-              <div className="px-1 py-10 text-[1rem] text-[#8d8d8d]">
-                No library items yet. Your library summary will show up here after items are added.
-              </div>
-            ) : (
-              recentItems.map((item) => (
-                <div key={item._id} className="flex items-center gap-5 py-6">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                    <Library className="h-6 w-6" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[1.1rem] font-semibold text-[#232946]">
-                      {item.title}
-                    </p>
-                    <p className="mt-1 text-[1rem] text-[#9b9b9b]">
-                      {item.slides.length} slides
-                    </p>
-                  </div>
-                  <p className="text-[1.2rem] font-semibold tracking-[-0.03em] text-[#232946]">
-                    {new Date(item.updatedAt ?? item._creationTime).toLocaleDateString()}
-                  </p>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </section>
-
-      <aside className="border-t border-[#f2f2f2] bg-[#fbfbfb] px-10 py-14 xl:w-[365px] xl:flex-none xl:self-start xl:border-l xl:border-t-0">
-        <h3 className="text-[2rem] font-semibold tracking-[-0.05em] text-[#232946]">
-          Workspace summary
-        </h3>
-
-        <div className="mt-12 space-y-4">
-          {summaryItems.map((item) => (
-            <div
-              key={item.label}
-              className="rounded-[24px] border border-primary/10 bg-white px-5 py-5"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-[16px] bg-primary/10 text-primary">
-                    <item.icon className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p className="text-[0.72rem] font-semibold uppercase tracking-[0.26em] text-primary/60">
-                      {item.label}
-                    </p>
-                    <p className="mt-1 text-[0.98rem] text-[#7f8898]">{item.detail}</p>
-                  </div>
-                </div>
-                <span className="text-[1.45rem] font-semibold tracking-[-0.05em] text-[#232946]">
-                  {item.value}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-10 rounded-[28px] border border-primary/10 bg-white px-6 py-6">
-          <div className="space-y-5">
-            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.3em] text-primary/60">
-              Desktop app
+            <Eyebrow className="mt-4">Desktop app</Eyebrow>
+            <p className="mt-1.5 text-lg font-semibold tracking-[-0.02em]">Present runs your service</p>
+            <p className="mt-2 text-sm leading-6 text-[#7d8798]">
+              Everything here is edited and presented in the app, and works without internet on the day.
             </p>
-            <div className="space-y-3">
-              <p className="text-[1.55rem] font-semibold tracking-[-0.05em] text-[#232946]">
-                Launch or install Present
-              </p>
-              <p className="text-[0.98rem] leading-7 text-[#7f8898]">
-                {shouldAutoOpen
-                  ? "The browser is currently handing off to the desktop app."
-                  : "Open the installed desktop app or go to the site download flow if this machine still needs it."}
-              </p>
+            <div className="mt-5 grid gap-2">
+              <Button onClick={onOpenDesktopApp} className="w-full">
+                Open app <ArrowUpRight className="h-4 w-4" />
+              </Button>
+              <Link href="/download" className={`${buttonClass("outline")} w-full`}>
+                Download for this computer
+              </Link>
             </div>
-          </div>
-
-          <div className="mt-8 space-y-3">
-            <button
-              type="button"
-              onClick={onOpenDesktopApp}
-              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-92"
-            >
-              Open app
-              <ArrowUpRight className="h-4 w-4" />
-            </button>
-            <Link
-              href="/"
-              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-primary/15 bg-primary/[0.05] px-5 text-sm font-semibold text-primary transition hover:bg-primary/[0.09]"
-            >
-              Download app
-              <Download className="h-4 w-4" />
-            </Link>
-          </div>
-        </div>
-      </aside>
-    </div>
+          </Card>
+        </aside>
+      </div>
+    </Page>
   );
 }
+
+function DateTile({ date }: { date: Date | null }) {
+  if (!date) {
+    return (
+      <span className="flex h-11 w-11 flex-none items-center justify-center rounded-control bg-[#f3f4f8] text-[#9aa3b2]">
+        <CalendarRange className="h-[18px] w-[18px]" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-11 w-11 flex-none flex-col items-center justify-center rounded-control bg-primary/10 leading-none text-primary" title={formatDate(date)}>
+      <span className="text-[0.6rem] font-semibold uppercase tracking-wide">
+        {date.toLocaleDateString(undefined, { month: "short" })}
+      </span>
+      <span className="mt-0.5 text-base font-semibold">{date.getDate()}</span>
+    </span>
+  );
+}
+
+export { DateTile };
