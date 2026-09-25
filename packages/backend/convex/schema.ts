@@ -312,23 +312,29 @@ export default defineSchema({
     .index("by_org", ["orgId"])
     .index("by_org_order", ["orgId", "order"]),
 
-  // Lyric / slide theme presets — fonts, colors, alignment that can be
-  // applied to a slide via the Themes modal in the editor.
+  // Themes people saved: a workspace's, or one person's when they work
+  // outside a workspace. The built-in themes live in the app, not here.
   themes: defineTable({
-    orgId: v.id("organizations"),
+    // The workspace's, or unset for a personal theme.
+    orgId: v.optional(v.id("organizations")),
+    // Whose personal theme this is, when there is no workspace.
+    ownerUserId: v.optional(v.string()),
+    createdBy: v.optional(v.string()),
     name: v.string(),
-    // Opaque style payload; matches the SlideElementStyle shape so the
-    // editor can apply it directly to text elements without translation.
+    // The look, as the desktop's `theme-look.mjs` describes it. Themes from
+    // before looks have only `style` and `backgroundColor`.
+    look: v.optional(v.any()),
+    // The old Themes modal's payload: a SlideElementStyle for text elements.
     style: v.any(),
     backgroundColor: v.optional(v.string()),
-    // Preview swatch for the Themes modal grid.
     previewColor: v.string(),
     order: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_org", ["orgId"])
-    .index("by_org_order", ["orgId", "order"]),
+    .index("by_org_order", ["orgId", "order"])
+    .index("by_owner_order", ["ownerUserId", "order"]),
 
   // Keep playlists for backward compat
   playlists: defineTable({

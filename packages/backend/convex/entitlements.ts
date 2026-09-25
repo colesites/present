@@ -244,3 +244,30 @@ export const workspaceSeats = async (
   const pending = invites.filter((invite) => invite.status === "pending" && invite.expiresAt > now);
   return { limit, planLabel, members: members.length, pendingInvites: pending.length };
 };
+
+/**
+ * The themes someone can use in a workspace: their own plan's, or the best
+ * plan among its admins', whichever goes further. A volunteer in a church
+ * whose admin pays for Power gets Power's themes; so does the admin on their
+ * own. Outside a workspace (`orgId` null) it is their plan alone.
+ */
+export const themeTierFor = async (
+  ctx: Reader,
+  orgId: string | null,
+  caller: { userId: string; email: string | null },
+): Promise<PresentPlanDefinition["themes"]> => {
+  let best = (await entitlementsFor(ctx, caller.userId, caller.email)).planKey;
+  if (orgId) {
+    const admins = (
+      await ctx.db
+        .query("userProfiles")
+        .withIndex("by_org", (q) => q.eq("orgId", orgId as never))
+        .collect()
+    ).filter((profile) => profile.role === "admin" && profile.userId !== caller.userId);
+    for (const admin of admins) {
+      if (best === "power") break;
+      best = betterPlan(best, (await entitlementsFor(ctx, admin.userId, null)).planKey);
+    }
+  }
+  return getPresentPlanDefinition(best).themes;
+};

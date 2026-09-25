@@ -222,6 +222,17 @@ export type LibraryContent = {
     createdAt: number;
   };
   editorView?: "slides" | "source";
+  /**
+   * The theme last applied to the whole song, so slides rebuilt from its
+   * lyrics get it again. `look` is `features/themes/theme-look.mjs`'s.
+   */
+  theme?: LibraryTheme;
+};
+
+export type LibraryTheme = {
+  id: string;
+  name: string;
+  look: unknown;
 };
 
 export type LibraryItemDraft = {

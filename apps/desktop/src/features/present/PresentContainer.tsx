@@ -65,9 +65,13 @@ import {
   buildSlidesFromBody,
   createComposedLibraryDraft,
   DEFAULT_CANVAS_SIZE,
+  getCanvasSizeDimensions,
   getSlideBackgroundColor,
+  normalizeLibrarySlide,
   reorderLibrarySlides,
 } from "../library/lib/library-items";
+import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
+import { applyLookToSlides, normalizeLook, withSongTheme } from "../themes/theme-look.mjs";
 import {
   importServicePresentationFile,
   type PresentationImportMode,
@@ -1213,10 +1217,11 @@ export function PresentContainer({
         throw new Error("Library item not found.");
       }
 
-      const slides = buildSlidesFromBody(
-        body,
-        item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
-        libraryTextDefaults,
+      const canvasSize = item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE;
+      const slides = withSongTheme(
+        buildSlidesFromBody(body, canvasSize, libraryTextDefaults),
+        item.content?.theme,
+        getCanvasSizeDimensions(canvasSize),
       );
       await updateExistingLibraryItem(
         libraryId,
@@ -1245,6 +1250,85 @@ export function PresentContainer({
       updateExistingLibraryItem,
     ],
   );
+
+  // The song showing here is what the Themes panel applies to in Show view:
+  // a library song, not a service's imported presentation or scripture.
+  const setThemeTarget = useThemesModalStore((state) => state.setTarget);
+  const themeTargetItem =
+    viewMode === "show" &&
+    selectedDeckItem &&
+    selectedDeckItem.type !== "scripture" &&
+    selectedDeckLibraryId &&
+    !selectedDeckLibraryId.startsWith("presentation_")
+      ? selectedDeckItem
+      : null;
+  const themeTargetLiveIndex =
+    themeTargetItem && selected?.libraryId === String(themeTargetItem._id) ? selected.index : null;
+  useEffect(() => {
+    if (!themeTargetItem) {
+      setThemeTarget("show", null);
+      return;
+    }
+    setThemeTarget("show", {
+      surface: "show",
+      libraryId: String(themeTargetItem._id),
+      title: themeTargetItem.title || "this song",
+      slides: themeTargetItem.slides,
+      slideId:
+        themeTargetLiveIndex !== null ? themeTargetItem.slides[themeTargetLiveIndex]?.id ?? null : null,
+      canvasSize: themeTargetItem.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
+      themeId: themeTargetItem.content?.theme?.id ?? null,
+    });
+  }, [setThemeTarget, themeTargetItem, themeTargetLiveIndex]);
+
+  // A theme chosen in the panel for that song: saved to it, and onto the
+  // output at once if the song is live.
+  const pendingTheme = useThemesModalStore((state) => state.pending);
+  const consumePendingTheme = useThemesModalStore((state) => state.consumePending);
+  useEffect(() => {
+    if (!pendingTheme || pendingTheme.surface !== "show") return;
+    const { theme, onlySlideId, libraryId, nonce } = pendingTheme;
+    consumePendingTheme(nonce);
+    const item = libraryItems.find((candidate) => String(candidate._id) === libraryId);
+    if (!item) {
+      toast.error("That song isn't in the library any more.");
+      return;
+    }
+    const canvasSize = item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE;
+    const slides = applyLookToSlides(
+      item.slides.map((slide) => normalizeLibrarySlide(slide, canvasSize, libraryTextDefaults)),
+      normalizeLook(theme.look),
+      getCanvasSizeDimensions(canvasSize),
+      { onlySlideId },
+    ) as LibrarySlide[];
+    const content: LibraryContent | undefined = onlySlideId ? item.content : { ...item.content, theme };
+    void updateExistingLibraryItem(
+      libraryId,
+      { title: item.title, body: item.body, slides, content },
+      item.categoryId ? String(item.categoryId) : undefined,
+    )
+      .then(() => {
+        publishSavedSlidesToLiveOutput({
+          libraryId,
+          nextSlides: slides,
+          content,
+          previousSlides: item.slides,
+          fallbackIndex: selected?.libraryId === libraryId ? selected.index : null,
+        });
+        toast.success(onlySlideId ? `${theme.name} is on this slide` : `${theme.name} is on ${item.title}`);
+      })
+      .catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : "The theme couldn't be applied.");
+      });
+  }, [
+    consumePendingTheme,
+    libraryItems,
+    libraryTextDefaults,
+    pendingTheme,
+    publishSavedSlidesToLiveOutput,
+    selected,
+    updateExistingLibraryItem,
+  ]);
 
   const handleOpenMiniEditor = useCallback(
     (libraryId: string, initialSlideIndex?: number | null) => {

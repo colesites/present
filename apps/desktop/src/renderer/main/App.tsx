@@ -38,7 +38,7 @@ import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { resolveVerifiedOrganizationId } from "../shared/lib/organization-scope-policy.mjs";
 import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvider";
-import { ThemesModal } from "../../features/themes";
+import { ThemesPanel } from "../../features/themes";
 import { useThemesModalStore } from "../shared/store/themesModal";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
@@ -994,15 +994,10 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
         </div>
       ) : null}
 
-      {/* Themes modal lives at the top of the tree so any view (editor or
-          show mode) can open it. The editor watches the modal's "pending"
-          payload and applies it to the selected slide. */}
-      <ThemesModal
-        orgId={localOrgId}
-        onApplyTheme={(payload) =>
-          useThemesModalStore.getState().dispatchApply(payload)
-        }
-      />
+      {/* The Themes panel lives at the top of the tree so any view can open
+          it. It applies to the song the view in front publishes, through
+          the themes store; see `store/themesModal.ts`. */}
+      <ThemesPanel workspaceId={localOrgId} />
       <AiOperatorRoot
         sessionToken={sessionToken}
         speechInputDeviceId={settings.settingsSpeechInputDeviceId}

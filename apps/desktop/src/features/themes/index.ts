@@ -1,1 +1,1 @@
-export { ThemesModal } from "./ThemesModal";
+export { ThemesPanel } from "./ThemesPanel";

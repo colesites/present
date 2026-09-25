@@ -275,6 +275,7 @@ export function normalizeLibraryContent(
     slideLabelOptions: getLibraryLabelOptions(content, slides),
     composition: content?.composition,
     editorView: content?.editorView === "source" ? "source" : "slides",
+    ...(content?.theme ? { theme: content.theme } : {}),
   };
 }
 

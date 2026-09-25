@@ -11,7 +11,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 /** The kinds of thing the library holds. Mirrors `services::store::Kind`. */
-export type OfflineKind = "category" | "library" | "service" | "message";
+export type OfflineKind = "category" | "library" | "service" | "message" | "theme";
 
 /** One entity, as this machine last wrote it. */
 export type OfflineDocument<Body = unknown> = {

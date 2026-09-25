@@ -43,6 +43,7 @@ import { SlideList } from "./components/SlideList";
 import { EditorCanvas } from "./components/EditorCanvas";
 import { EditorInspector } from "./components/EditorInspector";
 import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
+import { applyLookToSlides, normalizeLook, withSongTheme } from "../themes/theme-look.mjs";
 
 interface LyricsEditorProps {
   libraryItem: LibraryItem | null;
@@ -316,6 +317,35 @@ export const LyricsEditor = memo(function LyricsEditor({
 
     lastItemKeyRef.current = itemKey;
   }, [activeDefaultTextStyle, libraryItem, selectedSlideId]);
+
+  // Hidden behind Show, the editor keeps its draft while the song can change
+  // there: a theme applied, lyrics saved from the mini window. The effect
+  // above takes those for save echoes of this draft. Coming back into view
+  // (an effect with no dependencies runs each time the view is shown) with
+  // nothing unsaved here, the editor takes the song as it is now.
+  useEffect(() => {
+    if (!libraryItem || String(draft._id) !== String(libraryItem._id)) return;
+    const payloadOf = (value: LibraryItemDraft, view: EditorViewMode) =>
+      JSON.stringify(
+        buildDraftWithNormalizedContent(
+          { ...value, title: value.title.trim(), content: { ...value.content, editorView: view } },
+          value.slides,
+          { ...value.content, editorView: view },
+          activeDefaultTextStyle,
+          { preserveBody: view === "source" },
+        ),
+      );
+    const incoming = createDraftFromLibraryItem(libraryItem, activeDefaultTextStyle);
+    const incomingPayload = payloadOf(
+      incoming,
+      incoming.content?.editorView === "source" ? "source" : "slides",
+    );
+    if (incomingPayload === latestSavedRef.current) return;
+    if (payloadOf(draft, editorView) !== latestSavedRef.current) return;
+    latestSavedRef.current = incomingPayload;
+    setDraft(incoming);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const selectedSlideIndex = useMemo(
     () => draft.slides.findIndex((slide) => slide.id === selectedSlideId),
@@ -667,49 +697,63 @@ export const LyricsEditor = memo(function LyricsEditor({
     [applyDraft],
   );
 
-  // Listen for Theme-modal apply requests. When the Themes modal dispatches
-  // a payload, the editor patches the currently-selected slide's text
-  // elements with the theme's style and applies the background color. We
-  // consume the pending payload after applying so it only fires once.
-  const pendingTheme = useThemesModalStore((state) => state.pending);
-  const consumePendingTheme = useThemesModalStore(
-    (state) => state.consumePending,
-  );
-  const lastAppliedNonceRef = useRef<number>(0);
+  // The song open here is what the Themes panel applies to while the editor
+  // is in front. Hidden (Show view), the effect is cleaned up and the entry
+  // goes, so the panel turns to Show's song instead.
+  const setThemeTarget = useThemesModalStore((state) => state.setTarget);
+  const themeTargetId = libraryItem && libraryItem.type !== "scripture" ? String(libraryItem._id) : null;
   useEffect(() => {
-    if (!pendingTheme) return;
-    if (pendingTheme.nonce === lastAppliedNonceRef.current) return;
-    lastAppliedNonceRef.current = pendingTheme.nonce;
-
-    if (Object.keys(pendingTheme.style).length > 0) {
-      setAllTextElementsStyle(pendingTheme.style);
-    }
-
-    if (pendingTheme.backgroundColor !== null && selectedSlideId) {
-      const bg = pendingTheme.backgroundColor;
-      applyDraft((previous) => ({
-        ...previous,
-        slides: previous.slides.map((slide) =>
-          slide.id === selectedSlideId
-            ? {
-                ...slide,
-                backgroundColor: bg,
-                useBackgroundColor: true,
-              }
-            : slide,
-        ),
-      }));
-    }
-
-    toast.success("Theme applied");
-    consumePendingTheme();
+    if (!themeTargetId) return;
+    setThemeTarget("editor", {
+      surface: "editor",
+      libraryId: themeTargetId,
+      title: draft.title.trim() || "this song",
+      slides: draft.slides,
+      slideId: selectedSlideId,
+      canvasSize: currentCanvasSize,
+      themeId: draft.content?.theme?.id ?? null,
+    });
   }, [
-    applyDraft,
-    consumePendingTheme,
-    pendingTheme,
+    currentCanvasSize,
+    draft.content?.theme?.id,
+    draft.slides,
+    draft.title,
     selectedSlideId,
-    setAllTextElementsStyle,
+    setThemeTarget,
+    themeTargetId,
   ]);
+  useEffect(() => {
+    if (!themeTargetId) return;
+    return () => setThemeTarget("editor", null);
+  }, [setThemeTarget, themeTargetId]);
+
+  // A theme chosen in the panel, for this song: onto the draft, which saves
+  // as any edit does. The whole song records it, so slides rebuilt from the
+  // lyrics get it again; one slide does not.
+  const pendingTheme = useThemesModalStore((state) => state.pending);
+  const consumePendingTheme = useThemesModalStore((state) => state.consumePending);
+  useEffect(() => {
+    if (
+      !pendingTheme ||
+      pendingTheme.surface !== "editor" ||
+      pendingTheme.libraryId !== themeTargetId
+    ) {
+      return;
+    }
+    const { theme, onlySlideId, nonce } = pendingTheme;
+    consumePendingTheme(nonce);
+    applyDraft((previous) => ({
+      ...previous,
+      slides: applyLookToSlides(
+        previous.slides,
+        normalizeLook(theme.look),
+        canvasDimensions,
+        { onlySlideId },
+      ) as LibrarySlide[],
+      content: onlySlideId ? previous.content : { ...previous.content, theme },
+    }));
+    toast.success(onlySlideId ? `${theme.name} is on this slide` : `${theme.name} is on the whole song`);
+  }, [applyDraft, canvasDimensions, consumePendingTheme, pendingTheme, themeTargetId]);
 
   const handleSelectSlide = useCallback(
     (slideId: string | null) => {
@@ -950,10 +994,10 @@ export const LyricsEditor = memo(function LyricsEditor({
         // 2. Re-flow the cleaned body into N-line slides (ignores any
         //    existing slide separators, so re-breaking to a new N works).
         const nextBody = breakLyricsIntoChunks(fixedBody, linesPerSlide);
-        const nextSlides = buildSlidesFromBody(
-          nextBody,
-          currentCanvasSize,
-          activeDefaultTextStyle,
+        const nextSlides = withSongTheme(
+          buildSlidesFromBody(nextBody, currentCanvasSize, activeDefaultTextStyle),
+          draft.content?.theme,
+          canvasDimensions,
         );
         applyDraft(
           (previous) => ({
@@ -980,8 +1024,10 @@ export const LyricsEditor = memo(function LyricsEditor({
     [
       activeDefaultTextStyle,
       applyDraft,
+      canvasDimensions,
       currentCanvasSize,
       draft.body,
+      draft.content?.theme,
       editorView,
       onFixLyrics,
       setInspectorTab,
@@ -995,21 +1041,23 @@ export const LyricsEditor = memo(function LyricsEditor({
         currentCanvasSize,
         activeDefaultTextStyle,
       );
-      setDraft((previous) =>
-        buildDraftWithNormalizedContent(
+      setDraft((previous) => {
+        // Rebuilt slides are plain; the song's theme goes back on them.
+        const themed = withSongTheme(nextSlides, previous.content?.theme, canvasDimensions);
+        return buildDraftWithNormalizedContent(
           {
             ...previous,
-            slides: nextSlides,
+            slides: themed,
             body: nextBody,
           },
-          nextSlides,
+          themed,
           previous.content,
           activeDefaultTextStyle,
           {
             preserveBody: true,
           },
-        ),
-      );
+        );
+      });
 
       setSelectedSlideId((current) => {
         if (current && nextSlides.some((slide) => slide.id === current)) {
@@ -1020,7 +1068,7 @@ export const LyricsEditor = memo(function LyricsEditor({
       setSelectedElementId(null);
       setInspectorTab("slide");
     },
-    [activeDefaultTextStyle, currentCanvasSize, setInspectorTab],
+    [activeDefaultTextStyle, canvasDimensions, currentCanvasSize, setInspectorTab],
   );
 
   const handleAddSlide = useCallback(() => {
