@@ -14,6 +14,7 @@ use tiny_skia::{FillRule, Paint, PathBuilder, PixmapMut, Stroke, Transform};
 
 use crate::services::slide::SlideElement;
 
+use super::fill::{self, Fill};
 use super::{color, geometry};
 
 /// A rectangle with optionally rounded corners, in local element space.
@@ -67,21 +68,28 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     let radius = geometry::border_radius(style, width, height, scale);
     let opacity = style.and_then(|s| s.opacity);
 
-    // Fill. A `transparent` background is skipped rather than painted: the
-    // Canvas version tests for it by name, and painting it would blend nothing
-    // over what is underneath for no reason.
-    if let Some(background) = style
-        .and_then(|s| s.background_color.as_deref())
-        .filter(|value| !value.trim().eq_ignore_ascii_case("transparent"))
-        .and_then(color::parse)
-    {
-        if let Some(path) = rounded_rect_path(0.0, 0.0, width, height, radius) {
-            let mut paint = Paint {
-                anti_alias: true,
-                ..Paint::default()
-            };
-            paint.set_color(color::with_opacity(background, opacity));
-            pixmap.fill_path(&path, &paint, FillRule::Winding, transform, None);
+    // Fill: a theme's gradient or mix of colours where the style has one it
+    // can read (`fill.rs`), else the background colour. A `transparent`
+    // background is skipped rather than painted: the Canvas version tests for
+    // it by name, and painting it would blend nothing over what is underneath
+    // for no reason.
+    if let Some(path) = rounded_rect_path(0.0, 0.0, width, height, radius) {
+        let painted = Fill::of(style).is_some_and(|fill| {
+            fill::paint(pixmap, &path, &fill, (width, height), opacity, transform)
+        });
+        if !painted {
+            if let Some(background) = style
+                .and_then(|s| s.background_color.as_deref())
+                .filter(|value| !value.trim().eq_ignore_ascii_case("transparent"))
+                .and_then(color::parse)
+            {
+                let mut paint = Paint {
+                    anti_alias: true,
+                    ..Paint::default()
+                };
+                paint.set_color(color::with_opacity(background, opacity));
+                pixmap.fill_path(&path, &paint, FillRule::Winding, transform, None);
+            }
         }
     }
 
@@ -183,6 +191,58 @@ mod tests {
         );
         assert_eq!(frame.pixel_at(10, 10), Some((0, 0, 0, 255)), "outside");
         assert_eq!(frame.pixel_at(70, 70), Some((0, 0, 0, 255)), "past it");
+    }
+
+    #[test]
+    fn a_gradient_fill_runs_across_the_shape() {
+        let frame = render(json!({
+            "id": "a", "type": "shape",
+            "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+            "style": {
+                "backgroundColor": "#00ff00",
+                "fill": { "kind": "gradient", "from": "#ff0000", "to": "#0000ff", "angle": 0.0 }
+            }
+        }));
+        let (left, _, left_blue, _) = frame.pixel_at(2, 50).expect("pixel");
+        let (right, _, right_blue, _) = frame.pixel_at(97, 50).expect("pixel");
+        assert!(
+            left > 240 && left_blue < 15,
+            "red at the start: {left} {left_blue}"
+        );
+        assert!(
+            right < 15 && right_blue > 240,
+            "blue at the end: {right} {right_blue}"
+        );
+        let (_, green, _, _) = frame.pixel_at(50, 50).expect("pixel");
+        assert_eq!(green, 0, "the plain colour is not drawn under it");
+    }
+
+    #[test]
+    fn a_mix_is_its_base_with_soft_spots_of_colour() {
+        let frame = render(json!({
+            "id": "a", "type": "shape",
+            "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+            "style": { "fill": { "kind": "mix", "base": "#000080", "spots": [
+                { "color": "#ff0000", "x": 0.2, "y": 0.2, "size": 0.3 }
+            ] } }
+        }));
+        let (red, _, _, _) = frame.pixel_at(20, 20).expect("pixel");
+        assert!(red > 230, "the spot's colour at its centre: {red}");
+        assert_eq!(
+            frame.pixel_at(90, 90),
+            Some((0, 0, 128, 255)),
+            "the base past its reach"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_fill_falls_back_to_the_background_colour() {
+        let frame = render(json!({
+            "id": "a", "type": "shape",
+            "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+            "style": { "backgroundColor": "#ff0000", "fill": { "kind": "gradient", "from": "nope", "to": "#fff" } }
+        }));
+        assert_eq!(frame.pixel_at(50, 50), Some((255, 0, 0, 255)));
     }
 
     #[test]

@@ -134,8 +134,63 @@ fn capitalize(text: &str, mode: Option<&str>) -> String {
             text.to_uppercase()
         }
         Some(value) if value.eq_ignore_ascii_case("lowercase") => text.to_lowercase(),
+        Some(value)
+            if value.eq_ignore_ascii_case("titleCase")
+                || value.eq_ignore_ascii_case("capitalize") =>
+        {
+            title_case(text)
+        }
+        Some(value) if value.eq_ignore_ascii_case("lineStart") => text
+            .split('\n')
+            .map(first_letter_upper)
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => text.to_owned(),
     }
+}
+
+/// Each word's first letter in capitals, as `applyCapitalization`'s
+/// `titleCase` does: a letter that follows anything but a letter, a digit or
+/// an apostrophe, so "it's" is "It's".
+fn title_case(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_word = false;
+    for character in text.chars() {
+        if character.is_alphabetic() && !in_word {
+            out.extend(character.to_uppercase());
+        } else {
+            out.push(character);
+        }
+        in_word = character.is_alphanumeric() || matches!(character, '\'' | '\u{2019}');
+    }
+    out
+}
+
+/// The first letter of a line in capitals, whatever comes before it.
+fn first_letter_upper(line: &str) -> String {
+    match line
+        .char_indices()
+        .find(|(_, character)| character.is_alphabetic())
+    {
+        Some((index, character)) => {
+            let mut out = String::with_capacity(line.len());
+            out.push_str(&line[..index]);
+            out.extend(character.to_uppercase());
+            out.push_str(&line[index + character.len_utf8()..]);
+            out
+        }
+        None => line.to_owned(),
+    }
+}
+
+/// A number the style carries that this build does not model as a field.
+fn extra_number(style: Option<&SlideElementStyle>, key: &str) -> Option<f32> {
+    style?
+        .extra
+        .get(key)?
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .map(|value| value as f32)
 }
 
 /// Draw one `text` element.
@@ -340,7 +395,11 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         .unwrap_or(48.0) as f32
         * uniform)
         .max(1.0);
-    let line_height = font_size * DEFAULT_LINE_HEIGHT;
+    // Line height as a multiple of the size (`lineHeight`), 1.2 unless set.
+    let line_height = font_size
+        * extra_number(style, "lineHeight")
+            .filter(|value| (0.5..=4.0).contains(value))
+            .unwrap_or(DEFAULT_LINE_HEIGHT);
 
     let text_color = style
         .and_then(|s| s.color.as_deref())
@@ -387,6 +446,12 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     }
     if let Some(family) = family.as_deref() {
         attrs = attrs.family(Family::Name(family));
+    }
+    // `letterSpacing` is in canvas pixels, as the size is; cosmic-text wants
+    // it as a fraction of the size.
+    if let Some(spacing) = extra_number(style, "letterSpacing").filter(|value| *value != 0.0) {
+        let canvas_size = font_size / uniform.max(f32::EPSILON);
+        attrs = attrs.letter_spacing((spacing / canvas_size).clamp(-0.5, 2.0));
     }
 
     let align = horizontal_align(style.and_then(|s| s.text_align.as_deref()));
@@ -483,6 +548,51 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         },
     );
 
+    // Underline and strikethrough, a line under or through each laid-out
+    // line of words, at the heights the canvas draws them.
+    let decoration = Decoration::of(style);
+    if decoration.underline || decoration.strike {
+        let thickness = (font_size * 0.06).max(1.0);
+        for run in buffer.layout_runs() {
+            let Some((left, right)) =
+                run.glyphs
+                    .iter()
+                    .fold(None, |span: Option<(f32, f32)>, glyph| {
+                        let (low, high) = (glyph.x, glyph.x + glyph.w);
+                        Some(span.map_or((low, high), |(a, b)| (a.min(low), b.max(high))))
+                    })
+            else {
+                continue;
+            };
+            let mut lines = Vec::with_capacity(2);
+            if decoration.underline {
+                lines.push(run.line_y + (font_size * 0.08).max(1.0));
+            }
+            if decoration.strike {
+                lines.push(run.line_y - font_size * 0.28);
+            }
+            for centre in lines {
+                let top = (offset_y + centre - thickness / 2.0).round() as i32;
+                let rows = thickness.round().max(1.0) as i32;
+                let from = (offset_x + left).floor() as i32;
+                let to = (offset_x + right).ceil() as i32;
+                for by in top.max(0)..(top + rows).min(box_height) {
+                    for bx in from.max(0)..to.min(box_width) {
+                        let (r, g, b, a) = gradient.as_ref().map_or(base_ink, |gradient| {
+                            gradient.at(bx as f32 + 0.5, by as f32 + 0.5)
+                        });
+                        if a <= 0.0 {
+                            continue;
+                        }
+                        let (px, py) = (bx + pad, by + pad);
+                        ink.include(px, py);
+                        blend(&mut scratch, (py * scratch_width + px) as usize, r, g, b, a);
+                    }
+                }
+            }
+        }
+    }
+
     if let Some(outline) = effects.outline {
         outline_under(&mut scratch, &mut ink, outline.radius, outline.color);
     }
@@ -494,6 +604,31 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         .element_transform(element)
         .pre_translate(-pad as f32, -pad as f32);
     composite(pixmap, &scratch, ink, transform);
+}
+
+/// The lines drawn with the words: `fontUnderline`, or `textDecoration` naming
+/// `underline` or `line-through`.
+#[derive(Debug, Clone, Copy, Default)]
+struct Decoration {
+    underline: bool,
+    strike: bool,
+}
+
+impl Decoration {
+    fn of(style: Option<&SlideElementStyle>) -> Self {
+        let Some(style) = style else {
+            return Self::default();
+        };
+        let named = style
+            .text_decoration
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        Self {
+            underline: style.font_underline == Some(true) || named.contains("underline"),
+            strike: named.contains("line-through"),
+        }
+    }
 }
 
 /// Words filled with a gradient (`textFillMode: "gradient"`), laid out as the
@@ -1769,5 +1904,90 @@ mod tests {
         }))
         .expect("style");
         assert!(TextGradient::of(Some(&style), 100.0, 50.0).is_none());
+    }
+
+    /// The columns and rows ink lands in: its left, right, top and bottom.
+    fn ink_extent(frame: &Frame) -> (u32, u32, u32, u32) {
+        let (mut left, mut right, mut top, mut bottom) = (u32::MAX, 0, u32::MAX, 0);
+        for y in 0..frame.height() {
+            for x in 0..frame.width() {
+                if let Some((r, g, b, _)) = frame.pixel_at(x, y) {
+                    if r > 40 || g > 40 || b > 40 {
+                        left = left.min(x);
+                        right = right.max(x);
+                        top = top.min(y);
+                        bottom = bottom.max(y);
+                    }
+                }
+            }
+        }
+        (left, right, top, bottom)
+    }
+
+    fn words(style: serde_json::Value, content: &str) -> Frame {
+        render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": content,
+            "style": style
+        }))
+    }
+
+    #[test]
+    fn letter_spacing_spreads_the_words() {
+        let (left, right, _, _) = ink_extent(&words(json!({ "fontSize": 24.0 }), "spacing"));
+        let (wide_left, wide_right, _, _) = ink_extent(&words(
+            json!({ "fontSize": 24.0, "letterSpacing": 8.0 }),
+            "spacing",
+        ));
+        assert!(
+            wide_right - wide_left > right - left + 30,
+            "{} against {}",
+            wide_right - wide_left,
+            right - left
+        );
+    }
+
+    #[test]
+    fn line_height_spreads_the_lines() {
+        let (_, _, top, bottom) = ink_extent(&words(json!({ "fontSize": 24.0 }), "one\ntwo"));
+        let (_, _, tall_top, tall_bottom) = ink_extent(&words(
+            json!({ "fontSize": 24.0, "lineHeight": 2.4 }),
+            "one\ntwo",
+        ));
+        assert!(
+            tall_bottom - tall_top > bottom - top + 15,
+            "{} against {}",
+            tall_bottom - tall_top,
+            bottom - top
+        );
+    }
+
+    #[test]
+    fn an_underline_is_drawn_under_the_words() {
+        let (_, _, _, bottom) = ink_extent(&words(json!({ "fontSize": 30.0 }), "mm"));
+        let (_, _, _, underlined) = ink_extent(&words(
+            json!({ "fontSize": 30.0, "textDecoration": "underline" }),
+            "mm",
+        ));
+        assert!(underlined > bottom, "{underlined} against {bottom}");
+        let (_, _, _, from_flag) = ink_extent(&words(
+            json!({ "fontSize": 30.0, "fontUnderline": true }),
+            "mm",
+        ));
+        assert_eq!(from_flag, underlined, "fontUnderline is the same line");
+    }
+
+    #[test]
+    fn title_case_and_first_letters_match_the_canvas() {
+        assert_eq!(
+            capitalize("amazing grace, how sweet", Some("titleCase")),
+            "Amazing Grace, How Sweet"
+        );
+        assert_eq!(capitalize("it's well", Some("titleCase")), "It's Well");
+        assert_eq!(
+            capitalize("  holy\n(and) true", Some("lineStart")),
+            "  Holy\n(And) true"
+        );
     }
 }

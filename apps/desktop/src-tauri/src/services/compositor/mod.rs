@@ -11,6 +11,7 @@
 
 pub mod color;
 pub mod composer;
+pub mod fill;
 pub mod filters;
 pub mod frame;
 pub mod geometry;
