@@ -76,6 +76,20 @@ export default defineSchema({
   // An invitation to join a workspace, sent to an email address. Accepting
   // it — on the website or in the desktop app — is the only way into a
   // workspace besides creating one (`invites.ts`).
+  // Messages sent from the site's "How can we help?" panel. Kept here so
+  // none is lost, and emailed to the team when SUPPORT_INBOX is set.
+  supportRequests: defineTable({
+    email: v.string(),
+    name: v.optional(v.string()),
+    topic: v.string(),
+    message: v.string(),
+    page: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    createdAt: v.number(),
+    emailSentAt: v.optional(v.number()),
+    emailError: v.optional(v.string()),
+  }).index("by_email_created", ["email", "createdAt"]),
+
   workspaceInvites: defineTable({
     orgId: v.id("organizations"),
     // Lower-cased; only someone signed in with this address can accept.

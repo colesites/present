@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import { DashboardFrame } from "./DashboardFrame";
 import { DashboardSidebar } from "./DashboardSidebar";
+import { HelpPanel } from "../../../components/help/HelpCenter";
 
 /**
  * The dashboard around every page: the navigation, the organization in use,
@@ -84,6 +85,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
   const [isSwitchingWorkspace, setIsSwitchingWorkspace] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   useEffect(() => {
     setCached(readCachedOrganizations());
@@ -213,6 +215,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
       onSwitchContext={handleSwitchContext}
       onSignOut={() => void handleSignOut()}
       onNavigate={onNavigate}
+      onOpenHelp={() => setIsHelpOpen(true)}
     />
   );
 
@@ -226,6 +229,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
       >
         {children}
       </DashboardFrame>
+      <HelpPanel open={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </DashboardContext.Provider>
   );
 }

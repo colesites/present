@@ -27,6 +27,7 @@ import type * as props from "../props.js";
 import type * as reset from "../reset.js";
 import type * as services from "../services.js";
 import type * as slideMasters from "../slideMasters.js";
+import type * as support from "../support.js";
 import type * as themes from "../themes.js";
 import type * as users from "../users.js";
 
@@ -56,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   reset: typeof reset;
   services: typeof services;
   slideMasters: typeof slideMasters;
+  support: typeof support;
   themes: typeof themes;
   users: typeof users;
 }>;

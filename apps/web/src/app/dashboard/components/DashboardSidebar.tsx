@@ -8,6 +8,7 @@ import {
   CreditCard,
   LayoutGrid,
   Library,
+  LifeBuoy,
   Settings,
   UserRound,
   UsersRound,
@@ -48,6 +49,7 @@ interface DashboardSidebarProps {
   onSignOut: () => void;
   /** Called when a link is followed, so the phone drawer can close. */
   onNavigate?: () => void;
+  onOpenHelp?: () => void;
 }
 
 /**
@@ -70,6 +72,7 @@ export function DashboardSidebar({
   onSwitchContext,
   onSignOut,
   onNavigate,
+  onOpenHelp,
 }: DashboardSidebarProps) {
   return (
     <div className="flex h-full min-h-0 flex-col text-white">
@@ -102,7 +105,21 @@ export function DashboardSidebar({
         </ul>
       </nav>
 
-      <div className="pt-6">
+      {onOpenHelp ? (
+        <button
+          type="button"
+          onClick={() => {
+            onNavigate?.();
+            onOpenHelp();
+          }}
+          className="mt-4 flex items-center gap-3 rounded-[10px] px-3 py-2 text-[0.92rem] text-white/55 transition-colors hover:bg-white/[0.04] hover:text-white/90"
+        >
+          <LifeBuoy className="h-[17px] w-[17px] flex-none text-white/45" strokeWidth={1.8} />
+          Help
+        </button>
+      ) : null}
+
+      <div className="pt-4">
         <AccountSwitcher
           currentOrganization={currentOrganization}
           isLoading={isLoadingOrganization}
