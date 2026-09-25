@@ -28,8 +28,8 @@
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "shortDescription": "Church presentation software",
-    "longDescription": "Present — church presentation software for worship services.",
+    "shortDescription": "Presentation software",
+    "longDescription": "Present is presentation software for churches, conferences and live events.",
     "copyright": "Present",
     "resources": {
       "ndi/": "ndi/",
