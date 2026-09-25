@@ -370,22 +370,26 @@ export const LyricsEditor = memo(function LyricsEditor({
     [selectedElementId, selectedSlide?.elements],
   );
 
+  const selectedElementType = selectedElement?.type ?? null;
   useEffect(() => {
     if (!selectedElementId) {
       return;
     }
 
-    if (!selectedElement) {
+    if (!selectedElementType) {
       setSelectedElementId(null);
       setInspectorTab(lastGeneralInspectorTabRef.current);
       return;
     }
 
-    const objectTab = getInspectorTabForElementType(selectedElement.type);
+    // On selecting an object, its tab. Only then: the sidebar's Song and
+    // Slide tabs stay open while the object is edited, not snapped back to
+    // it on every change.
+    const objectTab = getInspectorTabForElementType(selectedElementType);
     if (objectTab) {
       setInspectorTabState(objectTab);
     }
-  }, [selectedElement, selectedElementId, setInspectorTab]);
+  }, [selectedElementId, selectedElementType, setInspectorTab]);
 
   const applyDraft = useCallback(
     (
@@ -1310,9 +1314,9 @@ export const LyricsEditor = memo(function LyricsEditor({
           <ResizableHandle withHandle />
   
           <ResizablePanel
-            defaultSize={25}
-            minSize={20}
-            maxSize={35}
+            defaultSize={21}
+            minSize={17}
+            maxSize={32}
             className="bg-background border-l border-border"
           >
             <EditorInspector

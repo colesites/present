@@ -13,7 +13,7 @@ import {
   Lock 
 } from "lucide-react";
 import { cn } from "../../../renderer/shared/lib/utils";
-import { AutoFitText } from "../../../renderer/shared/components";
+import { CanvasSlideLayer } from "../../../renderer/shared/components/CanvasSlideLayer";
 import type { LibrarySlide, LibraryContent, SlideElement } from "../../../shared/types";
 import { getSlideBackgroundColor } from "../../library/lib/library-items";
 import { resolveSlideListScrollTop } from "../lib/slide-list-scroll.mjs";
@@ -267,25 +267,26 @@ export const SlideList = memo(function SlideList({
                       </div>
                     </div>
 
-                    {/* The slide, as a plain rectangle of the right shape.
-                        No padding inside it: the words are laid out to the
-                        whole slide, and an inset made "WELCOME" wrap in the
-                        middle of itself. */}
+                    {/* The slide as the audience will see it: drawn by the
+                        renderer the output uses, with its fonts, colours,
+                        boxes and background, so a change shows here too. */}
                     <div
                       className="relative aspect-video w-full overflow-hidden rounded-md ring-1 ring-white/8"
                       style={{ backgroundColor: backgroundColor ?? "#000000" }}
                     >
-                      {slide.text.trim() ? (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <AutoFitText
-                            text={slide.text.trim()}
-                            className="pointer-events-none select-none px-1 text-center text-foreground"
-                            style={{ fontFamily }}
-                            maxFontSize={22}
-                            minScale={0.4}
-                          />
-                        </div>
-                      ) : null}
+                      <CanvasSlideLayer
+                        text={slide.text}
+                        elements={slide.elements ?? []}
+                        canvasSize={content?.presentation?.canvasSize}
+                        className="pointer-events-none absolute inset-0"
+                        libraryStyle={{
+                          fontFamily,
+                          fontSize: 80,
+                          fontBold: false,
+                          fontItalic: false,
+                          fontUnderline: false,
+                        }}
+                      />
                     </div>
                   </button>
                   <button
