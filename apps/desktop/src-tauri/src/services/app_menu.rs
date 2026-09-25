@@ -225,6 +225,11 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
         .build()?;
 
     // --- Presentation ------------------------------------------------------
+    let timer = SubmenuBuilder::new(app, "Timer")
+        .item(&item("presentation.timer-play", "Start/Pause Timer")?)
+        .item(&item("presentation.timer-reset", "Reset Timer")?)
+        .item(&item("presentation.timer-stop-all", "Stop All Timers")?)
+        .build()?;
     let mut presentation = SubmenuBuilder::new(app, "Presentation");
     for (index, (id, text)) in CONTROLS.iter().enumerate() {
         if index == 2 {
@@ -248,8 +253,11 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
             "Messages on Output",
         )?)
         .separator()
+        .item(&item("presentation.play-media", "Play/Pause Media")?)
         .item(&item("presentation.clear-media", "Clear Media")?)
         .item(&check("freeze", "presentation.freeze", "Freeze Output")?)
+        .separator()
+        .item(&timer)
         .build()?;
 
     // --- Screens -----------------------------------------------------------

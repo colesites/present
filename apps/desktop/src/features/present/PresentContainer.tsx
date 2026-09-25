@@ -85,7 +85,7 @@ import { useScriptureLayoutTemplateStore } from "../scripture/lib/layout-templat
 import { useScreenComposerState } from "../screen-composer";
 import { useGlobalSearchStore } from "../../renderer/shared/store/globalSearchStore";
 import { usePresentAiToolProvider } from "../../renderer/ai-operator/usePresentAiToolProvider";
-import { useMenuChecks } from "../../renderer/tauri/menu-commands";
+import { useMenuChecks, useMenuCommand } from "../../renderer/tauri/menu-commands";
 
 type EditedOutputSnapshot = {
   slideId: string;
@@ -1583,6 +1583,17 @@ export function PresentContainer({
     messages: isMessageLayerEnabled,
     grid: isGridView,
   });
+
+  // The media and timer items in the Presentation menu: the transport and the
+  // timer panel's own buttons, for the timer the panel has selected.
+  useMenuCommand("presentation.play-media", toggleVideoPlayback);
+  useMenuCommand("presentation.timer-play", () => {
+    if (timers.activeTimer) timers.toggleTimerPlayback(timers.activeTimer.id);
+  });
+  useMenuCommand("presentation.timer-reset", () => {
+    if (timers.activeTimer) timers.resetTimer(timers.activeTimer.id);
+  });
+  useMenuCommand("presentation.timer-stop-all", timers.stopAllTimers);
 
   // Foot pedals, MIDI and OSC reach the same handlers a click does
   // (`services/control` in the core, `useControlActions`).
