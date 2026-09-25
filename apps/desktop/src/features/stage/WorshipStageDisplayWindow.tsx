@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../../renderer/shared/components/ScriptureTextLayer";
 import type {
@@ -215,26 +215,50 @@ export function WorshipStageDisplayWindow() {
     window.electronAPI?.notifyWorshipStageReady?.();
   }, []);
 
+  // Where the operator's video is, and whether it is running, for the
+  // mirror to follow. A ref as well as state, so the element can catch up
+  // from its own events with the latest values.
+  const playbackRef = useRef({
+    positionSeconds: state.videoCurrentTime,
+    sampledAtMs: state.videoTimeSampledAtMs,
+    playing: state.isVideoPlaying,
+  });
+  useEffect(() => {
+    playbackRef.current = {
+      positionSeconds: state.videoCurrentTime,
+      sampledAtMs: state.videoTimeSampledAtMs,
+      playing: state.isVideoPlaying,
+    };
+  }, [state.isVideoPlaying, state.videoCurrentTime, state.videoTimeSampledAtMs]);
+
+  const followOperator = useCallback((video: HTMLVideoElement) => {
+    const playback = playbackRef.current;
+    syncMirrorVideo(video, playback);
+    if (playback.playing) {
+      void video.play().catch((): void => undefined);
+    } else {
+      video.pause();
+    }
+  }, []);
+
+  // Loading a new source leaves a video element paused, and so does mounting
+  // one: switching from one video to another, or showing media again, used
+  // to leave the stage on a still frame, because nothing here had changed
+  // but the URL. The URL and what is shown are part of what this follows,
+  // and a newly loaded video catches up in `onLoadedData` below.
   useEffect(() => {
     const video = videoRef.current;
     if (!video || state.mediaType !== "video") {
       return;
     }
-
-    syncMirrorVideo(video, {
-      positionSeconds: state.videoCurrentTime,
-      sampledAtMs: state.videoTimeSampledAtMs,
-      playing: state.isVideoPlaying,
-    });
-
-    if (state.isVideoPlaying) {
-      void video.play().catch((): void => undefined);
-    } else {
-      video.pause();
-    }
+    followOperator(video);
   }, [
+    followOperator,
+    state.hideBackground,
     state.isVideoPlaying,
     state.mediaType,
+    state.mediaUrl,
+    state.showMedia,
     state.videoCurrentTime,
     state.videoTimeSampledAtMs,
   ]);
@@ -272,6 +296,7 @@ export function WorshipStageDisplayWindow() {
             loop={state.videoSettings.loop}
             muted
             playsInline
+            onLoadedData={(event) => followOperator(event.currentTarget)}
             style={{ filter: state.mediaFilterCSS }}
           >
             <track kind="captions" />

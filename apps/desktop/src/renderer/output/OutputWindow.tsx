@@ -202,12 +202,7 @@ export function OutputWindow() {
 
   const legacyVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  useEffect(() => {
-    const video = legacyVideoRef.current;
-    if (!video || state.mediaType !== "video") {
-      return;
-    }
-
+  const followOperator = (video: HTMLVideoElement) => {
     syncMirrorVideo(video, {
       positionSeconds: state.videoCurrentTime,
       sampledAtMs: state.videoTimeSampledAtMs,
@@ -222,9 +217,25 @@ export function OutputWindow() {
     } else {
       video.pause();
     }
+  };
+
+  // The element exists only while media is shown, and a new or remounted one
+  // starts paused, so showing media again is part of what this follows; a
+  // newly loaded video also catches up in `onLoadedData` (the worship stage
+  // stayed on a still frame for want of both).
+  useEffect(() => {
+    const video = legacyVideoRef.current;
+    if (!video || state.mediaType !== "video") {
+      return;
+    }
+    followOperator(video);
+    // `followOperator` reads the same state listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    state.hideBackground,
     state.mediaType,
     state.mediaUrl,
+    state.showMedia,
     state.videoCurrentTime,
     state.videoTimeSampledAtMs,
     state.isVideoPlaying,
@@ -477,6 +488,7 @@ export function OutputWindow() {
               loop={state.videoSettings.loop}
               muted
               playsInline
+              onLoadedData={(event) => followOperator(event.currentTarget)}
               style={{ filter: state.mediaFilterCSS }}
             >
               <track kind="captions" />
