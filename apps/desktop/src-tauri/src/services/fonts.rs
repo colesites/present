@@ -499,6 +499,58 @@ pub fn describe_family(family_name: &str, post_script_name: &str) -> FamilyEntry
     }
 }
 
+/// One face of a family, as the platform describes it: its weight on the
+/// CSS scale and whether it is italic, where the platform says, and
+/// otherwise the guesses `describe_family` makes from its PostScript name.
+///
+/// The list used to hold only each family's first face, which is why every
+/// font offered one weight: Arial had no Bold, Helvetica Neue no Light.
+pub fn describe_member(
+    family_name: &str,
+    post_script_name: &str,
+    css_weight: Option<u16>,
+    italic: Option<bool>,
+) -> FamilyEntry {
+    let mut entry = describe_family(family_name, post_script_name);
+    if let Some(weight) = css_weight {
+        entry.weight = css_weight_name(weight);
+    }
+    if let Some(italic) = italic {
+        entry.style = if italic { "italic" } else { "normal" };
+    }
+    entry
+}
+
+/// A CSS weight as the nearest hundred, which `normalize_weight` reads.
+fn css_weight_name(weight: u16) -> &'static str {
+    match (u32::from(weight) + 50) / 100 {
+        0 | 1 => "100",
+        2 => "200",
+        3 => "300",
+        4 => "400",
+        5 => "500",
+        6 => "600",
+        7 => "700",
+        8 => "800",
+        _ => "900",
+    }
+}
+
+/// `NSFontManager`'s weight (0 to 15, 5 regular, 9 bold) on the CSS scale.
+pub fn css_weight_from_apple(weight: isize) -> u16 {
+    match weight {
+        ..=1 => 100,
+        2 => 200,
+        3 | 4 => 300,
+        5 => 400,
+        6 => 500,
+        7 | 8 => 600,
+        9 => 700,
+        10 => 800,
+        _ => 900,
+    }
+}
+
 /// font-list's `standardize` with quoting disabled: `\uXXXX` escapes decoded,
 /// either case of `u`, then one pair of surrounding double quotes removed.
 pub fn standardize_name(name: &str) -> String {
@@ -960,6 +1012,64 @@ mod tests {
         .map(str::to_owned)
         .to_vec();
         assert_eq!(system_families(&names), ["a", "A", "b", "Q", "Spaced"]);
+    }
+
+    #[test]
+    fn every_face_of_a_family_is_listed_with_its_own_weight() {
+        let entries = [
+            describe_member(
+                "Arial",
+                "ArialMT",
+                Some(css_weight_from_apple(5)),
+                Some(false),
+            ),
+            describe_member(
+                "Arial",
+                "Arial-BoldMT",
+                Some(css_weight_from_apple(9)),
+                Some(false),
+            ),
+            describe_member(
+                "Arial",
+                "Arial-BoldItalicMT",
+                Some(css_weight_from_apple(9)),
+                Some(true),
+            ),
+            describe_member(
+                "Helvetica Neue",
+                "HelveticaNeue-Light",
+                Some(300),
+                Some(false),
+            ),
+            // Nothing from the platform: guessed from the name, as before.
+            describe_member("Avenir", "Avenir-Heavy", None, None),
+        ];
+        let faces: Vec<(String, String, String)> = system_faces(&entries)
+            .into_iter()
+            .map(|face| (face.family_name, face.weight, face.style))
+            .collect();
+        assert_eq!(
+            faces,
+            [
+                ("Arial".into(), "400".into(), "normal".into()),
+                ("Arial".into(), "700".into(), "italic".into()),
+                ("Arial".into(), "700".into(), "normal".into()),
+                ("Avenir".into(), "800".into(), "normal".into()),
+                ("Helvetica Neue".into(), "300".into(), "normal".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn apple_weights_land_on_the_css_scale() {
+        assert_eq!(css_weight_from_apple(3), 300);
+        assert_eq!(css_weight_from_apple(5), 400);
+        assert_eq!(css_weight_from_apple(6), 500);
+        assert_eq!(css_weight_from_apple(8), 600);
+        assert_eq!(css_weight_from_apple(9), 700);
+        assert_eq!(css_weight_from_apple(11), 900);
+        assert_eq!(css_weight_name(350), "400");
+        assert_eq!(css_weight_name(950), "900");
     }
 
     #[test]

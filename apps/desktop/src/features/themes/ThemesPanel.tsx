@@ -155,7 +155,7 @@ export function ThemesPanel({ workspaceId }: ThemesPanelProps) {
   useEffect(() => {
     if (!isOpen) return;
     const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape" && !event.defaultPrevented) close();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -804,7 +804,7 @@ function ThemeEditor({
   const band = splitColor(look.band?.color ?? "rgba(0,0,0,0.6)");
 
   return (
-    <fieldset disabled={disabled} className="flex flex-col gap-5 p-4 disabled:opacity-60">
+    <fieldset disabled={disabled} className="flex min-w-0 flex-col gap-5 p-4 disabled:opacity-60">
       <div className="flex items-center gap-2">
         <input
           type="text"
