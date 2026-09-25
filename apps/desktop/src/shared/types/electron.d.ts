@@ -209,7 +209,7 @@ interface ElectronAPI {
   fetchBrowserSuggestions: (query: string) => Promise<BrowserSuggestionsResponse | null>;
   requestAssemblyAiToken: (
     sessionToken: string,
-    source: "bible" | "library",
+    source: "bible" | "library" | "song",
   ) => Promise<unknown | null>;
   requestMicrophoneAccess: () => Promise<MediaAccessResult>;
   requestCameraAccess: () => Promise<MediaAccessResult>;

@@ -219,7 +219,7 @@ export const LibrariesPanel = memo(
       sessionToken,
       lang: speechLang,
       inputDeviceId: speechInputDeviceId,
-      usageSource: "library",
+      usageSource: "song",
       onResult: ({ transcript }) => {
         onSearchChange(transcript);
       },

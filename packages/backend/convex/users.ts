@@ -1,15 +1,74 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { getPresentPlanDefinition } from "../../shared/src/billing";
 import {
-  getPresentPlanDefinition,
-  UNLIMITED_SPEECH_QUOTA_SECONDS,
-} from "../../shared/src/billing";
+  billingSummary,
+  calendarMonth,
+  entitlementsFor,
+  identityEmail,
+  workspaceMemberLimit,
+} from "./entitlements";
 
-const normalizeEmail = (value: unknown): string | null =>
-  typeof value === "string" && value.trim()
-    ? value.trim().toLowerCase()
+/**
+ * Note on the person's billing record whether they are on the allowlist.
+ *
+ * The allowlist is by email, which only their own token carries, so without
+ * this a workspace could not count an allowlisted admin while somebody else
+ * was the one joining it. Refreshed every time they sign in.
+ */
+const recordAllowlist = async (ctx: MutationCtx, userId: string, email: string | null) => {
+  const entry = email
+    ? await ctx.db
+        .query("speechQuotaAllowlist")
+        .withIndex("by_normalized_email", (q) => q.eq("normalizedEmail", email))
+        .first()
     : null;
+  const allowlisted = Boolean(entry);
+  const record = await ctx.db
+    .query("userBilling")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .first();
+  if (record) {
+    if ((record.allowlisted ?? false) !== allowlisted) {
+      await ctx.db.patch(record._id, { allowlisted });
+    }
+    return;
+  }
+  if (!allowlisted) return;
+  const free = getPresentPlanDefinition("free");
+  await ctx.db.insert("userBilling", {
+    userId,
+    planKey: free.key,
+    planLabel: free.label,
+    planSlug: free.key,
+    status: "active",
+    quotaSeconds: free.monthlySpeechLimitSeconds,
+    ...calendarMonth(),
+    allowlisted: true,
+    updatedAt: Date.now(),
+  });
+};
+
+/** Refuse to add someone to a workspace that is already full for its plan. */
+const assertWorkspaceHasRoom = async (
+  ctx: MutationCtx,
+  orgId: Id<"organizations">,
+  caller: { userId: string; email: string | null },
+) => {
+  const [{ limit, planLabel }, members] = await Promise.all([
+    workspaceMemberLimit(ctx, orgId, caller),
+    ctx.db
+      .query("userProfiles")
+      .withIndex("by_org", (q) => q.eq("orgId", orgId))
+      .collect(),
+  ]);
+  if (members.length >= limit) {
+    throw new ConvexError(
+      `This workspace already has its ${limit} members on ${planLabel}. Upgrade to add more people.`,
+    );
+  }
+};
 
 const isOrganizationDocument = (
   value: unknown,
@@ -101,52 +160,11 @@ export const getCurrentUser = query({
       (organization) => organization !== null,
     );
 
-    const billingRecord = await ctx.db
-      .query("userBilling")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
-    const fallbackPlan = getPresentPlanDefinition("free");
-    const activeBilling = billingRecord ?? {
-      planKey: fallbackPlan.key,
-      planLabel: fallbackPlan.label,
-      planSlug: fallbackPlan.key,
-      status: "active",
-      quotaSeconds: fallbackPlan.monthlySpeechLimitSeconds,
-      periodStartMs: 0,
-      periodEndMs: 0,
-      updatedAt: 0,
-    };
-    const normalizedEmail = normalizeEmail(identity.email);
-    const allowlistEntry = normalizedEmail
-      ? await ctx.db
-          .query("speechQuotaAllowlist")
-          .withIndex("by_normalized_email", (q) =>
-            q.eq("normalizedEmail", normalizedEmail),
-          )
-          .first()
-      : null;
-    const quotaSeconds = Math.max(
-      activeBilling.quotaSeconds,
-      allowlistEntry
-        ? Math.max(allowlistEntry.quotaSeconds, UNLIMITED_SPEECH_QUOTA_SECONDS)
-        : 0,
+    const billing = await billingSummary(
+      ctx,
+      userId,
+      await entitlementsFor(ctx, userId, identityEmail(identity)),
     );
-    const billingPeriodKey = `${activeBilling.periodStartMs}:${activeBilling.periodEndMs}`;
-    const speechSessions = await ctx.db
-      .query("speechUsageSessions")
-      .withIndex("by_user_period", (q) =>
-        q.eq("userId", userId).eq("periodKey", billingPeriodKey),
-      )
-      .collect();
-    const usedSeconds = speechSessions.reduce((total, session) => {
-      const endMs =
-        typeof session.endedAtMs === "number" ? session.endedAtMs : Date.now();
-      const elapsedSeconds = Math.max(
-        0,
-        Math.ceil((endMs - session.startedAtMs) / 1000),
-      );
-      return total + Math.min(session.maxDurationSeconds, elapsedSeconds);
-    }, 0);
 
     // Pull the user's saved workspace preference (the active org selection
     // that should follow them across devices). If it doesn't exist yet, or
@@ -183,18 +201,7 @@ export const getCurrentUser = query({
         id: userId,
         name: identity.name ?? "Account",
         email: identity.email ?? "",
-        billing: {
-          planKey: activeBilling.planKey,
-          planLabel: activeBilling.planLabel,
-          planSlug: activeBilling.planSlug ?? null,
-          status: activeBilling.status,
-          isPaid: activeBilling.planKey !== "free",
-          quotaSeconds,
-          usedSeconds,
-          remainingSeconds: Math.max(0, quotaSeconds - usedSeconds),
-          periodStartMs: activeBilling.periodStartMs,
-          periodEndMs: activeBilling.periodEndMs,
-        },
+        billing,
       },
       organizations: filteredOrganizations,
       // Legacy field kept so older builds still pick *something*.
@@ -379,6 +386,7 @@ export const ensureCurrent = mutation({
     }
 
     const userId = identity.subject;
+    await recordAllowlist(ctx, userId, identityEmail(identity));
 
     // Check if user already has a profile
     const existingProfile = await ctx.db
@@ -530,6 +538,11 @@ export const addUserToOrganization = mutation({
       throw new ConvexError("User is already a member of this organization");
     }
 
+    await assertWorkspaceHasRoom(ctx, args.orgId, {
+      userId: currentUserId,
+      email: identityEmail(identity),
+    });
+
     // Add user to organization
     const profileId = await ctx.db.insert("userProfiles", {
       userId: args.userId,
@@ -569,6 +582,11 @@ export const joinOrganizationById = mutation({
     if (existingProfile) {
       return { orgId: args.orgId, alreadyMember: true };
     }
+
+    await assertWorkspaceHasRoom(ctx, args.orgId, {
+      userId,
+      email: identityEmail(identity),
+    });
 
     await ctx.db.insert("userProfiles", {
       userId,

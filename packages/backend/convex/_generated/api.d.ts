@@ -12,6 +12,7 @@ import type * as authUtils from "../authUtils.js";
 import type * as billing from "../billing.js";
 import type * as categories from "../categories.js";
 import type * as debug from "../debug.js";
+import type * as entitlements from "../entitlements.js";
 import type * as http from "../http.js";
 import type * as libraries from "../libraries.js";
 import type * as lyrics from "../lyrics.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   billing: typeof billing;
   categories: typeof categories;
   debug: typeof debug;
+  entitlements: typeof entitlements;
   http: typeof http;
   libraries: typeof libraries;
   lyrics: typeof lyrics;

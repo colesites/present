@@ -15,8 +15,12 @@ const DEFAULT_ALLOWED_ORIGINS = new Set([
 ]);
 
 type AssemblyAiTokenRequestBody = {
-  source?: "bible" | "library";
+  // "song": the library's voice search, which Free does not include.
+  source?: "bible" | "library" | "song";
 };
+
+const SONG_SEARCH_NEEDS_PLAN_MESSAGE =
+  "Finding songs by voice is part of Pro and Power. On Free, AI projection finds Bible verses.";
 
 const SPEECH_QUOTA_EXHAUSTED_MESSAGE =
   "You've used all of your speech-to-search time for this billing period. Upgrade your plan or wait for the next billing period to continue using voice search.";
@@ -114,7 +118,8 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json().catch(() => ({}))) as AssemblyAiTokenRequestBody;
-    const source = body.source === "library" ? "library" : "bible";
+    const source =
+      body.source === "song" ? "song" : body.source === "library" ? "library" : "bible";
 
     const convex = new ConvexHttpClient(convexUrl, { auth: convexToken });
     const speechSession = await convex.mutation(api.billing.startSpeechUsageSession, {
@@ -167,6 +172,13 @@ export async function POST(request: Request) {
     const message =
       error instanceof Error ? error.message : "Live transcription could not start.";
     const isQuotaError = isSpeechQuotaExhaustedError(message);
+    if (/finding songs by voice/i.test(message)) {
+      // A plan limit, not a sign-in problem: 403, so nothing signs out.
+      return Response.json(
+        { error: "plan_required", message: SONG_SEARCH_NEEDS_PLAN_MESSAGE },
+        { status: 403, headers },
+      );
+    }
     const status = isQuotaError ? 402 : 401;
 
     if (isQuotaError) {

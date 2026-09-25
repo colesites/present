@@ -33,7 +33,7 @@ export const isTauri = (): boolean =>
 export const getAppInfo = (): Promise<AppInfo> => invoke<AppInfo>("get_app_info");
 
 /** Matches `SpeechUsageSource` in `src-tauri/src/services/speech.rs`. */
-export type SpeechUsageSource = "bible" | "library";
+export type SpeechUsageSource = "bible" | "library" | "song";
 
 /**
  * Mint an AssemblyAI streaming token through the Rust core.

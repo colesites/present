@@ -1,4 +1,5 @@
 import { ConvexHttpClient } from "convex/browser";
+import { ConvexError } from "convex/values";
 import { api } from "@present/backend/convex/_generated/api";
 
 const DEFAULT_DESKTOP_CONVEX_URL = "https://wary-iguana-735.convex.cloud";
@@ -284,6 +285,13 @@ export async function fixLyrics(lyrics: string): Promise<string> {
   const locallyCleaned = cleanLyricsLocally(lyrics);
 
   try {
+    // As the signed-in user: each AI fix counts against their plan's monthly
+    // allowance, and the server refuses anyone it cannot count against.
+    const { ensureFreshDesktopAccessToken } = await import("../store/desktopSession");
+    const token = await ensureFreshDesktopAccessToken();
+    if (token) convex.setAuth(token);
+    else convex.clearAuth();
+
     const data = await convex.action(api.lyrics.fixLyrics, {
       lyrics: locallyCleaned,
     });
@@ -292,8 +300,14 @@ export async function fixLyrics(lyrics: string): Promise<string> {
       return locallyCleaned;
     }
     return data.cleanedLyrics?.trim() || locallyCleaned;
-  } catch {
-    // Offline / Convex down / quota: still return the cleaned text.
+  } catch (error) {
+    // Offline or Convex down: the local clean is returned without a word, as
+    // it always has been. A plan limit or a signed-out app is said, though:
+    // otherwise the operator thinks the AI ran when it did not.
+    if (error instanceof ConvexError) {
+      const { toast } = await import("sonner");
+      toast.error(String(error.data));
+    }
     return locallyCleaned;
   }
 }

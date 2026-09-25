@@ -31,7 +31,10 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 #[serde(rename_all = "lowercase")]
 pub enum SpeechUsageSource {
     Bible,
+    /// The AI operator. Older builds sent this for song search as well.
     Library,
+    /// The library's voice search for songs, which Free does not include.
+    Song,
 }
 
 /// Passed through to the frontend unchanged. The shape is the web route's, not
@@ -252,6 +255,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&SpeechUsageSource::Library).expect("serializable"),
             "\"library\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SpeechUsageSource::Song).expect("serializable"),
+            "\"song\""
         );
     }
 }

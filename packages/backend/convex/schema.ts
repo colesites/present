@@ -65,8 +65,21 @@ export default defineSchema({
     // Deprecated Clerk fields kept temporarily for migration
     clerkSubscriptionId: v.optional(v.string()),
     clerkSubscriptionItemId: v.optional(v.string()),
+    // On the allowlist (so on Power), recorded when they sign in. The list is
+    // by email, which only the signed-in user's own token carries; this lets
+    // a workspace's member limit count an allowlisted admin while somebody
+    // else is the one joining (`entitlements.ts`).
+    allowlisted: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
+
+  // AI lyrics fixes used, a row per person per billing period.
+  aiLyricsFixUsage: defineTable({
+    userId: v.string(),
+    periodKey: v.string(),
+    count: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user_period", ["userId", "periodKey"]),
 
   speechQuotaAllowlist: defineTable({
     email: v.string(),

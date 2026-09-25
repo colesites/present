@@ -1,5 +1,6 @@
 import { getStripe } from "@/lib/server/stripe";
 import { syncUserBillingToConvexFromWebhook } from "@/lib/server/billing-sync";
+import { planKeyOfPrice } from "@/lib/server/stripe-plan";
 import type Stripe from "stripe";
 
 const RELEVANT_EVENTS = new Set([
@@ -67,8 +68,7 @@ export async function POST(request: Request) {
             );
           }
 
-          const lookupKey =
-            subscription.items.data[0]?.price?.lookup_key ?? null;
+          const planKey = await planKeyOfPrice(stripe, subscription.items.data[0]?.price);
 
           await syncUserBillingToConvexFromWebhook({
             userId,
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
                 : session.customer?.id ?? "",
             stripeSubscriptionId: subscription.id,
             status: subscription.status,
-            planLookupKey: lookupKey,
+            planLookupKey: planKey,
             periodStartMs: (subscription.items.data[0]?.current_period_start ?? 0) * 1000,
             periodEndMs: (subscription.items.data[0]?.current_period_end ?? 0) * 1000,
           });
@@ -102,8 +102,7 @@ export async function POST(request: Request) {
           );
         }
 
-        const lookupKey =
-          subscription.items.data[0]?.price?.lookup_key ?? null;
+        const planKey = await planKeyOfPrice(getStripe(), subscription.items.data[0]?.price);
 
         await syncUserBillingToConvexFromWebhook({
           userId,
@@ -113,7 +112,7 @@ export async function POST(request: Request) {
               : subscription.customer?.id ?? "",
           stripeSubscriptionId: subscription.id,
           status: subscription.status,
-          planLookupKey: lookupKey,
+          planLookupKey: planKey,
           periodStartMs: (subscription.items.data[0]?.current_period_start ?? 0) * 1000,
           periodEndMs: (subscription.items.data[0]?.current_period_end ?? 0) * 1000,
         });

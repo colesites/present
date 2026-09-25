@@ -1,4 +1,5 @@
 import { action } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { z } from "zod";
 import { generateObject } from "ai";
@@ -9,9 +10,16 @@ const outputSchema = z.object({
   notes: z.string().optional(),
 });
 
+/**
+ * Tidy pasted lyrics into slide-ready sections with the AI model.
+ *
+ * Counted against the plan's monthly AI lyrics fixes (`billing.takeLyricsFix`),
+ * which also means it needs a signed-in user: it used to answer anyone at
+ * all, spending the AI budget on whoever called it.
+ */
 export const fixLyrics = action({
   args: { lyrics: v.string() },
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
     const gatewayKey = process.env.AI_GATEWAY_API_KEY;
     if (!gatewayKey) {
       return {
@@ -19,6 +27,8 @@ export const fixLyrics = action({
         notes: "AI_GATEWAY_API_KEY is not set",
       };
     }
+
+    const { periodKey } = await ctx.runMutation(internal.billing.takeLyricsFix, {});
 
     const openai = createOpenAI({
       apiKey: gatewayKey,
@@ -71,6 +81,8 @@ export const fixLyrics = action({
 
       return result.object;
     } catch (error) {
+      // Nothing was fixed, so nothing is counted.
+      await ctx.runMutation(internal.billing.returnLyricsFix, { periodKey });
       return {
         cleanedLyrics: args.lyrics,
         notes:
