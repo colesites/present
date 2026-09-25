@@ -505,3 +505,47 @@ export const removeMediaForFolder = mutation({
     }
   },
 });
+
+/**
+ * A new service with another one's running order: its groups, items and
+ * layout, under a new name and date. What most weeks start from.
+ */
+export const duplicate = mutation({
+  args: {
+    workspaceId: v.optional(v.string()),
+    serviceId: v.string(),
+    name: v.string(),
+    date: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const workspace = await validateWorkspace(ctx, args.workspaceId);
+    const source = (await ctx.db.get(args.serviceId as any)) as any;
+    if (!source) throw new Error("Service not found");
+    if (workspace.type === "personal" && source.userId !== workspace.userId) throw new Error("Unauthorized");
+    if (workspace.type === "organization" && source.orgId !== workspace.orgId) throw new Error("Unauthorized");
+
+    const table = workspace.type === "personal" ? "personalServices" : "services";
+    const existing =
+      workspace.type === "personal"
+        ? await ctx.db
+            .query("personalServices")
+            .withIndex("by_user", (q) => q.eq("userId", workspace.userId))
+            .collect()
+        : await ctx.db
+            .query("services")
+            .withIndex("by_org", (q) => q.eq("orgId", workspace.orgId))
+            .collect();
+    const maxOrder = existing.reduce((max, s) => Math.max(max, s.order ?? 0), 0);
+
+    return await ctx.db.insert(table as any, {
+      ...(workspace.type === "personal" ? { userId: workspace.userId } : { orgId: workspace.orgId }),
+      name: args.name.trim() || source.name,
+      date: args.date,
+      order: maxOrder + 1,
+      groups: source.groups ?? [],
+      layout: source.layout ?? [],
+      items: source.items ?? [],
+      createdAt: Date.now(),
+    } as any);
+  },
+});

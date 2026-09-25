@@ -1,39 +1,41 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import {
   BookOpenText,
   CalendarRange,
   CreditCard,
-  LayoutDashboard,
+  LayoutGrid,
   Library,
   Settings,
-  UserRoundCog,
+  UserRound,
   UsersRound,
 } from "lucide-react";
 import { DashboardSection, DashboardOrganizationListItem } from "../types";
 import { AccountSwitcher } from "./AccountSwitcher";
-import { Avatar, cx } from "./ui";
+import { cx } from "./ui";
 
 export const navItems = [
-  { label: "Dashboard", href: "/dashboard", section: "dashboard", icon: LayoutDashboard },
+  { label: "Overview", href: "/dashboard", section: "dashboard", icon: LayoutGrid },
   { label: "Services", href: "/dashboard/services", section: "services", icon: CalendarRange },
   { label: "Library", href: "/dashboard/library", section: "library", icon: Library },
   { label: "Bible", href: "/dashboard/bible", section: "bible", icon: BookOpenText },
   { label: "Members", href: "/dashboard/members", section: "members", icon: UsersRound },
   { label: "Billing", href: "/dashboard/billing", section: "billing", icon: CreditCard },
-  { label: "Account", href: "/dashboard/accounts", section: "accounts", icon: UserRoundCog },
+  { label: "Account", href: "/dashboard/accounts", section: "accounts", icon: UserRound },
   { label: "Settings", href: "/dashboard/settings", section: "settings", icon: Settings },
 ] as const satisfies ReadonlyArray<{
   label: string;
   href: string;
   section: DashboardSection;
-  icon: typeof LayoutDashboard;
+  icon: typeof LayoutGrid;
 }>;
 
 interface DashboardSidebarProps {
   currentSection: DashboardSection;
   currentOrganization: { id: string; name: string; logo?: string } | null;
+  isLoadingOrganization: boolean;
   organizations: DashboardOrganizationListItem[];
   activeWorkspaceId: string | null;
   isAccountSwitcherOpen: boolean;
@@ -51,11 +53,12 @@ interface DashboardSidebarProps {
 /**
  * The dashboard's navigation. The same content sits beside the page on a
  * large screen and slides in as a drawer on anything smaller
- * (`DashboardClient`).
+ * (`DashboardFrame`).
  */
 export function DashboardSidebar({
   currentSection,
   currentOrganization,
+  isLoadingOrganization,
   organizations,
   activeWorkspaceId,
   isAccountSwitcherOpen,
@@ -70,25 +73,13 @@ export function DashboardSidebar({
 }: DashboardSidebarProps) {
   return (
     <div className="flex h-full min-h-0 flex-col text-white">
-      <Link
-        href="/dashboard"
-        onClick={onNavigate}
-        className="flex items-center gap-3 rounded-card px-2 py-1.5 transition hover:bg-white/[0.04]"
-      >
-        <Avatar
-          src={currentOrganization?.logo}
-          name={currentOrganization?.name ?? "Present"}
-          size={44}
-          shape="tile"
-        />
-        <div className="min-w-0">
-          <p className="truncate text-[0.95rem] font-semibold">{currentOrganization?.name ?? "Present"}</p>
-          <p className="text-xs text-white/45">Present dashboard</p>
-        </div>
+      <Link href="/dashboard" onClick={onNavigate} className="flex items-center gap-2.5 px-3 py-1">
+        <Image src="/present-mark.svg" alt="" width={26} height={26} className="h-[26px] w-[26px]" />
+        <span className="text-[1.05rem] font-semibold tracking-[-0.02em]">Present</span>
       </Link>
 
       <nav className="mt-8 min-h-0 flex-1 overflow-y-auto" aria-label="Dashboard">
-        <ul className="space-y-1">
+        <ul className="space-y-0.5">
           {navItems.map((item) => {
             const active = item.section === currentSection;
             return (
@@ -98,11 +89,11 @@ export function DashboardSidebar({
                   onClick={onNavigate}
                   aria-current={active ? "page" : undefined}
                   className={cx(
-                    "flex items-center gap-3 rounded-control px-3 py-2.5 text-[0.95rem] font-medium transition",
-                    active ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/[0.05] hover:text-white",
+                    "flex items-center gap-3 rounded-[10px] px-3 py-2 text-[0.92rem] transition-colors",
+                    active ? "bg-white/[0.09] font-medium text-white" : "text-white/55 hover:bg-white/[0.04] hover:text-white/90",
                   )}
                 >
-                  <item.icon className="h-[18px] w-[18px] flex-none" />
+                  <item.icon className={cx("h-[17px] w-[17px] flex-none", active ? "text-white" : "text-white/45")} strokeWidth={1.8} />
                   <span>{item.label}</span>
                 </Link>
               </li>
@@ -114,6 +105,7 @@ export function DashboardSidebar({
       <div className="pt-6">
         <AccountSwitcher
           currentOrganization={currentOrganization}
+          isLoading={isLoadingOrganization}
           organizations={organizations}
           activeWorkspaceId={activeWorkspaceId}
           isOpen={isAccountSwitcherOpen}

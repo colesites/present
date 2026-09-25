@@ -16,11 +16,13 @@ import { Avatar, cx } from "./ui";
 export function DashboardFrame({
   section,
   currentOrg,
+  isLoadingOrganization = false,
   sidebar,
   children,
 }: {
   section: DashboardSection;
   currentOrg: DashboardOrganization | null;
+  isLoadingOrganization?: boolean;
   /** The navigation; `onNavigate` closes the phone menu when a link is followed. */
   sidebar: (onNavigate?: () => void) => ReactNode;
   children: ReactNode;
@@ -54,9 +56,15 @@ export function DashboardFrame({
         >
           <Menu className="h-5 w-5" />
         </button>
-        <Avatar src={currentOrg?.logo} name={currentOrg?.name ?? "Present"} size={30} shape="tile" />
-        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{currentOrg?.name ?? "Present"}</p>
-        <p className="flex-none text-sm text-white/50">{navItems.find((item) => item.section === section)?.label}</p>
+        {currentOrg ? (
+          <>
+            <Avatar src={currentOrg.logo} name={currentOrg.name} size={28} shape="tile" />
+            <p className="min-w-0 flex-1 truncate text-sm font-medium text-white">{currentOrg.name}</p>
+          </>
+        ) : (
+          <span className={cx("h-3.5 w-32 flex-1 rounded bg-white/10", isLoadingOrganization && "animate-pulse")} aria-hidden="true" />
+        )}
+        <p className="flex-none text-sm text-white/45">{navItems.find((item) => item.section === section)?.label}</p>
       </header>
 
       <div

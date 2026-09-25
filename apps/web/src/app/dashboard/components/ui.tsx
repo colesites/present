@@ -6,10 +6,18 @@ import { ChevronDown, Loader2 } from "lucide-react";
 /**
  * The dashboard's parts, sized once so every page matches.
  *
- * Shapes come from one scale (`globals.css`): `rounded-panel` for the white
- * panel, `rounded-card` for cards on it, `rounded-control` for fields and
- * icon tiles, and full rounding for buttons and chips.
+ * Plain on purpose: titles and lists carry the page, with borders and
+ * whitespace rather than tinted cards and icon badges. Shapes come from one
+ * scale in `globals.css`: `rounded-panel` for the white panel,
+ * `rounded-card` for anything on it, `rounded-control` for fields.
  */
+
+/** The text colours, named once. */
+export const tone = {
+  ink: "text-[#1d2240]",
+  muted: "text-[#6b7285]",
+  faint: "text-[#9aa1b1]",
+} as const;
 
 export const cx = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
@@ -19,8 +27,8 @@ export function Page({ children, wide = false }: { children: ReactNode; wide?: b
   return (
     <div
       className={cx(
-        "mx-auto w-full px-4 pb-12 pt-6 text-[#232946] sm:px-6 sm:pt-8 lg:px-10 lg:pt-10",
-        wide ? "max-w-7xl" : "max-w-5xl",
+        "mx-auto w-full px-4 pb-16 pt-6 text-[#1d2240] sm:px-6 sm:pt-8 lg:px-10 lg:pt-10",
+        wide ? "max-w-6xl" : "max-w-4xl",
       )}
     >
       {children}
@@ -29,56 +37,49 @@ export function Page({ children, wide = false }: { children: ReactNode; wide?: b
 }
 
 export function PageHeader({
-  eyebrow,
   title,
   description,
   actions,
 }: {
-  eyebrow?: string;
-  title: string;
+  title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
+  /** Accepted for pages not yet moved over; not shown. */
+  eyebrow?: string;
 }) {
   return (
-    <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+    <header className="flex flex-col gap-4 border-b border-[#eceef3] pb-6 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
-        {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
-        <h1 className="mt-2 text-[1.9rem] font-semibold leading-[1.05] tracking-[-0.045em] sm:text-[2.4rem] lg:text-[2.75rem]">
-          {title}
-        </h1>
-        {description ? (
-          <p className="mt-3 max-w-2xl text-[0.95rem] leading-6 text-[#7d8798] sm:text-base sm:leading-7">
-            {description}
-          </p>
-        ) : null}
+        <h1 className="text-[1.6rem] font-semibold leading-tight tracking-[-0.03em] sm:text-[1.85rem]">{title}</h1>
+        {description ? <div className="mt-1.5 text-[0.95rem] leading-6 text-[#6b7285]">{description}</div> : null}
       </div>
       {actions ? <div className="flex flex-wrap gap-2 sm:flex-none sm:justify-end">{actions}</div> : null}
     </header>
   );
 }
 
+/** A small label above a value. */
 export function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
-  return (
-    <p className={cx("text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-primary/70", className)}>
-      {children}
-    </p>
-  );
+  return <p className={cx("text-[0.8rem] font-medium text-[#6b7285]", className)}>{children}</p>;
 }
 
 export function Card({
   children,
   className,
-  tone = "white",
+  tone: surface = "white",
+  padded = true,
 }: {
   children: ReactNode;
   className?: string;
   tone?: "white" | "soft";
+  padded?: boolean;
 }) {
   return (
     <div
       className={cx(
-        "rounded-card border p-5 sm:p-6",
-        tone === "soft" ? "border-primary/10 bg-primary/[0.035]" : "border-[#ececf2] bg-white",
+        "rounded-card border",
+        padded && "p-5",
+        surface === "soft" ? "border-[#eceef3] bg-[#f8f9fb]" : "border-[#e7e9ef] bg-white",
         className,
       )}
     >
@@ -87,6 +88,7 @@ export function Card({
   );
 }
 
+/** A section's heading, with an optional link or control at its end. */
 export function SectionTitle({
   children,
   aside,
@@ -97,94 +99,92 @@ export function SectionTitle({
   className?: string;
 }) {
   return (
-    <div className={cx("flex items-center justify-between gap-3", className)}>
-      <h2 className="text-lg font-semibold tracking-[-0.02em] sm:text-xl">{children}</h2>
+    <div className={cx("mb-3 flex min-h-8 items-center justify-between gap-3", className)}>
+      <h2 className="text-[0.98rem] font-semibold tracking-[-0.01em]">{children}</h2>
       {aside}
     </div>
   );
 }
 
-/**
- * A number and what it counts. The icon sits beside, never over, the text;
- * on a phone the card is one short row with the number at its end.
- */
+/** Rows in a bordered list. Pass `<li>`s; dividers come from here. */
+export function List({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <ul className={cx("divide-y divide-[#eff0f4] overflow-hidden rounded-card border border-[#e7e9ef] bg-white", className)}>
+      {children}
+    </ul>
+  );
+}
+
 export function StatCard({
   label,
   value,
   detail,
-  icon: Icon,
 }: {
   label: string;
   value: ReactNode;
   detail?: string;
-  icon: ComponentType<{ className?: string }>;
+  icon?: ComponentType<{ className?: string }>;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-3.5 rounded-card border border-[#ececf2] bg-white px-4 py-3.5 sm:items-start sm:gap-4 sm:p-5">
-      <span className="flex h-10 w-10 flex-none items-center justify-center rounded-control bg-primary/10 text-primary">
-        <Icon className="h-5 w-5" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-primary/70">
-          {label}
-        </p>
-        <p className="mt-1 hidden text-[1.75rem] font-semibold leading-none tracking-[-0.04em] sm:block">{value}</p>
-        {detail ? <p className="truncate text-sm leading-5 text-[#7d8798] sm:mt-2 sm:whitespace-normal">{detail}</p> : null}
-      </div>
-      <p className="flex-none text-2xl font-semibold tracking-[-0.04em] sm:hidden">{value}</p>
+    <div className="min-w-0 rounded-card border border-[#e7e9ef] bg-white px-4 py-3.5">
+      <p className="truncate text-[0.8rem] text-[#6b7285]">{label}</p>
+      <p className="mt-1 text-[1.5rem] font-semibold leading-none tracking-[-0.03em]">{value}</p>
+      {detail ? <p className="mt-1.5 truncate text-[0.8rem] text-[#9aa1b1]">{detail}</p> : null}
     </div>
   );
 }
 
 export function EmptyState({
-  icon: Icon,
   title,
   children,
   action,
 }: {
-  icon: ComponentType<{ className?: string }>;
+  icon?: ComponentType<{ className?: string }>;
   title: string;
   children?: ReactNode;
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center rounded-card border border-dashed border-[#e2e4ec] px-6 py-12 text-center">
-      <span className="flex h-12 w-12 items-center justify-center rounded-control bg-primary/10 text-primary">
-        <Icon className="h-5 w-5" />
-      </span>
-      <p className="mt-4 font-semibold">{title}</p>
-      {children ? <p className="mt-1 max-w-sm text-sm leading-6 text-[#7d8798]">{children}</p> : null}
-      {action ? <div className="mt-5">{action}</div> : null}
+    <div className="rounded-card border border-dashed border-[#dfe2ea] px-6 py-10 text-center">
+      <p className="font-medium">{title}</p>
+      {children ? <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-[#6b7285]">{children}</p> : null}
+      {action ? <div className="mt-5 flex justify-center">{action}</div> : null}
     </div>
   );
 }
 
-export function SkeletonRows({ rows = 3, height = "h-[68px]" }: { rows?: number; height?: string }) {
+export function SkeletonRows({ rows = 3, height = "h-14" }: { rows?: number; height?: string }) {
   return (
-    <div className="space-y-2" aria-hidden="true">
+    <div className="overflow-hidden rounded-card border border-[#e7e9ef]" aria-hidden="true">
       {Array.from({ length: rows }, (_, row) => (
-        <div key={row} className={cx(height, "animate-pulse rounded-card bg-[#f3f4f8]")} />
+        <div key={row} className={cx(height, "flex items-center gap-3 border-b border-[#eff0f4] px-4 last:border-b-0")}>
+          <span className="h-3 w-1/3 animate-pulse rounded bg-[#eef0f4]" />
+          <span className="h-3 w-1/5 animate-pulse rounded bg-[#f3f4f7]" />
+        </div>
       ))}
     </div>
   );
 }
 
+export function Skeleton({ className }: { className?: string }) {
+  return <span className={cx("block animate-pulse rounded bg-[#eef0f4]", className)} aria-hidden="true" />;
+}
+
 const BUTTON_STYLES = {
   primary: "bg-primary text-white hover:bg-primary/90",
-  secondary: "border border-primary/15 bg-primary/[0.05] text-primary hover:bg-primary/[0.1]",
-  outline: "border border-[#e2e4ec] bg-white text-[#232946] hover:border-primary/40 hover:text-primary",
-  ghost: "text-[#7d8798] hover:bg-[#f3f4f8] hover:text-[#232946]",
-  danger: "bg-red-500 text-white hover:bg-red-600",
-  "danger-outline": "border border-red-200 text-red-600 hover:bg-red-50",
+  secondary: "bg-[#f1f2f6] text-[#1d2240] hover:bg-[#e8eaf0]",
+  outline: "border border-[#dfe2ea] bg-white text-[#1d2240] hover:border-[#c9cdd9] hover:bg-[#fafbfc]",
+  ghost: "text-[#6b7285] hover:bg-[#f1f2f6] hover:text-[#1d2240]",
+  danger: "bg-red-600 text-white hover:bg-red-700",
+  "danger-outline": "border border-red-200 bg-white text-red-600 hover:bg-red-50",
 } as const;
 
-export const buttonClass = (
-  variant: keyof typeof BUTTON_STYLES = "primary",
-  size: "sm" | "md" = "md",
-) =>
+export type ButtonVariant = keyof typeof BUTTON_STYLES;
+
+export const buttonClass = (variant: ButtonVariant = "primary", size: "sm" | "md" = "md") =>
   cx(
-    "inline-flex flex-none items-center justify-center gap-2 rounded-full font-semibold transition disabled:pointer-events-none disabled:opacity-50",
-    size === "sm" ? "h-9 px-4 text-[0.8rem]" : "h-11 px-5 text-sm",
+    "inline-flex flex-none items-center justify-center gap-1.5 rounded-[10px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50",
+    size === "sm" ? "h-8 px-3 text-[0.82rem]" : "h-10 px-4 text-sm",
     BUTTON_STYLES[variant],
   );
 
@@ -196,17 +196,12 @@ export function Button({
   children,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: keyof typeof BUTTON_STYLES;
+  variant?: ButtonVariant;
   size?: "sm" | "md";
   busy?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      {...props}
-      disabled={props.disabled || busy}
-      className={cx(buttonClass(variant, size), className)}
-    >
+    <button type="button" {...props} disabled={props.disabled || busy} className={cx(buttonClass(variant, size), className)}>
       {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
       {children}
     </button>
@@ -214,7 +209,7 @@ export function Button({
 }
 
 export const fieldClass =
-  "h-11 w-full rounded-control border border-[#e4e6ee] bg-[#fafbfd] px-3.5 text-[0.95rem] text-[#232946] outline-none transition placeholder:text-[#a3aaba] focus:border-primary/50 focus:bg-white focus:ring-4 focus:ring-primary/10 disabled:opacity-60";
+  "h-10 w-full rounded-control border border-[#dfe2ea] bg-white px-3 text-[0.95rem] text-[#1d2240] outline-none transition placeholder:text-[#a6adbb] focus:border-primary/60 focus:ring-[3px] focus:ring-primary/15 disabled:bg-[#f8f9fb] disabled:text-[#6b7285]";
 
 export function Field({
   label,
@@ -229,11 +224,11 @@ export function Field({
 }) {
   return (
     <div className="min-w-0">
-      <label htmlFor={htmlFor} className="text-sm font-medium text-[#232946]">
+      <label htmlFor={htmlFor} className="text-sm font-medium">
         {label}
       </label>
       <div className="mt-1.5">{children}</div>
-      {hint ? <p className="mt-1.5 text-[0.8rem] leading-5 text-[#9aa3b2]">{hint}</p> : null}
+      {hint ? <p className="mt-1.5 text-[0.8rem] leading-5 text-[#9aa1b1]">{hint}</p> : null}
     </div>
   );
 }
@@ -250,13 +245,13 @@ export function Select({
       <select
         {...props}
         className={cx(
-          "w-full appearance-none rounded-control border border-[#e4e6ee] bg-[#fafbfd] pr-9 text-[#232946] outline-none transition focus:border-primary/50 focus:bg-white focus:ring-4 focus:ring-primary/10 disabled:opacity-60",
-          compact ? "h-9 pl-3 text-[0.85rem]" : "h-11 pl-3.5 text-[0.95rem]",
+          "w-full appearance-none rounded-control border border-[#dfe2ea] bg-white pr-8 text-[#1d2240] outline-none transition focus:border-primary/60 focus:ring-[3px] focus:ring-primary/15 disabled:bg-[#f8f9fb] disabled:text-[#6b7285]",
+          compact ? "h-8 pl-2.5 text-[0.84rem]" : "h-10 pl-3 text-[0.95rem]",
         )}
       >
         {children}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9aa3b2]" />
+      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9aa1b1]" />
     </div>
   );
 }
@@ -282,21 +277,18 @@ export function Toggle({
         aria-checked={checked}
         disabled={disabled}
         onClick={() => onChange(!checked)}
-        className={cx(
-          "relative mt-0.5 h-6 w-11 flex-none rounded-full transition",
-          checked ? "bg-primary" : "bg-[#dfe2ea]",
-        )}
+        className={cx("relative mt-0.5 h-5 w-9 flex-none rounded-full transition", checked ? "bg-primary" : "bg-[#dcdfe7]")}
       >
         <span
           className={cx(
-            "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all",
-            checked ? "left-[22px]" : "left-0.5",
+            "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all",
+            checked ? "left-[18px]" : "left-0.5",
           )}
         />
       </button>
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-[#232946]">{label}</span>
-        {description ? <span className="mt-0.5 block text-[0.8rem] leading-5 text-[#9aa3b2]">{description}</span> : null}
+        <span className="block text-sm font-medium">{label}</span>
+        {description ? <span className="mt-0.5 block text-[0.8rem] leading-5 text-[#9aa1b1]">{description}</span> : null}
       </span>
     </label>
   );
@@ -307,10 +299,10 @@ export function Notice({ kind, children }: { kind: "ok" | "error" | "info"; chil
     <p
       role={kind === "error" ? "alert" : "status"}
       className={cx(
-        "rounded-control px-3.5 py-2.5 text-sm",
-        kind === "ok" && "bg-emerald-50 text-emerald-700",
-        kind === "error" && "bg-red-50 text-red-600",
-        kind === "info" && "bg-primary/[0.06] text-primary",
+        "rounded-control border px-3.5 py-2.5 text-sm",
+        kind === "ok" && "border-emerald-200 bg-emerald-50 text-emerald-800",
+        kind === "error" && "border-red-200 bg-red-50 text-red-700",
+        kind === "info" && "border-[#e2e4f5] bg-[#f5f6fd] text-[#3c418f]",
       )}
     >
       {children}
@@ -323,7 +315,7 @@ export const friendlyError = (error: unknown): string => {
   const data = (error as { data?: unknown } | null)?.data;
   if (typeof data === "string") return data;
   const message = error instanceof Error ? error.message : "";
-  return message.match(/ConvexError: (.*?)(?:\n|$)/)?.[1] ?? "Something went wrong. Try again.";
+  return message.match(/ConvexError: (.*?)(?:\n|$)/)?.[1] ?? message.match(/Uncaught Error: (.*?)(?:\n|$)/)?.[1] ?? "Something went wrong. Try again.";
 };
 
 export function Avatar({
@@ -344,16 +336,45 @@ export function Avatar({
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() ?? "")
       .join("") || "P";
-  const rounding = shape === "circle" ? "rounded-full" : "rounded-control";
+  const rounding = shape === "circle" ? "rounded-full" : "rounded-[8px]";
   return src ? (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={src} alt="" width={size} height={size} style={{ width: size, height: size }} className={cx(rounding, "flex-none object-cover")} />
   ) : (
     <span
-      style={{ width: size, height: size, fontSize: Math.max(11, size * 0.36) }}
-      className={cx(rounding, "flex flex-none items-center justify-center bg-primary/10 font-semibold text-primary")}
+      style={{ width: size, height: size, fontSize: Math.max(10, size * 0.36) }}
+      className={cx(rounding, "flex flex-none items-center justify-center bg-[#e9eaf6] font-semibold text-[#3c418f]")}
     >
       {initials}
     </span>
+  );
+}
+
+/** A modal panel, for forms that shouldn't take a page of their own. */
+export function Dialog({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
+      <button type="button" aria-label="Close" tabIndex={-1} onClick={onClose} className="absolute inset-0 bg-[#0d0f1a]/40" />
+      <div className="relative w-full rounded-t-[18px] bg-white shadow-[0_24px_60px_rgba(15,18,40,0.25)] sm:max-w-md sm:rounded-[16px]">
+        <div className="border-b border-[#eceef3] px-5 py-4">
+          <h2 className="font-semibold">{title}</h2>
+        </div>
+        <div className="px-5 py-5">{children}</div>
+        {footer ? <div className="flex justify-end gap-2 border-t border-[#eceef3] px-5 py-3.5">{footer}</div> : null}
+      </div>
+    </div>
   );
 }
