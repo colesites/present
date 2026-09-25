@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Apple, ArrowDownToLine, Terminal } from "lucide-react";
+import { HelpButton } from "@/components/help/HelpCenter";
 import { Footer, Navbar } from "@/components/home/Layout";
 import {
   getDesktopDownloadTargets,
@@ -202,6 +203,7 @@ export default async function DownloadPage() {
       </main>
 
       <Footer />
+      <HelpButton />
     </div>
   );
 }

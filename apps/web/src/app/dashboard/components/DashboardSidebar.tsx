@@ -8,7 +8,7 @@ import {
   CreditCard,
   LayoutGrid,
   Library,
-  LifeBuoy,
+  MessageSquare,
   Settings,
   UserRound,
   UsersRound,
@@ -114,7 +114,7 @@ export function DashboardSidebar({
           }}
           className="mt-4 flex items-center gap-3 rounded-[10px] px-3 py-2 text-[0.92rem] text-white/55 transition-colors hover:bg-white/[0.04] hover:text-white/90"
         >
-          <LifeBuoy className="h-[17px] w-[17px] flex-none text-white/45" strokeWidth={1.8} />
+          <MessageSquare className="h-[17px] w-[17px] flex-none text-white/45" strokeWidth={1.8} />
           Help
         </button>
       ) : null}

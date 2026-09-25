@@ -190,9 +190,8 @@ export function Hero() {
 
         {/* ── Badge ── */}
         <div ref={badgeRef} className="flex items-center gap-3 mb-8" style={{ opacity: 0 }}>
-          <div className="h-5 w-5 rounded-sm bg-primary flex items-center justify-center font-bold text-white text-[10px] shadow-[0_0_15px_rgba(var(--primary),0.5)]">
-            <span className="translate-y-[0.5px]">P</span>
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/present-mark.svg" alt="" width={20} height={20} className="h-5 w-5 rounded-[5px]" />
           <span className="text-xs font-bold tracking-[0.2em] uppercase text-white/60">Present</span>
         </div>
 
