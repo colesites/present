@@ -434,8 +434,13 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     let scratch_width = scratch.width() as i32;
 
     let base = text_color.to_color_u8();
-    let (base_r, base_g, base_b) = (base.red(), base.green(), base.blue());
-    let base_alpha = f32::from(base.alpha()) / 255.0;
+    let base_ink = (
+        base.red(),
+        base.green(),
+        base.blue(),
+        f32::from(base.alpha()) / 255.0,
+    );
+    let gradient = TextGradient::of(style, width, height);
     let mut ink = InkBounds::default();
 
     buffer.draw(
@@ -443,14 +448,11 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         cache,
         cosmic_text::Color::rgba(255, 255, 255, 255),
         |x, y, w, h, coverage| {
-            let alpha = coverage.a();
-            if alpha == 0 {
+            let coverage = coverage.a();
+            if coverage == 0 {
                 return;
             }
-            let alpha = f32::from(alpha) / 255.0 * base_alpha;
-            if alpha <= 0.0 {
-                return;
-            }
+            let coverage = f32::from(coverage) / 255.0;
 
             for offset_row in 0..h as i32 {
                 for offset_col in 0..w as i32 {
@@ -459,14 +461,21 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
                     if bx < 0 || by < 0 || bx >= box_width || by >= box_height {
                         continue;
                     }
+                    let (r, g, b, a) = gradient.as_ref().map_or(base_ink, |gradient| {
+                        gradient.at(bx as f32 + 0.5, by as f32 + 0.5)
+                    });
+                    let alpha = coverage * a;
+                    if alpha <= 0.0 {
+                        continue;
+                    }
                     let (px, py) = (bx + pad, by + pad);
                     ink.include(px, py);
                     blend(
                         &mut scratch,
                         (py * scratch_width + px) as usize,
-                        base_r,
-                        base_g,
-                        base_b,
+                        r,
+                        g,
+                        b,
                         alpha,
                     );
                 }
@@ -485,6 +494,60 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         .element_transform(element)
         .pre_translate(-pad as f32, -pad as f32);
     composite(pixmap, &scratch, ink, transform);
+}
+
+/// Words filled with a gradient (`textFillMode: "gradient"`), laid out as the
+/// canvas lays it (`createTextGradient` in `CanvasSlideLayer.tsx`): a line
+/// through the middle of the box at `gradientAngle` degrees (315 when unset),
+/// reaching the box's longer side each way, `gradientFromColor` at its start.
+#[derive(Debug, Clone, Copy)]
+struct TextGradient {
+    from: [f32; 4],
+    to: [f32; 4],
+    centre: (f32, f32),
+    direction: (f32, f32),
+    radius: f32,
+}
+
+impl TextGradient {
+    fn of(style: Option<&SlideElementStyle>, width: f32, height: f32) -> Option<Self> {
+        let style = style?;
+        if style.text_fill_mode.as_deref() != Some("gradient") {
+            return None;
+        }
+        let channels = |value: Option<&str>| -> Option<[f32; 4]> {
+            let color = color::with_opacity(color::parse(value?)?, style.opacity);
+            Some([
+                color.red() * 255.0,
+                color.green() * 255.0,
+                color.blue() * 255.0,
+                color.alpha(),
+            ])
+        };
+        let from = channels(style.gradient_from_color.as_deref())?;
+        let to = channels(style.gradient_to_color.as_deref())?;
+        let degrees = style
+            .gradient_angle
+            .filter(|angle| angle.is_finite())
+            .unwrap_or(315.0);
+        let radians = (degrees as f32).to_radians();
+        Some(Self {
+            from,
+            to,
+            centre: (width / 2.0, height / 2.0),
+            direction: (radians.cos(), radians.sin()),
+            radius: width.max(height).max(1.0),
+        })
+    }
+
+    /// The colour at a point in the box, as straight RGB and an alpha.
+    fn at(&self, x: f32, y: f32) -> (u8, u8, u8, f32) {
+        let along = (x - self.centre.0) * self.direction.0 + (y - self.centre.1) * self.direction.1;
+        let t = ((along + self.radius) / (2.0 * self.radius)).clamp(0.0, 1.0);
+        let mix = |index: usize| self.from[index] + (self.to[index] - self.from[index]) * t;
+        let channel = |index: usize| mix(index).round().clamp(0.0, 255.0) as u8;
+        (channel(0), channel(1), channel(2), mix(3).clamp(0.0, 1.0))
+    }
 }
 
 /// A text element's outline: how far it reaches past the glyphs, in frame
@@ -1641,5 +1704,70 @@ mod tests {
             TextEffects::of(Some(&style), 1.0, tiny_skia::Color::WHITE).pad(),
             0
         );
+    }
+
+    /// The average red and blue of the ink in a column band.
+    fn red_and_blue_in_columns(frame: &Frame, from_x: u32, to_x: u32) -> (f64, f64) {
+        let (mut red, mut blue, mut count) = (0.0, 0.0, 0.0);
+        for y in 0..frame.height() {
+            for x in from_x..to_x.min(frame.width()) {
+                if let Some((r, g, b, _)) = frame.pixel_at(x, y) {
+                    if r > 40 || g > 40 || b > 40 {
+                        red += f64::from(r);
+                        blue += f64::from(b);
+                        count += 1.0;
+                    }
+                }
+            }
+        }
+        assert!(count > 0.0, "no ink between {from_x} and {to_x}");
+        (red / count, blue / count)
+    }
+
+    #[test]
+    fn a_gradient_runs_across_the_words_as_the_canvas_draws_it() {
+        let frame = render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": "MMMMMMMMMMMM",
+            "style": {
+                "fontSize": 48.0, "textFillMode": "gradient",
+                "gradientFromColor": "#ff0000", "gradientToColor": "#0000ff", "gradientAngle": 0.0
+            }
+        }));
+        let (left_red, left_blue) = red_and_blue_in_columns(&frame, 0, 200);
+        let (right_red, right_blue) = red_and_blue_in_columns(&frame, 200, 400);
+        assert!(
+            left_red > right_red,
+            "red fades left to right: {left_red} then {right_red}"
+        );
+        assert!(
+            right_blue > left_blue,
+            "blue grows left to right: {left_blue} then {right_blue}"
+        );
+    }
+
+    #[test]
+    fn a_gradient_meets_the_box_where_the_canvas_puts_it() {
+        let style: SlideElementStyle = serde_json::from_value(json!({
+            "textFillMode": "gradient",
+            "gradientFromColor": "#000000", "gradientToColor": "#ffffff", "gradientAngle": 0.0
+        }))
+        .expect("style");
+        let gradient = TextGradient::of(Some(&style), 100.0, 50.0).expect("a gradient");
+        // The line reaches the longer side past the middle each way, so the
+        // box itself spans the middle half of it.
+        assert_eq!(gradient.at(50.0, 25.0).0, 128);
+        assert_eq!(gradient.at(0.0, 25.0).0, 64);
+        assert_eq!(gradient.at(100.0, 25.0).0, 191);
+    }
+
+    #[test]
+    fn a_gradient_missing_a_colour_is_the_plain_colour() {
+        let style: SlideElementStyle = serde_json::from_value(json!({
+            "textFillMode": "gradient", "gradientFromColor": "#ff0000", "color": "#00ff00"
+        }))
+        .expect("style");
+        assert!(TextGradient::of(Some(&style), 100.0, 50.0).is_none());
     }
 }
