@@ -16,6 +16,7 @@ import type {
   SlideTextBody,
 } from "../../../shared/types";
 import type { LibraryStyle } from "../../../shared/types/output-window";
+import { applyCapitalization } from "../lib/capitalization";
 
 const DEFAULT_CANVAS_SIZE: CanvasSizePreset = "1920x1080";
 const CANVAS_DIMENSIONS: Record<
@@ -748,21 +749,37 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
               spaceAfter: 0,
             }));
 
+        // All caps and the other cases, as the audience renderer applies them,
+        // before anything is measured, so lines wrap as they'll be seen.
+        const casedParagraphs = styleData.capitalization
+          ? paragraphs.map((paragraph) => ({
+              ...paragraph,
+              runs: paragraph.runs.map((run) => ({
+                ...run,
+                text: applyCapitalization(run.text, styleData.capitalization),
+              })),
+            }))
+          : paragraphs;
+        const outlineWidth =
+          styleData.strokeWidth && styleData.strokeWidth > 0 && styleData.strokeColor
+            ? styleData.strokeWidth * Math.min(scaleX, scaleY)
+            : 0;
+
         const shouldAutoFitScriptureText =
           element.contentRole === "scriptureVerse" ||
           element.contentRole === "scriptureFooter";
         const scaledParagraphs = shouldAutoFitScriptureText
           ? scaleParagraphs(
-              paragraphs,
+              casedParagraphs,
               resolveScriptureAutoFitScale(
                 ctx,
-                paragraphs,
+                casedParagraphs,
                 contentWidth,
                 contentHeight,
                 0.3
               )
             )
-          : paragraphs;
+          : casedParagraphs;
 
         const measurement = measureTextBlock(ctx, scaledParagraphs, contentWidth);
         const laidOut = measurement.laidOut;
@@ -802,6 +819,20 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
               ctx.fillStyle = gradientFill ?? runStyle.color;
               ctx.textAlign = "left";
               ctx.textBaseline = "alphabetic";
+              if (outlineWidth > 0 && run.text.trim()) {
+                // Twice as wide, half of it under the fill: what shows is an
+                // outline of `strokeWidth` outside the letters, as the
+                // audience renderer draws it. Only the outline casts the
+                // shadow; a second one from the fill would darken the edge.
+                ctx.save();
+                ctx.lineJoin = "round";
+                ctx.miterLimit = 2;
+                ctx.lineWidth = outlineWidth * 2;
+                ctx.strokeStyle = styleData.strokeColor as string;
+                ctx.strokeText(run.text, cursorX, baselineY);
+                ctx.restore();
+                applyShadow(ctx, null, scaleX, scaleY);
+              }
               drawUnderlinedText(
                 ctx,
                 run.text,
@@ -810,6 +841,9 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
                 runStyle,
                 measured.width
               );
+              if (outlineWidth > 0) {
+                applyShadow(ctx, parsedShadow, scaleX, scaleY);
+              }
               cursorX += measured.width;
             }
 

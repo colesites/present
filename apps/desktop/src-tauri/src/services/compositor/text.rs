@@ -406,6 +406,11 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
             laid_out,
         );
 
+    // A shadow or an outline reaches past the glyphs, so the scratch is padded
+    // to hold them; the glyphs themselves are still clipped to the box.
+    let effects = TextEffects::of(style, uniform, text_color);
+    let pad = effects.pad();
+
     // Glyphs are rasterised into a scratch pixmap and composited once.
     //
     // This is the difference between a frame budget and a slideshow.
@@ -419,13 +424,14 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     // It is also what makes rotation correct rather than merely fast: the
     // element's transform is applied to the finished text as an image, not to
     // each glyph box separately.
+    let box_width = (width.ceil() as i32).max(1);
+    let box_height = (height.ceil() as i32).max(1);
     let Some(mut scratch) =
-        tiny_skia::Pixmap::new((width.ceil() as u32).max(1), (height.ceil() as u32).max(1))
+        tiny_skia::Pixmap::new((box_width + 2 * pad) as u32, (box_height + 2 * pad) as u32)
     else {
         return;
     };
     let scratch_width = scratch.width() as i32;
-    let scratch_height = scratch.height() as i32;
 
     let base = text_color.to_color_u8();
     let (base_r, base_g, base_b) = (base.red(), base.green(), base.blue());
@@ -448,11 +454,12 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
 
             for offset_row in 0..h as i32 {
                 for offset_col in 0..w as i32 {
-                    let px = offset_x as i32 + x + offset_col;
-                    let py = offset_y as i32 + y + offset_row;
-                    if px < 0 || py < 0 || px >= scratch_width || py >= scratch_height {
+                    let bx = offset_x as i32 + x + offset_col;
+                    let by = offset_y as i32 + y + offset_row;
+                    if bx < 0 || by < 0 || bx >= box_width || by >= box_height {
                         continue;
                     }
+                    let (px, py) = (bx + pad, by + pad);
                     ink.include(px, py);
                     blend(
                         &mut scratch,
@@ -467,7 +474,336 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         },
     );
 
-    composite(pixmap, &scratch, ink, viewport.element_transform(element));
+    if let Some(outline) = effects.outline {
+        outline_under(&mut scratch, &mut ink, outline.radius, outline.color);
+    }
+    if let Some(shadow) = effects.shadow {
+        shadow_under(&mut scratch, &mut ink, &shadow);
+    }
+
+    let transform = viewport
+        .element_transform(element)
+        .pre_translate(-pad as f32, -pad as f32);
+    composite(pixmap, &scratch, ink, transform);
+}
+
+/// A text element's outline: how far it reaches past the glyphs, in frame
+/// pixels, and its colour.
+#[derive(Debug, Clone, Copy)]
+struct Outline {
+    radius: f32,
+    color: tiny_skia::Color,
+}
+
+/// What a text element draws around its glyphs: an outline (`strokeColor`,
+/// `strokeWidth`) and a shadow (`shadow`, CSS `dx dy blur color`), both in
+/// canvas pixels, as the slide grid's canvas reads them.
+#[derive(Debug, Clone, Copy, Default)]
+struct TextEffects {
+    outline: Option<Outline>,
+    shadow: Option<Shadow>,
+}
+
+impl TextEffects {
+    fn of(style: Option<&SlideElementStyle>, scale: f32, text_color: tiny_skia::Color) -> Self {
+        let Some(style) = style else {
+            return Self::default();
+        };
+        let outline = style
+            .stroke_width
+            .filter(|width| width.is_finite() && *width > 0.0)
+            .and_then(|width| {
+                let color = style.stroke_color.as_deref().and_then(color::parse)?;
+                // Faded with the text, as the whole element fades on the canvas.
+                let color = color::with_opacity(color, style.opacity);
+                Some(Outline {
+                    radius: (width as f32 * scale).min(MAX_OUTLINE_PX),
+                    color,
+                })
+            })
+            .filter(|outline| outline.radius >= 0.5);
+        let shadow = style
+            .shadow
+            .as_deref()
+            .and_then(|value| parse_css_shadow(value, scale))
+            .map(|mut shadow| {
+                // The shadow fades with the text too.
+                shadow.color.apply_opacity(text_color.alpha());
+                shadow
+            });
+        Self { outline, shadow }
+    }
+
+    /// How far past the text box the outline and shadow can reach.
+    fn pad(&self) -> i32 {
+        let outline = self.outline.map_or(0.0, |outline| outline.radius);
+        let shadow = self.shadow.map_or(0.0, |shadow| {
+            shadow.dx.abs().max(shadow.dy.abs()) + 3.0 * shadow.sigma.max(0.0)
+        });
+        if outline == 0.0 && shadow == 0.0 {
+            return 0;
+        }
+        (outline + shadow).ceil() as i32 + 2
+    }
+}
+
+/// An outline wider than this is a block, not an outline. Frame pixels.
+const MAX_OUTLINE_PX: f32 = 48.0;
+
+/// A CSS shadow, `dx dy [blur] [color]` in canvas pixels, optionally inside
+/// `drop-shadow(...)`, scaled to the frame. `none`, empty or unreadable is no
+/// shadow. A missing colour is the canvas's default, black at 35%.
+fn parse_css_shadow(value: &str, scale: f32) -> Option<Shadow> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let inner = match trimmed.get(..12) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("drop-shadow(") => {
+            trimmed[12..].trim_end().trim_end_matches(')')
+        }
+        _ => trimmed,
+    };
+
+    let mut rest = inner.trim();
+    let mut lengths: Vec<f32> = Vec::with_capacity(3);
+    while lengths.len() < 3 {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let token = &rest[..end];
+        let number = token.strip_suffix("px").unwrap_or(token);
+        match number.parse::<f32>() {
+            Ok(length) if length.is_finite() => {
+                lengths.push(length);
+                rest = rest[end..].trim_start();
+            }
+            _ => break,
+        }
+    }
+    if lengths.len() < 2 {
+        return None;
+    }
+    let color = if rest.is_empty() {
+        tiny_skia::Color::from_rgba8(0, 0, 0, 89)
+    } else {
+        color::parse(rest)?
+    };
+    Some(Shadow {
+        dx: lengths[0] * scale,
+        dy: lengths[1] * scale,
+        // A CSS blur length is twice the Gaussian's standard deviation.
+        sigma: lengths.get(2).copied().unwrap_or(0.0).max(0.0) * scale / 2.0,
+        color,
+    })
+}
+
+/// The maximum over each centred window of `2 * half + 1` values, into
+/// `out`: van Herk / Gil-Werman, so its cost doesn't grow with the window.
+fn sliding_max(row: &[u8], half: usize, out: &mut [u8]) {
+    let n = row.len();
+    if n == 0 {
+        return;
+    }
+    if half == 0 {
+        out[..n].copy_from_slice(row);
+        return;
+    }
+    let size = 2 * half + 1;
+    let mut forward = vec![0u8; n];
+    let mut backward = vec![0u8; n];
+    for i in 0..n {
+        forward[i] = if i % size == 0 {
+            row[i]
+        } else {
+            forward[i - 1].max(row[i])
+        };
+    }
+    for i in (0..n).rev() {
+        backward[i] = if i == n - 1 || (i + 1) % size == 0 {
+            row[i]
+        } else {
+            backward[i + 1].max(row[i])
+        };
+    }
+    for (x, slot) in out.iter_mut().enumerate().take(n) {
+        let left = x.saturating_sub(half);
+        let right = (x + half).min(n - 1);
+        // Within one block, or across two: the suffix of the left block and
+        // the prefix of the right.
+        *slot = if left / size == right / size {
+            row[left..=right].iter().copied().max().unwrap_or(0)
+        } else {
+            backward[left].max(forward[right])
+        };
+    }
+}
+
+/// `over`, with `tint` at `alpha` beneath it: premultiplied source-over.
+fn over_tint(
+    over: tiny_skia::PremultipliedColorU8,
+    tint: tiny_skia::ColorU8,
+    alpha: u32,
+) -> tiny_skia::PremultipliedColorU8 {
+    let inverse = 255 - u32::from(over.alpha());
+    let below = |channel: u8| (u32::from(channel) * alpha + 127) / 255;
+    let out_alpha = (u32::from(over.alpha()) + (alpha * inverse + 127) / 255).min(255) as u8;
+    let mix = |top: u8, channel: u8| {
+        ((u32::from(top) + (below(channel) * inverse + 127) / 255).min(u32::from(out_alpha))) as u8
+    };
+    tiny_skia::PremultipliedColorU8::from_rgba(
+        mix(over.red(), tint.red()),
+        mix(over.green(), tint.green()),
+        mix(over.blue(), tint.blue()),
+        out_alpha,
+    )
+    .unwrap_or(over)
+}
+
+/// Grow the ink by `radius` in every direction, in `color`, under the glyphs.
+///
+/// A disc of that radius, as the union of centred rows: each row a sliding
+/// maximum as wide as the disc is at that height. The glyphs' own
+/// anti-aliasing carries over to the outline's edge.
+fn outline_under(
+    scratch: &mut tiny_skia::Pixmap,
+    ink: &mut InkBounds,
+    radius: f32,
+    color: tiny_skia::Color,
+) {
+    let Some((left, top, right, bottom)) = ink.area else {
+        return;
+    };
+    let reach = radius.round().max(1.0) as i32;
+    let (width, height) = (scratch.width() as i32, scratch.height() as i32);
+    let (left, top) = ((left - reach).max(0), (top - reach).max(0));
+    let (right, bottom) = (
+        (right + reach).min(width - 1),
+        (bottom + reach).min(height - 1),
+    );
+    let (region_width, region_height) = ((right - left + 1) as usize, (bottom - top + 1) as usize);
+    let at = |x: usize, y: usize| (top as usize + y) * width as usize + left as usize + x;
+
+    let pixels = scratch.pixels();
+    let mut alpha = vec![0u8; region_width * region_height];
+    for y in 0..region_height {
+        for x in 0..region_width {
+            alpha[y * region_width + x] = pixels.get(at(x, y)).map_or(0, |pixel| pixel.alpha());
+        }
+    }
+
+    let mut grown = vec![0u8; region_width * region_height];
+    let mut row_max = vec![0u8; region_width];
+    for dy in -reach..=reach {
+        let half = f64::from(reach * reach - dy * dy).sqrt().floor() as usize;
+        for y in 0..region_height as i32 {
+            let source = y + dy;
+            if source < 0 || source >= region_height as i32 {
+                continue;
+            }
+            let from = source as usize * region_width;
+            sliding_max(&alpha[from..from + region_width], half, &mut row_max);
+            let to = y as usize * region_width;
+            for (slot, value) in grown[to..to + region_width].iter_mut().zip(&row_max) {
+                *slot = (*slot).max(*value);
+            }
+        }
+    }
+
+    let tint = color.to_color_u8();
+    let pixels = scratch.pixels_mut();
+    for y in 0..region_height {
+        for x in 0..region_width {
+            let coverage = grown[y * region_width + x];
+            if coverage == 0 {
+                continue;
+            }
+            let Some(slot) = pixels.get_mut(at(x, y)) else {
+                continue;
+            };
+            let outline_alpha = u32::from(coverage) * u32::from(tint.alpha()) / 255;
+            *slot = over_tint(*slot, tint, outline_alpha);
+        }
+    }
+    ink.include(left, top);
+    ink.include(right, bottom);
+}
+
+/// A blurred, tinted, offset copy of everything in the scratch, beneath it.
+/// Drawn in the element's own space, so it turns with a rotated box.
+fn shadow_under(scratch: &mut tiny_skia::Pixmap, ink: &mut InkBounds, shadow: &Shadow) {
+    let Some((left, top, right, bottom)) = ink.area else {
+        return;
+    };
+    let spread = (shadow.sigma * 3.0).ceil() as i32 + 1;
+    let (width, height) = (scratch.width() as i32, scratch.height() as i32);
+    let (left, top) = ((left - spread).max(0), (top - spread).max(0));
+    let (right, bottom) = (
+        (right + spread).min(width - 1),
+        (bottom + spread).min(height - 1),
+    );
+    let (region_width, region_height) = ((right - left + 1) as usize, (bottom - top + 1) as usize);
+
+    let tint = shadow.color.to_color_u8();
+    let pixels = scratch.pixels();
+    let mut region = Vec::with_capacity(region_width * region_height);
+    for y in 0..region_height {
+        for x in 0..region_width {
+            let index = (top as usize + y) * width as usize + left as usize + x;
+            let coverage = pixels.get(index).map_or(0, |pixel| pixel.alpha());
+            let alpha = (u32::from(coverage) * u32::from(tint.alpha()) + 127) / 255;
+            let premultiply = |channel: u8| ((u32::from(channel) * alpha + 127) / 255) as u8;
+            region.push(
+                tiny_skia::PremultipliedColorU8::from_rgba(
+                    premultiply(tint.red()),
+                    premultiply(tint.green()),
+                    premultiply(tint.blue()),
+                    alpha as u8,
+                )
+                .unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT),
+            );
+        }
+    }
+    super::filters::blur(&mut region, region_width, region_height, shadow.sigma, 1.0);
+
+    let (dx, dy) = (shadow.dx.round() as i32, shadow.dy.round() as i32);
+    let pixels = scratch.pixels_mut();
+    for y in 0..region_height as i32 {
+        let target_y = top + y + dy;
+        if target_y < 0 || target_y >= height {
+            continue;
+        }
+        for x in 0..region_width as i32 {
+            let target_x = left + x + dx;
+            if target_x < 0 || target_x >= width {
+                continue;
+            }
+            let cast = region[y as usize * region_width + x as usize];
+            if cast.alpha() == 0 {
+                continue;
+            }
+            let Some(slot) = pixels.get_mut((target_y * width + target_x) as usize) else {
+                continue;
+            };
+            let inverse = 255 - u32::from(slot.alpha());
+            let mix = |top: u8, below: u8| {
+                (u32::from(top) + (u32::from(below) * inverse + 127) / 255).min(255) as u8
+            };
+            *slot = tiny_skia::PremultipliedColorU8::from_rgba(
+                mix(slot.red(), cast.red()),
+                mix(slot.green(), cast.green()),
+                mix(slot.blue(), cast.blue()),
+                mix(slot.alpha(), cast.alpha()),
+            )
+            .unwrap_or(*slot);
+        }
+    }
+    ink.include(
+        (left + dx).clamp(0, width - 1),
+        (top + dy).clamp(0, height - 1),
+    );
+    ink.include(
+        (right + dx).clamp(0, width - 1),
+        (bottom + dy).clamp(0, height - 1),
+    );
 }
 
 /// The rectangle of a scratch pixmap that holds any ink, inclusive.
@@ -1198,5 +1534,112 @@ mod tests {
         assert_eq!(weight_of(Some(&numeric)), Weight(700));
         assert_eq!(weight_of(Some(&nonsense)), Weight::NORMAL);
         assert_eq!(weight_of(None), Weight::NORMAL);
+    }
+
+    #[test]
+    fn a_css_shadow_reads_as_the_canvas_reads_it() {
+        let shadow = parse_css_shadow("0 4px 12px rgba(0,0,0,0.8)", 1.0).expect("shadow");
+        assert_eq!((shadow.dx, shadow.dy, shadow.sigma), (0.0, 4.0, 6.0));
+        assert!((shadow.color.alpha() - 0.8).abs() < 0.01);
+
+        let wrapped = parse_css_shadow("drop-shadow(2px -3px 4px #ff0000)", 2.0).expect("shadow");
+        assert_eq!((wrapped.dx, wrapped.dy, wrapped.sigma), (4.0, -6.0, 4.0));
+
+        let default_colour = parse_css_shadow("1 1", 1.0).expect("shadow");
+        assert!((default_colour.color.alpha() - 0.35).abs() < 0.01);
+
+        for none in ["", "none", "NONE", "soft", "1px"] {
+            assert!(parse_css_shadow(none, 1.0).is_none(), "{none:?}");
+        }
+    }
+
+    #[test]
+    fn the_sliding_maximum_matches_the_slow_one() {
+        let row: Vec<u8> = (0..97u32).map(|i| ((i * 37 + 11) % 251) as u8).collect();
+        let mut out = vec![0u8; row.len()];
+        for half in 0..9 {
+            sliding_max(&row, half, &mut out);
+            for (x, got) in out.iter().enumerate() {
+                let from = x.saturating_sub(half);
+                let to = (x + half).min(row.len() - 1);
+                let expected = row[from..=to].iter().copied().max().unwrap();
+                assert_eq!(*got, expected, "half {half}, x {x}");
+            }
+        }
+    }
+
+    fn count_pixels(frame: &Frame, test: impl Fn(u8, u8, u8) -> bool) -> usize {
+        (0..frame.height())
+            .flat_map(|y| (0..frame.width()).map(move |x| (x, y)))
+            .filter_map(|(x, y)| frame.pixel_at(x, y))
+            .filter(|(r, g, b, _)| test(*r, *g, *b))
+            .count()
+    }
+
+    #[test]
+    fn an_outline_is_drawn_around_the_glyphs() {
+        let plain = render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": "Grace",
+            "style": { "fontSize": 60.0, "color": "#ffffff" }
+        }));
+        let outlined = render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": "Grace",
+            "style": { "fontSize": 60.0, "color": "#ffffff", "strokeColor": "#ff0000", "strokeWidth": 3.0 }
+        }));
+        let red = |r: u8, g: u8, b: u8| r > 150 && g < 90 && b < 90;
+        assert_eq!(count_pixels(&plain, red), 0);
+        assert!(count_pixels(&outlined, red) > 150, "no outline pixels");
+        // The glyphs are still white on top of it.
+        assert!(count_pixels(&outlined, |r, g, b| r > 220 && g > 220 && b > 220) > 100);
+    }
+
+    #[test]
+    fn a_shadow_falls_below_the_glyphs() {
+        let frame = render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": "Grace",
+            "style": { "fontSize": 60.0, "color": "#ffffff", "shadow": "0 8px 0 #00ff00", "verticalAlign": "top" }
+        }));
+        let green = |r: u8, g: u8, b: u8| g > 150 && r < 100 && b < 100;
+        assert!(count_pixels(&frame, green) > 100, "no shadow pixels");
+        // Green only shows where the shadow is not under white glyphs, so the
+        // lowest green row is lower than the lowest white one.
+        let lowest = |test: &dyn Fn(u8, u8, u8) -> bool| {
+            (0..frame.height())
+                .rev()
+                .find(|&y| {
+                    (0..frame.width()).any(|x| {
+                        frame
+                            .pixel_at(x, y)
+                            .is_some_and(|(r, g, b, _)| test(r, g, b))
+                    })
+                })
+                .unwrap_or(0)
+        };
+        let white = |r: u8, g: u8, b: u8| r > 220 && g > 220 && b > 220;
+        assert!(
+            lowest(&green) > lowest(&white),
+            "the shadow isn't below the text"
+        );
+    }
+
+    #[test]
+    fn no_shadow_or_outline_leaves_the_box_as_it_was() {
+        assert_eq!(TextEffects::default().pad(), 0);
+        let style = SlideElementStyle {
+            shadow: Some("none".into()),
+            stroke_width: Some(0.0),
+            stroke_color: Some("#fff".into()),
+            ..SlideElementStyle::default()
+        };
+        assert_eq!(
+            TextEffects::of(Some(&style), 1.0, tiny_skia::Color::WHITE).pad(),
+            0
+        );
     }
 }
