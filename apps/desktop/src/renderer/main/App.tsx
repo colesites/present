@@ -517,7 +517,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       ? "show"
       : viewMode;
   const contentSource: ContentSource = "my-creations";
-  const isAutopilotEnabled = false;
   const isBibleActive =
     effectiveViewMode === "show" && bottomTab === "scripture";
   const isLibrariesActive =
@@ -900,7 +899,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       showsPanelRef={showsPanelRef}
       mediaPanelRef={mediaPanelRef}
       scripturePanelRef={scripturePanelRef}
-      isAutopilotEnabled={isAutopilotEnabled}
       showTextInOutput={showTextInOutput}
       setShowTextInOutput={setShowTextInOutput}
       showMediaInOutput={showMediaInOutput}

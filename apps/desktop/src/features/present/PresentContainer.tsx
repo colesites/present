@@ -52,7 +52,8 @@ import {
   getSlideGroups,
   getSlidesForGrid,
 } from "../../renderer/shared/lib/present/selectors";
-import { useSpeechAutopilot } from "../../renderer/shared/hooks/useSpeechAutopilot";
+import { useSongAgent } from "../song-agent/useSongAgent";
+import { useDesktopSessionStore } from "../../renderer/shared/store/desktopSession";
 import { useAppNavigation } from "../../renderer/shared/hooks/useAppNavigation";
 import { useAppHandlers } from "../../renderer/shared/hooks/useAppHandlers";
 import {
@@ -277,7 +278,6 @@ interface PresentContainerProps {
   showsPanelRef: React.RefObject<LibrariesPanelRef>;
   mediaPanelRef: React.RefObject<MediaPanelRef>;
   scripturePanelRef: React.RefObject<ScripturePanelRef>;
-  isAutopilotEnabled: boolean;
   showTextInOutput: boolean;
   setShowTextInOutput: (show: boolean) => void;
   showMediaInOutput: boolean;
@@ -304,7 +304,6 @@ export function PresentContainer({
   showsPanelRef,
   mediaPanelRef,
   scripturePanelRef,
-  isAutopilotEnabled,
   contentSource,
   showTextInOutput,
   setShowTextInOutput,
@@ -1550,15 +1549,26 @@ export function PresentContainer({
     outputSlideContent,
   ]);
 
-  // Coordination Hooks
-  useSpeechAutopilot({
-    isAutopilotEnabled,
-    viewMode,
-    slidesForGrid,
-    selected,
-    handleSelectSlide: async (id, text, footer) => {
-      await handleLiveSlideSelect(id, text, footer);
-    },
+  // The song agent: follows the song on screen as it is sung, and offers
+  // the one it hears when the band starts another.
+  const songAgentSessionToken = useDesktopSessionStore((state) => state.sessionToken);
+  const serviceSongIds = useMemo(
+    () =>
+      serviceItems
+        .filter((item) => item.type === "library" && item.refId)
+        .map((item) => String(item.refId)),
+    [serviceItems],
+  );
+  useSongAgent({
+    libraryItems,
+    serviceSongIds,
+    live: selected?.libraryId ? selected : null,
+    showSlide: (libraryId, slideIndex, text) =>
+      handleLiveSlideSelect(`${libraryId}:${slideIndex}`, text),
+    openSong: handleSetSelectedDeckLibraryId,
+    sessionToken: songAgentSessionToken,
+    lang: settingsLang,
+    inputDeviceId: settingsSpeechInputDeviceId,
   });
 
   const {

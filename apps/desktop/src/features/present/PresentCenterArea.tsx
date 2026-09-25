@@ -14,6 +14,7 @@ import type { ScriptureSlide } from "../../features/scripture/lib/slides";
 import { MediaItem, VideoSettings } from "../media/hooks/useMediaFolders";
 import { cn } from "../../renderer/shared/lib/utils";
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
+import { SongAgentControl } from "../song-agent/SongAgentControl";
 
 /* ---------------- TYPES (DERIVED, NOT INVENTED) ---------------- */
 
@@ -386,7 +387,8 @@ export function PresentCenterArea({
 
       {/* Footer Area - Reusable Workspace Footer */}
       {viewMode === "show" && (
-        <WorkspaceFooter 
+        <WorkspaceFooter
+          leftContent={<SongAgentControl />}
           showTransitionPicker
           isGridView={effectiveIsGridView}
           onViewModeChange={onGridViewChange}
