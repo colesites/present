@@ -10,6 +10,7 @@ import {
   readOrgLibraryItems,
   readOrgServices,
   readSyncQueue,
+  markWorkspaceSynced,
   repairOrgServiceLibraryReferences,
   replaceOrgCategories,
   replaceOrgLibraryItems,
@@ -23,6 +24,7 @@ import {
   ensureFreshDesktopAccessToken,
   useDesktopSessionStore,
 } from "../store/desktopSession";
+import { finishStartup, markStartup } from "../lib/startup-timeline";
 
 const ID_MAP_STORAGE_KEY = "present-sync-id-map-v1";
 const MAX_BATCH_SIZE = 20;
@@ -232,6 +234,10 @@ type SyncEngineParams = {
 export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
   const convex = useConvex();
   const runningRef = useRef(false);
+  // A run asked for while one is going. It used to be dropped, so whatever
+  // asked — the organisations arriving just after sign-in, say — waited for
+  // the twenty-second timer instead.
+  const rerunRef = useRef(false);
   const retryDelayRef = useRef(RETRY_MIN_DELAY_MS);
   const retryTimerRef = useRef<number | null>(null);
   const idMapRef = useRef<SyncIdMap>(readIdMap());
@@ -684,7 +690,11 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
   );
 
   const runSync = useCallback(async () => {
-    if (!enabled || runningRef.current) {
+    if (!enabled) {
+      return;
+    }
+    if (runningRef.current) {
+      rerunRef.current = true;
       return;
     }
 
@@ -753,18 +763,45 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
       const pendingOrgIds = new Set(
         readSyncQueue().map((queueItem) => queueItem.orgId),
       );
+      const toPull: string[] = [];
       for (const workspaceId of getWorkspaceIdsToPull()) {
         // Skip pulling workspaces that still have pending sync items to
         // avoid overwriting local edits (e.g. slides) with stale server
-        // data before the local changes have been pushed.
+        // data before the local changes have been pushed. What this machine
+        // holds is the latest there is for them.
         if (pendingOrgIds.has(workspaceId) || syncedOrgIds.has(workspaceId)) {
+          markWorkspaceSynced(workspaceId);
           continue;
         }
-        await pullRemoteWorkspace(workspaceId);
+        toPull.push(workspaceId);
+      }
+      // All at once rather than one after another: the workspace on screen
+      // used to wait behind the personal one, a round trip to Convex each.
+      markStartup("pull-started", toPull.length);
+      const pulled = await Promise.allSettled(
+        toPull.map(async (workspaceId) => {
+          await pullRemoteWorkspace(workspaceId);
+          markWorkspaceSynced(workspaceId);
+        }),
+      );
+      const failed = pulled.filter((result) => result.status === "rejected");
+      if (failed.length > 0) {
+        console.warn("[SyncEngine] a workspace could not be pulled", failed);
+        scheduleRetry(() => {
+          void runSync();
+        });
+      } else {
+        finishStartup("pulled", toPull.length);
       }
       return;
     } finally {
       runningRef.current = false;
+      if (rerunRef.current) {
+        rerunRef.current = false;
+        window.setTimeout(() => {
+          void runSync();
+        }, 0);
+      }
     }
   }, [
     clearRetryTimer,
@@ -781,6 +818,23 @@ export function useOfflineSyncEngine({ enabled }: SyncEngineParams) {
     },
     [runSync],
   );
+
+  // The workspaces to pull are the ones the session knows. Straight after
+  // signing in it knows none but "personal" until Convex says which
+  // organisations there are — and the pull that had already started missed
+  // them, so a church's services and library waited for the timer below.
+  // Pull again the moment the list changes.
+  const workspaceKey = useDesktopSessionStore((state) =>
+    [state.orgId ?? "", ...state.organizations.map((organization) => organization.id)].join(","),
+  );
+  const pulledForKeyRef = useRef(workspaceKey);
+  useEffect(() => {
+    if (!enabled || pulledForKeyRef.current === workspaceKey) {
+      return;
+    }
+    pulledForKeyRef.current = workspaceKey;
+    void runSync();
+  }, [enabled, runSync, workspaceKey]);
 
   useEffect(() => {
     if (!enabled) {

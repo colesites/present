@@ -26,6 +26,7 @@ import {
   ensureFreshDesktopAccessToken,
   useDesktopSessionStore,
 } from "../shared/store/desktopSession";
+import { markStartup } from "../shared/lib/startup-timeline";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { resolveVerifiedOrganizationId } from "../shared/lib/organization-scope-policy.mjs";
@@ -96,6 +97,9 @@ function AuthenticatedHome({ windowType }: { windowType: string | null }) {
   const clearSession = useDesktopSessionStore((state) => state.clearSession);
   const isConvexAuthReady = useDesktopConvexAuthReady();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  useEffect(() => {
+    if (isConvexAuthenticated) markStartup("convex-authenticated");
+  }, [isConvexAuthenticated]);
   const [isOnline, setIsOnline] = useState(() =>
     typeof navigator === "undefined" ? true : navigator.onLine
   );

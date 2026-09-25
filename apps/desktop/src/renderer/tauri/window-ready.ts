@@ -7,11 +7,13 @@
  */
 
 import { useEffect } from "react";
+import { markStartup } from "../shared/lib/startup-timeline";
 
 const isTauriShell = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const reportReady = (): void => {
+  markStartup("first-paint");
   void import("@tauri-apps/api/core")
     .then(({ invoke }) => invoke("window_ready"))
     .catch((error: unknown) => {

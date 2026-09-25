@@ -12,6 +12,7 @@ import {
   shouldRetryRefresh,
   TOKEN_REFRESH_RETRY_DELAYS_MS,
 } from "../lib/auth-refresh-policy.mjs";
+import { markStartup } from "../lib/startup-timeline";
 
 export interface DesktopUser {
   id: string;
@@ -539,6 +540,7 @@ export const ensureFreshDesktopAccessToken = async (options?: {
     stateToken &&
     !shouldRefreshAccessToken(stateTokenExpiresAtMs)
   ) {
+    markStartup("token-stored");
     return stateToken;
   }
 
@@ -553,6 +555,7 @@ export const ensureFreshDesktopAccessToken = async (options?: {
     const fallbackToken = stateToken;
     const fallbackTokenExpiryMs = stateTokenExpiresAtMs;
 
+    markStartup("token-refresh-started");
     logDesktopAuthEvent("refresh-started", {
       forceRefresh,
       hasFallbackToken: Boolean(fallbackToken),
@@ -583,6 +586,7 @@ export const ensureFreshDesktopAccessToken = async (options?: {
         const snapshot = useDesktopSessionStore.getState();
         void persistSessionSnapshot(snapshot);
 
+        markStartup("token-refreshed");
         logDesktopAuthEvent("refresh-succeeded", {
           sessionExpiresAtMs: payload.sessionExpiresAtMs,
           tokenExpiresAtMs: payload.accessTokenExpiresAtMs,
@@ -719,6 +723,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
         authStatus: "unauthenticated",
         hasHydratedSession: true,
       });
+      markStartup("session-restored", "signed-out");
       return;
     }
 
@@ -736,6 +741,7 @@ export const useDesktopSessionStore = create<DesktopSessionState>()((set, get) =
       (stored.token ? getTokenExpiryTimestampMs(stored.token) : null);
 
     const hasCachedIdentity = Boolean(stored.user);
+    markStartup("session-restored", hasCachedIdentity ? "cached" : "no-identity");
 
     set({
       authStatus: hasCachedIdentity ? "authenticated" : "loading",

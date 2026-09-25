@@ -43,6 +43,7 @@ import {
   toQueuedChange,
 } from "./offline-rows.mjs";
 import { remapServiceLibraryItemIds } from "./service-library-id-map.mjs";
+import { markStartup } from "../lib/startup-timeline";
 
 export type OfflineEntityType = "library" | "service" | "message";
 export type OfflineOperation = "create" | "update" | "delete" | "reorder";
@@ -202,6 +203,33 @@ export const flushOfflineData = async (): Promise<void> => {
 
 let hydration: Promise<void> | null = null;
 
+/** The database has answered, with a library or without one. */
+let hasBeenRead = false;
+
+/** Workspaces Convex has answered for since the app started. */
+const syncedWorkspaces = new Set<string>();
+
+/**
+ * Whether this machine's library has been read yet. Until it has, an empty
+ * list means "not read", not "nothing here".
+ */
+export const isOfflineDataRead = (): boolean => hasBeenRead;
+
+/**
+ * Whether Convex has answered for `workspaceId` since the app started — or
+ * this machine holds changes to it that it has yet to send, which makes the
+ * local copy the latest there is.
+ */
+export const hasWorkspaceSynced = (workspaceId: string): boolean =>
+  syncedWorkspaces.has(workspaceId);
+
+/** Called by the sync once a workspace's lists have come back. */
+export const markWorkspaceSynced = (workspaceId: string): void => {
+  if (syncedWorkspaces.has(workspaceId)) return;
+  syncedWorkspaces.add(workspaceId);
+  announce();
+};
+
 /**
  * Resolves once this machine's library has been read into memory.
  *
@@ -215,18 +243,34 @@ export const whenOfflineDataReady = (): Promise<void> => {
 
 const hydrate = async (): Promise<void> => {
   if (!hasStore()) {
+    hasBeenRead = true;
     return;
   }
   try {
     await carryOverBrowserStorage();
 
+    // Every list at once, rather than one round trip to Rust after another:
+    // a church's library is a few workspaces of four kinds each.
     const arrived = emptyLocalState();
-    for (const workspace of await offlineWorkspaces()) {
-      for (const [field, kind] of kinds) {
-        for (const document of await offlineList<StoredEntity>(workspace, kind)) {
-          entitiesOf(arrived, field).push(document.body);
-          written.set(rowKey(kind, workspace, String(document.id)), document.body);
-        }
+    const [lists, waiting] = await Promise.all([
+      offlineWorkspaces().then((workspaces) =>
+        Promise.all(
+          workspaces.flatMap((workspace) =>
+            kinds.map(async ([field, kind]) => ({
+              field,
+              kind,
+              workspace,
+              documents: await offlineList<StoredEntity>(workspace, kind),
+            })),
+          ),
+        ),
+      ),
+      offlineQueued(undefined, QUEUE_READ_LIMIT),
+    ]);
+    for (const { field, kind, workspace, documents } of lists) {
+      for (const document of documents) {
+        entitiesOf(arrived, field).push(document.body);
+        written.set(rowKey(kind, workspace, String(document.id)), document.body);
       }
     }
 
@@ -244,7 +288,6 @@ const hydrate = async (): Promise<void> => {
       ];
     }
 
-    const waiting = await offlineQueued(undefined, QUEUE_READ_LIMIT);
     const queuedMeanwhile = new Set(inMemorySyncQueue.map((item) => item.id));
     inMemorySyncQueue = [
       ...waiting
@@ -253,12 +296,19 @@ const hydrate = async (): Promise<void> => {
       ...inMemorySyncQueue,
     ].sort((left, right) => left.updatedAt - right.updatedAt);
 
+    hasBeenRead = true;
+    markStartup(
+      "library-read",
+      arrived.libraryItems.length + arrived.services.length + arrived.categories.length,
+    );
     announce();
     schedulePersist();
   } catch (error) {
     // The app still works: it starts with an empty library and fills from
     // Convex when there is a network, as it would on a new machine.
     warn("the library on this machine could not be read", error);
+    hasBeenRead = true;
+    announce();
   }
 };
 
