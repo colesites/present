@@ -3,6 +3,7 @@
 import { Show, SignInButton, SignUpButton } from "@clerk/nextjs";
 import { Check, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 
@@ -63,6 +64,7 @@ export function PricingShowcase({
   const [isLoadingPlans, setIsLoadingPlans] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     let cancelled = false;
@@ -113,55 +115,11 @@ export function PricingShowcase({
 
   const maxSavings = useMemo(() => computeMaxSavings(plans), [plans]);
 
-  const handleCheckout = async (lookupKey: string) => {
+  // Payment happens on Present's own checkout page, with Stripe's Payment
+  // Element inside it, rather than on Stripe's hosted checkout.
+  const handleCheckout = (lookupKey: string) => {
     setCheckoutLoading(lookupKey);
-    try {
-      const response = await fetch("/api/stripe/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lookupKey,
-          successUrl: `${window.location.origin}${redirectUrl}?checkout=success`,
-          cancelUrl: `${window.location.origin}${redirectUrl}?checkout=cancel`,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-      const data = (await response.json()) as { url: string };
-      if (data.url) {
-        window.location.href = data.url;
-      }
-    } catch (error) {
-      console.error("[PricingShowcase] Checkout error:", error);
-    } finally {
-      setCheckoutLoading(null);
-    }
-  };
-
-  const handleManageSubscription = async () => {
-    try {
-      const response = await fetch("/api/stripe/portal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          returnUrl: `${window.location.origin}${redirectUrl}`,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-      const data = (await response.json()) as { url: string };
-      if (data.url) {
-        window.location.href = data.url;
-      }
-    } catch (error) {
-      console.error("[PricingShowcase] Portal error:", error);
-    }
+    router.push(`/checkout?plan=${encodeURIComponent(lookupKey)}`);
   };
 
   return (
@@ -349,7 +307,10 @@ export function PricingShowcase({
                         ) : (
                           <SignInButton
                             mode="modal"
-                            forceRedirectUrl={redirectUrl}
+                            // Straight on to paying for the plan they picked.
+                            forceRedirectUrl={
+                              lookupKey ? `/checkout?plan=${encodeURIComponent(lookupKey)}` : redirectUrl
+                            }
                           >
                             <button
                               type="button"

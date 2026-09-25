@@ -17,8 +17,9 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
     resolvedSearchParams.client === "electron";
   const nextParam = resolvedSearchParams.next;
   const requestedNext = Array.isArray(nextParam) ? nextParam[0] : nextParam;
+  // A path on this site only: "//host" and "/\host" are other sites.
   const safeRedirectPath =
-    typeof requestedNext === "string" && requestedNext.startsWith("/")
+    typeof requestedNext === "string" && /^\/(?![/\\])/.test(requestedNext)
       ? requestedNext
       : "/dashboard";
 
