@@ -100,7 +100,9 @@ export const currentSubscription = async (stripe: Stripe, customerId: string): P
     customer: customerId,
     status: "all",
     limit: 20,
-    expand: ["data.items.data.price.product", "data.default_payment_method"],
+    // Stripe expands at most four levels, so the price's product is fetched
+    // by `planKeyOfPrice` when it needs it rather than expanded here.
+    expand: ["data.items.data.price", "data.default_payment_method"],
   });
   const ranked = subscriptions.data
     .filter((subscription) => LIVE_STATUSES.has(subscription.status))

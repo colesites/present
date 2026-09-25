@@ -24,7 +24,8 @@ export async function GET(request: Request) {
 
     const stripe = getStripe();
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
-      expand: ["subscription.items.data.price.product", "setup_intent"],
+      // Four levels at most: `planKeyOfPrice` fetches the product itself.
+      expand: ["subscription.items.data.price", "setup_intent"],
     });
     if (session.metadata?.userId !== userId) throw new BillingError("That checkout isn't yours.", 403);
 

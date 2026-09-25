@@ -214,7 +214,10 @@ export function BillingSection() {
                   key={plan.slug}
                   plan={plan}
                   interval={interval}
-                  currentPlanKey={complimentary ? status?.planKey ?? null : subscription?.planKey ?? (status ? "free" : null)}
+                  // What the server says they have: a subscription's plan, or the
+                  // one their account carries without one (Free, or the allowlist).
+                  currentPlanKey={subscription?.planKey ?? status?.planKey ?? null}
+                  ready={Boolean(overview) && Boolean(status)}
                   currentLookupKey={subscription?.lookupKey ?? null}
                   hasSubscription={Boolean(subscription)}
                   complimentary={complimentary}
@@ -432,11 +435,13 @@ function PlanCard({
   currentLookupKey,
   hasSubscription,
   complimentary,
+  ready,
   onSwitch,
 }: {
   plan: Plan;
   interval: "month" | "year";
   currentPlanKey: string | null;
+  ready: boolean;
   currentLookupKey: string | null;
   hasSubscription: boolean;
   complimentary: boolean;
@@ -449,9 +454,17 @@ function PlanCard({
   const isExactPrice = Boolean(lookupKey && lookupKey === currentLookupKey);
   const featured = plan.slug === "pro";
 
+  const rank = { free: 0, pro: 1, power: 2 } as Record<string, number>;
   let action: React.ReactNode = null;
-  if (complimentary) {
-    action = isCurrentPlan ? <Current /> : null;
+  if (!ready) {
+    action = <div className="h-11 animate-pulse rounded-full bg-[#f3f4f8]" aria-hidden="true" />;
+  } else if (complimentary) {
+    // On the allowlist: their plan costs nothing, so nothing here is for sale.
+    action = isCurrentPlan ? (
+      <Current />
+    ) : (rank[plan.slug] ?? 0) < (rank[currentPlanKey ?? "free"] ?? 0) ? (
+      <p className="text-center text-[0.8rem] text-[#9aa3b2]">Included in your plan.</p>
+    ) : null;
   } else if (isFree) {
     action = isCurrentPlan ? <Current /> : hasSubscription ? (
       <p className="text-center text-[0.8rem] text-[#9aa3b2]">Cancel your plan above to move to Free.</p>
