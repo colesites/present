@@ -1465,20 +1465,30 @@ export function PresentContainer({
   const selectMediaForOutputWithComposer = useCallback(
     (item: MediaItem | null) => {
       if (screenComposer.enabled && screenComposer.selectedRegion) {
+        // Straight onto the screen as well as the draft: the operator is
+        // choosing what the region shows, with the composer on air.
         if (screenComposer.selectedRegion.source === "video") {
-          screenComposer.updateRegion(screenComposer.selectedRegion.id, {
-            mediaUrl: item?.url ?? null,
-            mediaType: item?.type ?? null,
-            mediaLabel: item?.name ?? null,
-          });
+          screenComposer.updateRegion(
+            screenComposer.selectedRegion.id,
+            {
+              mediaUrl: item?.url ?? null,
+              mediaType: item?.type ?? null,
+              mediaLabel: item?.name ?? null,
+            },
+            { live: true },
+          );
         }
 
         if (screenComposer.selectedRegion.source === "slides") {
-          screenComposer.updateRegion(screenComposer.selectedRegion.id, {
-            backgroundMediaUrl: item?.url ?? null,
-            backgroundMediaType: item?.type ?? null,
-            backgroundMediaLabel: item?.name ?? null,
-          });
+          screenComposer.updateRegion(
+            screenComposer.selectedRegion.id,
+            {
+              backgroundMediaUrl: item?.url ?? null,
+              backgroundMediaType: item?.type ?? null,
+              backgroundMediaLabel: item?.name ?? null,
+            },
+            { live: true },
+          );
         }
       }
 
@@ -1563,26 +1573,36 @@ export function PresentContainer({
       return;
     }
 
+    // The selected slides region follows the slide the operator shows, on
+    // the screen as well as in the draft.
     if (!outputActiveSlideId && !outputSlideContent) {
-      screenComposer.updateRegion(screenComposer.selectedRegion.id, {
-        slideId: null,
-        slideText: null,
-        slideFooter: null,
-        slideElements: null,
-        slideCanvasSize: null,
-        slideBackgroundColor: null,
-      });
+      screenComposer.updateRegion(
+        screenComposer.selectedRegion.id,
+        {
+          slideId: null,
+          slideText: null,
+          slideFooter: null,
+          slideElements: null,
+          slideCanvasSize: null,
+          slideBackgroundColor: null,
+        },
+        { live: true },
+      );
       return;
     }
 
-    screenComposer.updateRegion(screenComposer.selectedRegion.id, {
-      slideId: nextSlideId,
-      slideText: nextSlideText,
-      slideFooter: nextSlideFooter,
-      slideElements: nextSlideElements,
-      slideCanvasSize: nextSlideCanvasSize,
-      slideBackgroundColor: nextSlideBackgroundColor,
-    });
+    screenComposer.updateRegion(
+      screenComposer.selectedRegion.id,
+      {
+        slideId: nextSlideId,
+        slideText: nextSlideText,
+        slideFooter: nextSlideFooter,
+        slideElements: nextSlideElements,
+        slideCanvasSize: nextSlideCanvasSize,
+        slideBackgroundColor: nextSlideBackgroundColor,
+      },
+      { live: true },
+    );
   }, [
     screenComposer,
     outputActiveSlideId,

@@ -384,6 +384,80 @@ impl VideoFeed {
     }
 }
 
+/// The videos playing in screen composer regions, one feed each, by region.
+///
+/// A region's video is not the operator's: nothing plays or pauses it, it
+/// starts from the beginning when it goes on screen and loops, as the output
+/// window's `<video autoplay loop>` in a region does. So each is followed as a
+/// video that is always playing, from where it began.
+#[derive(Default)]
+pub struct RegionVideos {
+    feeds: std::collections::HashMap<String, VideoFeed>,
+}
+
+impl RegionVideos {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// This instant's frame of each region's video, for the compositor
+    /// (`SceneCompositor::render_with_regions`). A region whose video has
+    /// gone, or a composer turned off, lets its decoder and file go.
+    pub fn frames_for(
+        &mut self,
+        scene: &OutputScene,
+        now: Instant,
+        size: (u32, u32),
+        open: &Opener,
+    ) -> Vec<(String, &VideoFrame)> {
+        let wanted: std::collections::HashMap<String, String> = if scene.screen_composer_enabled {
+            scene
+                .screen_composer_layout()
+                .map(|layout| {
+                    layout
+                        .regions
+                        .iter()
+                        .filter_map(|region| {
+                            region
+                                .video_url()
+                                .map(|url| (region.id.clone(), url.to_owned()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
+        self.feeds.retain(|id, _| wanted.contains_key(id));
+        for id in wanted.keys() {
+            self.feeds.entry(id.clone()).or_default();
+        }
+
+        let mut frames = Vec::with_capacity(self.feeds.len());
+        for (id, feed) in &mut self.feeds {
+            let Some(url) = wanted.get(id) else {
+                continue;
+            };
+            let region_scene = OutputScene {
+                media_url: Some(url.clone()),
+                media_type: Some(MediaKind::Video),
+                show_media: true,
+                is_video_playing: true,
+                video_current_time: 0.0,
+                video_settings: crate::services::output::VideoSettings {
+                    loop_: true,
+                    muted: true,
+                },
+                ..OutputScene::default()
+            };
+            if let Some(frame) = feed.frame_for(&region_scene, now, size, open) {
+                frames.push((id.clone(), frame));
+            }
+        }
+        frames
+    }
+}
+
 enum Advanced {
     UpToDate,
     /// The decoder ran out of frames. The last one stays on hand.

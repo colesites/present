@@ -1,11 +1,23 @@
 "use client";
 
+import { useEffect } from "react";
 import { MonitorUp } from "lucide-react";
+import { useMediaFolders } from "../media/hooks";
+import { useMediaLibraryStore } from "../../renderer/shared/store/mediaLibrary";
 import { ScreenComposerWorkspace } from "./ScreenComposerWorkspace";
 import { useScreenComposerState } from "./useScreenComposerState";
 
 export function ScreenComposerWindow() {
   const composer = useScreenComposerState();
+
+  // The media library, so a region's media can be chosen here. It used to be
+  // chosen only from the main window's Media panel, and only while the
+  // composer was on the screen, so a region being set up had no way to get
+  // any.
+  const { allMediaItems } = useMediaFolders();
+  useEffect(() => {
+    useMediaLibraryStore.getState().setItems(allMediaItems);
+  }, [allMediaItems]);
 
   return (
     <div className="flex h-screen min-h-0 flex-col bg-background text-foreground">

@@ -638,9 +638,18 @@ export function useScreenComposerState() {
           | "slideBackgroundColor"
         >
       >,
+      options?: {
+        /**
+         * Also on the layout on screen, if the region is in it: for what a
+         * region shows (its media, the slide it follows), which the operator
+         * expects to see at once. Its size, place and look are drafts until
+         * Apply.
+         */
+        live?: boolean;
+      },
     ) => {
-      setStore((previous) =>
-        withUpdatedActiveLayout(previous, (layout) => {
+      setStore((previous) => {
+        const next = withUpdatedActiveLayout(previous, (layout) => {
           const nextRegions = layout.regions.map((region) =>
             region.id === regionId ? normalizeRegion({ ...region, ...update }) : region,
           );
@@ -649,8 +658,21 @@ export function useScreenComposerState() {
             regions: nextRegions,
             updatedAt: Date.now(),
           };
-        }),
-      );
+        });
+        if (!options?.live || !next.liveLayout.regions.some((region) => region.id === regionId)) {
+          return next;
+        }
+        return {
+          ...next,
+          liveLayout: {
+            ...next.liveLayout,
+            regions: next.liveLayout.regions.map((region) =>
+              region.id === regionId ? normalizeRegion({ ...region, ...update }) : region,
+            ),
+            updatedAt: Date.now(),
+          },
+        };
+      });
     },
     [],
   );
@@ -776,11 +798,17 @@ export function useScreenComposerState() {
       if (!layout) {
         return previous;
       }
+      // Going live puts the layout on the screen. It used to copy the
+      // layout and leave the output as it was until "Output enabled" was also
+      // ticked, so the audience kept seeing the slide. The region being
+      // worked on stays the one selected.
+      const selectedStays = layout.regions.some((region) => region.id === previous.selectedRegionId);
       return {
         ...previous,
+        enabled: true,
         activeLayoutId: layout.id,
         liveLayoutId: layout.id,
-        selectedRegionId: layout.regions[0]?.id ?? null,
+        selectedRegionId: selectedStays ? previous.selectedRegionId : (layout.regions[0]?.id ?? null),
         liveLayout: cloneLayout(layout),
       };
     });

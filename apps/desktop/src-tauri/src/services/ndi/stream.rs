@@ -20,12 +20,14 @@ use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
 use super::look::scene_for_ndi;
 use super::output::{FrameSource, FALLBACK_SIZE};
-use super::video_feed::{Opener, VideoFeed};
+use super::video_feed::{Opener, RegionVideos, VideoFeed};
 
 pub struct AppFrameSource {
     app: AppHandle,
     compositor: SceneCompositor,
     video: VideoFeed,
+    /// The videos playing in screen composer regions.
+    regions: RegionVideos,
     /// Opening a video, on its own thread (`video_feed.rs`).
     open: Opener,
 }
@@ -38,6 +40,7 @@ impl AppFrameSource {
             app,
             compositor: SceneCompositor::new(width, height),
             video: VideoFeed::new(),
+            regions: RegionVideos::new(),
             open: scoped_opener(app_for_opening),
         }
     }
@@ -49,6 +52,7 @@ impl FrameSource for AppFrameSource {
             app,
             compositor,
             video,
+            regions,
             open,
         } = self;
 
@@ -72,15 +76,19 @@ impl FrameSource for AppFrameSource {
         let looks = looks.snapshot();
         let scene = scene_for_ndi(&output.on_screen(), &looks.live_look().targets.ndi);
 
-        let frame = video.frame_for(&scene, Instant::now(), size, open);
+        let now = Instant::now();
+        let frame = video.frame_for(&scene, now, size, open);
+        let region_frames = regions.frames_for(&scene, now, size, open);
 
         let loader = ScopedMediaLoader::new(&files);
-        let (rendered, _) = compositor.render(&scene, frame, &loader).ok_or_else(|| {
-            format!(
-                "the compositor could not draw a {}x{} frame",
-                size.0, size.1
-            )
-        })?;
+        let (rendered, _) = compositor
+            .render_with_regions(&scene, frame, &region_frames, &loader)
+            .ok_or_else(|| {
+                format!(
+                    "the compositor could not draw a {}x{} frame",
+                    size.0, size.1
+                )
+            })?;
         rendered.write_bgra(out);
         Ok(size)
     }

@@ -158,7 +158,23 @@ pub struct SceneCompositor {
         super::overlays::MarqueeStrip,
         crate::services::output::MessageOverlay,
     )>,
+    /// The screen composer's countdown clocks, apart from the regions: they
+    /// change once a second, and the regions, which can hold a whole slide
+    /// each, do not.
+    composer_clock: Option<(Pixmap, ComposerClockKey)>,
 }
+
+/// Everything the composer's clocks are drawn from.
+#[derive(Debug, Clone, PartialEq)]
+struct ComposerClockKey {
+    layout: Option<serde_json::Value>,
+    text: Option<String>,
+    label: Option<String>,
+}
+
+/// A video playing in a screen composer region, by the region's id: this
+/// instant's frame, decoded by whoever owns the region's decoder.
+pub type RegionFrame<'a> = (String, &'a VideoFrame);
 
 /// Everything `draw_message` and `draw_props` read.
 #[derive(Debug, Clone, PartialEq)]
@@ -216,6 +232,7 @@ impl SceneCompositor {
             overlay_layer: None,
             overlay_for: None,
             marquee: None,
+            composer_clock: None,
         }
     }
 
@@ -258,7 +275,16 @@ impl SceneCompositor {
             .message_overlay
             .as_ref()
             .is_some_and(super::overlays::is_moving);
-        if moving_message || self.is_animating() {
+        // A video playing in a composer region moves while the scene stands
+        // still, as the background video would if it were the scene's own.
+        let region_video = scene.screen_composer_enabled
+            && scene.screen_composer_layout().is_some_and(|layout| {
+                layout
+                    .regions
+                    .iter()
+                    .any(|region| region.video_url().is_some())
+            });
+        if moving_message || region_video || self.is_animating() {
             return true;
         }
         !last.is_some_and(|(previous_scene, previous_video, previous_size)| {
@@ -279,6 +305,7 @@ impl SceneCompositor {
         self.overlay_layer = None;
         self.overlay_for = None;
         self.marquee = None;
+        self.composer_clock = None;
     }
 
     /// The frame from the last successful `render`.
@@ -317,6 +344,20 @@ impl SceneCompositor {
         &mut self,
         scene: &OutputScene,
         video: Option<&VideoFrame>,
+        loader: &dyn MediaLoader,
+    ) -> Option<(&Frame, Rendered)> {
+        self.render_with_regions(scene, video, &[], loader)
+    }
+
+    /// Compose one frame, with the videos playing in screen composer regions.
+    ///
+    /// `regions` are this instant's frames of those videos, by region id,
+    /// decoded by the caller as `video` is (`ndi::video_feed::RegionVideos`).
+    pub fn render_with_regions(
+        &mut self,
+        scene: &OutputScene,
+        video: Option<&VideoFrame>,
+        regions: &[RegionFrame<'_>],
         loader: &dyn MediaLoader,
     ) -> Option<(&Frame, Rendered)> {
         let mut report = Rendered::default();
@@ -385,6 +426,17 @@ impl SceneCompositor {
             }
         }
 
+        // 3½. With the composer on, the videos playing in its regions, each
+        //     on its plate. The regions' other contents are in the slide
+        //     layer drawn over them next, which leaves these clear.
+        let composer = scene
+            .screen_composer_enabled
+            .then(|| scene.screen_composer_layout())
+            .flatten();
+        if let Some(layout) = composer.as_ref() {
+            self.draw_composer_videos(&mut frame, layout, regions);
+        }
+
         // 4. The slide, only rebuilt when it changed.
         if !self.draw_transition_layers(&mut frame, scene, loader, &mut report, now) {
             if let Some(layers) = self.layers_for(scene, loader, &mut report) {
@@ -392,8 +444,22 @@ impl SceneCompositor {
             }
         }
 
-        // 5. The timer, redrawn only when it ticks.
-        if scene.timer_visible {
+        // 4½. The composer's countdown clocks, redrawn only when they tick.
+        let has_clock = composer.as_ref().is_some_and(|layout| {
+            layout
+                .regions
+                .iter()
+                .any(|region| region.source == super::composer::ComposerSource::Countdown)
+        });
+        if has_clock {
+            if let Some(clock) = self.composer_clock_for(scene, composer.as_ref()) {
+                blend_over(&mut frame, clock);
+            }
+        }
+
+        // 5. The timer, redrawn only when it ticks. Not while a composer
+        //    region shows it, as the output window leaves it out then too.
+        if scene.timer_visible && !has_clock {
             if let Some(timer) = self.timer_for(scene) {
                 blend_over(&mut frame, timer);
             }
@@ -605,12 +671,191 @@ impl SceneCompositor {
         // the elements above, not as well as them.
         if scene.screen_composer_enabled {
             if let Some(layout) = scene.screen_composer_layout() {
-                let mut view = layers.as_mut();
-                let regions = super::overlays::draw_composer(&mut view, &layout, loader);
-                report.elements_drawn += regions.drawn;
-                report.elements_deferred += regions.deferred;
+                self.draw_composer_regions(layers, scene, &layout, loader, report);
             }
         }
+    }
+
+    /// The screen composer's regions, each drawn inside its own rectangle, as
+    /// the output window's `renderRegionContent` draws them: a plate, the
+    /// media, and a slides region's slide laid out as its author intended,
+    /// scaled to the region rather than the screen.
+    ///
+    /// Videos are not here: they move, and this layer is drawn once. Their
+    /// regions are left clear, plate and all, for `draw_composer_videos`
+    /// under it. Nor are the clocks, which tick: `composer_clock_for`.
+    fn draw_composer_regions(
+        &self,
+        layers: &mut Pixmap,
+        scene: &OutputScene,
+        layout: &super::composer::ComposerLayout,
+        loader: &dyn MediaLoader,
+        report: &mut Rendered,
+    ) {
+        use super::composer::ComposerSource;
+
+        let (frame_width, frame_height) = (layers.width() as f32, layers.height() as f32);
+        for region in &layout.regions {
+            let Some((x, y, width, height)) = region.inner_rect(frame_width, frame_height) else {
+                continue;
+            };
+            if !region.is_composited() {
+                // A camera: the webview layer's, like a capture prop.
+                report.elements_deferred += 1;
+                continue;
+            }
+
+            if region.video_url().is_none() {
+                super::overlays::draw_region_plate(
+                    &mut layers.as_mut(),
+                    region,
+                    frame_width,
+                    frame_height,
+                );
+            }
+            if let Some(url) = region.image_url() {
+                super::overlays::draw_region_image(
+                    &mut layers.as_mut(),
+                    region,
+                    url,
+                    loader,
+                    frame_width,
+                    frame_height,
+                );
+            }
+
+            match region.source {
+                ComposerSource::Slides => {
+                    let region_scene = region_slide_scene(scene, region);
+                    let (inner_width, inner_height) = (
+                        width.round().max(1.0) as u32,
+                        height.round().max(1.0) as u32,
+                    );
+                    let Some(mut picture) = Pixmap::new(inner_width, inner_height) else {
+                        continue;
+                    };
+                    if let Some(background) = region_scene
+                        .slide_background_color
+                        .as_deref()
+                        .and_then(color::parse)
+                    {
+                        picture.fill(background);
+                    }
+                    let viewport = geometry::Viewport::new(
+                        region_scene.slide_canvas_size.as_deref(),
+                        inner_width,
+                        inner_height,
+                    );
+                    self.draw_layer_into(
+                        &mut picture,
+                        &region_scene,
+                        loader,
+                        report,
+                        Keep::Everything,
+                        &viewport,
+                    );
+                    layers.draw_pixmap(
+                        x.round() as i32,
+                        y.round() as i32,
+                        picture.as_ref(),
+                        &tiny_skia::PixmapPaint::default(),
+                        Transform::identity(),
+                        None,
+                    );
+                }
+                ComposerSource::Countdown => {
+                    super::overlays::draw_countdown_shade(
+                        &mut layers.as_mut(),
+                        region,
+                        frame_width,
+                        frame_height,
+                    );
+                    report.elements_drawn += 1;
+                }
+                ComposerSource::Video => report.elements_drawn += 1,
+                ComposerSource::CameraFeed | ComposerSource::Unknown => {}
+            }
+        }
+    }
+
+    /// The videos playing in composer regions, each on its plate, at this
+    /// instant's frame. A region whose video has no frame yet shows its plate.
+    fn draw_composer_videos(
+        &self,
+        frame: &mut Frame,
+        layout: &super::composer::ComposerLayout,
+        regions: &[RegionFrame<'_>],
+    ) {
+        let (frame_width, frame_height) = (frame.width() as f32, frame.height() as f32);
+        for region in layout
+            .regions
+            .iter()
+            .filter(|region| region.video_url().is_some())
+        {
+            super::overlays::draw_region_plate(
+                &mut frame.pixmap_mut(),
+                region,
+                frame_width,
+                frame_height,
+            );
+            let Some((_, video)) = regions.iter().find(|(id, _)| *id == region.id) else {
+                continue;
+            };
+            if let Some(picture) = video_to_pixmap(video) {
+                super::overlays::draw_region_video(
+                    &mut frame.pixmap_mut(),
+                    region,
+                    &picture,
+                    frame_width,
+                    frame_height,
+                );
+            }
+        }
+    }
+
+    /// The composer's countdown clocks over transparency, redrawn when the
+    /// time, the timer's name or the layout changes.
+    fn composer_clock_for(
+        &mut self,
+        scene: &OutputScene,
+        layout: Option<&super::composer::ComposerLayout>,
+    ) -> Option<&Pixmap> {
+        let layout = layout?;
+        let key = ComposerClockKey {
+            layout: scene.screen_composer_layout.clone(),
+            text: scene.timer_text.clone(),
+            label: scene.timer_label.clone(),
+        };
+        let current = self
+            .composer_clock
+            .as_ref()
+            .is_some_and(|(_, drawn_for)| *drawn_for == key);
+        if !current {
+            let mut layer = Pixmap::new(self.width, self.height)?;
+            let (frame_width, frame_height) = (self.width as f32, self.height as f32);
+            let clock = scene
+                .timer_text
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("00:00:00");
+            for region in layout
+                .regions
+                .iter()
+                .filter(|region| region.source == super::composer::ComposerSource::Countdown)
+            {
+                super::overlays::draw_region_clock(
+                    &mut layer.as_mut(),
+                    region,
+                    scene.timer_label.as_deref(),
+                    clock,
+                    frame_width,
+                    frame_height,
+                );
+            }
+            self.composer_clock = Some((layer, key));
+        }
+        self.composer_clock.as_ref().map(|(layer, _)| layer)
     }
 
     /// Draw this frame's slide layers while a changed-elements transition is
@@ -1025,6 +1270,45 @@ fn apply_media_filters(frame: &mut Frame, (x, y, w, h): MediaRect, css: &str) {
 /// maybe a sixth of the screen; the rest of the layer is fully transparent
 /// pixels whose contribution is arithmetically zero. Skipping them turns the
 /// common case from two million blends into a few hundred thousand.
+/// The slide a composer slides region shows, as a scene of its own: the
+/// region's own slide where it has one, field by field, and the one on screen
+/// where it does not, as `OutputWindow.tsx` falls back.
+fn region_slide_scene(
+    scene: &OutputScene,
+    region: &super::composer::ComposerRegion,
+) -> OutputScene {
+    OutputScene {
+        show_text: scene.show_text,
+        active_slide_id: region
+            .slide_id
+            .clone()
+            .or_else(|| scene.active_slide_id.clone()),
+        slide_text: region
+            .slide_text
+            .clone()
+            .or_else(|| scene.slide_text.clone()),
+        slide_footer: region
+            .slide_footer
+            .clone()
+            .or_else(|| scene.slide_footer.clone()),
+        slide_elements: match region.slide_elements.as_ref() {
+            Some(elements) => serde_json::to_value(elements).ok(),
+            None => scene.slide_elements.clone(),
+        },
+        slide_canvas_size: region
+            .slide_canvas_size
+            .clone()
+            .or_else(|| scene.slide_canvas_size.clone()),
+        slide_background_color: region
+            .slide_background_color
+            .clone()
+            .or_else(|| scene.slide_background_color.clone()),
+        scripture_style: scene.scripture_style.clone(),
+        library_style: scene.library_style.clone(),
+        ..OutputScene::default()
+    }
+}
+
 fn blend_over(frame: &mut Frame, layers: &Pixmap) {
     if frame.width() != layers.width() || frame.height() != layers.height() {
         return;
@@ -2082,42 +2366,165 @@ mod tests {
 
     #[test]
     fn the_composer_replaces_the_slide_rather_than_sitting_over_it() {
-        // When the composer is on, the regions *are* the output. Drawing the
-        // ordinary slide as well would put two things on the screen at once.
+        // When the composer is on, the regions *are* the output. A slides
+        // region with no slide of its own shows the one on screen, inside the
+        // region and scaled to it, as the output window does, and nothing is
+        // drawn outside the regions.
         let mut compositor = SceneCompositor::new(200, 100);
         let scene = OutputScene {
             screen_composer_enabled: true,
             screen_composer_layout: Some(json!({
                 "regions": [{
-                    "x": 0.0, "y": 0.0, "width": 0.5, "height": 1.0,
+                    "x": 0.0, "y": 0.0, "width": 50.0, "height": 100.0,
                     "source": "slides",
                     "backgroundColor": "#00ff00"
                 }]
             })),
             slide_elements: Some(json!([{
                 "id": "a", "type": "shape",
-                "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+                "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0,
                 "style": { "backgroundColor": "#ff0000" }
             }])),
-            slide_canvas_size: Some("200x100".to_owned()),
+            slide_canvas_size: Some("100x100".to_owned()),
             ..scene()
         };
 
-        let (frame, report) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        let (frame, _) = compositor.render(&scene, None, &NoMedia).expect("frame");
 
         assert_eq!(
-            frame.pixel_at(50, 50),
+            frame.pixel_at(50, 20),
+            Some((255, 0, 0, 255)),
+            "the slide, drawn inside its region"
+        );
+        assert_eq!(
+            frame.pixel_at(50, 80),
             Some((0, 255, 0, 255)),
-            "the region, not the slide"
+            "the region's plate below the slide's shape"
         );
         assert_eq!(
             frame.pixel_at(150, 50),
             Some((0, 0, 0, 255)),
-            "outside the region"
+            "and nothing outside the region"
+        );
+    }
+
+    #[test]
+    fn regions_land_where_the_composer_put_them() {
+        // The layout is in percentages. Read as fractions of 1, a region 50
+        // wide covered the whole screen and one starting at 50 was off it.
+        let mut compositor = SceneCompositor::new(200, 100);
+        let scene = OutputScene {
+            screen_composer_enabled: true,
+            screen_composer_layout: Some(json!({
+                "regions": [
+                    { "x": 0.0, "y": 0.0, "width": 50.0, "height": 100.0,
+                      "source": "video", "backgroundColor": "#ff0000" },
+                    { "x": 50.0, "y": 0.0, "width": 50.0, "height": 100.0,
+                      "source": "video", "backgroundColor": "#0000ff" }
+                ]
+            })),
+            ..scene()
+        };
+        let (frame, _) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(
+            frame.pixel_at(40, 50),
+            Some((255, 0, 0, 255)),
+            "left region on the left"
         );
         assert_eq!(
-            report.elements_drawn, 1,
-            "one region, not the slide element"
+            frame.pixel_at(160, 50),
+            Some((0, 0, 255, 255)),
+            "right region on the right"
+        );
+    }
+
+    #[test]
+    fn a_region_plays_its_own_video() {
+        let mut compositor = SceneCompositor::new(200, 100);
+        let scene = OutputScene {
+            screen_composer_enabled: true,
+            screen_composer_layout: Some(json!({
+                "regions": [{
+                    "id": "left", "x": 0.0, "y": 0.0, "width": 50.0, "height": 100.0,
+                    "source": "video", "fitMode": "fill",
+                    "mediaUrl": "local-media://media/clip.mp4", "mediaType": "video",
+                    "backgroundColor": "#0000ff"
+                }]
+            })),
+            ..scene()
+        };
+        assert!(
+            compositor.needs_drawing(None, &scene, None, (200, 100))
+                && compositor.needs_drawing(
+                    Some(&(scene.clone(), None, (200, 100))),
+                    &scene,
+                    None,
+                    (200, 100)
+                ),
+            "a region's video moves while the scene stands still"
+        );
+
+        let (frame, _) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(
+            frame.pixel_at(50, 50),
+            Some((0, 0, 255, 255)),
+            "its plate while the video opens"
+        );
+
+        let video = frame_of(64, 36, [0, 255, 0, 255]);
+        let frames = [("left".to_owned(), &video)];
+        let (frame, _) = compositor
+            .render_with_regions(&scene, None, &frames, &NoMedia)
+            .expect("frame");
+        assert_eq!(
+            frame.pixel_at(50, 50),
+            Some((0, 255, 0, 255)),
+            "then the video, in its region"
+        );
+        assert_eq!(
+            frame.pixel_at(150, 50),
+            Some((0, 0, 0, 255)),
+            "and only there"
+        );
+    }
+
+    #[test]
+    fn a_countdown_region_shows_the_running_timer() {
+        let mut compositor = SceneCompositor::new(320, 180);
+        let clock_at = |text: &str| OutputScene {
+            screen_composer_enabled: true,
+            screen_composer_layout: Some(json!({
+                "regions": [{
+                    "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+                    "source": "countdown", "backgroundColor": "transparent",
+                    "textContent": "00:00:00"
+                }]
+            })),
+            timer_text: Some(text.to_owned()),
+            timer_visible: true,
+            ..scene()
+        };
+        let bright = |frame: &Frame| {
+            frame
+                .pixmap()
+                .pixels()
+                .iter()
+                .filter(|pixel| pixel.red() > 200)
+                .count()
+        };
+        let (first, _) = compositor
+            .render(&clock_at("04:59"), None, &NoMedia)
+            .expect("frame");
+        let first_ink = bright(first);
+        let first_pixels = first.pixmap().data().to_vec();
+        assert!(first_ink > 50, "the clock is drawn: {first_ink}");
+        let (second, _) = compositor
+            .render(&clock_at("04:58"), None, &NoMedia)
+            .expect("frame");
+        assert_ne!(
+            second.pixmap().data(),
+            &first_pixels[..],
+            "and it is the timer's time, not a fixed 00:00:00"
         );
     }
 
@@ -2128,7 +2535,7 @@ mod tests {
             screen_composer_enabled: true,
             screen_composer_layout: Some(json!({
                 "regions": [{
-                    "x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0,
+                    "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
                     "source": "camera-feed",
                     "backgroundColor": "#00ff00"
                 }]
