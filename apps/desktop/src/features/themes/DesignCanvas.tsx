@@ -2,6 +2,7 @@
 
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
+import { SlideMediaBackdrop } from "../../renderer/shared/components/SlideMediaBackdrop";
 import { cn } from "../../renderer/shared/lib/utils";
 import type { CanvasSizePreset, LibrarySlide, SlideElement } from "../../shared/types";
 import { getCanvasSizeDimensions } from "../library/lib/library-items";
@@ -61,11 +62,13 @@ export function DesignCanvas({
   const background =
     look.background?.kind === "color"
       ? look.background.color
-      : look.background
-        ? look.background.kind === "gradient"
-          ? look.background.from
-          : look.background.base
-        : MEDIA_STAND_IN;
+      : look.background?.kind === "gradient"
+        ? look.background.from
+        : look.background?.kind === "mix"
+          ? look.background.base
+          : look.background?.kind === "media"
+            ? "#000000"
+            : MEDIA_STAND_IN;
 
   const startDrag = (event: ReactPointerEvent, target: DesignTarget, mode: DragMode) => {
     event.stopPropagation();
@@ -160,6 +163,7 @@ export function DesignCanvas({
       style={{ aspectRatio: `${width} / ${height}` }}
     >
       <div className="absolute inset-0 overflow-hidden rounded-lg border border-border/60" style={{ background }}>
+        {look.background?.kind === "media" ? <SlideMediaBackdrop backgroundId={look.background.mediaId} /> : null}
         <CanvasSlideLayer
           text={slide.text}
           elements={(slide.elements ?? []) as SlideElement[]}

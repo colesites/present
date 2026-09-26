@@ -7,6 +7,7 @@ import {
   applyLookToSlide,
   applyLookToSlides,
   backgroundIdFor,
+  findBackgroundMedia,
   bandIdFor,
   isUntouchedOldSeed,
   layoutFrames,
@@ -121,6 +122,34 @@ test("a gradient or mix background is a shape behind everything, with its first 
   assert.equal(plain.elements.length, 1, "the next theme takes it away");
 });
 
+test("an image or video background is the slide's media, behind a clear slide", () => {
+  const video = { kind: "media", mediaId: "folder-1-Waves.mp4", name: "Waves.mp4", mediaType: "video" };
+  const look = normalizeLook({ ...theme("builtin:classic"), background: video });
+  assert.deepEqual(look.background, video);
+  assert.equal(tierOfLook(look), "pro", "a Pro theme, not a Power one");
+  const slide = applyLookToSlide({ ...lyricSlide("a"), backgroundColor: "#ff0000", useBackgroundColor: true }, look, canvas);
+  assert.equal(slide.backgroundId, "folder-1-Waves.mp4");
+  assert.equal(slide.useBackgroundColor, false, "a colour on the slide would cover the video");
+  assert.equal(slide.elements.length, 1, "no shape is drawn for it");
+  const plain = applyLookToSlide(slide, theme("builtin:paper"), canvas);
+  assert.equal(plain.backgroundId, undefined, "the next theme takes it away");
+  const read = lookFromSlide(slide, canvas, [{ id: "folder-1-Waves.mp4", name: "Waves.mp4", type: "video" }]);
+  assert.deepEqual(read.background, video);
+});
+
+test("a background's media is found by id, or by file name on another computer", () => {
+  const items = [
+    { id: "home-Blue.png", name: "Blue.png" },
+    { id: "church-Waves.mp4", name: "Waves.mp4" },
+  ];
+  assert.equal(findBackgroundMedia("church-Waves.mp4", items), items[1]);
+  assert.equal(findBackgroundMedia("laptop-Waves.mp4", items), items[1], "another folder, the same file");
+  assert.equal(findBackgroundMedia("laptop-Missing.mp4", items), null);
+  assert.equal(findBackgroundMedia(null, items), null);
+  assert.equal(normalizeLook({ ...theme("builtin:classic"), background: { kind: "media", mediaId: "" } }).background, null);
+  assert.equal(normalizeLook({ ...theme("builtin:classic"), background: { kind: "media", mediaId: "x-Clip.MOV" } }).background.mediaType, "video");
+});
+
 test("a blank slide still gets the background, but no box", () => {
   const blank = applyLookToSlide({ id: "b", text: "", elements: [] }, theme("builtin:lower-third"), canvas);
   assert.deepEqual(blank.elements, []);
@@ -151,6 +180,18 @@ test("the words and their box go wherever the theme puts them", () => {
   assert.deepEqual([text.x, text.y, text.width, text.height], [640, 72, 512, 216]);
   assert.deepEqual([box.x, box.y, box.width, box.height], [576, 36, 640, 288]);
   assert.equal(box.style.borderRadius, 13.33, "the radius scales with the canvas");
+});
+
+test("a theme's box and background are the same element on every slide, so transitions leave them still", () => {
+  const [one, two] = applyLookToSlides([lyricSlide("a", "Amazing grace"), lyricSlide("b", "How sweet")], {
+    ...theme("builtin:dusk"),
+    box: theme("builtin:lower-third").box,
+  }, canvas);
+  assert.deepEqual(one.elements.slice(0, 2), two.elements.slice(0, 2), "the background and the box, identical");
+  assert.notEqual(one.elements[2].id, two.elements[2].id, "the words are each slide's own");
+  const older = { ...lyricSlide("c"), elements: [{ id: "c__theme-band", type: "shape", x: 0, y: 0, width: 1, height: 1 }, ...lyricSlide("c").elements] };
+  const replaced = applyLookToSlide(older, theme("builtin:classic"), canvas);
+  assert.equal(replaced.elements.length, 1, "an older slide's box is found and taken away too");
 });
 
 test("applying another theme replaces the box rather than stacking them", () => {

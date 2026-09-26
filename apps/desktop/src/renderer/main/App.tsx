@@ -40,6 +40,7 @@ import { resolveVerifiedOrganizationId } from "../shared/lib/organization-scope-
 import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvider";
 import { ThemesPanel } from "../../features/themes";
 import { useThemesModalStore } from "../shared/store/themesModal";
+import { useMediaLibraryStore } from "../shared/store/mediaLibrary";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
 import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
@@ -532,6 +533,10 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // Shared Data hooks (lifted for Settings vs Present toggling)
   const mediaState = useMediaFolders();
   const { folders, allMediaItems, selectMediaForOutput } = mediaState;
+  // The media library, for what draws slides' image and video backgrounds.
+  useEffect(() => {
+    useMediaLibraryStore.getState().setItems(allMediaItems);
+  }, [allMediaItems]);
   const settings = useAppSettings({ folders, allMediaItems });
   const {
     settingsOutputDisplayId,

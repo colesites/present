@@ -576,6 +576,7 @@ export function FillEditor({
   lockedLabel,
   disabled,
   label,
+  hideKindPicker = false,
 }: {
   value: SlideFill | null;
   onChange: (value: SlideFill | null) => void;
@@ -585,6 +586,8 @@ export function FillEditor({
   lockedLabel?: string;
   disabled?: boolean;
   label: string;
+  /** For a caller that offers the kinds itself, with more beside them. */
+  hideKindPicker?: boolean;
 }) {
   const kind: FillKind = value?.kind ?? "none";
   const base = value
@@ -610,7 +613,7 @@ export function FillEditor({
       <span id={id} className="sr-only">
         {label}
       </span>
-      <Segmented
+      {hideKindPicker ? null : <Segmented
         value={kind}
         label={label}
         disabled={disabled}
@@ -627,7 +630,7 @@ export function FillEditor({
           disabled: lockedKinds.includes(option),
           title: lockedKinds.includes(option) ? lockedLabel : undefined,
         }))}
-      />
+      />}
       {value?.kind === "color" ? (
         <ColorInput label={`${label} colour`} value={value.color} alpha disabled={disabled} onChange={(color) => onChange({ kind: "color", color })} />
       ) : null}

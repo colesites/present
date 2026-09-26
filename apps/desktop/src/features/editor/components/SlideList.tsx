@@ -17,6 +17,7 @@ import { CanvasSlideLayer } from "../../../renderer/shared/components/CanvasSlid
 import type { LibrarySlide, LibraryContent, SlideElement } from "../../../shared/types";
 import { getSlideBackgroundColor } from "../../library/lib/library-items";
 import { resolveSlideListScrollTop } from "../lib/slide-list-scroll.mjs";
+import { SlideMediaBackdrop } from "../../../renderer/shared/components/SlideMediaBackdrop";
 
 const SLIDE_DRAG_DATA_KEY = "application/x-present-slide-index";
 const LAYER_DRAG_DATA_KEY = "application/x-present-layer-index";
@@ -274,6 +275,7 @@ export const SlideList = memo(function SlideList({
                       className="relative aspect-video w-full overflow-hidden rounded-md ring-1 ring-white/8"
                       style={{ backgroundColor: backgroundColor ?? "#000000" }}
                     >
+                      <SlideMediaBackdrop backgroundId={slide.backgroundId} />
                       <CanvasSlideLayer
                         text={slide.text}
                         elements={slide.elements ?? []}

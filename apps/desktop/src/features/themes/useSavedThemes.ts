@@ -132,7 +132,8 @@ export function useSavedThemes({
   // Older versions of the app read `style` and `backgroundColor`, so a theme
   // saved here still shows and applies there.
   const legacyFields = (look: ThemeLook) => {
-    const background = look.background ? plainColorOf(look.background) : null;
+    const background =
+      look.background && look.background.kind !== "media" ? plainColorOf(look.background) : null;
     return {
       style: withoutUndefined(styleForText(look.text)),
       ...(background ? { backgroundColor: background } : {}),

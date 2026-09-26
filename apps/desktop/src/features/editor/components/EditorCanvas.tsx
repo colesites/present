@@ -22,6 +22,7 @@ import type {
 } from "../../../shared/types";
 import { getCanvasSizeDimensions } from "../../library/lib/library-items";
 import { fillToCss, readFill } from "../../../renderer/shared/lib/slide-fill";
+import { SlideMediaBackdrop } from "../../../renderer/shared/components/SlideMediaBackdrop";
 
 interface EditorCanvasProps {
   editorView: "slides" | "source";
@@ -383,6 +384,7 @@ export const EditorCanvas = memo(function EditorCanvas({
             backgroundColor: selectedSlideBackground ?? "#000000",
           }}
         >
+          <SlideMediaBackdrop backgroundId={selectedSlide?.backgroundId} />
           {selectedSlide?.elements?.map((element, elementIndex) => (
             <div
               key={element.id}

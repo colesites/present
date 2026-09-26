@@ -72,7 +72,12 @@ import {
   reorderLibrarySlides,
 } from "../library/lib/library-items";
 import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
-import { applyLookToSlides, normalizeLook, withSongTheme } from "../themes/theme-look.mjs";
+import {
+  applyLookToSlides,
+  findBackgroundMedia,
+  normalizeLook,
+  withSongTheme,
+} from "../themes/theme-look.mjs";
 import {
   importServicePresentationFile,
   type PresentationImportMode,
@@ -954,9 +959,33 @@ export function PresentContainer({
     [activeMediaItem, allMediaItems, settingsScriptureBackgroundId]
   );
 
+  // A song slide's own image or video, from its theme: the media layer
+  // while that slide is live, as scripture's background is for scripture.
+  // Slides that share it (a song themed with one video) share the layer, so
+  // it plays on from slide to slide rather than starting again.
+  const liveSlideBackgroundId = useMemo(() => {
+    if (isScriptureActive || !selected?.libraryId) return null;
+    const item = availableSlideDeckItems.find(
+      (candidate) => String(candidate._id) === selected.libraryId,
+    );
+    return item?.slides[selected.index]?.backgroundId ?? null;
+  }, [availableSlideDeckItems, isScriptureActive, selected]);
+  // Media the operator chooses (or clears) while that slide is live wins
+  // over it, until the slide changes: a click in the Media panel always
+  // does something.
+  const liveSlideKey = selected?.libraryId ? `${selected.libraryId}:${selected.index}` : null;
+  const [operatorMediaForSlide, setOperatorMediaForSlide] = useState<string | null>(null);
+  const slideBackgroundMediaItem = useMemo(
+    () =>
+      liveSlideKey && operatorMediaForSlide === liveSlideKey
+        ? null
+        : (findBackgroundMedia(liveSlideBackgroundId, allMediaItems) as MediaItem | null),
+    [allMediaItems, liveSlideBackgroundId, liveSlideKey, operatorMediaForSlide],
+  );
+
   const effectiveActiveMediaItem = isScriptureActive
     ? (scriptureBackgroundMediaItem ?? activeMediaItem)
-    : activeMediaItem;
+    : (slideBackgroundMediaItem ?? activeMediaItem);
   const effectiveMediaFilters = useMemo<MediaFilters>(
     () => getMediaFiltersForItem(effectiveActiveMediaItem),
     [effectiveActiveMediaItem, getMediaFiltersForItem],
@@ -1454,9 +1483,10 @@ export function PresentContainer({
         }
       }
 
+      setOperatorMediaForSlide(liveSlideKey);
       selectMediaForOutput(item);
     },
-    [screenComposer, selectMediaForOutput],
+    [liveSlideKey, screenComposer, selectMediaForOutput],
   );
 
   const {
@@ -1596,7 +1626,9 @@ export function PresentContainer({
     audioOutputDeviceId: settingsAudioOutputDeviceId,
     shouldAutoPlay,
     onAutoPlayConsumed: () => setShouldAutoPlay(false),
-    forcePlay: isScriptureActive && effectiveActiveMediaItem?.type === "video",
+    forcePlay:
+      (isScriptureActive || Boolean(slideBackgroundMediaItem)) &&
+      effectiveActiveMediaItem?.type === "video",
   });
 
   // Offer, but never automatically force, a newly connected audio output.

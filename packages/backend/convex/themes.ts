@@ -44,8 +44,9 @@ const tierOf = async (ctx: Ctx, workspace: WorkspaceContext) => {
 };
 
 /**
- * What a look needs: a gradient anywhere (in the words, the background or
- * the box behind the words) is Power's; anything else, Pro's.
+ * What a look needs: a gradient or a mix of colours anywhere (in the words,
+ * the background or the box behind the words) is Power's; anything else,
+ * an image or video background included, is Pro's.
  */
 const tierNeededFor = (look: unknown): PresentThemeTier => {
   const value = look as {
@@ -53,8 +54,10 @@ const tierNeededFor = (look: unknown): PresentThemeTier => {
     background?: { kind?: unknown } | string | null;
     box?: { fill?: { kind?: unknown } } | null;
   } | null;
-  const fancy = (fill: unknown) =>
-    Boolean(fill && typeof fill === "object" && (fill as { kind?: unknown }).kind !== "color");
+  const fancy = (fill: unknown) => {
+    const kind = fill && typeof fill === "object" ? (fill as { kind?: unknown }).kind : null;
+    return kind === "gradient" || kind === "mix";
+  };
   return value?.text?.gradient || fancy(value?.background) || fancy(value?.box?.fill)
     ? "advanced"
     : "custom";

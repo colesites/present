@@ -23,6 +23,7 @@ import {
 } from "../../renderer/shared/components/ui/context-menu";
 import { ArrowRight, GripVertical, NotebookPen, Pencil } from "lucide-react";
 import { getSlideBackgroundColor } from "../library/lib/library-items";
+import { SlideMediaBackdrop } from "../../renderer/shared/components/SlideMediaBackdrop";
 
 // Fixed slide box height
 const BASE_SLIDE_HEIGHT = 160;
@@ -491,6 +492,8 @@ const SlideCard = memo(function SlideCard({
             )}
             style={{ backgroundColor: backgroundColor ?? "#000000" }}
           >
+            {/* An image or video background from the slide's theme. */}
+            {!isScripture ? <SlideMediaBackdrop backgroundId={slide.backgroundId} /> : null}
             {!isScripture && displayElements && displayElements.length > 0 ? (
               <div className="absolute inset-0 overflow-hidden">
                 <CanvasSlideLayer

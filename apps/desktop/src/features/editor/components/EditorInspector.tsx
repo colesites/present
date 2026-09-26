@@ -46,6 +46,9 @@ import {
 } from "../../../renderer/shared/hooks/useFontCatalog";
 import { normalizeCapitalizationMode } from "../../../renderer/shared/lib/capitalization";
 import { readFill } from "../../../renderer/shared/lib/slide-fill";
+import { BackgroundEditor, type Background } from "../../../renderer/shared/components/BackgroundEditor";
+import { useMediaLibraryStore } from "../../../renderer/shared/store/mediaLibrary";
+import type { MediaItem } from "../../media/hooks/useMediaFolders";
 import { cn } from "../../../renderer/shared/lib/utils";
 import { useThemesModalStore } from "../../../renderer/shared/store/themesModal";
 import type {
@@ -54,7 +57,6 @@ import type {
   LibrarySlide,
   SlideElement,
   SlideElementStyle,
-  SlideFill,
 } from "../../../shared/types";
 import {
   getCanvasSizeDimensions,
@@ -63,6 +65,7 @@ import {
 import {
   SHADOW_PRESETS,
   backgroundIdFor,
+  findBackgroundMedia,
   parseShadowCss,
   shadowCss,
 } from "../../themes/theme-look.mjs";
@@ -159,11 +162,23 @@ function getObjectInspectorTab(type: SlideElement["type"] | undefined): ObjectIn
   return null;
 }
 
-/** A slide's background: none, its colour, or a gradient or mix a shape paints. */
-function slideBackgroundFill(slide: LibrarySlide): SlideFill | null {
+/**
+ * A slide's background: none, its colour, a gradient or mix a shape paints,
+ * or an image or video from the media library (`backgroundId`).
+ */
+function slideBackground(slide: LibrarySlide, mediaItems: MediaItem[]): Background | null {
   const shape = slide.elements?.find((element) => element.id.endsWith("__theme-bg"));
   const fill = shape ? readFill(shape.style?.fill) : null;
   if (fill) return fill;
+  if (slide.backgroundId) {
+    const item = findBackgroundMedia(slide.backgroundId, mediaItems);
+    return {
+      kind: "media",
+      mediaId: slide.backgroundId,
+      name: item?.name ?? slide.backgroundId,
+      mediaType: item?.type === "video" ? "video" : "image",
+    };
+  }
   return slide.useBackgroundColor && slide.backgroundColor ? { kind: "color", color: slide.backgroundColor } : null;
 }
 
@@ -259,11 +274,15 @@ export const EditorInspector = memo(function EditorInspector({
     }));
   };
 
-  const setSlideBackground = (fill: SlideFill | null) =>
-    updateSelectedSlide((slide) => {
-      const elements = (slide.elements ?? []).filter((element) => !element.id.endsWith("__theme-bg"));
-      if (!fill) return { ...slide, elements, useBackgroundColor: false };
-      if (fill.kind === "color") return { ...slide, elements, backgroundColor: fill.color, useBackgroundColor: true };
+  const setSlideBackground = (fill: Background | null) =>
+    updateSelectedSlide((current) => {
+      const elements = (current.elements ?? []).filter((element) => !element.id.endsWith("__theme-bg"));
+      const slide: LibrarySlide = { ...current, elements };
+      delete slide.backgroundId;
+      if (!fill) return { ...slide, useBackgroundColor: false };
+      // The media layer's, behind a clear slide: a colour would cover it.
+      if (fill.kind === "media") return { ...slide, backgroundId: fill.mediaId, useBackgroundColor: false };
+      if (fill.kind === "color") return { ...slide, backgroundColor: fill.color, useBackgroundColor: true };
       const base = fill.kind === "gradient" ? fill.from : fill.base;
       const shape: SlideElement = {
         id: backgroundIdFor(slide.id),
@@ -278,6 +297,7 @@ export const EditorInspector = memo(function EditorInspector({
       };
       return { ...slide, elements: [shape, ...elements], backgroundColor: base, useBackgroundColor: true };
     });
+  const mediaItems = useMediaLibraryStore((state) => state.items);
 
   const theme = draft.content?.theme;
   const openThemes = () => useThemesModalStore.getState().open();
@@ -401,17 +421,19 @@ export const EditorInspector = memo(function EditorInspector({
                 </StyleRow>
               </StyleSection>
               <StyleSection title="Background">
-                <FillEditor
+                <BackgroundEditor
+                  key={selectedSlide.id}
                   label="Slide background"
-                  value={slideBackgroundFill(selectedSlide)}
-                  allowNone
+                  value={slideBackground(selectedSlide, mediaItems)}
                   noneLabel="None"
                   onChange={setSlideBackground}
                 />
                 <p className="text-[10px] leading-4 text-muted-foreground">
-                  {slideBackgroundFill(selectedSlide)
-                    ? "Covers the media behind this slide."
-                    : "None: the song's background, or the media behind it, shows."}
+                  {selectedSlide.backgroundId
+                    ? "Plays behind this slide while it is live, in place of the media chosen in Show."
+                    : slideBackground(selectedSlide, mediaItems)
+                      ? "Covers the media behind this slide."
+                      : "None: the song's background, or the media behind it, shows."}
                 </p>
               </StyleSection>
               <ThemeSection name={theme?.name ?? null} onOpen={openThemes} />

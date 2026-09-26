@@ -11,6 +11,7 @@ import {
   Italic,
   Underline,
 } from "lucide-react";
+import { BackgroundEditor } from "../../renderer/shared/components/BackgroundEditor";
 import { FontFamilySelect } from "../../renderer/shared/components/FontFamilySelect";
 import {
   ColorInput,
@@ -375,20 +376,24 @@ export function ThemeInspector({
         ) : null}
       </StyleSection>
 
-      <StyleSection title="Background" badge={look.background && look.background.kind !== "color" && !canGradient ? "Power" : null}>
-        <FillEditor
+      <StyleSection
+        title="Background"
+        badge={(look.background?.kind === "gradient" || look.background?.kind === "mix") && !canGradient ? "Power" : null}
+      >
+        <BackgroundEditor
           label="Background"
           value={look.background}
-          allowNone
           noneLabel="Clear"
           lockedKinds={lockedFills}
           lockedLabel="Gradients and mixes come with Power"
           onChange={(background) => onChange({ ...look, background })}
         />
         <p className="text-[10px] leading-4 text-muted-foreground">
-          {look.background
-            ? "It covers any video or image behind the slide."
-            : "Clear: your video, image or camera shows behind the words."}
+          {look.background?.kind === "media"
+            ? `${look.background.name} plays behind the slide while it is live. Another computer shows it if its media library has a file of the same name.`
+            : look.background
+              ? "It covers any video or image behind the slide."
+              : "Clear: your video, image or camera shows behind the words."}
         </p>
       </StyleSection>
     </fieldset>

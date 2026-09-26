@@ -13,6 +13,8 @@ import { Check, Lock, Plus, Redo2, RotateCcw, Trash2, Undo2, X } from "lucide-re
 import { toast } from "sonner";
 import { ConvexError } from "convex/values";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
+import { SlideMediaBackdrop } from "../../renderer/shared/components/SlideMediaBackdrop";
+import { useMediaLibraryStore } from "../../renderer/shared/store/mediaLibrary";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,6 +44,7 @@ import {
   normalizeLook,
   tierIncludes,
   tierOfLook,
+  type ThemeFill,
   type ThemeFrame,
   type ThemeLook,
   type ThemeTier,
@@ -446,7 +449,10 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
                         disabled={!shownSlide?.text.trim()}
                         onSelect={() =>
                           shownSlide &&
-                          void createFrom(`${target?.title ?? "Slide"} look`, lookFromSlide(shownSlide, canvas))
+                          void createFrom(
+                            `${target?.title ?? "Slide"} look`,
+                            lookFromSlide(shownSlide, canvas, useMediaLibraryStore.getState().items),
+                          )
                         }
                       >
                         {slideIndex !== null ? `The look of slide ${slideIndex + 1}` : "The look of this slide"}
@@ -624,15 +630,18 @@ function ThemesDialog({ workspaceId, onClose }: ThemesPanelProps & { onClose: ()
 
 /** A look with its gradients as their first colours, for a plan without them. */
 function withoutGradients(look: ThemeLook): ThemeLook {
-  const plain = (fill: ThemeLook["background"]): ThemeLook["background"] =>
-    fill && fill.kind !== "color"
-      ? { kind: "color", color: fill.kind === "gradient" ? fill.from : fill.base }
-      : fill;
+  const plain = <T extends ThemeLook["background"]>(fill: T): T | ThemeFill =>
+    fill?.kind === "gradient"
+      ? { kind: "color", color: fill.from }
+      : fill?.kind === "mix"
+        ? { kind: "color", color: fill.base }
+        : fill;
+  const box = look.box;
   return {
     ...look,
     text: { ...look.text, gradient: null, color: look.text.gradient?.from ?? look.text.color },
     background: plain(look.background),
-    box: look.box ? { ...look.box, fill: plain(look.box.fill) ?? look.box.fill } : null,
+    box: box ? { ...box, fill: plain(box.fill) as ThemeFill } : null,
   };
 }
 
@@ -849,9 +858,17 @@ function Swatch({ look }: { look: ThemeLook }) {
   return (
     <span
       className="relative flex h-[24px] w-[42px] flex-none overflow-hidden rounded-[4px] border border-white/10"
-      style={{ background: look.background ? fillSwatchCss(look.background) : MEDIA_STAND_IN }}
+      style={{
+        background:
+          look.background?.kind === "media"
+            ? "#000000"
+            : look.background
+              ? fillSwatchCss(look.background)
+              : MEDIA_STAND_IN,
+      }}
       aria-hidden
     >
+      {look.background?.kind === "media" ? <SlideMediaBackdrop backgroundId={look.background.mediaId} /> : null}
       {look.box ? (
         <span
           className="absolute"
@@ -908,9 +925,15 @@ function SlidePicture({
       className="relative w-full overflow-hidden border border-border/60"
       style={{
         aspectRatio: `${width} / ${height}`,
-        background: slide.useBackgroundColor && slide.backgroundColor ? slide.backgroundColor : MEDIA_STAND_IN,
+        background:
+          slide.useBackgroundColor && slide.backgroundColor
+            ? slide.backgroundColor
+            : slide.backgroundId
+              ? "#000000"
+              : MEDIA_STAND_IN,
       }}
     >
+      <SlideMediaBackdrop backgroundId={slide.backgroundId} />
       <CanvasSlideLayer
         text={slide.text}
         elements={(slide.elements ?? []) as SlideElement[]}

@@ -7,7 +7,8 @@
  * colour or gradient, spacing, shadow, outline), where their box sits on the
  * slide, an optional box behind them (a band along the bottom, a card in the
  * middle), and the slide's background: clear, so the media or camera shows
- * through, or a colour, a gradient or a mix of colours.
+ * through, a colour, a gradient, a mix of colours, or an image or video from
+ * the media library, which plays behind the slide while it is live.
  *
  * Applying it rewrites the text elements' styles, puts the box and the
  * background on each slide as shapes the renderers draw
@@ -48,12 +49,14 @@
  *   outline: ThemeOutline | null,
  * }} ThemeText
  * @typedef {{ frame: ThemeFrame, fill: ThemeFill, radius: number }} ThemeBox
+ * @typedef {{ kind: "media", mediaId: string, name: string, mediaType: "image" | "video" }} ThemeMedia
+ * @typedef {ThemeFill | ThemeMedia} ThemeBackground
  * @typedef {{
  *   version: 2,
  *   text: ThemeText,
  *   frame: ThemeFrame,
  *   box: ThemeBox | null,
- *   background: ThemeFill | null,
+ *   background: ThemeBackground | null,
  * }} ThemeLook
  * @typedef {"basic" | "pro" | "advanced"} ThemeTier
  * @typedef {{ id: string, name: string, tier: ThemeTier, look: ThemeLook, description?: string }} BuiltInTheme
@@ -204,10 +207,18 @@ const fractions = (element, canvas) => ({
   height: round4(element.height / canvas.height),
 });
 
-/** The id a theme's box is given on a slide, so the next theme can find it. */
-export const bandIdFor = (/** @type {string | undefined} */ slideId) => `${slideId ?? "slide"}__theme-band`;
-/** The id a theme's background is given on a slide. */
-export const backgroundIdFor = (/** @type {string | undefined} */ slideId) => `${slideId ?? "slide"}__theme-bg`;
+/**
+ * The id a theme's box is given on a slide, so the next theme can find it.
+ *
+ * The same on every slide. A transition keeps what did not change between
+ * two slides where it is and moves only the rest, matching elements by id
+ * (`compositor/transition/change_detection.rs`), so a box or background that
+ * is the same on both slides has to have the same id, or it fades and blurs
+ * with the words. Older slides have the slide's id in front of it.
+ */
+export const bandIdFor = (/** @type {string | undefined} */ _slideId) => "__theme-band";
+/** The id a theme's background is given on a slide; the same on every slide, as the box's is. */
+export const backgroundIdFor = (/** @type {string | undefined} */ _slideId) => "__theme-bg";
 const isThemeBand = (/** @type {any} */ element) =>
   typeof element?.id === "string" && element.id.endsWith("__theme-band");
 const isThemeBackground = (/** @type {any} */ element) =>
@@ -268,6 +279,39 @@ function restyleText(element, style) {
 export const plainColorOf = (/** @type {ThemeFill} */ fill) =>
   fill.kind === "color" ? fill.color : fill.kind === "gradient" ? fill.from : fill.base;
 
+const VIDEO_NAME = /\.(mp4|m4v|mov|webm|mkv|avi|mpg|mpeg|wmv)$/i;
+
+/**
+ * Whether a media library item is the one a slide's `backgroundId` names.
+ *
+ * The id first. A library item's id is its folder's id and its file name
+ * (`useMediaFolders`), and folders have different ids on different
+ * computers, so failing that, the same file name in any folder: a theme
+ * saved on one computer finds the file on another with the same name.
+ *
+ * @param {string} backgroundId
+ * @param {{ id: string, name: string }} item
+ */
+export const isBackgroundMedia = (backgroundId, item) =>
+  item.id === backgroundId || backgroundId.endsWith(`-${item.name}`);
+
+/**
+ * The media library item a slide's background names, if this computer has it.
+ *
+ * @template {{ id: string, name: string }} T
+ * @param {string | null | undefined} backgroundId
+ * @param {T[]} items
+ * @returns {T | null}
+ */
+export function findBackgroundMedia(backgroundId, items) {
+  if (!backgroundId) return null;
+  return (
+    items.find((item) => item.id === backgroundId) ??
+    items.find((item) => isBackgroundMedia(backgroundId, item)) ??
+    null
+  );
+}
+
 /**
  * One slide with `look` applied.
  *
@@ -300,8 +344,11 @@ export function applyLookToSlide(slide, look, canvas = THEME_CANVAS) {
     return reframe && element === textBoxes[0] ? { ...next, ...pixels(look.frame, canvas) } : next;
   });
 
+  const media = look.background?.kind === "media" ? look.background : null;
+  const fill = look.background && look.background.kind !== "media" ? look.background : null;
+
   const behind = [];
-  if (look.background && look.background.kind !== "color") {
+  if (fill && fill.kind !== "color") {
     behind.push({
       id: backgroundIdFor(slide.id),
       type: "shape",
@@ -311,7 +358,7 @@ export function applyLookToSlide(slide, look, canvas = THEME_CANVAS) {
       width: canvas.width,
       height: canvas.height,
       isLocked: true,
-      style: { fill: look.background, backgroundColor: plainColorOf(look.background), borderRadius: 0 },
+      style: { fill, backgroundColor: plainColorOf(fill), borderRadius: 0 },
     });
   }
   if (look.box && reframe) {
@@ -329,13 +376,17 @@ export function applyLookToSlide(slide, look, canvas = THEME_CANVAS) {
   }
   const next = [...behind, ...restyled];
 
-  return {
+  /** @type {any} */
+  const themed = {
     ...slide,
     ...(Array.isArray(slide.elements) || next.length > 0 ? { elements: next } : {}),
-    ...(look.background
-      ? { backgroundColor: plainColorOf(look.background), useBackgroundColor: true }
-      : { useBackgroundColor: false }),
+    // An image or video is the media layer's, behind a clear slide: a colour
+    // on the slide would cover it.
+    ...(fill ? { backgroundColor: plainColorOf(fill), useBackgroundColor: true } : { useBackgroundColor: false }),
   };
+  if (media) themed.backgroundId = media.mediaId;
+  else delete themed.backgroundId;
+  return themed;
 }
 
 /**
@@ -360,9 +411,10 @@ export function applyLookToSlides(slides, look, canvas = THEME_CANVAS, options =
  *
  * @param {any} slide
  * @param {{ width: number, height: number }} [canvas]
+ * @param {Array<{ id: string, name: string, type: string }>} [mediaItems] the media library, to name an image or video background
  * @returns {ThemeLook}
  */
-export function lookFromSlide(slide, canvas = THEME_CANVAS) {
+export function lookFromSlide(slide, canvas = THEME_CANVAS, mediaItems = []) {
   const elements = Array.isArray(slide?.elements) ? slide.elements : [];
   const box = elements.find((/** @type {any} */ element) => element?.type === "text" && !element.isPlaceholder) ?? null;
   const style = box?.style ?? {};
@@ -402,8 +454,28 @@ export function lookFromSlide(slide, canvas = THEME_CANVAS) {
         : null,
     background:
       background?.style?.fill ??
+      mediaBackgroundOf(slide?.backgroundId, mediaItems) ??
       (slide?.useBackgroundColor && slide?.backgroundColor ? { kind: "color", color: slide.backgroundColor } : null),
   });
+}
+
+/**
+ * A slide's `backgroundId` as a theme's media background.
+ *
+ * @param {unknown} backgroundId
+ * @param {Array<{ id: string, name: string, type: string }>} items
+ * @returns {ThemeMedia | null}
+ */
+function mediaBackgroundOf(backgroundId, items) {
+  if (typeof backgroundId !== "string" || !backgroundId.trim()) return null;
+  const item = findBackgroundMedia(backgroundId, items);
+  const name = item?.name ?? backgroundId.slice(backgroundId.lastIndexOf("-") + 1);
+  return {
+    kind: "media",
+    mediaId: backgroundId,
+    name,
+    mediaType: (item?.type ?? (VIDEO_NAME.test(name) ? "video" : "image")) === "video" ? "video" : "image",
+  };
 }
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -557,8 +629,34 @@ export function normalizeLook(value) {
     },
     frame: normalizeFrame(value?.frame, presets.frame),
     box,
-    background: value?.background == null || value.background === "" ? null : normalizeFill(value.background),
+    background: value?.background == null || value.background === "" ? null : normalizeBackground(value.background),
   };
+}
+
+/**
+ * A look's background made whole: a fill, or an image or video named by its
+ * media library id and file name.
+ *
+ * @param {any} value
+ * @returns {ThemeBackground | null}
+ */
+export function normalizeBackground(value) {
+  if (value && typeof value === "object" && value.kind === "media") {
+    const mediaId = typeof value.mediaId === "string" ? value.mediaId.trim().slice(0, 500) : "";
+    if (!mediaId) return null;
+    const name =
+      typeof value.name === "string" && value.name.trim()
+        ? value.name.trim().slice(0, 255)
+        : mediaId.slice(mediaId.lastIndexOf("-") + 1);
+    const mediaType =
+      value.mediaType === "video" || value.mediaType === "image"
+        ? value.mediaType
+        : VIDEO_NAME.test(name)
+          ? "video"
+          : "image";
+    return { kind: "media", mediaId, name, mediaType };
+  }
+  return normalizeFill(value);
 }
 
 /**
@@ -569,7 +667,8 @@ export function normalizeLook(value) {
  * @returns {ThemeTier}
  */
 export function tierOfLook(look) {
-  const fancy = (/** @type {ThemeFill | null | undefined} */ fill) => Boolean(fill && fill.kind !== "color");
+  const fancy = (/** @type {ThemeBackground | null | undefined} */ fill) =>
+    fill?.kind === "gradient" || fill?.kind === "mix";
   return look.text.gradient || fancy(look.background) || fancy(look.box?.fill) ? "advanced" : "pro";
 }
 
