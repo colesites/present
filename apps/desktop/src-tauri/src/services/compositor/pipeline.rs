@@ -239,12 +239,40 @@ impl SceneCompositor {
     /// A transition is part-way through, so the next frame will look
     /// different even though the scene has not changed.
     ///
-    /// Anything that draws only when its scene changes has to ask this. The
-    /// audience window does exactly that, and without asking it drew the first
-    /// frame of every transition and nothing after it — the preview looked
-    /// right only because it keeps drawing for a while after any change.
+    /// Anything that draws only when its scene changes has to ask this, and
+    /// does, through [`needs_drawing`](Self::needs_drawing).
     pub fn is_animating(&self) -> bool {
         self.running.is_some()
+    }
+
+    /// Whether a consumer that skips unchanged scenes has to draw this one.
+    ///
+    /// Yes when anything it last drew from differs (the scene, the video
+    /// frame, the size), and also when the picture moves by itself while the
+    /// scene stands still: a transition part-way through, or a message that
+    /// scrolls. The audience window and the operator's preview both skip
+    /// unchanged scenes, and both ask here. The preview used to decide for
+    /// itself and forgot transitions: it drew the first frame of each one,
+    /// which is mostly the slide being left, and kept showing it, so the
+    /// preview was always one slide behind whenever a transition was set.
+    pub fn needs_drawing(
+        &self,
+        last: Option<&(OutputScene, Option<f64>, (u32, u32))>,
+        scene: &OutputScene,
+        video: Option<f64>,
+        size: (u32, u32),
+    ) -> bool {
+        let moving_message = scene.message_overlay.as_ref().is_some_and(|message| {
+            matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
+        });
+        if moving_message || self.is_animating() {
+            return true;
+        }
+        !last.is_some_and(|(previous_scene, previous_video, previous_size)| {
+            *previous_size == size
+                && *previous_video == video
+                && !previous_scene.draws_differently(scene)
+        })
     }
 
     /// Throw the cache away. For a resize, or a font change that would alter
@@ -1303,6 +1331,114 @@ mod tests {
         assert!(
             red > 0 && blue > 0,
             "part way between the two backgrounds, not one or the other: {red},{blue}"
+        );
+    }
+
+    /// What a consumer that skips unchanged scenes keeps: the preview and the
+    /// audience window both draw like this.
+    #[derive(Default)]
+    struct Skipping {
+        last: Option<(OutputScene, Option<f64>, (u32, u32))>,
+        shown: Option<(u8, u8, u8, u8)>,
+        draws: usize,
+    }
+
+    impl Skipping {
+        fn tick(&mut self, compositor: &mut SceneCompositor, scene: &OutputScene) {
+            if !compositor.needs_drawing(self.last.as_ref(), scene, None, (100, 100)) {
+                return;
+            }
+            let (frame, _) = compositor.render(scene, None, &NoMedia).expect("a frame");
+            self.shown = frame.pixel_at(50, 50);
+            self.last = Some((scene.clone(), None, (100, 100)));
+            self.draws += 1;
+        }
+    }
+
+    fn solid_slide(colour: &str, transition: Option<transition::Transition>) -> OutputScene {
+        OutputScene {
+            slide_elements: Some(json!([{
+                "id": "words", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+                "style": { "backgroundColor": colour }
+            }])),
+            transition,
+            ..scene()
+        }
+    }
+
+    /// The preview was one slide behind whenever a transition was set: it
+    /// drew the first frame of the transition, mostly the slide being left,
+    /// and then kept that picture because the scene had not changed.
+    #[test]
+    fn a_consumer_that_skips_unchanged_scenes_draws_a_transition_to_its_end() {
+        let mut compositor = SceneCompositor::new(100, 100);
+        let mut preview = Skipping::default();
+        preview.tick(&mut compositor, &solid_slide("#ff0000", None));
+        assert_eq!(preview.shown, Some((255, 0, 0, 255)), "slide one");
+
+        let slide_two = solid_slide(
+            "#0000ff",
+            Some(transition::Transition {
+                kind: "fade".to_owned(),
+                duration_ms: 60,
+                ..transition::Transition::none()
+            }),
+        );
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_millis(200) {
+            preview.tick(&mut compositor, &slide_two);
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+        assert_eq!(
+            preview.shown,
+            Some((0, 0, 255, 255)),
+            "slide two, not the start of the fade"
+        );
+        assert!(
+            preview.draws > 3,
+            "drawn through the fade, not once: {}",
+            preview.draws
+        );
+
+        let draws = preview.draws;
+        for _ in 0..5 {
+            preview.tick(&mut compositor, &slide_two);
+        }
+        assert_eq!(preview.draws, draws, "and not again once it has ended");
+    }
+
+    #[test]
+    fn a_still_slide_is_drawn_once_and_a_scrolling_message_every_time() {
+        let mut compositor = SceneCompositor::new(100, 100);
+        let still = solid_slide("#ff0000", None);
+        let mut preview = Skipping::default();
+        for _ in 0..4 {
+            preview.tick(&mut compositor, &still);
+        }
+        assert_eq!(preview.draws, 1);
+
+        let scrolling = OutputScene {
+            message_overlay: Some(crate::services::output::MessageOverlay {
+                id: "m".to_owned(),
+                text: "Welcome".to_owned(),
+                position: "bottom".to_owned(),
+                theme_key: "default".to_owned(),
+                shown_at_ms: 0.0,
+                dismiss_mode: "manual".to_owned(),
+                animation: "marquee-left".to_owned(),
+                speed_seconds: 10.0,
+                font_scale: 1.0,
+            }),
+            ..still
+        };
+        let mut preview = Skipping::default();
+        for _ in 0..4 {
+            preview.tick(&mut compositor, &scrolling);
+        }
+        assert_eq!(
+            preview.draws, 4,
+            "a marquee moves while its scene stands still"
         );
     }
 

@@ -64,27 +64,9 @@ impl SurfaceSource for AppSurfaceSource {
         let frame = video.frame_for(&scene, Instant::now(), size, open);
         let shown = frame.map(|frame| frame.presentation_seconds);
 
-        // A message that scrolls is the one thing that looks different from one
-        // frame to the next while the scene itself is identical, so it has to
-        // be named here: otherwise the surface decides nothing changed, skips
-        // the draw, and the marquee stands still on the wall while moving
-        // perfectly well in the preview — which draws continuously.
-        let moving_message = scene.message_overlay.as_ref().is_some_and(|message| {
-            matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
-        });
-        // A transition moves while the scene stands still, exactly as a
-        // scrolling message does, and has to be drawn every tick for the same
-        // reason — or the audience sees its first frame and then a cut.
-        let animating = compositor.is_animating();
-        let unchanged = !moving_message
-            && !animating
-            && last
-                .as_ref()
-                .is_some_and(|(previous_scene, previous_video, previous_size)| {
-                    *previous_size == size
-                        && *previous_video == shown
-                        && !previous_scene.draws_differently(&scene)
-                });
+        // A transition or a scrolling message moves while the scene stands
+        // still, so "unchanged" is the compositor's to say, not just the scene's.
+        let unchanged = !compositor.needs_drawing(last.as_ref(), &scene, shown, size);
         if unchanged {
             return Ok(false);
         }

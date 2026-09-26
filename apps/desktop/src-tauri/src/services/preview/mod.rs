@@ -91,14 +91,11 @@ impl PreviewSource {
             .video
             .frame_for(&scene, Instant::now(), size, &self.open);
         let shown = frame.map(|frame| frame.presentation_seconds);
-        let unchanged =
-            self.last
-                .as_ref()
-                .is_some_and(|(previous_scene, previous_video, previous_size)| {
-                    *previous_size == size
-                        && *previous_video == shown
-                        && !previous_scene.draws_differently(&scene)
-                });
+        // The same question the audience window asks, so a transition is drawn
+        // to its end here too, rather than its first frame kept.
+        let unchanged = !self
+            .compositor
+            .needs_drawing(self.last.as_ref(), &scene, shown, size);
         if unchanged && !self.picture.is_empty() {
             return Ok(&self.picture);
         }
