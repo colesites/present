@@ -240,7 +240,14 @@ pub fn open(
             // Without this the audience output throttles when the operator window
             // takes focus, which shows up on the projector as a blank frame.
             // (`output.window.ts:68-71`, `main.window.ts:132-135`.)
-            .background_throttling(BackgroundThrottlingPolicy::Disabled);
+            .background_throttling(BackgroundThrottlingPolicy::Disabled)
+            // The page's own drag and drop: reordering a service, a template,
+            // the slide grid, the editor's slides. Tauri's file-drop handler
+            // claims every drag over the webview as its own (it answers
+            // "handled" to each one), so WebKit never sent the page `dragover`
+            // or `drop`: a drag started and went nowhere. Nothing here takes
+            // files dropped from Finder, so there is nothing to give up.
+            .disable_drag_drop_handler();
 
     match spec.placement {
         Placement::FillRoleDisplay { .. } => {

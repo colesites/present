@@ -23,6 +23,9 @@ import {
   SelectValue,
 } from "../../renderer/shared/components/ui/select";
 import { cn } from "../../renderer/shared/lib/utils";
+import { MediaPicker } from "../../renderer/shared/components/MediaPicker";
+import { useMediaLibraryStore } from "../../renderer/shared/store/mediaLibrary";
+import type { MediaItem } from "../media/hooks/useMediaFolders";
 import type { ScreenComposerController } from "./useScreenComposerState";
 import type {
   ScreenComposerPreset,
@@ -321,22 +324,80 @@ const RegionPreviewContent = memo(function RegionPreviewContent({
 
       {region.source === "slides" ? (
         <div className="absolute inset-0 flex h-full w-full items-center justify-center bg-black/20 p-3 text-center">
-          <p className={cn("line-clamp-6 font-medium leading-tight text-foreground", textSizeClass)}>
-            Slides output
-          </p>
+          {region.slideText?.trim() ? (
+            <p className={cn("line-clamp-6 whitespace-pre-line font-medium leading-tight text-foreground", textSizeClass)}>
+              {region.slideText}
+            </p>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">Shows the slide on screen</p>
+          )}
         </div>
       ) : null}
 
       {region.source === "video" ? (
-        <div className="absolute inset-0 flex h-full w-full items-center justify-center bg-black/25 p-3 text-center">
-          <p className={cn("line-clamp-6 font-medium leading-tight text-foreground", textSizeClass)}>
-            Media output
-          </p>
-        </div>
+        region.mediaUrl ? (
+          region.mediaType === "video" ? (
+            <video
+              src={region.mediaUrl}
+              muted
+              playsInline
+              autoPlay
+              loop
+              className={cn("absolute inset-0 h-full w-full", fitModeClass(region.fitMode))}
+            />
+          ) : (
+            <img
+              src={region.mediaUrl}
+              alt=""
+              className={cn("absolute inset-0 h-full w-full", fitModeClass(region.fitMode))}
+            />
+          )
+        ) : (
+          <div className="absolute inset-0 flex h-full w-full items-center justify-center bg-black/25 p-3 text-center">
+            <p className="text-[11px] text-muted-foreground">No media chosen</p>
+          </div>
+        )
       ) : null}
     </div>
   );
 });
+
+/**
+ * What a region shows from the media library, chosen here. The choice goes to
+ * the screen at once if the region is on it.
+ */
+function RegionMediaField({
+  label,
+  url,
+  name,
+  onChoose,
+}: {
+  label: string;
+  url: string | null;
+  name: string | null;
+  onChoose: (item: MediaItem | null) => void;
+}) {
+  const items = useMediaLibraryStore((state) => state.items);
+  const chosen = url ? items.find((item) => item.url === url) ?? null : null;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <label className="block text-[11px] text-muted-foreground">{label}</label>
+        {url ? (
+          <button
+            type="button"
+            onClick={() => onChoose(null)}
+            className="text-[11px] text-muted-foreground transition hover:text-foreground"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+      <p className="truncate text-[12px] text-foreground">{chosen?.name ?? name ?? "Nothing chosen"}</p>
+      <MediaPicker value={chosen?.id ?? null} onChoose={(item) => onChoose(item)} />
+    </div>
+  );
+}
 
 const ProgramPreview = memo(function ProgramPreview({
   regions,
@@ -556,15 +617,29 @@ export function ScreenComposerWorkspace({
             Live Mode
           </button>
         </div>
-        <label className="inline-flex items-center gap-2 rounded-md border border-border bg-background/70 px-2 py-1 text-[11px] text-muted-foreground">
-          <input
-            type="checkbox"
-            className="h-3.5 w-3.5 accent-primary"
-            checked={composer.enabled}
-            onChange={(event) => composer.setEnabled(event.target.checked)}
-          />
-          Output enabled
-        </label>
+        {composer.enabled ? (
+          <div className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[11px] font-semibold text-emerald-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              On screen
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-[11px]"
+              onClick={() => {
+                composer.setEnabled(false);
+                composer.setMode("edit");
+              }}
+            >
+              Take off screen
+            </Button>
+          </div>
+        ) : (
+          <span className="rounded-md border border-border bg-background/70 px-2 py-1 text-[11px] text-muted-foreground">
+            Not on screen. Go Live shows it.
+          </span>
+        )}
 
         <Button
           size="sm"
@@ -806,34 +881,42 @@ export function ScreenComposerWorkspace({
                 </Select>
               </div>
 
+              {selectedRegion.source === "video" ? (
+                <RegionMediaField
+                  label="Media"
+                  url={selectedRegion.mediaUrl}
+                  name={selectedRegion.mediaLabel}
+                  onChoose={(item) =>
+                    composer.updateRegion(
+                      selectedRegion.id,
+                      {
+                        mediaUrl: item?.url ?? null,
+                        mediaType: item?.type ?? null,
+                        mediaLabel: item?.name ?? null,
+                      },
+                      { live: true },
+                    )
+                  }
+                />
+              ) : null}
+
               {selectedRegion.source === "slides" ? (
-                <div>
-                  <label className="mb-1 block text-[11px] text-muted-foreground">
-                    Slide background media
-                  </label>
-                  <div className="space-y-2 rounded-md border border-border/80 bg-background/40 p-2 text-[11px] text-muted-foreground">
-                    <p>
-                      Select media from the main Media panel while this region is active.
-                    </p>
-                    <p className="truncate text-foreground">
-                      {selectedRegion.backgroundMediaLabel ?? "No media selected"}
-                    </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-[10px]"
-                      onClick={() =>
-                        composer.updateRegion(selectedRegion.id, {
-                          backgroundMediaUrl: null,
-                          backgroundMediaType: null,
-                          backgroundMediaLabel: null,
-                        })
-                      }
-                    >
-                      Clear media
-                    </Button>
-                  </div>
-                </div>
+                <RegionMediaField
+                  label="Background behind the slide"
+                  url={selectedRegion.backgroundMediaUrl ?? null}
+                  name={selectedRegion.backgroundMediaLabel ?? null}
+                  onChoose={(item) =>
+                    composer.updateRegion(
+                      selectedRegion.id,
+                      {
+                        backgroundMediaUrl: item?.url ?? null,
+                        backgroundMediaType: item?.type ?? null,
+                        backgroundMediaLabel: item?.name ?? null,
+                      },
+                      { live: true },
+                    )
+                  }
+                />
               ) : null}
 
               <div>

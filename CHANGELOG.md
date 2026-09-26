@@ -4,6 +4,26 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-27
+
+### Fixed
+
+- Nothing could be reordered by dragging: a service's items and groups, a
+  template's, the slide grid, the editor's slides and timers, nor a library
+  item dragged into a service. Tauri's file-drop handler took every drag over
+  the window, so the page never saw where it was dropped. The windows are now
+  built without it.
+- A song with a theme was slow: slides took a long time to change,
+  transitions did not run and a background video hung. While any video
+  played, the slide was drawn again about ten times a second, and a themed
+  slide took a tenth of a second to draw. It is now drawn only when it
+  changes, in about half the time, and the slide grid no longer redraws every
+  slide on each click.
+- The Screen Composer did not reach the screen. Go Live now puts the layout
+  on screen, a region's media is chosen in the composer, and the audience
+  screen draws each region where it was placed, plays its video, shows its
+  slide and shows the running countdown.
+
 ## [0.4.2] - 2026-09-26
 
 ### Changed

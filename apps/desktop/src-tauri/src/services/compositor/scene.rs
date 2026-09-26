@@ -126,20 +126,6 @@ fn draw_element(
     draw_element_into_mut(&mut pixmap, element, viewport, loader)
 }
 
-/// Draw one element into a standalone pixmap.
-///
-/// Exists so the caching pipeline can build the slide layers over transparency
-/// rather than over a frame. Same drawing either way — the layer order lives in
-/// the caller, and there is one implementation of each element type.
-pub(super) fn draw_element_into_pixmap(
-    pixmap: &mut tiny_skia::PixmapMut<'_>,
-    element: &SlideElement,
-    viewport: &geometry::Viewport,
-    loader: &dyn MediaLoader,
-) -> bool {
-    draw_element_into_mut(pixmap, element, viewport, loader)
-}
-
 pub(super) fn draw_element_into(
     pixmap: &mut tiny_skia::Pixmap,
     element: &SlideElement,

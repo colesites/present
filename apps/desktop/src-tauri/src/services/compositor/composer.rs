@@ -120,6 +120,8 @@ pub struct ComposerRegion {
     #[serde(default = "yes")]
     pub show_media_layer: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub slide_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub slide_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slide_footer: Option<String>,
@@ -141,38 +143,87 @@ fn yes() -> bool {
 }
 
 impl ComposerRegion {
-    /// The region's rectangle in frame pixels.
+    /// Where the region is on a frame this size, in pixels.
     ///
-    /// `None` when it has no area, which is a region the operator has collapsed
-    /// rather than an error.
+    /// The layout holds percentages of the output, as the composer's fields
+    /// and the output window's CSS both do: `width: 50` is half the screen.
+    /// This read them as fractions of 1, so a region 50 wide was drawn the
+    /// whole width of the screen, and one at `x: 50` started past its right
+    /// edge and was never seen.
     pub fn rect(&self, frame_width: f32, frame_height: f32) -> Option<(f32, f32, f32, f32)> {
-        let fraction = |value: Option<f64>| -> f32 {
-            value
-                .filter(|v| v.is_finite())
-                .unwrap_or(0.0)
-                .clamp(0.0, 1.0) as f32
+        let share = |value: Option<f64>| -> f32 {
+            (value.filter(|v| v.is_finite()).unwrap_or(0.0) / 100.0).clamp(0.0, 1.0) as f32
         };
 
-        let width = fraction(self.width) * frame_width;
-        let height = fraction(self.height) * frame_height;
+        let x = share(self.x) * frame_width;
+        let y = share(self.y) * frame_height;
+        // Kept on the frame: a region cannot hang off its edge.
+        let width = (share(self.width) * frame_width).min(frame_width - x);
+        let height = (share(self.height) * frame_height).min(frame_height - y);
         if width <= 0.0 || height <= 0.0 {
             return None;
         }
 
+        Some((x, y, width, height))
+    }
+
+    /// The part of the region its content fills: inside its padding, which
+    /// the output window gives in pixels of a 1080-line screen.
+    pub fn inner_rect(&self, frame_width: f32, frame_height: f32) -> Option<(f32, f32, f32, f32)> {
+        let (x, y, width, height) = self.rect(frame_width, frame_height)?;
+        let padding = self
+            .padding
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map_or(0.0, |value| value as f32 * frame_height / 1080.0)
+            .min(width / 2.0 - 0.5)
+            .min(height / 2.0 - 0.5)
+            .max(0.0);
         Some((
-            fraction(self.x) * frame_width,
-            fraction(self.y) * frame_height,
-            width,
-            height,
+            x + padding,
+            y + padding,
+            width - padding * 2.0,
+            height - padding * 2.0,
         ))
+    }
+
+    /// The region's corner radius on a frame this tall.
+    pub fn radius(&self, frame_height: f32) -> f32 {
+        self.border_radius
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map_or(0.0, |value| value as f32 * frame_height / 1080.0)
     }
 
     pub fn is_composited(&self) -> bool {
         self.source.is_composited()
     }
+
+    /// The media the region shows, and whether it is a video: a media
+    /// region's own, or the background behind a slides region's words.
+    fn media(&self) -> Option<(&str, bool)> {
+        let (url, kind) = match self.source {
+            ComposerSource::Video => (self.media_url.as_deref(), self.media_type.as_deref()),
+            ComposerSource::Slides => (
+                self.background_media_url.as_deref(),
+                self.background_media_type.as_deref(),
+            ),
+            _ => (None, None),
+        };
+        let url = url.map(str::trim).filter(|url| !url.is_empty())?;
+        Some((url, kind == Some("video")))
+    }
+
+    /// The video this region plays, if it plays one.
+    pub fn video_url(&self) -> Option<&str> {
+        self.media().and_then(|(url, video)| video.then_some(url))
+    }
+
+    /// The still this region shows, if it shows one.
+    pub fn image_url(&self) -> Option<&str> {
+        self.media()
+            .and_then(|(url, video)| (!video).then_some(url))
+    }
 }
 
-/// A named arrangement of regions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ComposerLayout {
@@ -229,7 +280,7 @@ mod tests {
             "regions": [{
                 "id": "r1",
                 "name": "Left",
-                "x": 0.0, "y": 0.0, "width": 0.5, "height": 1.0,
+                "x": 0.0, "y": 0.0, "width": 50.0, "height": 100.0,
                 "source": "slides",
                 "fitMode": "contain",
                 "showTextLayer": true,
@@ -251,8 +302,8 @@ mod tests {
     fn an_unknown_source_degrades_instead_of_failing() {
         let layout = parse_layout(Some(&json!({
             "regions": [
-                { "source": "slides", "width": 0.5, "height": 1.0 },
-                { "source": "holodeck", "width": 0.5, "height": 1.0 }
+                { "source": "slides", "width": 50.0, "height": 100.0 },
+                { "source": "holodeck", "width": 50.0, "height": 100.0 }
             ]
         })))
         .expect("layout");
@@ -276,10 +327,12 @@ mod tests {
     }
 
     #[test]
-    fn regions_are_fractions_of_the_output_not_pixels() {
-        // What lets one layout work on a 1080p projector and a 4K screen.
+    fn regions_are_percentages_of_the_output_not_pixels() {
+        // What lets one layout work on a 1080p projector and a 4K screen, and
+        // what the composer writes: `width: 50` is half the screen. Read as
+        // fractions of 1, half-screen regions filled the whole screen.
         let layout = parse_layout(Some(&json!({
-            "regions": [{ "x": 0.5, "y": 0.0, "width": 0.5, "height": 1.0 }]
+            "regions": [{ "x": 50.0, "y": 0.0, "width": 50.0, "height": 100.0 }]
         })))
         .expect("layout");
 
@@ -298,8 +351,8 @@ mod tests {
     fn a_collapsed_region_has_no_rectangle() {
         let layout = parse_layout(Some(&json!({
             "regions": [
-                { "x": 0.0, "y": 0.0, "width": 0.0, "height": 1.0 },
-                { "x": 0.0, "y": 0.0, "width": 0.5, "height": 0.0 }
+                { "x": 0.0, "y": 0.0, "width": 0.0, "height": 100.0 },
+                { "x": 0.0, "y": 0.0, "width": 50.0, "height": 0.0 }
             ]
         })))
         .expect("layout");
@@ -311,13 +364,21 @@ mod tests {
     #[test]
     fn out_of_range_geometry_is_clamped_rather_than_escaping_the_frame() {
         let layout = parse_layout(Some(&json!({
-            "regions": [{ "x": 2.5, "y": -1.0, "width": 9.0, "height": 1.0 }]
+            "regions": [
+                { "x": 60.0, "y": -10.0, "width": 90.0, "height": 100.0 },
+                { "x": 250.0, "y": 0.0, "width": 50.0, "height": 100.0 }
+            ]
         })))
         .expect("layout");
 
         let (x, y, width, height) = layout.regions[0].rect(1000.0, 500.0).expect("rect");
-        assert_eq!((x, y), (1000.0, 0.0));
-        assert_eq!((width, height), (1000.0, 500.0));
+        assert_eq!((x, y), (600.0, 0.0));
+        assert_eq!((width, height), (400.0, 500.0), "cut at the frame's edge");
+        assert_eq!(
+            layout.regions[1].rect(1000.0, 500.0),
+            None,
+            "wholly off the frame"
+        );
     }
 
     #[test]
@@ -325,7 +386,7 @@ mod tests {
         // A layout written before the flags existed should show its content,
         // not hide it.
         let layout = parse_layout(Some(&json!({
-            "regions": [{ "width": 1.0, "height": 1.0 }]
+            "regions": [{ "width": 100.0, "height": 100.0 }]
         })))
         .expect("layout");
 

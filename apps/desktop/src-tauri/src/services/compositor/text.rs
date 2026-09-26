@@ -548,6 +548,11 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         },
     );
 
+    // The font system is shared by every compositor (the audience screen, the
+    // preview, NDI), and nothing below needs it. Held to the end, as it was,
+    // each waited for the others' shadows and composites too.
+    drop(fonts);
+
     // Underline and strikethrough, a line under or through each laid-out
     // line of words, at the heights the canvas draws them.
     let decoration = Decoration::of(style);
@@ -599,7 +604,6 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     if let Some(shadow) = effects.shadow {
         shadow_under(&mut scratch, &mut ink, &shadow);
     }
-
     let transform = viewport
         .element_transform(element)
         .pre_translate(-pad as f32, -pad as f32);
@@ -927,6 +931,163 @@ fn outline_under(
 
 /// A blurred, tinted, offset copy of everything in the scratch, beneath it.
 /// Drawn in the element's own space, so it turns with a rotated box.
+/// A shadow's picture: the coverage of `scratch` within `area` (left, top,
+/// width, height), blurred by `sigma`, tinted, as premultiplied pixels the
+/// size of `area`.
+///
+/// Only the coverage is blurred, not four channels, and a soft shadow is
+/// blurred at a fraction of the size, then smoothed back up: a blur that wide
+/// has no detail finer than the pixels it drops. Blurring the tinted
+/// picture at full size was most of the time a themed slide took to draw,
+/// about a tenth of a second for a line of words with a soft shadow, paid on
+/// every slide change and twice at the start of every transition.
+fn tinted_shadow(
+    scratch: &tiny_skia::Pixmap,
+    (left, top, region_width, region_height): (i32, i32, usize, usize),
+    sigma: f32,
+    tint: tiny_skia::ColorU8,
+) -> Vec<tiny_skia::PremultipliedColorU8> {
+    let transparent = tiny_skia::PremultipliedColorU8::TRANSPARENT;
+    let mut region = vec![transparent; region_width * region_height];
+    if region.is_empty() || tint.alpha() == 0 {
+        return region;
+    }
+
+    let step = if sigma.is_finite() {
+        (sigma / 1.5).floor().clamp(1.0, 6.0) as usize
+    } else {
+        1
+    };
+    let (small_width, small_height) = (region_width.div_ceil(step), region_height.div_ceil(step));
+
+    // The coverage, summed into cells `step` pixels square. Outside the
+    // scratch counts as nothing, as it does for a CSS shadow.
+    let width = scratch.width() as usize;
+    let height = scratch.height() as usize;
+    let (left, top) = (left.max(0) as usize, top.max(0) as usize);
+    let pixels = scratch.pixels();
+    let mut coverage = vec![0.0_f32; small_width * small_height];
+    let columns = region_width.min(width.saturating_sub(left));
+    for y in 0..region_height.min(height.saturating_sub(top)) {
+        let row = &pixels[(top + y) * width + left..(top + y) * width + left + columns];
+        let cells = &mut coverage[(y / step) * small_width..(y / step + 1) * small_width];
+        for (cell, run) in cells.iter_mut().zip(row.chunks(step)) {
+            *cell += run
+                .iter()
+                .map(|pixel| u32::from(pixel.alpha()))
+                .sum::<u32>() as f32;
+        }
+    }
+    let per_cell = 1.0 / (step * step) as f32;
+    for value in &mut coverage {
+        *value *= per_cell;
+    }
+
+    blur_coverage(
+        &mut coverage,
+        small_width,
+        small_height,
+        sigma / step as f32,
+    );
+
+    // Back up to full size, between the cells, with where each column and
+    // row falls between them worked out once.
+    let between = |index: usize, cells: usize| -> (usize, usize, f32) {
+        let at = ((index as f32 + 0.5) / step as f32 - 0.5).clamp(0.0, (cells - 1) as f32);
+        let low = at.floor() as usize;
+        (low, (low + 1).min(cells - 1), at - low as f32)
+    };
+    let across: Vec<(usize, usize, f32)> =
+        (0..region_width).map(|x| between(x, small_width)).collect();
+    let tint_alpha = f32::from(tint.alpha()) / 255.0;
+    for y in 0..region_height {
+        let (y0, y1, fy) = between(y, small_height);
+        let upper = &coverage[y0 * small_width..(y0 + 1) * small_width];
+        let lower = &coverage[y1 * small_width..(y1 + 1) * small_width];
+        let out = &mut region[y * region_width..(y + 1) * region_width];
+        for (pixel, &(x0, x1, fx)) in out.iter_mut().zip(&across) {
+            let top_value = upper[x0] + (upper[x1] - upper[x0]) * fx;
+            let bottom_value = lower[x0] + (lower[x1] - lower[x0]) * fx;
+            let value = (top_value + (bottom_value - top_value) * fy) * tint_alpha;
+            if value < 0.5 {
+                continue;
+            }
+            let alpha = value.min(255.0) as u32;
+            let premultiply = |channel: u8| ((u32::from(channel) * alpha + 127) / 255) as u8;
+            *pixel = tiny_skia::PremultipliedColorU8::from_rgba(
+                premultiply(tint.red()),
+                premultiply(tint.green()),
+                premultiply(tint.blue()),
+                alpha as u8,
+            )
+            .unwrap_or(transparent);
+        }
+    }
+    region
+}
+
+/// Blur one channel in place: three box blurs each way, within a few percent
+/// of a Gaussian of the same deviation, with outside counting as nothing.
+///
+/// Rows, then columns swept a row at a time with a running sum per column, so
+/// both directions read memory in order.
+fn blur_coverage(values: &mut [f32], width: usize, height: usize, sigma: f32) {
+    if width == 0
+        || height == 0
+        || values.len() != width * height
+        || !sigma.is_finite()
+        || sigma < 0.5
+    {
+        return;
+    }
+    let ideal = (4.0 * sigma * sigma + 1.0).sqrt();
+    let radius = (((ideal - 1.0) / 2.0).round() as usize).max(1);
+    let scale = 1.0 / (2 * radius + 1) as f32;
+    let mut across = vec![0.0_f32; values.len()];
+    let mut columns = vec![0.0_f32; width];
+
+    for _ in 0..3 {
+        for y in 0..height {
+            let row = &values[y * width..(y + 1) * width];
+            let out = &mut across[y * width..(y + 1) * width];
+            let mut sum: f32 = row[..radius.min(width)].iter().sum();
+            for x in 0..width {
+                if x + radius < width {
+                    sum += row[x + radius];
+                }
+                out[x] = sum * scale;
+                if x >= radius {
+                    sum -= row[x - radius];
+                }
+            }
+        }
+
+        columns.iter_mut().for_each(|value| *value = 0.0);
+        for y in 0..radius.min(height) {
+            for (sum, value) in columns.iter_mut().zip(&across[y * width..(y + 1) * width]) {
+                *sum += value;
+            }
+        }
+        for y in 0..height {
+            if y + radius < height {
+                let below = (y + radius) * width;
+                for (sum, value) in columns.iter_mut().zip(&across[below..below + width]) {
+                    *sum += value;
+                }
+            }
+            for (out, sum) in values[y * width..(y + 1) * width].iter_mut().zip(&columns) {
+                *out = (sum * scale).max(0.0);
+            }
+            if y >= radius {
+                let above = (y - radius) * width;
+                for (sum, value) in columns.iter_mut().zip(&across[above..above + width]) {
+                    *sum -= value;
+                }
+            }
+        }
+    }
+}
+
 fn shadow_under(scratch: &mut tiny_skia::Pixmap, ink: &mut InkBounds, shadow: &Shadow) {
     let Some((left, top, right, bottom)) = ink.area else {
         return;
@@ -940,27 +1101,12 @@ fn shadow_under(scratch: &mut tiny_skia::Pixmap, ink: &mut InkBounds, shadow: &S
     );
     let (region_width, region_height) = ((right - left + 1) as usize, (bottom - top + 1) as usize);
 
-    let tint = shadow.color.to_color_u8();
-    let pixels = scratch.pixels();
-    let mut region = Vec::with_capacity(region_width * region_height);
-    for y in 0..region_height {
-        for x in 0..region_width {
-            let index = (top as usize + y) * width as usize + left as usize + x;
-            let coverage = pixels.get(index).map_or(0, |pixel| pixel.alpha());
-            let alpha = (u32::from(coverage) * u32::from(tint.alpha()) + 127) / 255;
-            let premultiply = |channel: u8| ((u32::from(channel) * alpha + 127) / 255) as u8;
-            region.push(
-                tiny_skia::PremultipliedColorU8::from_rgba(
-                    premultiply(tint.red()),
-                    premultiply(tint.green()),
-                    premultiply(tint.blue()),
-                    alpha as u8,
-                )
-                .unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT),
-            );
-        }
-    }
-    super::filters::blur(&mut region, region_width, region_height, shadow.sigma, 1.0);
+    let region = tinted_shadow(
+        scratch,
+        (left, top, region_width, region_height),
+        shadow.sigma,
+        shadow.color.to_color_u8(),
+    );
 
     let (dx, dy) = (shadow.dx.round() as i32, shadow.dy.round() as i32);
     let pixels = scratch.pixels_mut();
@@ -981,6 +1127,15 @@ fn shadow_under(scratch: &mut tiny_skia::Pixmap, ink: &mut InkBounds, shadow: &S
             let Some(slot) = pixels.get_mut((target_y * width + target_x) as usize) else {
                 continue;
             };
+            // Under a solid glyph a shadow cannot be seen; on nothing it is
+            // itself.
+            if slot.alpha() == 255 {
+                continue;
+            }
+            if slot.alpha() == 0 {
+                *slot = cast;
+                continue;
+            }
             let inverse = 255 - u32::from(slot.alpha());
             let mix = |top: u8, below: u8| {
                 (u32::from(top) + (u32::from(below) * inverse + 127) / 255).min(255) as u8
@@ -1360,28 +1515,12 @@ fn draw_shadow(
     let (right, bottom) = ((right + pad).min(width - 1), (bottom + pad).min(height - 1));
     let (region_width, region_height) = ((right - left + 1) as usize, (bottom - top + 1) as usize);
 
-    let tint = shadow.color.to_color_u8();
-    let source = scratch.pixels();
-    let mut region = Vec::with_capacity(region_width * region_height);
-    for sy in top..=bottom {
-        for sx in left..=right {
-            let coverage = source
-                .get((sy * width + sx) as usize)
-                .map_or(0, |pixel| pixel.alpha());
-            let alpha = (u32::from(coverage) * u32::from(tint.alpha()) + 127) / 255;
-            let premultiply = |channel: u8| ((u32::from(channel) * alpha + 127) / 255) as u8;
-            region.push(
-                tiny_skia::PremultipliedColorU8::from_rgba(
-                    premultiply(tint.red()),
-                    premultiply(tint.green()),
-                    premultiply(tint.blue()),
-                    alpha as u8,
-                )
-                .unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT),
-            );
-        }
-    }
-    super::filters::blur(&mut region, region_width, region_height, sigma, 1.0);
+    let region = tinted_shadow(
+        scratch,
+        (left, top, region_width, region_height),
+        sigma,
+        shadow.color.to_color_u8(),
+    );
 
     let offset = (
         left + (transform.tx + shadow.dx).round() as i32,
@@ -1407,6 +1546,19 @@ fn blend(scratch: &mut tiny_skia::Pixmap, index: usize, r: u8, g: u8, b: u8, alp
     };
 
     let src_a = alpha.clamp(0.0, 1.0);
+    // Nothing under it yet, which is nearly every pixel of a glyph: the colour
+    // itself at this coverage, without mixing in the nothing below.
+    if slot.alpha() == 0 {
+        let premultiply = |channel: u8| (f32::from(channel) * src_a).round() as u8;
+        *slot = tiny_skia::PremultipliedColorU8::from_rgba(
+            premultiply(r),
+            premultiply(g),
+            premultiply(b),
+            (src_a * 255.0).round() as u8,
+        )
+        .unwrap_or(*slot);
+        return;
+    }
     let inverse = 1.0 - src_a;
 
     let mix = |src: u8, dst: u8| -> u8 {
@@ -1793,6 +1945,66 @@ mod tests {
         assert!(count_pixels(&outlined, red) > 150, "no outline pixels");
         // The glyphs are still white on top of it.
         assert!(count_pixels(&outlined, |r, g, b| r > 220 && g > 220 && b > 220) > 100);
+    }
+
+    #[test]
+    fn the_coverage_blur_spreads_evenly_and_loses_nothing() {
+        let (width, height) = (41, 41);
+        let mut values = vec![0.0_f32; width * height];
+        values[20 * width + 20] = 1000.0;
+        blur_coverage(&mut values, width, height, 4.0);
+        let total: f32 = values.iter().sum();
+        assert!(
+            (total - 1000.0).abs() < 1.0,
+            "the shadow's weight is kept: {total}"
+        );
+        let at = |x: usize, y: usize| values[y * width + x];
+        assert!(
+            at(20, 20) > at(24, 20) && at(24, 20) > at(28, 20),
+            "it falls away from the middle"
+        );
+        assert!(
+            (at(16, 20) - at(24, 20)).abs() < 1e-3,
+            "and the same each way"
+        );
+        assert!((at(20, 16) - at(20, 24)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_soft_shadow_drawn_small_matches_one_blurred_at_full_size() {
+        // Blurred at a quarter of the size and smoothed back up, a soft
+        // shadow has to look like the one blurred at full size, which cost a
+        // tenth of a second for a line of words.
+        let mut scratch = tiny_skia::Pixmap::new(200, 120).expect("scratch");
+        for y in 40..80 {
+            for x in 30..170 {
+                scratch.pixels_mut()[y * 200 + x] =
+                    tiny_skia::PremultipliedColorU8::from_rgba(255, 255, 255, 255).expect("pixel");
+            }
+        }
+        let tint = tiny_skia::ColorU8::from_rgba(0, 0, 0, 200);
+        let sigma = 6.0;
+        let fast = tinted_shadow(&scratch, (0, 0, 200, 120), sigma, tint);
+
+        let mut reference: Vec<tiny_skia::PremultipliedColorU8> = scratch
+            .pixels()
+            .iter()
+            .map(|pixel| {
+                let alpha = (u32::from(pixel.alpha()) * 200 + 127) / 255;
+                tiny_skia::PremultipliedColorU8::from_rgba(0, 0, 0, alpha as u8).expect("pixel")
+            })
+            .collect();
+        super::super::filters::blur(&mut reference, 200, 120, sigma, 1.0);
+
+        let differences: Vec<i32> = fast
+            .iter()
+            .zip(&reference)
+            .map(|(a, b)| (i32::from(a.alpha()) - i32::from(b.alpha())).abs())
+            .collect();
+        let mean = differences.iter().sum::<i32>() as f32 / differences.len() as f32;
+        let worst = differences.iter().copied().max().unwrap_or(0);
+        assert!(mean < 2.0, "on average within a level or two: {mean}");
+        assert!(worst < 16, "and nowhere far off: {worst}");
     }
 
     #[test]

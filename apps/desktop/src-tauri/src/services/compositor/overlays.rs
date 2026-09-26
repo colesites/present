@@ -604,143 +604,161 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
     text::draw_box(pixmap, label, &spec);
 }
 
-/// Draw the screen composer's regions.
-///
-/// The composer replaces the ordinary slide rather than sitting above it, which
-/// is why this is a separate entry point and not another overlay: when it is
-/// enabled, the regions *are* the output.
-///
-/// A region whose source is a camera feed is left to the webview layer, like a
-/// capture prop. A region with a slide draws that slide's elements inside its
-/// own rectangle, which is the whole point of the composer.
-pub fn draw_composer(
+/// A composer region's plate: its colour, inside its padding, with its
+/// corners rounded, as the output window's region box draws it.
+pub fn draw_region_plate(
     pixmap: &mut PixmapMut<'_>,
-    layout: &super::composer::ComposerLayout,
+    region: &super::composer::ComposerRegion,
+    frame_width: f32,
+    frame_height: f32,
+) {
+    let Some((x, y, width, height)) = region.inner_rect(frame_width, frame_height) else {
+        return;
+    };
+    let Some(plate) = region
+        .background_color
+        .as_deref()
+        .filter(|value| !value.trim().eq_ignore_ascii_case("transparent"))
+        .and_then(color::parse)
+    else {
+        return;
+    };
+    fill_rounded(
+        pixmap,
+        (x, y, width, height),
+        region.radius(frame_height),
+        plate,
+    );
+}
+
+/// A rectangle of colour with rounded corners.
+fn fill_rounded(
+    pixmap: &mut PixmapMut<'_>,
+    (x, y, width, height): (f32, f32, f32, f32),
+    radius: f32,
+    fill: Color,
+) {
+    let Some(path) =
+        shapes::rounded_rect_path(x, y, width, height, radius.min(width.min(height) / 2.0))
+    else {
+        return;
+    };
+    let mut paint = tiny_skia::Paint {
+        anti_alias: true,
+        ..tiny_skia::Paint::default()
+    };
+    paint.set_color(fill);
+    pixmap.fill_path(
+        &path,
+        &paint,
+        tiny_skia::FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
+}
+
+/// A still in a composer region, fitted inside its plate as the region's fit
+/// mode says. `false` when it could not be read.
+pub fn draw_region_image(
+    pixmap: &mut PixmapMut<'_>,
+    region: &super::composer::ComposerRegion,
+    url: &str,
     loader: &dyn MediaLoader,
-) -> PropsDrawn {
-    let mut counts = PropsDrawn::default();
-    let frame_width = pixmap.width() as f32;
-    let frame_height = pixmap.height() as f32;
+    frame_width: f32,
+    frame_height: f32,
+) -> bool {
+    let Some((x, y, width, height)) = region.inner_rect(frame_width, frame_height) else {
+        return false;
+    };
+    let Some(decoded) = loader.load(url).and_then(|bytes| images::decode(&bytes)) else {
+        return false;
+    };
+    images::draw(
+        pixmap,
+        &decoded,
+        Transform::from_translate(x, y),
+        width,
+        height,
+        region.fit_mode.to_object_fit(),
+        None,
+    );
+    true
+}
 
-    for region in &layout.regions {
-        let Some((x, y, width, height)) = region.rect(frame_width, frame_height) else {
-            continue;
-        };
-        if !region.is_composited() {
-            counts.deferred += 1;
-            continue;
-        }
+/// A frame of a composer region's video, fitted inside its plate.
+pub fn draw_region_video(
+    pixmap: &mut PixmapMut<'_>,
+    region: &super::composer::ComposerRegion,
+    picture: &tiny_skia::Pixmap,
+    frame_width: f32,
+    frame_height: f32,
+) {
+    let Some((x, y, width, height)) = region.inner_rect(frame_width, frame_height) else {
+        return;
+    };
+    images::draw(
+        pixmap,
+        picture,
+        Transform::from_translate(x, y),
+        width,
+        height,
+        region.fit_mode.to_object_fit(),
+        None,
+    );
+}
 
-        // The region's own plate, under whatever it shows.
-        if let Some(background) = region
-            .background_color
-            .as_deref()
-            .filter(|value| !value.trim().eq_ignore_ascii_case("transparent"))
-            .and_then(color::parse)
-        {
-            let radius = region
-                .border_radius
-                .filter(|value| value.is_finite() && *value > 0.0)
-                .unwrap_or(0.0) as f32;
-
-            if let Some(path) =
-                shapes::rounded_rect_path(x, y, width, height, radius.min(width.min(height) / 2.0))
-            {
-                let mut paint = tiny_skia::Paint {
-                    anti_alias: true,
-                    ..tiny_skia::Paint::default()
-                };
-                paint.set_color(background);
-                pixmap.fill_path(
-                    &path,
-                    &paint,
-                    tiny_skia::FillRule::Winding,
-                    Transform::identity(),
-                    None,
-                );
-            }
-        }
-
-        let padding = region
-            .padding
-            .filter(|value| value.is_finite() && *value >= 0.0)
-            .unwrap_or(0.0) as f32;
-        let inner_x = x + padding;
-        let inner_y = y + padding;
-        let inner_width = (width - padding * 2.0).max(1.0);
-        let inner_height = (height - padding * 2.0).max(1.0);
-
-        // Media behind text, matching the layer order everywhere else.
-        if region.show_media_layer {
-            if let Some(url) = region
-                .media_url
-                .as_deref()
-                .or(region.background_media_url.as_deref())
-                .filter(|url| !url.is_empty())
-            {
-                if let Some(decoded) = loader.load(url).and_then(|bytes| images::decode(&bytes)) {
-                    images::draw(
-                        pixmap,
-                        &decoded,
-                        Transform::from_translate(inner_x, inner_y),
-                        inner_width,
-                        inner_height,
-                        region.fit_mode.to_object_fit(),
-                        None,
-                    );
-                }
-            }
-        }
-
-        if !region.show_text_layer {
-            counts.drawn += 1;
-            continue;
-        }
-
-        // A region carrying a slide draws that slide inside itself, scaled to
-        // the region rather than to the output. That is what the composer is
-        // for: two decks side by side, each laid out as its author intended.
-        if let Some(elements) = region.slide_elements.as_deref() {
-            let viewport = super::geometry::Viewport::new(
-                region.slide_canvas_size.as_deref(),
-                inner_width.max(1.0) as u32,
-                inner_height.max(1.0) as u32,
-            );
-            for element in elements {
-                if !element.is_visible() || !element.element_type.is_composited() {
-                    continue;
-                }
-                // Regions are drawn into the same pixmap, so the element's own
-                // transform is offset by where the region starts.
-                let mut moved = element.clone();
-                moved.x = Some(element.x() + inner_x as f64 / viewport.scale_x());
-                moved.y = Some(element.y() + inner_y as f64 / viewport.scale_y());
-                super::scene::draw_element_into_pixmap(pixmap, &moved, &viewport, loader);
-            }
-        }
-
-        let text_body = region
-            .text_content
-            .as_deref()
-            .or(region.slide_text.as_deref())
-            .filter(|value| !value.trim().is_empty());
-
-        if let Some(body) = text_body {
-            let spec = text::TextBox::new(
-                inner_x,
-                inner_y,
-                inner_width,
-                inner_height,
-                (inner_height * 0.12).max(12.0),
-            )
-            .centred();
-            text::draw_box(pixmap, body, &spec);
-        }
-
-        counts.drawn += 1;
+/// A countdown region's shade: the darker panel the clock sits on.
+pub fn draw_countdown_shade(
+    pixmap: &mut PixmapMut<'_>,
+    region: &super::composer::ComposerRegion,
+    frame_width: f32,
+    frame_height: f32,
+) {
+    if let Some(rect) = region.inner_rect(frame_width, frame_height) {
+        fill_rounded(
+            pixmap,
+            rect,
+            region.radius(frame_height),
+            Color::from_rgba8(0, 0, 0, 128),
+        );
     }
+}
 
-    counts
+/// A countdown region's clock, and the timer's name above it.
+///
+/// Sized to the region: the clock as large as fits a third of its height or
+/// most of its width, the name about a third of that.
+pub fn draw_region_clock(
+    pixmap: &mut PixmapMut<'_>,
+    region: &super::composer::ComposerRegion,
+    label: Option<&str>,
+    clock: &str,
+    frame_width: f32,
+    frame_height: f32,
+) {
+    let Some((x, y, width, height)) = region.inner_rect(frame_width, frame_height) else {
+        return;
+    };
+    let characters = clock.chars().count().max(4) as f32;
+    let clock_size = (height * 0.34).min(width * 1.7 / characters).max(10.0);
+    let label = label.map(str::trim).filter(|value| !value.is_empty());
+    let label_size = (clock_size * 0.3).max(8.0);
+    let gap = clock_size * 0.15;
+    let block = clock_size * 1.2 + label.map_or(0.0, |_| label_size * 1.2 + gap);
+    let top = y + ((height - block) / 2.0).max(0.0);
+
+    if let Some(label) = label {
+        let spec = text::TextBox::new(x, top, width, label_size * 1.3, label_size)
+            .centred()
+            .with_color(Color::from_rgba8(212, 212, 216, 255));
+        text::draw_box(pixmap, &label.to_uppercase(), &spec);
+    }
+    let clock_top = top + label.map_or(0.0, |_| label_size * 1.2 + gap);
+    let spec = text::TextBox::new(x, clock_top, width, clock_size * 1.3, clock_size)
+        .centred()
+        .with_color(Color::WHITE)
+        .with_weight(cosmic_text::Weight::SEMIBOLD);
+    text::draw_box(pixmap, clock, &spec);
 }
 
 #[cfg(test)]

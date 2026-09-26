@@ -24,7 +24,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
 use crate::services::media_protocol;
-use crate::services::ndi::video_feed::{Opener, VideoFeed};
+use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed};
 use crate::services::output::OutputScene;
 use crate::services::thumbnails;
 use crate::services::video::{self, VideoDecoder};
@@ -52,6 +52,8 @@ pub struct PreviewSource {
     app: AppHandle,
     compositor: SceneCompositor,
     video: VideoFeed,
+    /// The videos playing in screen composer regions.
+    regions: RegionVideos,
     /// Opening a video, on its own thread (`ndi/video_feed.rs`).
     open: Opener,
     /// What the last JPEG was drawn from, so an unchanged scene is encoded
@@ -67,6 +69,7 @@ impl PreviewSource {
             app,
             compositor: SceneCompositor::new(640, 360),
             video: VideoFeed::default(),
+            regions: RegionVideos::new(),
             open,
             last: None,
             picture: Vec::new(),
@@ -87,10 +90,10 @@ impl PreviewSource {
         };
 
         let scene = output.on_screen();
-        let frame = self
-            .video
-            .frame_for(&scene, Instant::now(), size, &self.open);
+        let now = Instant::now();
+        let frame = self.video.frame_for(&scene, now, size, &self.open);
         let shown = frame.map(|frame| frame.presentation_seconds);
+        let region_frames = self.regions.frames_for(&scene, now, size, &self.open);
         // The same question the audience window asks, so a transition is drawn
         // to its end here too, rather than its first frame kept.
         let unchanged = !self
@@ -104,7 +107,7 @@ impl PreviewSource {
         let loader = ScopedMediaLoader::new(&files);
         let (rendered, _) = self
             .compositor
-            .render(&scene, frame, &loader)
+            .render_with_regions(&scene, frame, &region_frames, &loader)
             .ok_or_else(|| format!("could not draw a {}x{} preview", size.0, size.1))?;
 
         let mut bgra = Vec::new();
