@@ -4,6 +4,22 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-26
+
+### Changed
+
+- The keyboard's play and pause keys, and the Now Playing controls, play and
+  pause the video on every screen, as the player's own controls do.
+
+### Fixed
+
+- The preview could go blank after a visit to Edit or Browser, and stay on a
+  black frame.
+- A video playing when the computer went to sleep was stopped on every screen
+  when it woke. WebKit pauses the player during sleep, and that was taken as
+  the operator pausing it. A pause now counts only when the operator made it,
+  and any other pause while a video is meant to be playing is undone.
+
 ## [0.4.1] - 2026-09-26
 
 Themes, a song agent, and a Settings window laid out again.
