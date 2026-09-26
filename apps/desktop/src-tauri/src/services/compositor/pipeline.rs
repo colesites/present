@@ -1399,10 +1399,28 @@ pub fn background_color(scene: &OutputScene) -> Option<Color> {
 /// Only those are ignored. Nothing in the slide layers reads them; every other
 /// field might.
 fn layers_differ(cached: &OutputScene, scene: &OutputScene) -> bool {
+    // What the slide layer is not drawn from. The video's own fields matter
+    // most: while a video plays the operator's player reports where it is
+    // about ten times a second, and `video_time_sampled_at_ms` changed with
+    // each report. Compared here, it redrew the slide ten times a second for
+    // as long as any video played, and rebuilt a running transition's layers
+    // as often. A plain slide took that in its stride; a themed one, a tenth
+    // of a second to draw, stalled the video, the slide changes and every
+    // transition.
     let without_clocks = |value: &OutputScene| OutputScene {
         video_current_time: 0.0,
+        video_time_sampled_at_ms: None,
         is_video_playing: false,
         should_sync_time: false,
+        media_url: None,
+        media_id: None,
+        media_type: None,
+        show_media: false,
+        media_filter_css: String::new(),
+        video_settings: crate::services::output::VideoSettings {
+            loop_: false,
+            muted: false,
+        },
         timer_label: None,
         timer_text: None,
         timer_running: false,
@@ -2041,6 +2059,39 @@ mod tests {
             .expect("frame");
         assert_eq!(frame.pixel_at(50, 50), Some((0, 0, 0, 255)));
         assert!(!report.background_media_drawn);
+    }
+
+    #[test]
+    fn a_playing_video_reporting_its_place_does_not_redraw_the_slide() {
+        // About ten reports a second while a video plays. Each one redrew the
+        // slide, which for a themed slide was most of every second.
+        let mut compositor = SceneCompositor::new(160, 90);
+        let reported_at = |ms: f64| OutputScene {
+            video_time_sampled_at_ms: Some(ms),
+            video_current_time: ms / 1000.0,
+            is_video_playing: true,
+            ..solid_slide("#ff0000", None)
+        };
+        compositor
+            .render(&reported_at(1_000.0), None, &NoMedia)
+            .expect("frame");
+        assert!(
+            compositor.rebuilt_last_frame(),
+            "the first frame draws the slide"
+        );
+        for report in 1..=5 {
+            compositor
+                .render(
+                    &reported_at(1_000.0 + f64::from(report) * 100.0),
+                    None,
+                    &NoMedia,
+                )
+                .expect("frame");
+            assert!(
+                !compositor.rebuilt_last_frame(),
+                "report {report} redrew a slide that had not changed"
+            );
+        }
     }
 
     #[test]
