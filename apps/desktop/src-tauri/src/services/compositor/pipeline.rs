@@ -58,13 +58,12 @@ pub enum Keep<'a> {
 
 impl Keep<'_> {
     fn wants(self, index: usize, element: &crate::services::slide::SlideElement) -> bool {
+        // Matched as change detection matched them.
         let named = |ids: &[String]| {
-            let key = if element.id.trim().is_empty() {
-                format!("#{index}")
-            } else {
-                element.id.clone()
-            };
-            ids.contains(&key)
+            ids.contains(&transition::change_detection::element_key(
+                index,
+                &element.id,
+            ))
         };
         match self {
             Self::Everything => true,
