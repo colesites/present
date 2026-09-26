@@ -48,21 +48,32 @@ export function CompositorPreviewLayer({ className }: { className?: string }) {
     return () => observer.disconnect();
   }, []);
 
-  // Ask for the next frame as soon as this screen can paint one, rather than
-  // on a timer of its own. The core draws in a loop and hands back whatever is
-  // newest, so asking more often costs a request and never a decode — and
-  // asking less often than the video runs is how a preview skips.
+  // One frame asked for at a time, and the next as soon as it has arrived and
+  // this screen can paint again. The core draws what is newest whenever it is
+  // asked, so this runs as fast as a frame can be drawn and delivered, and no
+  // faster. A new frame used to be asked for on every repaint whether the last
+  // had arrived or not: each one replaced the image still loading, so a frame
+  // that took longer than a repaint was thrown away, and the core drew frames
+  // nobody saw. Things that move, a scrolling message most of all, moved in
+  // uneven jumps.
+  const askRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!size) return;
     let tick = 0;
     let frame = 0;
-    const next = () => {
-      tick += 1;
-      setLoading(previewFrameUrl(size.width, size.height, tick));
-      frame = window.requestAnimationFrame(next);
+    const ask = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        tick += 1;
+        setLoading(previewFrameUrl(size.width, size.height, tick));
+      });
     };
-    frame = window.requestAnimationFrame(next);
-    return () => window.cancelAnimationFrame(frame);
+    askRef.current = ask;
+    ask();
+    return () => {
+      askRef.current = null;
+      window.cancelAnimationFrame(frame);
+    };
   }, [size]);
 
   return (
@@ -76,10 +87,16 @@ export function CompositorPreviewLayer({ className }: { className?: string }) {
           src={loading}
           alt=""
           className="absolute inset-0 h-full w-full object-contain opacity-0"
-          onLoad={() => setShown(loading)}
+          onLoad={() => {
+            setShown(loading);
+            askRef.current?.();
+          }}
           // A frame the core could not draw comes back empty; whatever is on
-          // screen stays until the next one arrives.
-          onError={() => undefined}
+          // screen stays, and the next is asked for after a moment rather
+          // than at once, so a core that is still starting is not hammered.
+          onError={() => {
+            window.setTimeout(() => askRef.current?.(), 100);
+          }}
         />
       ) : null}
     </div>

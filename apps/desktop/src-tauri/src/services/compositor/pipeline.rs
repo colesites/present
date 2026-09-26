@@ -151,6 +151,13 @@ pub struct SceneCompositor {
     /// the window draws them above the timer, and the timer above the slide.
     overlay_layer: Option<(Pixmap, OverlayCounts)>,
     overlay_for: Option<OverlayKey>,
+    /// A scrolling message's words, drawn once and placed anew each frame
+    /// over the band in the overlay layer, and the message they were drawn
+    /// from.
+    marquee: Option<(
+        super::overlays::MarqueeStrip,
+        crate::services::output::MessageOverlay,
+    )>,
 }
 
 /// Everything `draw_message` and `draw_props` read.
@@ -158,22 +165,7 @@ pub struct SceneCompositor {
 struct OverlayKey {
     message: Option<crate::services::output::MessageOverlay>,
     props: Vec<crate::services::output::PropsOverlayItem>,
-    /// Which frame of a moving message this layer holds.
-    ///
-    /// The layer is cached and only redrawn when this key changes, which is
-    /// what a scrolling message needs to defeat: its contents are identical
-    /// from one frame to the next and only its position differs. A message
-    /// that does not move keeps this at zero and the layer is drawn once, as
-    /// before.
-    scroll_step: u64,
 }
-
-/// How many times a second a moving message is redrawn.
-///
-/// The whole overlay layer is rebuilt at each step, so this is a cost as well
-/// as a smoothness: thirty is smooth to the eye and leaves the rest of the
-/// frame budget alone.
-const MARQUEE_STEPS_PER_SECOND: f64 = 30.0;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct OverlayCounts {
@@ -223,6 +215,7 @@ impl SceneCompositor {
             timer_for: None,
             overlay_layer: None,
             overlay_for: None,
+            marquee: None,
         }
     }
 
@@ -261,9 +254,10 @@ impl SceneCompositor {
         video: Option<f64>,
         size: (u32, u32),
     ) -> bool {
-        let moving_message = scene.message_overlay.as_ref().is_some_and(|message| {
-            matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
-        });
+        let moving_message = scene
+            .message_overlay
+            .as_ref()
+            .is_some_and(super::overlays::is_moving);
         if moving_message || self.is_animating() {
             return true;
         }
@@ -284,6 +278,7 @@ impl SceneCompositor {
         self.timer_for = None;
         self.overlay_layer = None;
         self.overlay_for = None;
+        self.marquee = None;
     }
 
     /// The frame from the last successful `render`.
@@ -413,6 +408,8 @@ impl SceneCompositor {
                 blend_over(&mut frame, overlays);
             }
         }
+        // 7. A scrolling message's words, over its band, where they are now.
+        self.draw_marquee(&mut frame, scene);
 
         // A whole-slide transition is between two *pictures*, background and
         // all — which is what the operator asked for when they chose it, and
@@ -477,32 +474,47 @@ impl SceneCompositor {
         self.timer_layer.as_ref()
     }
 
-    /// The cached banner-and-props layer, redrawn if either changed.
-    fn overlays_for(
-        &mut self,
-        scene: &OutputScene,
-        loader: &dyn MediaLoader,
-    ) -> Option<(&Pixmap, OverlayCounts)> {
+    /// Put a scrolling message's words where they are at this instant.
+    ///
+    /// The band behind them is in the overlay layer, drawn once. The words
+    /// are drawn once too, and only placed here, every frame.
+    fn draw_marquee(&mut self, frame: &mut Frame, scene: &OutputScene) {
+        let Some(message) = scene
+            .message_overlay
+            .as_ref()
+            .filter(|message| super::overlays::is_moving(message))
+        else {
+            self.marquee = None;
+            return;
+        };
+        if self.marquee.as_ref().map(|(_, drawn_from)| drawn_from) != Some(message) {
+            self.marquee = super::overlays::MarqueeStrip::new(message, self.width, self.height)
+                .map(|strip| (strip, message.clone()));
+        }
+        let Some((strip, _)) = self.marquee.as_ref() else {
+            return;
+        };
         // Wall clock rather than the monotonic one: `shown_at_ms` is when the
         // operator sent the message, which is a time of day.
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
-        let elapsed_seconds = scene.message_overlay.as_ref().map_or(0.0, |message| {
-            (now_ms - message.shown_at_ms).max(0.0) / 1000.0
-        });
-        let moving = scene.message_overlay.as_ref().is_some_and(|message| {
-            matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
-        });
+        let elapsed_seconds = (now_ms - message.shown_at_ms).max(0.0) / 1000.0;
+        strip.draw(&mut frame.pixmap_mut(), message, elapsed_seconds);
+    }
 
+    /// The cached banner-and-props layer, redrawn if either changed.
+    ///
+    /// A scrolling message's band is in it, and its words are not: those are
+    /// placed each frame by [`draw_marquee`](Self::draw_marquee).
+    fn overlays_for(
+        &mut self,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+    ) -> Option<(&Pixmap, OverlayCounts)> {
         let key = OverlayKey {
             message: scene.message_overlay.clone(),
             props: scene.props_overlay.clone(),
-            scroll_step: if moving {
-                (elapsed_seconds * MARQUEE_STEPS_PER_SECOND) as u64
-            } else {
-                0
-            },
         };
         if key.message.is_none() && key.props.is_empty() {
             return None;
@@ -517,7 +529,11 @@ impl SceneCompositor {
                 counts.drawn += props.drawn;
                 counts.deferred += props.deferred;
                 if let Some(message) = scene.message_overlay.as_ref() {
-                    super::overlays::draw_message(&mut view, message, elapsed_seconds);
+                    if super::overlays::is_moving(message) {
+                        super::overlays::draw_message_plate(&mut view, message);
+                    } else {
+                        super::overlays::draw_message(&mut view, message, 0.0);
+                    }
                     counts.drawn += 1;
                 }
             }
@@ -1439,6 +1455,41 @@ mod tests {
             preview.draws, 4,
             "a marquee moves while its scene stands still"
         );
+    }
+
+    #[test]
+    fn a_scrolling_message_is_somewhere_new_on_frames_a_few_milliseconds_apart() {
+        // An output draws sixty frames a second. The words were moved only
+        // thirty times a second, so frames drawn close together were the same
+        // picture, and then the next leapt: the stutter an operator saw.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
+        let scrolling = OutputScene {
+            message_overlay: Some(crate::services::output::MessageOverlay {
+                id: "m".to_owned(),
+                text: "Welcome".to_owned(),
+                position: "top".to_owned(),
+                theme_key: "default".to_owned(),
+                shown_at_ms: now_ms - 500.0,
+                dismiss_mode: "manual".to_owned(),
+                animation: "marquee-left".to_owned(),
+                speed_seconds: 2.0,
+                font_scale: 1.0,
+            }),
+            ..scene()
+        };
+        let mut compositor = SceneCompositor::new(320, 180);
+        let first = compositor
+            .render(&scrolling, None, &NoMedia)
+            .map(|(frame, _)| frame.pixmap().data().to_vec())
+            .expect("a frame");
+        std::thread::sleep(std::time::Duration::from_millis(8));
+        let second = compositor
+            .render(&scrolling, None, &NoMedia)
+            .map(|(frame, _)| frame.pixmap().data().to_vec())
+            .expect("a frame");
+        assert_ne!(first, second, "the words moved between the two frames");
     }
 
     #[test]
