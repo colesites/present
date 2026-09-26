@@ -213,7 +213,6 @@ test("no source file outside the inventory plays media programmatically", () => 
   const known = new Map([
     // Media elements — each one can make a sound.
     ["src/features/present/PresentCenterArea.tsx", "element: the audible Show View player"],
-    ["src/features/settings/components/SettingsScreen.tsx", "element: a muted preview thumbnail"],
     ["src/features/sidebar-rail/panels/AudioTabPanel.tsx", "element: the backing-track player"],
     ["src/features/slides/OutputPreview.tsx", "element: a muted mirror"],
     ["src/features/stage/WorshipStageDisplayWindow.tsx", "element: a muted mirror"],

@@ -20,12 +20,15 @@ interface FontFamilySelectProps {
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  /** For the button itself, where `className` is for the box around it. */
+  triggerClassName?: string;
 }
 
 export const FontFamilySelect = memo(function FontFamilySelect({
   value,
   onChange,
   className,
+  triggerClassName,
 }: FontFamilySelectProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -165,6 +168,7 @@ export const FontFamilySelect = memo(function FontFamilySelect({
         onClick={() => setOpen((current) => !current)}
         className={cn(
           "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-left text-sm text-foreground outline-none transition hover:border-primary/40 focus:ring-1 focus:ring-primary/40",
+          triggerClassName,
           open && "border-primary/50",
         )}
       >

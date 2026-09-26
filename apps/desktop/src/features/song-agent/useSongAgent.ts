@@ -25,6 +25,10 @@ interface UseSongAgentOptions {
   sessionToken: string | null;
   lang: string;
   inputDeviceId: string | null;
+  /** Move the song on screen along as it is sung. On unless set off. */
+  follow?: boolean;
+  /** Say when another song from the library is being sung. On unless set off. */
+  suggest?: boolean;
 }
 
 /** How often, at most, a half-heard line is searched for in the library. */
@@ -107,7 +111,7 @@ export function useSongAgent(options: UseSongAgentOptions) {
       // The song on screen, followed slide by slide.
       const liveId = current.live?.libraryId ?? null;
       const livePosition = liveId ? songs.position.get(liveId) : undefined;
-      if (liveId && livePosition !== undefined && current.live) {
+      if (current.follow !== false && liveId && livePosition !== undefined && current.live) {
         const next = follower.step({
           slides: songIndex.slidePairs[livePosition],
           words,
@@ -124,6 +128,10 @@ export function useSongAgent(options: UseSongAgentOptions) {
 
       // Another song? Asked of the whole library at the end of each line,
       // and now and then mid-line.
+      if (current.suggest === false) {
+        if (useSongAgentStore.getState().suggestion) publish({ suggestion: null });
+        return;
+      }
       if (!isFinal && now - lastSearchAt.current < IDENTIFY_EVERY_MS) return;
       lastSearchAt.current = now;
       const best = confidentSong(

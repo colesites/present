@@ -47,7 +47,49 @@ export type Settings = {
   ndiGroupName?: string;
   /** What the stream declares and is paced to: 24, 25, 30, 50 or 60. */
   ndiFrameRate?: number;
+  agent?: Partial<AgentSettings>;
 };
+
+/**
+ * How the Bible and song agents behave while they listen. The defaults are
+ * what each did before it could be changed.
+ */
+export type AgentSettings = {
+  /** A passage the Bible agent hears goes on screen, or waits in the Bible tab. */
+  bibleOnHeard: "show" | "find";
+  /** A passage it hears is added to the open service. */
+  bibleAddToService: boolean;
+  /** "Next verse" and "previous verse" move the passage on screen. */
+  bibleVoiceCommands: boolean;
+  /** The song agent moves the song on screen along as it is sung. */
+  songFollow: boolean;
+  /** It says when the band is singing another song from the library. */
+  songSuggest: boolean;
+};
+
+export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
+  bibleOnHeard: "show",
+  bibleAddToService: true,
+  bibleVoiceCommands: true,
+  songFollow: true,
+  songSuggest: true,
+};
+
+/** Agent settings from storage, with anything missing or wrong as the default. */
+export function normalizeAgentSettings(value: unknown): AgentSettings {
+  const stored = (value && typeof value === "object" ? value : {}) as Partial<
+    Record<keyof AgentSettings, unknown>
+  >;
+  const flag = (key: keyof AgentSettings, fallback: boolean) =>
+    typeof stored[key] === "boolean" ? (stored[key] as boolean) : fallback;
+  return {
+    bibleOnHeard: stored.bibleOnHeard === "find" ? "find" : "show",
+    bibleAddToService: flag("bibleAddToService", DEFAULT_AGENT_SETTINGS.bibleAddToService),
+    bibleVoiceCommands: flag("bibleVoiceCommands", DEFAULT_AGENT_SETTINGS.bibleVoiceCommands),
+    songFollow: flag("songFollow", DEFAULT_AGENT_SETTINGS.songFollow),
+    songSuggest: flag("songSuggest", DEFAULT_AGENT_SETTINGS.songSuggest),
+  };
+}
 
 export const SETTINGS_STORAGE_KEY = "present-settings";
 

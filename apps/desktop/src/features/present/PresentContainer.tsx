@@ -364,6 +364,7 @@ export function PresentContainer({
     settingsLibraryFontWeight,
     settingsLang,
     settingsSpeechInputDeviceId,
+    settingsAgent,
     settingsAudioOutputDeviceId,
     setSettingsAudioOutputDeviceId,
     setSettingsAudioOutputDeviceLabel,
@@ -1608,6 +1609,8 @@ export function PresentContainer({
     sessionToken: songAgentSessionToken,
     lang: settingsLang,
     inputDeviceId: settingsSpeechInputDeviceId,
+    follow: settingsAgent.songFollow,
+    suggest: settingsAgent.songSuggest,
   });
 
   const {
@@ -2407,6 +2410,11 @@ export function PresentContainer({
         speechSettings={{
           lang: settingsLang,
           inputDeviceId: settingsSpeechInputDeviceId,
+          bible: {
+            onHeard: settingsAgent.bibleOnHeard,
+            addToService: settingsAgent.bibleAddToService,
+            voiceCommands: settingsAgent.bibleVoiceCommands,
+          },
         }}
         isPptxSelection={selectedPresentationSourceType === "pptx"}
         panelRefs={{

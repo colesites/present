@@ -1,7 +1,10 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
+  DEFAULT_AGENT_SETTINGS,
+  normalizeAgentSettings,
   Settings,
-  SETTINGS_STORAGE_KEY
+  SETTINGS_STORAGE_KEY,
+  type AgentSettings,
 } from "../../../features/settings/lib/constants";
 import { MediaItem, MediaFolder } from "../../../features/media/hooks/useMediaFolders";
 import { useAudioDeviceSync } from "./useAudioRouting";
@@ -199,6 +202,13 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   const [settingsNdiRuntimeStatus, setSettingsNdiRuntimeStatus] = useState(
     DEFAULT_NDI_RUNTIME_STATUS
   );
+  const [settingsAgent, setSettingsAgentState] =
+    useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
+  const setSettingsAgent = useCallback(
+    (patch: Partial<AgentSettings>) =>
+      setSettingsAgentState((previous) => ({ ...previous, ...patch })),
+    [],
+  );
   const [settingsHydrated, setSettingsHydrated] = useState(false);
 
   const [settingsMediaFolderId, setSettingsMediaFolderId] = useState<
@@ -388,6 +398,9 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     if (typeof parsed.ndiGroupName === "string") {
       setSettingsNdiGroupName(normalizeNdiGroupName(parsed.ndiGroupName));
     }
+    if (parsed.agent && typeof parsed.agent === "object") {
+      setSettingsAgentState(normalizeAgentSettings(parsed.agent));
+    }
   }, []);
 
   // The audio-output device belongs to the Rust sink, because both audible
@@ -503,6 +516,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
           settingsNdiSourceName.trim() || DEFAULT_NDI_SOURCE_NAME,
         ndiGroupName: normalizeNdiGroupName(settingsNdiGroupName),
         ndiFrameRate: settingsNdiFrameRate,
+        agent: settingsAgent,
       };
       const serialized = JSON.stringify(next);
       localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
@@ -545,6 +559,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsNdiSourceName,
     settingsNdiGroupName,
     settingsNdiFrameRate,
+    settingsAgent,
   ]);
 
   useEffect(() => {
@@ -691,6 +706,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsNdiFrameRate,
     setSettingsNdiFrameRate,
     settingsNdiRuntimeStatus,
+    settingsAgent,
+    setSettingsAgent,
     settingsHydrated,
     settingsMediaFolderId,
     setSettingsMediaFolderId,

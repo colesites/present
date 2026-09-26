@@ -15,6 +15,7 @@ import { MediaItem, VideoSettings } from "../media/hooks/useMediaFolders";
 import { cn } from "../../renderer/shared/lib/utils";
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
 import { SongAgentControl } from "../song-agent/SongAgentControl";
+import type { BibleAgentSettings } from "../scripture/components/ScripturePanel";
 
 /* ---------------- TYPES (DERIVED, NOT INVENTED) ---------------- */
 
@@ -90,6 +91,7 @@ type Props = {
   scripturePanelRef: React.RefObject<ScripturePanelRef | null>;
   showsPanelProps: ShowsProps;
   speechLang: string;
+  bibleAgent: BibleAgentSettings;
   speechInputDeviceId: string | null;
 
   onSendScripture: (slides: ScriptureSlide[]) => void;
@@ -150,6 +152,7 @@ export function PresentCenterArea({
   showsPanelProps,
   speechLang,
   speechInputDeviceId,
+  bibleAgent,
   onSendScripture,
   selectedServiceId,
   onAddScriptureToService,
@@ -276,6 +279,7 @@ export function PresentCenterArea({
           isActive={viewMode === "show" && bottomTab === "scripture"}
           speechLang={speechLang}
           speechInputDeviceId={speechInputDeviceId}
+          bibleAgent={bibleAgent}
           activeSlideId={activeSlideId}
         />
       </div>
@@ -287,6 +291,7 @@ export function PresentCenterArea({
       onSendScripture,
       speechInputDeviceId,
       speechLang,
+      bibleAgent,
       scripturePanelRef,
       selectedServiceId,
       viewMode,
