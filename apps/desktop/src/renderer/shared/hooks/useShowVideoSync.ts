@@ -5,6 +5,7 @@ import { MediaItem, VideoSettings } from "../../../features/media/hooks/useMedia
 import { applyAudioRouting, useAudioRouting } from "./useAudioRouting";
 import { usePlaybackTransport } from "./usePlaybackTransport";
 import { positionForVideo } from "../../../shared/lib/mirror-video-sync.mjs";
+import { isOperatorPause, shouldResume } from "../../../shared/lib/show-video-pause.mjs";
 
 export function useShowVideoSync(params: {
   showViewMedia: MediaItem;
@@ -30,6 +31,14 @@ export function useShowVideoSync(params: {
   const showVideoRef = useRef<HTMLVideoElement>(null);
   const isProgrammaticPlayRef = useRef(false);
   const lastTimeUpdateMsRef = useRef(0);
+  /**
+   * When the operator last touched the player: a click or a key on it, or a
+   * media key. A pause that follows one is theirs; one that does not is the
+   * system's, and is not a reason to stop the video on every screen.
+   */
+  const operatorTouchedAtRef = useRef(Number.NEGATIVE_INFINITY);
+  /** When the operator last paused, so it is not undone as a stray pause. */
+  const operatorPausedAtRef = useRef(Number.NEGATIVE_INFINITY);
 
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
@@ -179,20 +188,114 @@ export function useShowVideoSync(params: {
 
   const handleVideoPause = useCallback(
     (event?: React.SyntheticEvent<HTMLVideoElement>) => {
-      if (isProgrammaticPlayRef.current) return;
-      // The element pauses itself at the end of a video that does not loop;
-      // that is `ended`, which the transport hears separately.
-      if (event?.currentTarget.ended) return;
-      // WebKit pauses a video itself when its window is hidden — covered by the
-      // output window, minimised, or behind another app — and resumes it when
-      // the window is seen again. Nobody can press pause on a hidden page, so
-      // that is not the operator stopping the video.
-      if (document.visibilityState === "hidden") return;
+      // Not the operator: this hook's own pause; the end of a video that does
+      // not loop, which the transport hears as `ended`; a hidden window, which
+      // WebKit pauses and resumes itself; or a pause nobody asked for. WebKit
+      // pauses the player when the computer sleeps, with the window still
+      // showing. Taken as the operator's, that paused the video on every
+      // screen, and the pause this hook then made to match stopped WebKit
+      // resuming it on waking, so the service woke with its video stopped.
+      const now = performance.now();
+      if (
+        !isOperatorPause({
+          nowMs: now,
+          touchedAtMs: operatorTouchedAtRef.current,
+          programmatic: isProgrammaticPlayRef.current,
+          ended: Boolean(event?.currentTarget.ended),
+          hidden: document.visibilityState === "hidden",
+        })
+      ) {
+        return;
+      }
+      operatorPausedAtRef.current = now;
       setIsVideoPlaying(false);
       transport.pause();
     },
     [transport],
   );
+
+  // What counts as the operator touching the player.
+  useEffect(() => {
+    const video = showVideoRef.current;
+    if (!video || currentVideoItem?.type !== "video") return;
+    const touched = () => {
+      operatorTouchedAtRef.current = performance.now();
+    };
+    video.addEventListener("pointerdown", touched, true);
+    video.addEventListener("keydown", touched, true);
+    return () => {
+      video.removeEventListener("pointerdown", touched, true);
+      video.removeEventListener("keydown", touched, true);
+    };
+  }, [currentVideoItem?.id, currentVideoItem?.type]);
+
+  // The keyboard's play and pause keys, and the Now Playing controls, are the
+  // operator too. Without these, WebKit pauses the player for them itself,
+  // which looks like the system.
+  useEffect(() => {
+    const video = showVideoRef.current;
+    const session = typeof navigator === "undefined" ? undefined : navigator.mediaSession;
+    if (!video || !session?.setActionHandler || currentVideoItem?.type !== "video") return;
+    const handle = (action: MediaSessionAction, run: () => void) => {
+      try {
+        session.setActionHandler(action, () => {
+          operatorTouchedAtRef.current = performance.now();
+          run();
+        });
+      } catch {
+        // This action is not supported here; WebKit handles it as before.
+      }
+    };
+    handle("play", () => {
+      video.play().catch((): void => undefined);
+    });
+    handle("pause", () => video.pause());
+    return () => {
+      for (const action of ["play", "pause"] as const) {
+        try {
+          session.setActionHandler(action, null);
+        } catch {
+          // Nothing was set.
+        }
+      }
+    };
+  }, [currentVideoItem?.id, currentVideoItem?.type]);
+
+  // The player follows the transport. While the video is meant to be playing,
+  // a player found paused that the operator did not pause is started again:
+  // once the computer wakes from sleep, or after anything else that paused it
+  // without asking.
+  useEffect(() => {
+    if (!effectiveIsVideoPlaying || currentVideoItem?.type !== "video") return;
+    const resume = () => {
+      const video = showVideoRef.current;
+      if (
+        !video ||
+        !shouldResume({
+          nowMs: performance.now(),
+          transportPlaying: true,
+          paused: video.paused,
+          ended: video.ended,
+          seeking: video.seeking,
+          hidden: document.visibilityState === "hidden",
+          operatorPausedAtMs: operatorPausedAtRef.current,
+        })
+      ) {
+        return;
+      }
+      isProgrammaticPlayRef.current = true;
+      video.play().catch((): void => undefined);
+      window.setTimeout(() => {
+        isProgrammaticPlayRef.current = false;
+      }, 100);
+    };
+    const intervalId = window.setInterval(resume, 1000);
+    window.addEventListener("focus", resume);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", resume);
+    };
+  }, [currentVideoItem?.id, currentVideoItem?.type, effectiveIsVideoPlaying]);
 
   // Coming back to the window: WebKit resumes the video from where it paused
   // it, which is behind the mirrors that kept playing on another screen. Jump

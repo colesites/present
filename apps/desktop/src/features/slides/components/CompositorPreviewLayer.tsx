@@ -8,6 +8,24 @@ import { previewFrameUrl } from "../../../renderer/tauri/preview-frames";
 const WIDEST = 960;
 
 /**
+ * How long a frame may take to come back before it is asked for again. A
+ * request can go unanswered, neither loaded nor failed: the webview drops it
+ * across a sleep, or while the window is hidden.
+ */
+const ANSWER_WITHIN_MS = 1500;
+
+/**
+ * What makes each frame's address new, for the whole session.
+ *
+ * Counted per preview, it started again at 1 whenever the preview was shown
+ * again (leaving Edit mounts a new one) or changed size. The first address
+ * asked for could then be the one already on screen, which the page does not
+ * load again, so no answer came, nothing asked for the next, and the preview
+ * stayed on that frame: black, while the video was still opening.
+ */
+let nextTick = 0;
+
+/**
  * The audience picture as the compositor draws it, over the preview.
  *
  * Every format FFmpeg reads plays here, because there is no video element in
@@ -40,7 +58,12 @@ export function CompositorPreviewLayer({ className }: { className?: string }) {
       // inspects. Past this the frame rate costs more than the sharpness is
       // worth, and the frame rate is what a preview is for.
       const scale = Math.min(window.devicePixelRatio || 1, WIDEST / width);
-      setSize({ width: width * scale, height: height * scale });
+      const next = { width: Math.round(width * scale), height: Math.round(height * scale) };
+      // The same size again is not a change: the observer reports one when
+      // the preview is shown again after being hidden.
+      setSize((previous) =>
+        previous && previous.width === next.width && previous.height === next.height ? previous : next,
+      );
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -57,22 +80,28 @@ export function CompositorPreviewLayer({ className }: { className?: string }) {
   // nobody saw. Things that move, a scrolling message most of all, moved in
   // uneven jumps.
   const askRef = useRef<(() => void) | null>(null);
+  const answeredAtRef = useRef(0);
   useEffect(() => {
     if (!size) return;
-    let tick = 0;
     let frame = 0;
     const ask = () => {
       window.cancelAnimationFrame(frame);
+      answeredAtRef.current = performance.now();
       frame = window.requestAnimationFrame(() => {
-        tick += 1;
-        setLoading(previewFrameUrl(size.width, size.height, tick));
+        nextTick += 1;
+        setLoading(previewFrameUrl(size.width, size.height, nextTick));
       });
     };
     askRef.current = ask;
     ask();
+    // A frame that never answers would stop the preview where it is.
+    const watchdog = window.setInterval(() => {
+      if (performance.now() - answeredAtRef.current > ANSWER_WITHIN_MS) ask();
+    }, 500);
     return () => {
       askRef.current = null;
       window.cancelAnimationFrame(frame);
+      window.clearInterval(watchdog);
     };
   }, [size]);
 

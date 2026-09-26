@@ -83,6 +83,55 @@ export const previousReleases = (manifest: ReleaseManifest): Release[] => {
   return manifest.versions.filter((release) => release.version !== latest?.version);
 };
 
+/** One release by its version, or `null` if it was never published. */
+export const releaseForVersion = (
+  manifest: ReleaseManifest,
+  version: string,
+): Release | null => manifest.versions.find((release) => release.version === version) ?? null;
+
+/** What a release can be downloaded as, in the order the page offers them. */
+export const RELEASE_DOWNLOADS = [
+  { slug: "mac-apple-silicon", platform: "mac", label: "Apple Silicon" },
+  { slug: "mac-intel", platform: "mac", label: "Intel" },
+  { slug: "windows", platform: "windows", label: "Windows" },
+  { slug: "linux", platform: "linux", label: "Linux .deb" },
+  { slug: "linux-rpm", platform: "linux", label: "Linux .rpm" },
+] as const;
+
+export type ReleaseDownload = {
+  slug: (typeof RELEASE_DOWNLOADS)[number]["slug"];
+  platform: (typeof RELEASE_DOWNLOADS)[number]["platform"];
+  label: string;
+  /** The site's own address for it: `/download/mac-intel/0.4.1`. */
+  path: string;
+  /** In bytes, or `null` when the release has no such build. */
+  size: number | null;
+};
+
+/**
+ * A release's downloads, by what they are for rather than what the file is
+ * called, each at an address on this site. Apple Silicon, Intel and Windows
+ * are always listed, so a release without one says so; Linux only when it was
+ * built.
+ */
+export const releaseDownloads = (release: Release): ReleaseDownload[] =>
+  RELEASE_DOWNLOADS.flatMap(({ slug, platform, label }) => {
+    const file = fileForSlug(release, slug);
+    if (!file && platform === "linux") return [];
+    return [
+      {
+        slug,
+        platform,
+        label,
+        path: `/download/${slug}/${encodeURIComponent(release.version)}`,
+        size: file ? file.size : null,
+      },
+    ];
+  });
+
+/** A version as the release job writes one. */
+export const isReleaseVersion = (value: string): boolean => /^\d+\.\d+\.\d+$/.test(value);
+
 /** The download for one variant of one release, if that release has it. */
 export const fileForSlug = (
   release: Release | null,
