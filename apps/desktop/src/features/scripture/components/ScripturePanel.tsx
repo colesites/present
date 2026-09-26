@@ -908,6 +908,7 @@ export const ScripturePanel = memo(
                       onAddScriptureToService(selectedServiceId, reference, text)
                   : undefined
               }
+              onStep={setLookupValue}
             />
 
             {textSearchQuery.trim().length > 0 && (

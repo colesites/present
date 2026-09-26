@@ -72,6 +72,7 @@ import {
   reorderLibrarySlides,
 } from "../library/lib/library-items";
 import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
+import { useScripturePanelStore } from "../scripture/lib/panel-state";
 import {
   applyLookToSlides,
   findBackgroundMedia,
@@ -1511,6 +1512,10 @@ export function PresentContainer({
       setEditedOutputSnapshot(null);
       setSelectedPresentationLibraryId(null);
       handleSelectScripture(refId);
+      // And in the Bible panel, whichever view is open, so a passage in the
+      // service can be read and put up from the Bible tab without going to
+      // Show. The panel shows whatever reference its search holds.
+      useScripturePanelStore.getState().setLookupValue(refId);
     },
     onSelectPresentation: (refId: string) => {
       setEditedOutputSnapshot(null);
