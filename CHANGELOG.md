@@ -4,6 +4,16 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-26
+
+### Fixed
+
+- Nothing could be reordered by dragging: a service's items and groups, a
+  template's, the slide grid, the editor's slides and timers, nor a library
+  item dragged into a service. Tauri's file-drop handler took every drag over
+  the window, so the page never saw where it was dropped. The windows are now
+  built without it.
+
 ## [0.4.2] - 2026-09-26
 
 ### Changed
