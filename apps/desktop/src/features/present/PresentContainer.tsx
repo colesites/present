@@ -63,12 +63,12 @@ import {
 import { MainView } from "./MainView";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import {
-  buildSlidesFromBody,
   createComposedLibraryDraft,
   DEFAULT_CANVAS_SIZE,
   getCanvasSizeDimensions,
   getSlideBackgroundColor,
   normalizeLibrarySlide,
+  rebuildSlidesFromLyrics,
   reorderLibrarySlides,
 } from "../library/lib/library-items";
 import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
@@ -77,7 +77,6 @@ import {
   applyLookToSlides,
   findBackgroundMedia,
   normalizeLook,
-  withSongTheme,
 } from "../themes/theme-look.mjs";
 import {
   importServicePresentationFile,
@@ -1246,12 +1245,10 @@ export function PresentContainer({
         throw new Error("Library item not found.");
       }
 
+      // The same slides with new words, so the one on screen is still the
+      // one on screen and shows the edit at once (`rebuildSlidesFromLyrics`).
       const canvasSize = item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE;
-      const slides = withSongTheme(
-        buildSlidesFromBody(body, canvasSize, libraryTextDefaults),
-        item.content?.theme,
-        getCanvasSizeDimensions(canvasSize),
-      );
+      const slides = rebuildSlidesFromLyrics(body, item.slides, canvasSize, libraryTextDefaults);
       await updateExistingLibraryItem(
         libraryId,
         {

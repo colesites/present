@@ -253,10 +253,11 @@ export const SlidesGrid = memo(function SlidesGrid({
   }
 
   return (
-    <div className="relative pb-24">
+    // The scroll area's own padding is the space after the last row; more
+    // left a band of empty grid below every song.
+    <div className="relative pb-2">
       <div
         className={cn(
-          "pb-8",
           isGridView ? "grid" : "flex flex-col"
         )}
         style={{

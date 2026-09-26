@@ -1,6 +1,7 @@
 "use client";
 
 import { parseLyricsToSlides } from "../../../renderer/shared/lib/lyrics";
+import { slidesFromLyrics, type StoredSlide } from "@present/shared";
 import type {
   CanvasSizePreset,
   LibraryContent,
@@ -286,6 +287,27 @@ export function buildSlidesFromBody(
 ): LibrarySlide[] {
   return parseLyricsToSlides(body).map((slide) =>
     normalizeLibrarySlide(slide, canvasSize, textDefaults),
+  );
+}
+
+/**
+ * A song's slides after its lyrics were edited, keeping the slides they
+ * were: each slide keeps its id, look and background, and one whose words
+ * did not change is left exactly as it was (`slidesFromLyrics`).
+ *
+ * What an edit to a song that may be on screen has to use. The slide live on
+ * the output is known by its id, so slides made afresh from the lyrics, each
+ * with a new id, left the output showing the old words until the slide was
+ * chosen again, and the grid lost its place.
+ */
+export function rebuildSlidesFromLyrics(
+  body: string,
+  previous: LibrarySlide[],
+  canvasSize: CanvasSizePreset = DEFAULT_CANVAS_SIZE,
+  textDefaults?: LibraryTextStyleDefaults,
+): LibrarySlide[] {
+  return slidesFromLyrics(body, previous as StoredSlide[], createSlideId).map((slide) =>
+    normalizeLibrarySlide(slide as LibrarySlide, canvasSize, textDefaults),
   );
 }
 

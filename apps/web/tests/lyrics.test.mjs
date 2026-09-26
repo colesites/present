@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { lyricsFromSlides, parseLyricsToSlides, slidesFromLyrics } = await import("../../../packages/shared/src/lyrics.ts");
+const { lyricsFromSlides, pairSlides, parseLyricsToSlides, slidesFromLyrics } = await import("../../../packages/shared/src/lyrics.ts");
 
 const song = `[Verse 1]
 Amazing grace, how sweet the sound
@@ -76,4 +76,49 @@ test("a song with no styled slides stays unstyled for the app to fill in", () =>
   const next = slidesFromLyrics("one\n\ntwo", [], () => "id");
   assert.equal(next.length, 2);
   assert.equal(next[0].elements, undefined);
+});
+
+test("a slide whose words did not change is kept exactly, rich text and all", () => {
+  const styled = {
+    id: "a",
+    text: "Amazing grace",
+    elements: [{ id: "a_text_0", type: "text", content: "Amazing grace", richTextHtml: "<b>Amazing</b> grace" }],
+  };
+  const other = { id: "b", text: "How sweet", elements: [{ id: "b_text_0", type: "text", content: "How sweet" }] };
+  const next = slidesFromLyrics("Amazing grace\n\nHow sweet the sound", [styled, other], () => "made");
+  assert.equal(next[0].elements, styled.elements, "untouched");
+  assert.equal(next[1].id, "b", "the edited slide keeps its id");
+  assert.equal(next[1].elements[0].content, "How sweet the sound");
+});
+
+test("a new slide in a themed song takes the theme's box and background", () => {
+  const themed = {
+    id: "a",
+    text: "one",
+    elements: [
+      { id: "__theme-bg", type: "shape", style: { fill: { kind: "mix", base: "#000", spots: [] } } },
+      { id: "__theme-band", type: "shape", style: { backgroundColor: "#000" } },
+      { id: "a_text_0", type: "text", content: "one", style: { fontFamily: "Georgia" } },
+    ],
+  };
+  const next = slidesFromLyrics("one\n\ntwo", [themed], () => "new");
+  assert.deepEqual(next[1].elements.map((element) => element.id), ["__theme-bg", "__theme-band", "new_text_0"]);
+  assert.equal(next[1].elements[2].content, "two");
+  assert.equal(next[1].elements[2].style.fontFamily, "Georgia");
+});
+
+test("slides are paired by their words, so a deleted or added verse moves no other slide", () => {
+  assert.deepEqual(pairSlides(["a", "c", "d"], ["a", "b", "c", "d"]), [0, 2, 3], "b deleted");
+  assert.deepEqual(pairSlides(["a", "new", "b", "c"], ["a", "b", "c"]), [0, -1, 1, 2], "a verse added");
+  assert.deepEqual(pairSlides(["a", "B!", "c"], ["a", "b", "c"]), [0, 1, 2], "b edited in place");
+  assert.deepEqual(pairSlides(["x", "y"], ["a", "b", "c"]), [0, 1], "all edited: by place");
+  assert.deepEqual(pairSlides(["chorus", "verse", "chorus"], ["chorus", "verse", "chorus"]), [0, 1, 2], "repeats keep order");
+
+  const previous = ["one", "two", "three"].map((text) => ({
+    id: text,
+    text,
+    elements: [{ id: `${text}_text_0`, type: "text", content: text }],
+  }));
+  const next = slidesFromLyrics("one\n\nthree", previous, () => "made");
+  assert.deepEqual(next.map((slide) => slide.id), ["one", "three"], "the live slide keeps its words and its id");
 });

@@ -350,6 +350,56 @@ const withText = (element: ElementRecord, text: string, id?: string): ElementRec
 };
 
 /**
+ * Which old slide each new slide is, by index, or -1 for a new one.
+ *
+ * Slides whose words are unchanged are paired first, in order, wherever
+ * they moved to; then each edited slide takes the unpaired old slide that
+ * sat where it sits, between the same unchanged neighbours. So deleting or
+ * adding a verse leaves every other slide itself, and editing a line
+ * changes that slide and no other.
+ */
+export function pairSlides(next: string[], previous: string[]): number[] {
+  const pairs = next.map(() => -1);
+  const used = new Set<number>();
+  let from = 0;
+  next.forEach((text, index) => {
+    for (let candidate = from; candidate < previous.length; candidate += 1) {
+      if (!used.has(candidate) && previous[candidate] === text) {
+        pairs[index] = candidate;
+        used.add(candidate);
+        from = candidate + 1;
+        return;
+      }
+    }
+  });
+  next.forEach((_, index) => {
+    if (pairs[index] >= 0) return;
+    let before = -1;
+    for (let back = index - 1; back >= 0; back -= 1) {
+      if (pairs[back] >= 0) {
+        before = pairs[back];
+        break;
+      }
+    }
+    let after = previous.length;
+    for (let ahead = index + 1; ahead < next.length; ahead += 1) {
+      if (pairs[ahead] >= 0 && previous[pairs[ahead]] === next[ahead]) {
+        after = pairs[ahead];
+        break;
+      }
+    }
+    for (let candidate = before + 1; candidate < after; candidate += 1) {
+      if (!used.has(candidate)) {
+        pairs[index] = candidate;
+        used.add(candidate);
+        return;
+      }
+    }
+  });
+  return pairs;
+}
+
+/**
  * The slides a song's lyrics make, keeping what the old slides looked like.
  *
  * Slide `n` keeps slide `n`'s id, elements and background, with its main
@@ -357,8 +407,12 @@ const withText = (element: ElementRecord, text: string, id?: string): ElementRec
  * keeps having none. Slides past the old count copy the last styled one. A song that never had styled elements gets none, and the
  * desktop app gives it its default text box, as it does for songs it makes.
  *
- * Retyping lyrics in the desktop app's source view resets every slide to
- * the defaults; this keeps a styled song styled.
+ * A slide whose words did not change is kept exactly as it was, bold and
+ * italics and all, so editing one line of a song changes one slide. That is
+ * also what lets the desktop app edit a live song: slides keep their ids, so
+ * the slide on screen is still the slide on screen after a save, with its
+ * new words. New slides take a theme's box and background (the elements
+ * whose ids end `__theme-band` and `__theme-bg`) along with the text box.
  */
 export function slidesFromLyrics(
   lyrics: string,
@@ -367,9 +421,10 @@ export function slidesFromLyrics(
 ): StoredSlide[] {
   const parsed = parseLyricsToSlides(lyrics);
   const template = [...previous].reverse().find((slide) => Array.isArray(slide.elements) && slide.elements.length > 0);
+  const pairs = pairSlides(parsed.map((slide) => slide.text), previous.map((slide) => slide.text));
 
   return parsed.map((parsedSlide, index) => {
-    const old = previous[index];
+    const old = pairs[index] >= 0 ? previous[pairs[index]] : undefined;
     const look = old ?? previous[previous.length - 1];
     const id = old?.id ?? makeId();
     const slide: StoredSlide = {
@@ -386,7 +441,9 @@ export function slidesFromLyrics(
 
     const oldElements = Array.isArray(old?.elements) ? (old.elements as ElementRecord[]) : null;
     const oldPrimary = oldElements ? primaryTextIndex(oldElements) : -1;
-    if (oldElements && oldPrimary >= 0) {
+    if (oldElements && old && old.text === parsedSlide.text) {
+      slide.elements = oldElements;
+    } else if (oldElements && oldPrimary >= 0) {
       slide.elements = oldElements.map((element, position) =>
         position === oldPrimary ? withText(element, parsedSlide.text) : element,
       );
@@ -394,7 +451,12 @@ export function slidesFromLyrics(
       const templateElements = template.elements as ElementRecord[];
       const templatePrimary = primaryTextIndex(templateElements);
       if (templatePrimary >= 0) {
-        slide.elements = [withText(templateElements[templatePrimary], parsedSlide.text, `${id}_text_0`)];
+        const themeShapes = templateElements.filter(
+          (element) =>
+            typeof element?.id === "string" &&
+            (element.id.endsWith("__theme-band") || element.id.endsWith("__theme-bg")),
+        );
+        slide.elements = [...themeShapes, withText(templateElements[templatePrimary], parsedSlide.text, `${id}_text_0`)];
       }
     }
     return slide;

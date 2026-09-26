@@ -20,7 +20,6 @@ import type {
 } from "../../shared/types";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import {
-  buildSlidesFromBody,
   createDraftFromLibraryItem,
   DEFAULT_CANVAS_SIZE,
   getCanvasSizeDimensions,
@@ -29,6 +28,7 @@ import {
   normalizeLibraryContent,
   normalizeLibrarySlide,
   normalizePresentationSettings,
+  rebuildSlidesFromLyrics,
   reorderLibrarySlides,
   reorderSlideElements,
   scaleSlidesToCanvas,
@@ -43,7 +43,7 @@ import { SlideList } from "./components/SlideList";
 import { EditorCanvas } from "./components/EditorCanvas";
 import { EditorInspector } from "./components/EditorInspector";
 import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
-import { applyLookToSlides, normalizeLook, withSongTheme } from "../themes/theme-look.mjs";
+import { applyLookToSlides, normalizeLook } from "../themes/theme-look.mjs";
 
 interface LyricsEditorProps {
   libraryItem: LibraryItem | null;
@@ -1002,10 +1002,11 @@ export const LyricsEditor = memo(function LyricsEditor({
         // 2. Re-flow the cleaned body into N-line slides (ignores any
         //    existing slide separators, so re-breaking to a new N works).
         const nextBody = breakLyricsIntoChunks(fixedBody, linesPerSlide);
-        const nextSlides = withSongTheme(
-          buildSlidesFromBody(nextBody, currentCanvasSize, activeDefaultTextStyle),
-          draft.content?.theme,
-          canvasDimensions,
+        const nextSlides = rebuildSlidesFromLyrics(
+          nextBody,
+          draft.slides,
+          currentCanvasSize,
+          activeDefaultTextStyle,
         );
         applyDraft(
           (previous) => ({
@@ -1032,10 +1033,9 @@ export const LyricsEditor = memo(function LyricsEditor({
     [
       activeDefaultTextStyle,
       applyDraft,
-      canvasDimensions,
       currentCanvasSize,
       draft.body,
-      draft.content?.theme,
+      draft.slides,
       editorView,
       onFixLyrics,
       setInspectorTab,
@@ -1044,21 +1044,17 @@ export const LyricsEditor = memo(function LyricsEditor({
 
   const handleSourceBodyChange = useCallback(
     (nextBody: string) => {
-      const nextSlides = buildSlidesFromBody(
-        nextBody,
-        currentCanvasSize,
-        activeDefaultTextStyle,
-      );
+      // The same slides with new words: each keeps its id, look and
+      // background, so the selection stays put and a live slide updates.
+      const kept = rebuildSlidesFromLyrics(nextBody, draft.slides, currentCanvasSize, activeDefaultTextStyle);
       setDraft((previous) => {
-        // Rebuilt slides are plain; the song's theme goes back on them.
-        const themed = withSongTheme(nextSlides, previous.content?.theme, canvasDimensions);
         return buildDraftWithNormalizedContent(
           {
             ...previous,
-            slides: themed,
+            slides: kept,
             body: nextBody,
           },
-          themed,
+          kept,
           previous.content,
           activeDefaultTextStyle,
           {
@@ -1068,15 +1064,15 @@ export const LyricsEditor = memo(function LyricsEditor({
       });
 
       setSelectedSlideId((current) => {
-        if (current && nextSlides.some((slide) => slide.id === current)) {
+        if (current && kept.some((slide) => slide.id === current)) {
           return current;
         }
-        return nextSlides[0]?.id ?? null;
+        return kept[0]?.id ?? current;
       });
       setSelectedElementId(null);
       setInspectorTab("slide");
     },
-    [activeDefaultTextStyle, canvasDimensions, currentCanvasSize, setInspectorTab],
+    [activeDefaultTextStyle, currentCanvasSize, draft.slides, setInspectorTab],
   );
 
   const handleAddSlide = useCallback(() => {
