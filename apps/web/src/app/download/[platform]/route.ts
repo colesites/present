@@ -1,23 +1,9 @@
 import { fetchReleaseManifest, fileForSlug, latestRelease } from "@/lib/releases";
 import {
-  getDesktopDownloadFallbackFileName,
   getDesktopDownloadUrl,
   isDesktopDownloadSlug,
+  serveDesktopDownload,
 } from "@/lib/download.server";
-
-const getFileNameFromUrl = (source: string, fallback: string): string => {
-  try {
-    const parsed = new URL(source);
-    const value = parsed.pathname.split("/").filter(Boolean).pop();
-    if (value) {
-      return decodeURIComponent(value);
-    }
-  } catch {
-    // Ignore parsing failures and use the platform fallback.
-  }
-
-  return fallback;
-};
 
 export async function GET(
   _request: Request,
@@ -50,35 +36,5 @@ export async function GET(
     );
   }
 
-  const upstream = await fetch(desktopDownloadUrl, {
-    method: "GET",
-    redirect: "follow",
-    cache: "no-store",
-  });
-
-  if (!upstream.ok || !upstream.body) {
-    return new Response("Download is temporarily unavailable.", {
-      status: 502,
-    });
-  }
-
-  const headers = new Headers({
-    "Cache-Control": "no-store",
-    "Content-Disposition": `attachment; filename="${getFileNameFromUrl(
-      desktopDownloadUrl,
-      getDesktopDownloadFallbackFileName(platform)
-    )}"`,
-    "Content-Type":
-      upstream.headers.get("content-type") ?? "application/octet-stream",
-  });
-
-  const contentLength = upstream.headers.get("content-length");
-  if (contentLength) {
-    headers.set("Content-Length", contentLength);
-  }
-
-  return new Response(upstream.body, {
-    status: 200,
-    headers,
-  });
+  return serveDesktopDownload(desktopDownloadUrl, platform);
 }

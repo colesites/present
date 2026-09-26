@@ -222,3 +222,55 @@ export const getDesktopDownloadTargets = (
     };
   });
 };
+
+const fileNameFromUrl = (source: string, fallback: string): string => {
+  try {
+    const value = new URL(source).pathname.split("/").filter(Boolean).pop();
+    if (value) {
+      return decodeURIComponent(value);
+    }
+  } catch {
+    // Not a URL we can read a name from; the platform's own name will do.
+  }
+  return fallback;
+};
+
+/**
+ * Hand a published file to the browser from this site's own address.
+ *
+ * The file is fetched here and passed through, so the storage it lives in is
+ * never the link anyone sees or shares: `/download/mac-intel`, or
+ * `/download/mac-intel/0.4.1` for an earlier release.
+ */
+export const serveDesktopDownload = async (
+  sourceUrl: string,
+  slug: DesktopDownloadSlug,
+): Promise<Response> => {
+  const upstream = await fetch(sourceUrl, {
+    method: "GET",
+    redirect: "follow",
+    cache: "no-store",
+  });
+
+  if (!upstream.ok || !upstream.body) {
+    return new Response("Download is temporarily unavailable.", {
+      status: 502,
+    });
+  }
+
+  const headers = new Headers({
+    "Cache-Control": "no-store",
+    "Content-Disposition": `attachment; filename="${fileNameFromUrl(
+      sourceUrl,
+      getDesktopDownloadFallbackFileName(slug),
+    )}"`,
+    "Content-Type": upstream.headers.get("content-type") ?? "application/octet-stream",
+  });
+
+  const contentLength = upstream.headers.get("content-length");
+  if (contentLength) {
+    headers.set("Content-Length", contentLength);
+  }
+
+  return new Response(upstream.body, { status: 200, headers });
+};
