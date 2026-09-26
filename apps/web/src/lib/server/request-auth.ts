@@ -53,7 +53,7 @@ export const resolveRequestAuthContext = async (request: Request): Promise<{
     const client = await clerkClient();
     const user = await client.users.getUser(desktopSession.userId);
 
-    // The account, not the browser session that started it — the same rule the
+    // The account, not the browser session that started it: the same rule the
     // refresh route follows, so these routes keep working for a computer that
     // has been signed in for a year (`lib/server/desktop-jwt.ts`).
     if (isDesktopJwtConfigured()) {

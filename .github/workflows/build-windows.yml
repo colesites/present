@@ -73,8 +73,13 @@ jobs:
           if (-not $ok) { exit 1 }
           Write-Host "MSVC and LLVM are both present"
 
-      - name: Cache the FFmpeg build
-        uses: actions/cache@v4
+      # Restored here and saved straight after it is built, rather than with
+      # `actions/cache`, which saves only when the whole job succeeds: a
+      # failure in any later step threw the forty-minute FFmpeg build away,
+      # and the next run built it all again.
+      - name: Restore the FFmpeg build
+        id: ffmpeg-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             apps/desktop/src-tauri/ffmpeg/prefix
@@ -89,6 +94,15 @@ jobs:
           # MSYS2's own `link` shadows MSVC's linker, which configure needs.
           mv -f /usr/bin/link.exe /usr/bin/link-msys.exe || true
           bash apps/desktop/scripts/build-ffmpeg.sh
+
+      - name: Save the FFmpeg build
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            apps/desktop/src-tauri/ffmpeg/prefix
+            apps/desktop/src-tauri/ffmpeg/cache
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
 
       # `Add-Content` rather than `>>`: the redirect's encoding depends on the
       # PowerShell edition, and a UTF-16 line in this file is not read back as

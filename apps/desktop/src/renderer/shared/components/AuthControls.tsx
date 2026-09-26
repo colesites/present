@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Check, Plus, User } from "lucide-react";
+import { Check, Plus, User, UserPlus, UsersRound } from "lucide-react";
+import { toast } from "sonner";
 import { useMutation } from "convex/react";
 import { isUnlimitedSpeechQuota } from "@present/shared";
 import { api } from "@present/backend/convex/_generated/api";
@@ -17,6 +18,12 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { Button } from "./ui/button";
+import {
+  InvitationRow,
+  InvitePeopleDialog,
+  useMyInvitations,
+  useWorkspaceInvitations,
+} from "./WorkspaceInvitations";
 
 const getInitials = (value: string): string => {
   const normalized = value.trim();
@@ -66,6 +73,7 @@ const formatUsageDuration = (
 
 export function AuthControls() {
   const [isOpening, setIsOpening] = useState(false);
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const authStatus = useDesktopSessionStore((state) => state.authStatus);
   const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
@@ -132,6 +140,14 @@ export function AuthControls() {
       user &&
       organizations.length > 0
   );
+
+  const invitations = useMyInvitations(isSignedIn);
+  const activeOrganizationId =
+    organizations.find((organization) => organization.id === orgId)?.type === "organization"
+      ? orgId
+      : null;
+  // `null` when the signed-in person is not an admin of the active workspace.
+  const activeWorkspaceInvites = useWorkspaceInvitations(isSignedIn ? activeOrganizationId : null);
 
   if (authStatus === "unauthenticated" && !sessionToken) {
     return (
@@ -207,121 +223,186 @@ export function AuthControls() {
     : null;
 
   const realOrganizations = organizations.filter(org => org.type !== "personal");
+  const openInvitations = invitations ?? [];
+  const canInvite = activeOrganization.type === "organization" && Boolean(activeWorkspaceInvites);
+  const openInWeb = (path: string) => {
+    if (!window.electronAPI?.openExternalBrowser) {
+      return;
+    }
+    void window.electronAPI.openExternalBrowser(`${webBaseUrl}${path}`);
+  };
+  const handleJoined = (joinedOrgId: string, joinedOrgName: string) => {
+    // The mutation resolves after the subscriptions it changed, so the
+    // organization is already in the list to switch to.
+    setOrgId(joinedOrgId);
+    toast.success(`You joined ${joinedOrgName}.`);
+  };
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          className="h-10 w-10 items-center justify-center rounded-full p-0 hover:opacity-80"
-        >
-          {activeOrganization.logo ? (
-            activeOrganization.logo.startsWith("data:") ? (
-              <img
-                src={activeOrganization.logo}
-                alt={activeOrganization.name}
-                className="h-10 w-10 rounded-full object-cover"
-              />
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            className="relative h-10 w-10 items-center justify-center rounded-full p-0 hover:opacity-80"
+            aria-label={
+              openInvitations.length > 0
+                ? `Account, ${openInvitations.length} invitation${openInvitations.length === 1 ? "" : "s"}`
+                : "Account"
+            }
+          >
+            {activeOrganization.logo ? (
+              activeOrganization.logo.startsWith("data:") ? (
+                <img
+                  src={activeOrganization.logo}
+                  alt={activeOrganization.name}
+                  className="h-10 w-10 rounded-full object-cover"
+                />
+              ) : (
+                <img
+                  src={activeOrganization.logo}
+                  alt={activeOrganization.name}
+                  className="h-10 w-10 rounded-full object-cover"
+                  crossOrigin="anonymous"
+                />
+              )
             ) : (
-              <img
-                src={activeOrganization.logo}
-                alt={activeOrganization.name}
-                className="h-10 w-10 rounded-full object-cover"
-                crossOrigin="anonymous"
-              />
-            )
-          ) : (
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary/20 text-sm font-semibold text-primary">
-              {getInitials(activeOrganization.name)}
-            </span>
-          )}
-        </Button>
-      </DropdownMenuTrigger>
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary/20 text-sm font-semibold text-primary">
+                {getInitials(activeOrganization.name)}
+              </span>
+            )}
+            {openInvitations.length > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold leading-none text-primary-foreground ring-2 ring-background">
+                {openInvitations.length}
+              </span>
+            ) : null}
+          </Button>
+        </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-[320px] p-0">
-        <div className="border-b border-border/70 px-3 py-3">
-          <p className="truncate text-sm font-semibold text-foreground">{user.name}</p>
-          <p className="truncate text-[11px] text-muted-foreground">{user.email}</p>
-          {usageSummary && usageRemainder ? (
-            <div className="mt-2 space-y-0.5">
-              <p className="text-[11px] font-medium text-foreground">{usageSummary}</p>
-              <p className="text-[10px] text-muted-foreground">{usageRemainder}</p>
+        <DropdownMenuContent align="end" className="w-[320px] p-0">
+          <div className="border-b border-border/70 px-3 py-3">
+            <p className="truncate text-sm font-semibold text-foreground">{user.name}</p>
+            <p className="truncate text-[11px] text-muted-foreground">{user.email}</p>
+            {usageSummary && usageRemainder ? (
+              <div className="mt-2 space-y-0.5">
+                <p className="text-[11px] font-medium text-foreground">{usageSummary}</p>
+                <p className="text-[10px] text-muted-foreground">{usageRemainder}</p>
+              </div>
+            ) : null}
+          </div>
+          {openInvitations.length > 0 ? (
+            <div className="border-b border-border/70 pb-1">
+              <DropdownMenuLabel className="px-3 pb-1 pt-3 text-[10px] uppercase tracking-[0.12em] text-primary">
+                Invitations
+              </DropdownMenuLabel>
+              {openInvitations.map((invitation) => (
+                <InvitationRow
+                  key={invitation.id}
+                  invitation={invitation}
+                  onJoined={handleJoined}
+                />
+              ))}
             </div>
           ) : null}
-        </div>
-        <DropdownMenuLabel className="px-3 py-3 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-          Organizations
-        </DropdownMenuLabel>
-        <div className="max-h-[240px] overflow-y-auto px-1 pb-1">
-          {realOrganizations.map((organization) => (
-            <DropdownMenuItem
-              key={organization.id}
-              onClick={() => handleSelectOrganization(organization)}
-              className="mx-1 my-0.5 flex items-center justify-between rounded-md px-2 py-2"
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                {organization.logo ? (
-                  organization.logo.startsWith("data:") ? (
-                    <img
-                      src={organization.logo}
-                      alt={organization.name}
-                      className="h-7 w-7 rounded-full object-cover"
-                    />
+          <DropdownMenuLabel className="px-3 py-3 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+            Organizations
+          </DropdownMenuLabel>
+          <div className="max-h-[240px] overflow-y-auto px-1 pb-1">
+            {realOrganizations.map((organization) => (
+              <DropdownMenuItem
+                key={organization.id}
+                onClick={() => handleSelectOrganization(organization)}
+                className="mx-1 my-0.5 flex items-center justify-between rounded-md px-2 py-2"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  {organization.logo ? (
+                    organization.logo.startsWith("data:") ? (
+                      <img
+                        src={organization.logo}
+                        alt={organization.name}
+                        className="h-7 w-7 rounded-full object-cover"
+                      />
+                    ) : (
+                      <img
+                        src={organization.logo}
+                        alt={organization.name}
+                        className="h-7 w-7 rounded-full object-cover"
+                        crossOrigin="anonymous"
+                      />
+                    )
                   ) : (
-                    <img
-                      src={organization.logo}
-                      alt={organization.name}
-                      className="h-7 w-7 rounded-full object-cover"
-                      crossOrigin="anonymous"
-                    />
-                  )
-                ) : (
-                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
-                    {getInitials(organization.name)}
-                  </span>
-                )}
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-medium">
-                    {organization.name}
-                  </p>
-                  <p className="truncate text-[10px] capitalize text-muted-foreground">
-                    {organization.type}
-                  </p>
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
+                      {getInitials(organization.name)}
+                    </span>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium">
+                      {organization.name}
+                    </p>
+                    <p className="truncate text-[10px] capitalize text-muted-foreground">
+                      {organization.type}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              {organization.id === orgId ? (
-                <Check className="h-3.5 w-3.5 text-primary" />
-              ) : null}
-            </DropdownMenuItem>
-          ))}
-        </div>
+                {organization.id === orgId ? (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                ) : null}
+              </DropdownMenuItem>
+            ))}
+          </div>
 
-        <DropdownMenuSeparator />
-        <div className="space-y-1 p-2">
-          <DropdownMenuItem
-            onClick={() => {
-              if (!window.electronAPI?.openExternalBrowser) {
-                return;
-              }
-              void window.electronAPI.openExternalBrowser(
-                `${webBaseUrl}/dashboard/organization/setup`
-              );
-            }}
-            className="rounded-md px-2 py-2"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Create Organization
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => clearSession()}
-            className="rounded-md px-2 py-2 text-destructive focus:text-destructive"
-          >
-            <User className="h-3.5 w-3.5" />
-            Logout
-          </DropdownMenuItem>
-        </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
+          <DropdownMenuSeparator />
+          <div className="space-y-1 p-2">
+            {canInvite ? (
+              <DropdownMenuItem
+                // Once the menu has closed and handed focus back, so the
+                // dialog does not open underneath its focus trap.
+                onSelect={() => window.setTimeout(() => setIsInviteOpen(true), 0)}
+                className="rounded-md px-2 py-2"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                Invite People…
+              </DropdownMenuItem>
+            ) : null}
+            {activeOrganization.type === "organization" ? (
+              <DropdownMenuItem
+                onClick={() => openInWeb("/dashboard/members")}
+                className="rounded-md px-2 py-2"
+              >
+                <UsersRound className="h-3.5 w-3.5" />
+                Members
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuItem
+              onClick={() => openInWeb("/dashboard/organization/setup")}
+              className="rounded-md px-2 py-2"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Create Organization
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => clearSession()}
+              className="rounded-md px-2 py-2 text-destructive focus:text-destructive"
+            >
+              <User className="h-3.5 w-3.5" />
+              Logout
+            </DropdownMenuItem>
+          </div>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {canInvite ? (
+        <InvitePeopleDialog
+          open={isInviteOpen}
+          onOpenChange={setIsInviteOpen}
+          orgId={activeOrganization.id}
+          orgName={activeOrganization.name}
+          onManageMembers={() => {
+            setIsInviteOpen(false);
+            openInWeb("/dashboard/members");
+          }}
+        />
+      ) : null}
+    </>
   );
 }

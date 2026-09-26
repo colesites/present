@@ -71,6 +71,20 @@ for (const directory of [RUNTIME, LICENSES]) {
   fs.mkdirSync(directory, { recursive: true });
 }
 
+// On Windows the linker needs each library's import library in lib/, which
+// is where the Rust build looks. Checked here, before the Rust build, so a
+// build without them fails in seconds rather than at the final link.
+if (process.platform === "win32") {
+  for (const library of LIBRARIES) {
+    if (!fs.existsSync(path.join(PREFIX, "lib", `${library}.lib`))) {
+      fail(
+        `${library}.lib is not in ${path.join(PREFIX, "lib")}; the link would fail with ` +
+          "LNK1181. Rebuild FFmpeg with scripts/build-ffmpeg.sh, which puts it there.",
+      );
+    }
+  }
+}
+
 const staged = [];
 for (const library of LIBRARIES) {
   const file = runtimeFile(library);

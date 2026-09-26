@@ -2,7 +2,7 @@
 
 // Component ported from https://codepen.io/JuanFuentes/full/rgXKGQ
 
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { Fragment, useEffect, useRef, useState, useMemo, useCallback } from 'react';
 
 interface TextPressureProps {
   text?: string;
@@ -72,6 +72,17 @@ export const TextPressure: React.FC<TextPressureProps> = ({
   const [lineHeight, setLineHeight] = useState(1);
 
   const chars = text.split('');
+  // Letters grouped by word, each with its index among all letters, so a
+  // line can only break between words: "churches" never splits in two.
+  const words = useMemo(() => {
+    let index = 0;
+    return text.split(' ').map((word) => {
+      const letters = word.split('').map((char) => ({ char, index: index++ }));
+      index += 1; // the space after it
+      return letters;
+    });
+  }, [text]);
+  const longestWord = Math.max(1, ...words.map((word) => word.length));
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -108,6 +119,9 @@ export const TextPressure: React.FC<TextPressureProps> = ({
 
     let newFontSize = containerW / (chars.length / 2);
     newFontSize = Math.max(newFontSize, minFontSize);
+    // Never so big that the longest word is wider than the line. Wide faces
+    // like Stretch Sans run about 0.9em a letter.
+    newFontSize = Math.min(newFontSize, containerW / (longestWord * 0.92));
 
     setFontSize(newFontSize);
     setScaleY(1);
@@ -123,7 +137,7 @@ export const TextPressure: React.FC<TextPressureProps> = ({
         setLineHeight(yRatio);
       }
     });
-  }, [chars.length, minFontSize, scale]);
+  }, [chars.length, longestWord, minFontSize, scale]);
 
   useEffect(() => {
     const debouncedSetSize = debounce(setSize, 100);
@@ -223,18 +237,28 @@ export const TextPressure: React.FC<TextPressureProps> = ({
           color: stroke ? undefined : textColor
         }}
       >
-        {chars.map((char, i) => (
-          <span
-            key={i}
-            ref={el => {
-              spansRef.current[i] = el;
-            }}
-            data-char={char}
-            className="inline-block"
-            style={{ minWidth: char === ' ' ? '0.3em' : 'auto' }}
-          >
-            {char}
-          </span>
+        {words.map((word, w) => (
+          <Fragment key={w}>
+            <span className="inline-flex whitespace-nowrap">
+              {word.map(({ char, index }) => (
+                <span
+                  key={index}
+                  ref={el => {
+                    spansRef.current[index] = el;
+                  }}
+                  data-char={char}
+                  className="inline-block"
+                >
+                  {char}
+                </span>
+              ))}
+            </span>
+            {w < words.length - 1 ? (
+              <span className="inline-block" style={{ minWidth: '0.3em' }}>
+                {' '}
+              </span>
+            ) : null}
+          </Fragment>
         ))}
       </h1>
     </div>

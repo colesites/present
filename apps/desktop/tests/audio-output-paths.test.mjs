@@ -137,14 +137,27 @@ test("the audience YouTube embed is muted by its URL", () => {
   // A prop can put a YouTube embed on the audience screen. It plays in a
   // webview, so no `muted` attribute governs it and no `<video>` scanner sees
   // it: its silence is one `mute=1` in a parameter list that is edited by hand.
+  //
+  // Two lists: the app's, which development embeds directly, and the
+  // website's, which builds the player an installed app frames through it
+  // (`shared/lib/youtube-embed.mjs`).
   const outputWindow = readSource("src/renderer/output/OutputWindow.tsx");
-
-  const builder = outputWindow.slice(outputWindow.indexOf("function getYouTubeEmbedUrl"));
   assert.ok(
-    /\bmute:\s*"1"/.test(builder),
-    "The audience YouTube embed lost `mute: \"1\"`. It will play sound over " +
-      "the presenter's own audio on the congregation's screen.",
+    outputWindow.includes("youtubeEmbedUrl(") && outputWindow.includes("shared/lib/youtube-embed.mjs"),
+    "The audience window no longer builds its YouTube embed with the shared builder.",
   );
+
+  for (const [builder, name] of [
+    [readSource("src/shared/lib/youtube-embed.mjs"), "the app's YouTube player"],
+    [readSource("../web/src/lib/youtube-embed.ts"), "the website's YouTube page"],
+  ]) {
+    const player = builder.slice(builder.indexOf("youtubePlayerUrl ="));
+    assert.ok(
+      /\bmute:\s*"1"/.test(player),
+      `${name} lost \`mute: "1"\`. It will play sound over the presenter's own ` +
+        "audio on the congregation's screen.",
+    );
+  }
 });
 
 test("the speech capture graph reaches the speakers only through a zero gain", () => {
@@ -200,7 +213,6 @@ test("no source file outside the inventory plays media programmatically", () => 
   const known = new Map([
     // Media elements — each one can make a sound.
     ["src/features/present/PresentCenterArea.tsx", "element: the audible Show View player"],
-    ["src/features/settings/components/SettingsScreen.tsx", "element: a muted preview thumbnail"],
     ["src/features/sidebar-rail/panels/AudioTabPanel.tsx", "element: the backing-track player"],
     ["src/features/slides/OutputPreview.tsx", "element: a muted mirror"],
     ["src/features/stage/WorshipStageDisplayWindow.tsx", "element: a muted mirror"],

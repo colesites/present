@@ -61,6 +61,11 @@
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
   --z-index-1000: 1000;
+  /* The dashboard's shapes, one scale for all of it: the white panel, the
+     cards on it, and the fields and tiles inside those. */
+  --radius-panel: 24px;
+  --radius-card: 14px;
+  --radius-control: 10px;
 }
 
 :root {

@@ -37,7 +37,6 @@ import type {
 import { filtersToCSS } from "../../features/media/hooks";
 import type {
   CanvasSizePreset,
-  MessageOverlay,
   SlideElement,
 } from "../../shared/types";
 import type { UseTimersResult } from "../../renderer/shared/hooks";
@@ -50,6 +49,7 @@ import type {
   ScriptureVerticalAlign,
 } from "../../shared/types/output-window";
 import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
+import { youtubeEmbedUrl } from "../../shared/lib/youtube-embed.mjs";
 import { CompositorPreviewLayer } from "./components/CompositorPreviewLayer";
 
 interface SlideGroup {
@@ -61,7 +61,6 @@ export type OutputPreviewTarget = "audience" | "media" | "worship";
 
 const OUTPUT_BASE_WIDTH = 1280;
 const OUTPUT_BASE_HEIGHT = 720;
-const YOUTUBE_EMBED_ORIGIN = "https://present.app";
 
 interface OutputPreviewProps {
   text: string | null;
@@ -108,7 +107,6 @@ interface OutputPreviewProps {
   onToggleTimerLayer: () => void;
   isMessageLayerEnabled: boolean;
   onToggleMessageLayer: () => void;
-  activeMessageOverlay: MessageOverlay | null;
   propsOverlay: PropsOverlayItem[];
   // Timer state from the shared `useTimers` hook upstream (PresentContainer).
   // OutputPreview reads `activeTimer` for its small preview overlay and
@@ -181,86 +179,6 @@ const FilterSlider = memo(function FilterSlider({
   );
 });
 
-function getPreviewMessageThemeStyle(themeKey: string): React.CSSProperties {
-  switch (themeKey) {
-    case "info":
-      return { backgroundColor: "rgba(37, 99, 235, 0.94)", color: "#ffffff" };
-    case "warning":
-      return { backgroundColor: "rgba(245, 158, 11, 0.96)", color: "#111827" };
-    case "danger":
-      return { backgroundColor: "rgba(220, 38, 38, 0.96)", color: "#ffffff" };
-    case "transparent":
-      return {
-        backgroundColor: "rgba(0, 0, 0, 0.34)",
-        color: "#ffffff",
-        backdropFilter: "blur(2px)",
-      };
-    default:
-      return { backgroundColor: "rgba(31, 32, 48, 0.94)", color: "#ffffff" };
-  }
-}
-
-function PreviewMessageOverlay({ overlay }: { overlay: MessageOverlay }) {
-  if (!overlay.text.trim()) return null;
-
-  const isMarquee =
-    overlay.animation === "marquee-left" ||
-    overlay.animation === "marquee-right";
-  const positionClass = overlay.position === "top" ? "top-0" : "bottom-0";
-  const direction =
-    overlay.animation === "marquee-right"
-      ? "previewMarqueeRight"
-      : "previewMarqueeLeft";
-
-  return (
-    <div
-      className={cn(
-        "pointer-events-none absolute inset-x-0 z-30 overflow-hidden px-3 py-1.5",
-        positionClass,
-      )}
-      style={getPreviewMessageThemeStyle(overlay.themeKey)}
-    >
-      {isMarquee ? (
-        <>
-          <style>
-            {`
-              @keyframes previewMarqueeLeft {
-                0% { transform: translateX(100%); }
-                100% { transform: translateX(-100%); }
-              }
-              @keyframes previewMarqueeRight {
-                0% { transform: translateX(-100%); }
-                100% { transform: translateX(100%); }
-              }
-            `}
-          </style>
-          <span
-            className="block whitespace-nowrap font-semibold leading-tight"
-            style={{
-              fontSize: `${11 * (overlay.fontScale ?? 1)}px`,
-              animation: `${direction} ${Math.max(
-                2,
-                overlay.speedSeconds,
-              )}s linear infinite`,
-              willChange: "transform",
-            }}
-          >
-            {overlay.text}
-          </span>
-        </>
-      ) : (
-        <span
-          className="block text-center font-semibold leading-tight"
-          style={{ fontSize: `${11 * (overlay.fontScale ?? 1)}px` }}
-        >
-          {overlay.text}
-        </span>
-      )}
-    </div>
-  );
-}
-
-
 export const OutputPreview = memo(function OutputPreview({
   text,
   footer,
@@ -306,7 +224,6 @@ export const OutputPreview = memo(function OutputPreview({
   onToggleTimerLayer,
   isMessageLayerEnabled,
   onToggleMessageLayer,
-  activeMessageOverlay,
   propsOverlay,
   timers,
   timerLayout,
@@ -625,10 +542,13 @@ export const OutputPreview = memo(function OutputPreview({
               older design.
             */}
 
-            {activeMessageOverlay ? (
-              <PreviewMessageOverlay overlay={activeMessageOverlay} />
-            ) : null}
-
+            {/*
+              Nor is the message banner, or an image or text prop: they are in
+              the compositor's frame too, message and all. A second message
+              drawn here, on a banner not quite opaque, left the real one
+              showing through it as a faint copy at another size, and it
+              scrolled at its own pace.
+            */}
             <PreviewPropsOverlay items={propsOverlay} />
 
             {hasHiddenTextLayerContent &&
@@ -1284,18 +1204,9 @@ function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {
           opacity: item.opacity,
         };
 
-        if (item.kind === "image" && item.imageUrl) {
-          return (
-            <img
-              key={item.id}
-              src={item.imageUrl}
-              alt=""
-              className="pointer-events-none absolute z-30 h-auto object-contain"
-              style={style}
-            />
-          );
-        }
-
+        // Images and text are drawn by the compositor, into the frame under
+        // this (`overlays::is_composited`). Only what it leaves to the
+        // webview is drawn here.
         if (item.kind === "video" && item.mediaUrl) {
           return (
             <video
@@ -1309,27 +1220,6 @@ function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {
               muted
               playsInline
             />
-          );
-        }
-
-        if (item.kind === "text" && item.text) {
-          return (
-            <div
-              key={item.id}
-              className="pointer-events-none absolute z-30 flex items-center justify-center text-center"
-              style={style}
-            >
-              <span
-                className="font-semibold leading-tight"
-                style={{
-                  color: item.color ?? "white",
-                  fontSize: `${Math.max(8, (item.fontSize ?? 48) * 0.2)}px`,
-                  textShadow: "0 1px 5px rgba(0,0,0,0.7)",
-                }}
-              >
-                {item.text}
-              </span>
-            </div>
           );
         }
 
@@ -1563,7 +1453,11 @@ function PreviewYouTubeLayer({
   style: CSSProperties;
 }) {
   const src = useMemo(
-    () => getPreviewYouTubeEmbedUrl(youtubeUrl, getElapsedSeconds(shownAtMs)),
+    () =>
+      youtubeEmbedUrl(youtubeUrl, {
+        startSeconds: getElapsedSeconds(shownAtMs),
+        controls: true,
+      }),
     [shownAtMs, youtubeUrl],
   );
 
@@ -1580,50 +1474,6 @@ function PreviewYouTubeLayer({
       referrerPolicy="strict-origin-when-cross-origin"
     />
   );
-}
-
-function getPreviewYouTubeEmbedUrl(
-  value: string,
-  startSeconds = 0,
-): string | null {
-  try {
-    const url = new URL(value.trim());
-    let videoId: string | null = null;
-    if (url.hostname === "youtu.be") {
-      videoId = url.pathname.split("/").filter(Boolean)[0] ?? null;
-    } else if (url.hostname.endsWith("youtube.com")) {
-      if (url.pathname === "/watch") {
-        videoId = url.searchParams.get("v");
-      } else {
-        const parts = url.pathname.split("/").filter(Boolean);
-        if (["embed", "shorts", "live"].includes(parts[0] ?? "")) {
-          videoId = parts[1] ?? null;
-        }
-      }
-    }
-
-    if (!videoId) return null;
-    const params = new URLSearchParams({
-      autoplay: "1",
-      controls: "1",
-      disablekb: "1",
-      fs: "0",
-      iv_load_policy: "3",
-      loop: "1",
-      modestbranding: "1",
-      mute: "1",
-      origin: YOUTUBE_EMBED_ORIGIN,
-      playsinline: "1",
-      playlist: videoId,
-      rel: "0",
-    });
-    if (startSeconds > 0) {
-      params.set("start", String(startSeconds));
-    }
-    return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
-  } catch {
-    return null;
-  }
 }
 
 function getElapsedSeconds(startedAtMs?: number): number {

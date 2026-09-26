@@ -9,8 +9,8 @@ import { calculateJwkThumbprint, exportJWK, SignJWT, type JWK } from "jose";
  * **Why this exists at all.** Signing in on the desktop opens a browser, as
  * Claude's and ProPresenter's do. What the desktop keeps afterwards used to be
  * tied to that browser session: every refresh asked Clerk whether the session
- * was still active, so when Clerk ended it — a lifetime, an inactivity timeout
- * — the desktop signed the operator out, sometimes on a Sunday morning. A
+ * was still active, so when Clerk ended it (a lifetime, an inactivity timeout)
+ * the desktop signed the operator out, sometimes on a Sunday morning. A
  * presentation app cannot do that.
  *
  * So the desktop keeps a credential of its own. This mints the short-lived
@@ -57,7 +57,7 @@ const privateKeyPem = (): string | null => {
  * cannot be an issuer however the app is being run: Convex cannot reach it. A
  * development web app signs with the same key as the deployed one and claims
  * the deployed one's name, and the development Convex deployment trusts that
- * name — the tokens verify against the keys production publishes.
+ * name, and the tokens verify against the keys production publishes.
  */
 export const desktopJwtIssuer = (): string | null => {
   const configured =
@@ -86,7 +86,7 @@ export const isDesktopJwtConfigured = (): boolean => {
     console.warn(
       "[Desktop Auth] a signing key is set but no issuer is, so the desktop " +
         "credential is off and Clerk's session is being used instead. Set " +
-        "DESKTOP_JWT_ISSUER (or WEB_APP_URL) to this app's public URL — the " +
+        "DESKTOP_JWT_ISSUER (or WEB_APP_URL) to this app's public URL, the " +
         "same one Convex has as DESKTOP_JWT_ISSUER_DOMAIN.",
     );
   }
@@ -148,6 +148,70 @@ export const signConvexAccessToken = async (
     .sign(signing.key);
 
   return { token, expiresAt };
+};
+
+/** How long an answer from the issuer is believed, each way. A trusted key is
+ * re-checked now and then; a refused one soon, so the moment production starts
+ * publishing the key, development starts using it. */
+const TRUSTED_FOR_MS = 10 * 60_000;
+const REFUSED_FOR_MS = 60_000;
+
+let trust: { trusted: boolean; until: number } | null = null;
+
+/**
+ * Whether Convex will accept what this app signs: the issuer it names
+ * publishes this app's key.
+ *
+ * Configured is not enough. A development app signs with its own copy of the
+ * key and claims the deployed site's name ([`desktopJwtIssuer`]), so its
+ * tokens verify only if the deployed site publishes that same key. When it
+ * does not (no key in production yet, or a different one), Convex refuses
+ * every token, the desktop never learns who is signed in, and it sits on
+ * "Loading…" for good. So the issuer's published keys are asked, and until
+ * they include this one the refresh route uses Clerk's session, which always
+ * verifies.
+ */
+export const isDesktopJwtTrusted = async (): Promise<boolean> => {
+  if (!isDesktopJwtConfigured()) {
+    return false;
+  }
+  const now = Date.now();
+  if (trust && now < trust.until) {
+    return trust.trusted;
+  }
+
+  const issuer = desktopJwtIssuer();
+  const signing = await signingKey();
+  let trusted = false;
+  if (issuer && signing) {
+    try {
+      const ours = await exportJWK(createPublicKey(signing.key));
+      const response = await fetch(`${issuer}/.well-known/jwks.json`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(3_000),
+      });
+      const published = response.ok
+        ? ((await response.json()) as { keys?: Array<{ kid?: string; n?: string }> })
+        : null;
+      trusted = Boolean(
+        published?.keys?.some((key) => key.kid === signing.kid && key.n === ours.n),
+      );
+    } catch {
+      // Unreachable is not trusted: Convex could not reach it either.
+      trusted = false;
+    }
+  }
+
+  if (!trusted && trust?.trusted !== false) {
+    console.warn(
+      `[Desktop Auth] ${issuer}/.well-known/jwks.json does not publish this ` +
+        "app's signing key, so Convex would refuse the tokens it signs. Using " +
+        "Clerk's session instead. Give the deployed site the same " +
+        "DESKTOP_JWT_PRIVATE_KEY and redeploy it to turn the desktop credential on.",
+    );
+  }
+  trust = { trusted, until: now + (trusted ? TRUSTED_FOR_MS : REFUSED_FOR_MS) };
+  return trusted;
 };
 
 /** The public half, for Convex to check signatures against. */

@@ -49,17 +49,56 @@ impl Changes {
     }
 }
 
-/// The key an element is matched by across two slides.
+/// The ends of the ids a theme gives the box behind the words and the
+/// background it paints (`features/themes/theme-look.mjs`). Themes applied
+/// before those ids were the same on every slide put the slide's own id in
+/// front, so these match by the end alone.
+const THEME_SHAPES: [&str; 2] = ["__theme-band", "__theme-bg"];
+
+/// The key an element is matched by across two slides, from its id and its
+/// place in the list.
 ///
 /// Its id when it has one. An element without an id is matched by where it sits
 /// in the list, which is what the React tree falls back to as well — imperfect,
-/// and better than treating every element on the slide as new.
+/// and better than treating every element on the slide as new. A theme's box
+/// and background are the same element on every slide, whatever their ids.
+pub fn element_key(index: usize, id: &str) -> String {
+    let id = id.trim();
+    if id.is_empty() {
+        return format!("#{index}");
+    }
+    THEME_SHAPES
+        .iter()
+        .find(|end| id.ends_with(*end))
+        .map_or_else(|| id.to_owned(), |end| (*end).to_owned())
+}
+
 fn key_of(index: usize, element: &serde_json::Value) -> String {
-    element
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .filter(|id| !id.trim().is_empty())
-        .map_or_else(|| format!("#{index}"), str::to_owned)
+    element_key(
+        index,
+        element
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(""),
+    )
+}
+
+/// Whether two elements matched by key look the same: everything but their
+/// ids, which the key has already matched.
+fn looks_the_same(before: &serde_json::Value, after: &serde_json::Value) -> bool {
+    match (before.as_object(), after.as_object()) {
+        (Some(was), Some(is)) => {
+            let fields = |object: &serde_json::Map<String, serde_json::Value>| {
+                object
+                    .iter()
+                    .filter(|(name, _)| name.as_str() != "id")
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect::<BTreeMap<_, _>>()
+            };
+            fields(was) == fields(is)
+        }
+        _ => before == after,
+    }
 }
 
 fn elements_of(scene: &OutputScene) -> BTreeMap<String, &serde_json::Value> {
@@ -103,7 +142,10 @@ pub fn compare(before: &OutputScene, after: &OutputScene) -> Changes {
 
     let changed = is
         .iter()
-        .filter(|(key, element)| was.get(*key).is_none_or(|before| before != *element))
+        .filter(|(key, element)| {
+            was.get(*key)
+                .is_none_or(|before| !looks_the_same(before, element))
+        })
         .map(|(key, _)| key.clone())
         .collect();
     let removed = was
@@ -136,6 +178,64 @@ mod tests {
 
     fn text(id: &str, content: &str) -> serde_json::Value {
         json!({ "id": id, "type": "text", "content": content, "x": 100.0, "y": 200.0 })
+    }
+
+    #[test]
+    fn a_themes_box_and_background_stay_still_while_the_words_change() {
+        let band = |id: &str| json!({ "id": id, "type": "shape", "x": 0.0, "y": 680.0, "style": { "backgroundColor": "#000000" } });
+        let background = |id: &str| json!({ "id": id, "type": "shape", "style": { "fill": { "kind": "mix", "base": "#15161f", "spots": [] } } });
+        // Ids as themes now give them, the same on every slide.
+        let now = compare(
+            &scene(
+                json!([
+                    background("__theme-bg"),
+                    band("__theme-band"),
+                    text("a_text_0", "Amazing grace")
+                ]),
+                None,
+            ),
+            &scene(
+                json!([
+                    background("__theme-bg"),
+                    band("__theme-band"),
+                    text("b_text_0", "How sweet")
+                ]),
+                None,
+            ),
+        );
+        assert!(
+            !now.touches("__theme-band") && !now.touches("__theme-bg"),
+            "{now:?}"
+        );
+        assert!(
+            now.touches("b_text_0") && now.touches("a_text_0"),
+            "the words go and come"
+        );
+        // And as they were before, with each slide's id in front.
+        let before = compare(
+            &scene(
+                json!([
+                    background("a__theme-bg"),
+                    band("a__theme-band"),
+                    text("a_text_0", "Amazing grace")
+                ]),
+                None,
+            ),
+            &scene(
+                json!([
+                    background("b__theme-bg"),
+                    band("b__theme-band"),
+                    text("b_text_0", "How sweet")
+                ]),
+                None,
+            ),
+        );
+        assert!(
+            !before.touches("__theme-band") && !before.touches("__theme-bg"),
+            "{before:?}"
+        );
+        assert_eq!(element_key(0, "b__theme-band"), "__theme-band");
+        assert_eq!(element_key(3, ""), "#3");
     }
 
     #[test]

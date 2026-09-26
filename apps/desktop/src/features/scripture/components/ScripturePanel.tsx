@@ -65,8 +65,23 @@ interface ScripturePanelProps {
   isActive?: boolean;
   speechLang: string;
   speechInputDeviceId: string | null;
+  /** What the Bible agent does with what it hears (Settings, Agent). */
+  bibleAgent?: BibleAgentSettings;
   activeSlideId?: string | null;
 }
+
+export interface BibleAgentSettings {
+  /** A heard passage goes on screen, or waits here to be shown. */
+  onHeard: "show" | "find";
+  addToService: boolean;
+  voiceCommands: boolean;
+}
+
+const DEFAULT_BIBLE_AGENT: BibleAgentSettings = {
+  onHeard: "show",
+  addToService: true,
+  voiceCommands: true,
+};
 
 const isNextVerseCommand = (value: string) =>
   /\b(next|forward)\s+(verse|scripture)\b/i.test(value.trim());
@@ -87,10 +102,12 @@ export const ScripturePanel = memo(
       isActive = true,
       speechLang,
       speechInputDeviceId,
+      bibleAgent = DEFAULT_BIBLE_AGENT,
       activeSlideId = null,
     },
     ref,
   ) {
+    const { onHeard, addToService: addHeardToService, voiceCommands } = bibleAgent;
     const inputRef = useRef<ScriptureInputRef>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
     const identifyTimeoutRef = useRef<number | null>(null);
@@ -373,12 +390,12 @@ export const ScripturePanel = memo(
         if (!result.transcript) return;
         const transcript = result.transcript.trim();
 
-        if (result.isFinal && isNextVerseCommand(transcript)) {
+        if (voiceCommands && result.isFinal && isNextVerseCommand(transcript)) {
           void showAdjacentLiveVerse("next");
           return;
         }
 
-        if (result.isFinal && isPreviousVerseCommand(transcript)) {
+        if (voiceCommands && result.isFinal && isPreviousVerseCommand(transcript)) {
           void showAdjacentLiveVerse("previous");
           return;
         }
@@ -396,7 +413,7 @@ export const ScripturePanel = memo(
         // about everything that was heard. Asking here as well would ask
         // twice about the same sentence and race its own answer.
       },
-      [handleAiQueryChange, showAdjacentLiveVerse],
+      [handleAiQueryChange, showAdjacentLiveVerse, voiceCommands],
     );
 
     const {
@@ -465,7 +482,7 @@ export const ScripturePanel = memo(
     );
 
     const handleEnter = useCallback(
-      async (val?: string) => {
+      async (val?: string, options?: { addToService?: boolean }) => {
         let activeParsed = parsedRef;
         if (val) {
           activeParsed = parseReference(val, availableBooks);
@@ -498,7 +515,7 @@ export const ScripturePanel = memo(
           onSendToOutput(slides);
         }
 
-        if (selectedServiceId) {
+        if (selectedServiceId && options?.addToService !== false) {
           await onAddScriptureToService(selectedServiceId, refText, refText);
         }
       },
@@ -551,8 +568,12 @@ export const ScripturePanel = memo(
                 spoken += `-${verseEnd}`;
               }
             }
+            // Found either way. On screen at once unless the operator asked
+            // for it to wait here, in the Bible tab, to be shown.
             setLookupValue(spoken);
-            void handleEnter(spoken);
+            if (onHeard === "show") {
+              void handleEnter(spoken, { addToService: addHeardToService });
+            }
           })
           .catch(() => {
             // Offline, signed out, or the model could not be reached. The
@@ -575,6 +596,8 @@ export const ScripturePanel = memo(
       sessionToken,
       handleEnter,
       setLookupValue,
+      onHeard,
+      addHeardToService,
     ]);
 
     useEffect(() => {
@@ -908,6 +931,7 @@ export const ScripturePanel = memo(
                       onAddScriptureToService(selectedServiceId, reference, text)
                   : undefined
               }
+              onStep={setLookupValue}
             />
 
             {textSearchQuery.trim().length > 0 && (

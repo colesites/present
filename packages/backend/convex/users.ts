@@ -1,15 +1,55 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { getPresentPlanDefinition } from "../../shared/src/billing";
+import { normalizeWorkspaceRole } from "../../shared/src/workspace-roles";
 import {
-  getPresentPlanDefinition,
-  UNLIMITED_SPEECH_QUOTA_SECONDS,
-} from "../../shared/src/billing";
+  billingSummary,
+  calendarMonth,
+  entitlementsFor,
+  identityEmail,
+} from "./entitlements";
 
-const normalizeEmail = (value: unknown): string | null =>
-  typeof value === "string" && value.trim()
-    ? value.trim().toLowerCase()
+/**
+ * Note on the person's billing record whether they are on the allowlist.
+ *
+ * The allowlist is by email, which only their own token carries, so without
+ * this a workspace could not count an allowlisted admin while somebody else
+ * was the one joining it. Refreshed every time they sign in.
+ */
+const recordAllowlist = async (ctx: MutationCtx, userId: string, email: string | null) => {
+  const entry = email
+    ? await ctx.db
+        .query("speechQuotaAllowlist")
+        .withIndex("by_normalized_email", (q) => q.eq("normalizedEmail", email))
+        .first()
     : null;
+  const allowlisted = Boolean(entry);
+  const record = await ctx.db
+    .query("userBilling")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .first();
+  if (record) {
+    if ((record.allowlisted ?? false) !== allowlisted) {
+      await ctx.db.patch(record._id, { allowlisted });
+    }
+    return;
+  }
+  if (!allowlisted) return;
+  const free = getPresentPlanDefinition("free");
+  await ctx.db.insert("userBilling", {
+    userId,
+    planKey: free.key,
+    planLabel: free.label,
+    planSlug: free.key,
+    status: "active",
+    quotaSeconds: free.monthlySpeechLimitSeconds,
+    ...calendarMonth(),
+    allowlisted: true,
+    updatedAt: Date.now(),
+  });
+};
+
 
 const isOrganizationDocument = (
   value: unknown,
@@ -101,52 +141,11 @@ export const getCurrentUser = query({
       (organization) => organization !== null,
     );
 
-    const billingRecord = await ctx.db
-      .query("userBilling")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
-    const fallbackPlan = getPresentPlanDefinition("free");
-    const activeBilling = billingRecord ?? {
-      planKey: fallbackPlan.key,
-      planLabel: fallbackPlan.label,
-      planSlug: fallbackPlan.key,
-      status: "active",
-      quotaSeconds: fallbackPlan.monthlySpeechLimitSeconds,
-      periodStartMs: 0,
-      periodEndMs: 0,
-      updatedAt: 0,
-    };
-    const normalizedEmail = normalizeEmail(identity.email);
-    const allowlistEntry = normalizedEmail
-      ? await ctx.db
-          .query("speechQuotaAllowlist")
-          .withIndex("by_normalized_email", (q) =>
-            q.eq("normalizedEmail", normalizedEmail),
-          )
-          .first()
-      : null;
-    const quotaSeconds = Math.max(
-      activeBilling.quotaSeconds,
-      allowlistEntry
-        ? Math.max(allowlistEntry.quotaSeconds, UNLIMITED_SPEECH_QUOTA_SECONDS)
-        : 0,
+    const billing = await billingSummary(
+      ctx,
+      userId,
+      await entitlementsFor(ctx, userId, identityEmail(identity)),
     );
-    const billingPeriodKey = `${activeBilling.periodStartMs}:${activeBilling.periodEndMs}`;
-    const speechSessions = await ctx.db
-      .query("speechUsageSessions")
-      .withIndex("by_user_period", (q) =>
-        q.eq("userId", userId).eq("periodKey", billingPeriodKey),
-      )
-      .collect();
-    const usedSeconds = speechSessions.reduce((total, session) => {
-      const endMs =
-        typeof session.endedAtMs === "number" ? session.endedAtMs : Date.now();
-      const elapsedSeconds = Math.max(
-        0,
-        Math.ceil((endMs - session.startedAtMs) / 1000),
-      );
-      return total + Math.min(session.maxDurationSeconds, elapsedSeconds);
-    }, 0);
 
     // Pull the user's saved workspace preference (the active org selection
     // that should follow them across devices). If it doesn't exist yet, or
@@ -183,18 +182,7 @@ export const getCurrentUser = query({
         id: userId,
         name: identity.name ?? "Account",
         email: identity.email ?? "",
-        billing: {
-          planKey: activeBilling.planKey,
-          planLabel: activeBilling.planLabel,
-          planSlug: activeBilling.planSlug ?? null,
-          status: activeBilling.status,
-          isPaid: activeBilling.planKey !== "free",
-          quotaSeconds,
-          usedSeconds,
-          remainingSeconds: Math.max(0, quotaSeconds - usedSeconds),
-          periodStartMs: activeBilling.periodStartMs,
-          periodEndMs: activeBilling.periodEndMs,
-        },
+        billing,
       },
       organizations: filteredOrganizations,
       // Legacy field kept so older builds still pick *something*.
@@ -379,6 +367,7 @@ export const ensureCurrent = mutation({
     }
 
     const userId = identity.subject;
+    await recordAllowlist(ctx, userId, identityEmail(identity));
 
     // Check if user already has a profile
     const existingProfile = await ctx.db
@@ -492,96 +481,6 @@ export const createOrganization = mutation({
   },
 });
 
-// Add a user to an existing organization (by Clerk user ID)
-export const addUserToOrganization = mutation({
-  args: {
-    orgId: v.id("organizations"),
-    userId: v.string(), // Clerk user ID
-    role: v.optional(v.string()), // "admin" or "user"
-    userRole: v.optional(v.string()), // functional role like "tech-director"
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new ConvexError("Not authenticated");
-    }
-
-    const currentUserId = identity.subject;
-
-    // Check if current user is an admin of this organization
-    const currentUserProfile = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_user", (q) => q.eq("userId", currentUserId))
-      .filter((q) => q.eq(q.field("orgId"), args.orgId))
-      .first();
-
-    if (!currentUserProfile || currentUserProfile.role !== "admin") {
-      throw new ConvexError("Only organization admins can add users");
-    }
-
-    // Check if user is already in the organization
-    const existingProfile = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .filter((q) => q.eq(q.field("orgId"), args.orgId))
-      .first();
-
-    if (existingProfile) {
-      throw new ConvexError("User is already a member of this organization");
-    }
-
-    // Add user to organization
-    const profileId = await ctx.db.insert("userProfiles", {
-      userId: args.userId,
-      orgId: args.orgId,
-      role: args.role || "user",
-      userRole: args.userRole ?? undefined,
-      createdAt: Date.now(),
-    });
-
-    return { profileId, userId: args.userId };
-  },
-});
-
-export const joinOrganizationById = mutation({
-  args: {
-    orgId: v.id("organizations"),
-    userRole: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new ConvexError("Not authenticated");
-    }
-
-    const userId = identity.subject;
-    const organization = await ctx.db.get(args.orgId);
-    if (!organization) {
-      throw new ConvexError("Organization not found");
-    }
-
-    const existingProfile = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("orgId"), args.orgId))
-      .first();
-
-    if (existingProfile) {
-      return { orgId: args.orgId, alreadyMember: true };
-    }
-
-    await ctx.db.insert("userProfiles", {
-      userId,
-      orgId: args.orgId,
-      role: "user",
-      userRole: args.userRole ?? undefined,
-      createdAt: Date.now(),
-    });
-
-    return { orgId: args.orgId, alreadyMember: false };
-  },
-});
-
 // List all members of an organization
 export const listOrganizationMembers = query({
   args: {
@@ -672,6 +571,68 @@ export const removeUserFromOrganization = mutation({
     }
 
     await ctx.db.delete(profileToRemove._id);
+    return { success: true };
+  },
+});
+
+/**
+ * Change what someone does in a workspace, or what they may change in it.
+ *
+ * Anyone can say what they do themselves (`userRole`). Changing anyone
+ * else's, or anyone's admin access (`role`), takes an admin; and the last
+ * admin cannot give theirs up, or nobody could manage the workspace again.
+ */
+export const updateMember = mutation({
+  args: {
+    orgId: v.id("organizations"),
+    userId: v.string(),
+    userRole: v.optional(v.string()),
+    role: v.optional(v.union(v.literal("admin"), v.literal("user"))),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("Not authenticated");
+    }
+    const profileOf = (userId: string) =>
+      ctx.db
+        .query("userProfiles")
+        .withIndex("by_user_org", (q) => q.eq("userId", userId).eq("orgId", args.orgId))
+        .first();
+
+    const mine = await profileOf(identity.subject);
+    if (!mine) {
+      throw new ConvexError("You are not a member of this organization");
+    }
+    const isSelf = args.userId === identity.subject;
+    const target = isSelf ? mine : await profileOf(args.userId);
+    if (!target) {
+      throw new ConvexError("User is not a member of this organization");
+    }
+    if ((!isSelf || args.role !== undefined) && mine.role !== "admin") {
+      throw new ConvexError("Only organization admins can change someone's role or access");
+    }
+
+    const patch: { userRole?: string; role?: string } = {};
+    if (args.userRole !== undefined) {
+      patch.userRole = normalizeWorkspaceRole(args.userRole);
+    }
+    if (args.role !== undefined && args.role !== target.role) {
+      if (target.role === "admin" && args.role !== "admin") {
+        const admins = await ctx.db
+          .query("userProfiles")
+          .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
+          .filter((q) => q.eq(q.field("role"), "admin"))
+          .collect();
+        if (admins.length <= 1) {
+          throw new ConvexError("Make someone else an admin first. A workspace needs at least one.");
+        }
+      }
+      patch.role = args.role;
+    }
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(target._id, patch);
+    }
     return { success: true };
   },
 });

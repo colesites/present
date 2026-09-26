@@ -62,7 +62,7 @@ export function LogosWithBlurFlip() {
     });
   }, { dependencies: [mounted], scope: titleRef });
 
-  // 2. Logo Cycling — uses stable index keys so DOM elements are always reused
+  // 2. Logo Cycling: uses stable index keys so DOM elements are always reused
   useLayoutEffect(() => {
     if (!mounted) return;
 
@@ -149,7 +149,7 @@ export function LogosWithBlurFlip() {
           Powering the world&apos;s most innovative ministries with cinematic speed and precision.
         </p>
 
-        {/* Locked 4-Logo Grid — stable index keys guarantee 4 elements always exist */}
+        {/* Locked 4-Logo Grid: stable index keys guarantee 4 elements always exist */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-16 md:gap-24 lg:gap-32 w-full max-w-7xl mx-auto items-center justify-center min-h-[120px]">
           {[0, 1, 2, 3].map((i) => (
             <div

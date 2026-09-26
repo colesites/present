@@ -84,3 +84,20 @@ test("the two preview schemes may be drawn as images", () => {
     );
   }
 });
+
+test("the website's YouTube page may be framed", () => {
+  // A packaged build embeds YouTube props through it, because YouTube refuses
+  // an embed from `tauri://localhost`, which sends no referrer
+  // (`shared/lib/youtube-embed.mjs`). Refused here, a YouTube prop is as
+  // blank as it was before the wrapper existed — and, again, only once
+  // installed.
+  const frames = policy()
+    .split(";")
+    .map((directive) => directive.trim())
+    .find((directive) => directive.startsWith("frame-src"));
+  assert.ok(frames, "the CSP says what may be framed");
+  assert.ok(
+    frames.split(/\s+/).includes("https://present.multivrs.space"),
+    "frame-src must allow the website the YouTube wrapper is served from",
+  );
+});

@@ -14,7 +14,7 @@ export function Pricing() {
             Built for every stage
           </h2>
           <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-white/55 sm:text-lg">
-            Choose the plan that fits your congregation. From local small groups to global cathedrals.
+            Choose the plan that fits your team, from a weekly small group to a packed conference hall.
           </p>
         </div>
 

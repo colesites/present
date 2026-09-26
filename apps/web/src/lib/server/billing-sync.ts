@@ -3,6 +3,7 @@ import "server-only";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../packages/backend/convex/_generated/api";
 import { getStripe } from "./stripe";
+import { planKeyOfPrice } from "./stripe-plan";
 import {
   getPresentPlanDefinition,
   resolvePresentPlanKey,
@@ -87,15 +88,8 @@ export const syncUserBillingToConvex = async (input: {
     return;
   }
 
-  // Extract the plan from the first subscription item's price lookup_key
   const item = sub.items.data[0];
-  const lookupKey = item?.price?.lookup_key ?? null;
-  const productName =
-    typeof item?.price?.product === "object" && item.price.product !== null
-      ? (item.price.product as { name?: string }).name ?? null
-      : null;
-
-  const planKey = resolvePresentPlanKey(lookupKey ?? productName);
+  const planKey = await planKeyOfPrice(stripe, item?.price);
   const plan = getPresentPlanDefinition(planKey);
 
   const periodStartMs = (item?.current_period_start ?? 0) * 1000;

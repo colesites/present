@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { useMenuChecks, useMenuCommand } from "../../tauri/menu-commands";
 import { Monitor, X, Loader2 } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -96,6 +97,11 @@ export function ProjectButton({ className }: ProjectButtonProps) {
       openOnSecondaryScreen();
     }
   }, [isLive, closeOutput, openOnSecondaryScreen]);
+
+  // Screens ▸ Audience Output in the application menu is this button, and its
+  // tick is whether the output is open.
+  useMenuCommand("screens.output", handleClick);
+  useMenuChecks({ output: isLive });
 
   const handleRightClick = useCallback(
     (e: React.MouseEvent) => {

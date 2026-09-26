@@ -6,13 +6,13 @@ import { Testimonials } from "@/components/home/Testimonials";
 import { Pricing } from "@/components/home/Pricing";
 import { CallToAction } from "@/components/home/CallToAction";
 import { Navbar, Footer } from "@/components/home/Layout";
-import { MessageSquare } from "lucide-react";
+import { HelpButton } from "@/components/help/HelpCenter";
 
 export const metadata: Metadata = {
   // Overrides the layout's default for the home page only. Named ministries
   // were removed: naming a church as a user is a claim that needs their
   // agreement, and it narrowed the software to one kind of room.
-  title: "Present — Presentation software for churches and live events",
+  title: "Present | Presentation software for churches and live events",
   description:
     "Presentation software for churches, conferences and live events. Cloud libraries, real-time collaboration, instant scripture search, and a confidence view built for running something live.",
   keywords: [
@@ -49,11 +49,7 @@ export default function Home() {
         <CallToAction />
       </main>
 
-      {/* Floating Chat Button */}
-      <button className="fixed bottom-4 right-4 md:bottom-6 md:right-6 h-12 w-12 md:h-14 md:w-auto bg-white text-black font-semibold md:px-6 rounded-full shadow-[0_10px_40px_rgba(0,0,0,0.5)] hover:scale-105 transition-transform flex items-center justify-center md:gap-3 z-50">
-        <MessageSquare className="w-5 h-5 md:w-5 md:h-5 shrink-0 text-primary" />
-        <span className="hidden md:inline">How can we help?</span>
-      </button>
+      <HelpButton />
 
       <Footer />
     </div>

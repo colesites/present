@@ -52,7 +52,8 @@ import {
   getSlideGroups,
   getSlidesForGrid,
 } from "../../renderer/shared/lib/present/selectors";
-import { useSpeechAutopilot } from "../../renderer/shared/hooks/useSpeechAutopilot";
+import { useSongAgent } from "../song-agent/useSongAgent";
+import { useDesktopSessionStore } from "../../renderer/shared/store/desktopSession";
 import { useAppNavigation } from "../../renderer/shared/hooks/useAppNavigation";
 import { useAppHandlers } from "../../renderer/shared/hooks/useAppHandlers";
 import {
@@ -62,12 +63,21 @@ import {
 import { MainView } from "./MainView";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import {
-  buildSlidesFromBody,
   createComposedLibraryDraft,
   DEFAULT_CANVAS_SIZE,
+  getCanvasSizeDimensions,
   getSlideBackgroundColor,
+  normalizeLibrarySlide,
+  rebuildSlidesFromLyrics,
   reorderLibrarySlides,
 } from "../library/lib/library-items";
+import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
+import { useScripturePanelStore } from "../scripture/lib/panel-state";
+import {
+  applyLookToSlides,
+  findBackgroundMedia,
+  normalizeLook,
+} from "../themes/theme-look.mjs";
 import {
   importServicePresentationFile,
   type PresentationImportMode,
@@ -85,6 +95,7 @@ import { useScriptureLayoutTemplateStore } from "../scripture/lib/layout-templat
 import { useScreenComposerState } from "../screen-composer";
 import { useGlobalSearchStore } from "../../renderer/shared/store/globalSearchStore";
 import { usePresentAiToolProvider } from "../../renderer/ai-operator/usePresentAiToolProvider";
+import { useMenuChecks, useMenuCommand } from "../../renderer/tauri/menu-commands";
 
 type EditedOutputSnapshot = {
   slideId: string;
@@ -272,7 +283,6 @@ interface PresentContainerProps {
   showsPanelRef: React.RefObject<LibrariesPanelRef>;
   mediaPanelRef: React.RefObject<MediaPanelRef>;
   scripturePanelRef: React.RefObject<ScripturePanelRef>;
-  isAutopilotEnabled: boolean;
   showTextInOutput: boolean;
   setShowTextInOutput: (show: boolean) => void;
   showMediaInOutput: boolean;
@@ -299,7 +309,6 @@ export function PresentContainer({
   showsPanelRef,
   mediaPanelRef,
   scripturePanelRef,
-  isAutopilotEnabled,
   contentSource,
   showTextInOutput,
   setShowTextInOutput,
@@ -355,6 +364,7 @@ export function PresentContainer({
     settingsLibraryFontWeight,
     settingsLang,
     settingsSpeechInputDeviceId,
+    settingsAgent,
     settingsAudioOutputDeviceId,
     setSettingsAudioOutputDeviceId,
     setSettingsAudioOutputDeviceLabel,
@@ -950,9 +960,33 @@ export function PresentContainer({
     [activeMediaItem, allMediaItems, settingsScriptureBackgroundId]
   );
 
+  // A song slide's own image or video, from its theme: the media layer
+  // while that slide is live, as scripture's background is for scripture.
+  // Slides that share it (a song themed with one video) share the layer, so
+  // it plays on from slide to slide rather than starting again.
+  const liveSlideBackgroundId = useMemo(() => {
+    if (isScriptureActive || !selected?.libraryId) return null;
+    const item = availableSlideDeckItems.find(
+      (candidate) => String(candidate._id) === selected.libraryId,
+    );
+    return item?.slides[selected.index]?.backgroundId ?? null;
+  }, [availableSlideDeckItems, isScriptureActive, selected]);
+  // Media the operator chooses (or clears) while that slide is live wins
+  // over it, until the slide changes: a click in the Media panel always
+  // does something.
+  const liveSlideKey = selected?.libraryId ? `${selected.libraryId}:${selected.index}` : null;
+  const [operatorMediaForSlide, setOperatorMediaForSlide] = useState<string | null>(null);
+  const slideBackgroundMediaItem = useMemo(
+    () =>
+      liveSlideKey && operatorMediaForSlide === liveSlideKey
+        ? null
+        : (findBackgroundMedia(liveSlideBackgroundId, allMediaItems) as MediaItem | null),
+    [allMediaItems, liveSlideBackgroundId, liveSlideKey, operatorMediaForSlide],
+  );
+
   const effectiveActiveMediaItem = isScriptureActive
     ? (scriptureBackgroundMediaItem ?? activeMediaItem)
-    : activeMediaItem;
+    : (slideBackgroundMediaItem ?? activeMediaItem);
   const effectiveMediaFilters = useMemo<MediaFilters>(
     () => getMediaFiltersForItem(effectiveActiveMediaItem),
     [effectiveActiveMediaItem, getMediaFiltersForItem],
@@ -1212,11 +1246,10 @@ export function PresentContainer({
         throw new Error("Library item not found.");
       }
 
-      const slides = buildSlidesFromBody(
-        body,
-        item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
-        libraryTextDefaults,
-      );
+      // The same slides with new words, so the one on screen is still the
+      // one on screen and shows the edit at once (`rebuildSlidesFromLyrics`).
+      const canvasSize = item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE;
+      const slides = rebuildSlidesFromLyrics(body, item.slides, canvasSize, libraryTextDefaults);
       await updateExistingLibraryItem(
         libraryId,
         {
@@ -1244,6 +1277,92 @@ export function PresentContainer({
       updateExistingLibraryItem,
     ],
   );
+
+  // The song showing here is what the Themes panel applies to in Show view:
+  // a library song, not a service's imported presentation or scripture.
+  const setThemeTarget = useThemesModalStore((state) => state.setTarget);
+  const themeTargetItem =
+    viewMode === "show" &&
+    selectedDeckItem &&
+    selectedDeckItem.type !== "scripture" &&
+    selectedDeckLibraryId &&
+    !selectedDeckLibraryId.startsWith("presentation_")
+      ? selectedDeckItem
+      : null;
+  const themeTargetLiveIndex =
+    themeTargetItem && selected?.libraryId === String(themeTargetItem._id) ? selected.index : null;
+  useEffect(() => {
+    if (!themeTargetItem) {
+      setThemeTarget("show", null);
+      return;
+    }
+    setThemeTarget("show", {
+      surface: "show",
+      libraryId: String(themeTargetItem._id),
+      title: themeTargetItem.title || "this song",
+      slides: themeTargetItem.slides,
+      slideIndex:
+        themeTargetLiveIndex !== null && themeTargetLiveIndex < themeTargetItem.slides.length
+          ? themeTargetLiveIndex
+          : null,
+      canvasSize: themeTargetItem.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE,
+      themeId: themeTargetItem.content?.theme?.id ?? null,
+    });
+  }, [setThemeTarget, themeTargetItem, themeTargetLiveIndex]);
+
+  // A theme chosen in the panel for that song: saved to it, and onto the
+  // output at once if the song is live.
+  const pendingTheme = useThemesModalStore((state) => state.pending);
+  const consumePendingTheme = useThemesModalStore((state) => state.consumePending);
+  useEffect(() => {
+    if (!pendingTheme || pendingTheme.surface !== "show") return;
+    const { theme, onlySlideIndex, libraryId, nonce } = pendingTheme;
+    consumePendingTheme(nonce);
+    const item = libraryItems.find((candidate) => String(candidate._id) === libraryId);
+    if (!item) {
+      toast.error("That song isn't in the library any more.");
+      return;
+    }
+    const canvasSize = item.content?.presentation?.canvasSize ?? DEFAULT_CANVAS_SIZE;
+    const slides = applyLookToSlides(
+      item.slides.map((slide) => normalizeLibrarySlide(slide, canvasSize, libraryTextDefaults)),
+      normalizeLook(theme.look),
+      getCanvasSizeDimensions(canvasSize),
+      { onlySlideIndex },
+    ) as LibrarySlide[];
+    const content: LibraryContent | undefined =
+      onlySlideIndex !== null ? item.content : { ...item.content, theme };
+    void updateExistingLibraryItem(
+      libraryId,
+      { title: item.title, body: item.body, slides, content },
+      item.categoryId ? String(item.categoryId) : undefined,
+    )
+      .then(() => {
+        publishSavedSlidesToLiveOutput({
+          libraryId,
+          nextSlides: slides,
+          content,
+          previousSlides: item.slides,
+          fallbackIndex: selected?.libraryId === libraryId ? selected.index : null,
+        });
+        toast.success(
+          onlySlideIndex !== null
+            ? `${theme.name} is on slide ${onlySlideIndex + 1} of ${item.title}`
+            : `${theme.name} is on ${item.title}`,
+        );
+      })
+      .catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : "The theme couldn't be applied.");
+      });
+  }, [
+    consumePendingTheme,
+    libraryItems,
+    libraryTextDefaults,
+    pendingTheme,
+    publishSavedSlidesToLiveOutput,
+    selected,
+    updateExistingLibraryItem,
+  ]);
 
   const handleOpenMiniEditor = useCallback(
     (libraryId: string, initialSlideIndex?: number | null) => {
@@ -1363,9 +1482,10 @@ export function PresentContainer({
         }
       }
 
+      setOperatorMediaForSlide(liveSlideKey);
       selectMediaForOutput(item);
     },
-    [screenComposer, selectMediaForOutput],
+    [liveSlideKey, screenComposer, selectMediaForOutput],
   );
 
   const {
@@ -1390,6 +1510,10 @@ export function PresentContainer({
       setEditedOutputSnapshot(null);
       setSelectedPresentationLibraryId(null);
       handleSelectScripture(refId);
+      // And in the Bible panel, whichever view is open, so a passage in the
+      // service can be read and put up from the Bible tab without going to
+      // Show. The panel shows whatever reference its search holds.
+      useScripturePanelStore.getState().setLookupValue(refId);
     },
     onSelectPresentation: (refId: string) => {
       setEditedOutputSnapshot(null);
@@ -1465,15 +1589,28 @@ export function PresentContainer({
     outputSlideContent,
   ]);
 
-  // Coordination Hooks
-  useSpeechAutopilot({
-    isAutopilotEnabled,
-    viewMode,
-    slidesForGrid,
-    selected,
-    handleSelectSlide: async (id, text, footer) => {
-      await handleLiveSlideSelect(id, text, footer);
-    },
+  // The song agent: follows the song on screen as it is sung, and offers
+  // the one it hears when the band starts another.
+  const songAgentSessionToken = useDesktopSessionStore((state) => state.sessionToken);
+  const serviceSongIds = useMemo(
+    () =>
+      serviceItems
+        .filter((item) => item.type === "library" && item.refId)
+        .map((item) => String(item.refId)),
+    [serviceItems],
+  );
+  useSongAgent({
+    libraryItems,
+    serviceSongIds,
+    live: selected?.libraryId ? selected : null,
+    showSlide: (libraryId, slideIndex, text) =>
+      handleLiveSlideSelect(`${libraryId}:${slideIndex}`, text),
+    openSong: handleSetSelectedDeckLibraryId,
+    sessionToken: songAgentSessionToken,
+    lang: settingsLang,
+    inputDeviceId: settingsSpeechInputDeviceId,
+    follow: settingsAgent.songFollow,
+    suggest: settingsAgent.songSuggest,
   });
 
   const {
@@ -1494,7 +1631,9 @@ export function PresentContainer({
     audioOutputDeviceId: settingsAudioOutputDeviceId,
     shouldAutoPlay,
     onAutoPlayConsumed: () => setShouldAutoPlay(false),
-    forcePlay: isScriptureActive && effectiveActiveMediaItem?.type === "video",
+    forcePlay:
+      (isScriptureActive || Boolean(slideBackgroundMediaItem)) &&
+      effectiveActiveMediaItem?.type === "video",
   });
 
   // Offer, but never automatically force, a newly connected audio output.
@@ -1570,6 +1709,29 @@ export function PresentContainer({
     isGridView,
     setIsGridView,
   });
+
+  // The ticks in the application menu's Presentation and View menus: what is
+  // on the audience output now (`services/app_menu.rs`).
+  useMenuChecks({
+    text: showTextInOutput,
+    media: showMediaInOutput,
+    background: !hideBackgroundInOutput,
+    freeze: isOutputFrozen,
+    timer: isTimerLayerEnabled,
+    messages: isMessageLayerEnabled,
+    grid: isGridView,
+  });
+
+  // The media and timer items in the Presentation menu: the transport and the
+  // timer panel's own buttons, for the timer the panel has selected.
+  useMenuCommand("presentation.play-media", toggleVideoPlayback);
+  useMenuCommand("presentation.timer-play", () => {
+    if (timers.activeTimer) timers.toggleTimerPlayback(timers.activeTimer.id);
+  });
+  useMenuCommand("presentation.timer-reset", () => {
+    if (timers.activeTimer) timers.resetTimer(timers.activeTimer.id);
+  });
+  useMenuCommand("presentation.timer-stop-all", timers.stopAllTimers);
 
   // Foot pedals, MIDI and OSC reach the same handlers a click does
   // (`services/control` in the core, `useControlActions`).
@@ -2248,6 +2410,11 @@ export function PresentContainer({
         speechSettings={{
           lang: settingsLang,
           inputDeviceId: settingsSpeechInputDeviceId,
+          bible: {
+            onHeard: settingsAgent.bibleOnHeard,
+            addToService: settingsAgent.bibleAddToService,
+            voiceCommands: settingsAgent.bibleVoiceCommands,
+          },
         }}
         isPptxSelection={selectedPresentationSourceType === "pptx"}
         panelRefs={{

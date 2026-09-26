@@ -4,6 +4,7 @@ interface OrganizationSetupPageProps {
   searchParams: Promise<{
     sessionToken?: string | string[];
     source?: string | string[];
+    redirect?: string | string[];
   }>;
 }
 
@@ -19,11 +20,16 @@ export default async function OrganizationSetupPage({
   const source = Array.isArray(sourceParam)
     ? (sourceParam[0] ?? null)
     : (sourceParam ?? null);
+  const redirectParam = resolvedSearchParams.redirect;
+  const comeBackTo = Array.isArray(redirectParam)
+    ? (redirectParam[0] ?? null)
+    : (redirectParam ?? null);
 
   return (
     <OrganizationSetupClient
       source={source}
       desktopSessionToken={sessionToken}
+      desktopComeBackTo={comeBackTo}
     />
   );
 }

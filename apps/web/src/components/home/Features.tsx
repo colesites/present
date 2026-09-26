@@ -9,12 +9,13 @@ gsap.registerPlugin(ScrollTrigger);
 
 // ─── Images from Unsplash (dark, church/tech aesthetic) ──────────────────────
 const IMAGES = {
-  speakSearch:
+  // An open Bible in stained-glass light, by Shane Hoving (Unsplash License).
+  bibleAgent:
+    "https://images.unsplash.com/photo-1650065045891-e3a7c96a4ad7?w=900&q=80&fit=crop",
+  songAgent:
     "https://images.unsplash.com/photo-1598387181032-a3103a2db5b3?w=900&q=80&fit=crop",
   multiUser:
     "https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=900&q=80&fit=crop",
-  aiPilot:
-    "https://images.unsplash.com/photo-1677442135703-1787eea5ce01?w=900&q=80&fit=crop",
   cloudSync:
     "https://images.unsplash.com/photo-1544197150-b99a580bb7a8?w=900&q=80&fit=crop",
   groupDisplay:
@@ -109,7 +110,7 @@ function useLineReveal(ref: React.RefObject<HTMLElement | null>, delay = 0) {
   }, [ref, delay]);
 }
 
-// ─── Feature Row — full-width alternating layout ──────────────────────────────
+// ─── Feature Row: full-width alternating layout ──────────────────────────────
 interface FeatureRowProps {
   num: string;
   label: string;
@@ -242,8 +243,8 @@ const hCards: HCardProps[] = [
   { num: 1, label: "Group Display", description: "Drive 1–4 independent screens simultaneously. Each audience sees exactly what they need.", image: IMAGES.groupDisplay },
   { num: 2, label: "Remote Control", description: "Control your show from any device on the network. Walk the stage, lead the song.", image: IMAGES.remoteControl },
   { num: 3, label: "Media Stage", description: "A dedicated stage for video loops, motion backgrounds, and live camera feeds.", image: IMAGES.mediaStage },
-  { num: 4, label: "Worship Stage", description: "Lyrics, chord charts, and notes — surfaced beautifully for every musician on stage.", image: IMAGES.worshipStage },
-  { num: 5, label: "Live Streaming", description: "Stream directly to YouTube, Facebook, and RTMP with zero extra software.", image: IMAGES.liveStreaming },
+  { num: 4, label: "Worship Stage", description: "Lyrics, chord charts, and notes, surfaced beautifully for every musician on stage.", image: IMAGES.worshipStage },
+  { num: 5, label: "Live Streaming", description: "Send the audience screen over NDI to OBS, vMix or whatever your stream runs on.", image: IMAGES.liveStreaming },
   { num: 6, label: "Search Songs Online", description: "Tap into a global worship library. Search, preview, and add to your set in seconds.", image: IMAGES.searchOnline },
   { num: 7, label: "AI Fix Lyrics", description: "Paste scattered lyrics and AI restructures them into perfectly cued slides instantly.", image: IMAGES.fixLyrics },
   { num: 8, label: "Auto Save", description: "Every edit saved continuously, versioned in the cloud. Never lose your work again.", image: IMAGES.autoSave },
@@ -484,7 +485,7 @@ function SectionIntro() {
       </h2>
       <p className="line-clip">
         <span className="line-inner text-lg text-white/40 leading-relaxed">
-          Present combines blazing performance with an intuitive interface — so every volunteer
+          Present combines blazing performance with an intuitive interface, so every volunteer
           can run a world‑class production.
         </span>
       </p>
@@ -496,28 +497,28 @@ function SectionIntro() {
 const featureRows = [
   {
     num: "01",
-    label: "Speak to Search",
+    label: "Bible AI Agent",
     description:
-      "Just say the song title or Bible verse. Present hears you and pulls it up instantly — no typing, no hunting, just flow.",
-    image: IMAGES.speakSearch,
-    tag: "AI Voice",
+      "It listens to the preacher and puts each verse on screen as it's read, in the translation you choose. When it isn't sure, it asks the operator first.",
+    image: IMAGES.bibleAgent,
+    tag: "Scripture",
   },
   {
     num: "02",
+    label: "Song AI Agent",
+    description:
+      "It hears what the band starts to sing, finds the song in your library, and follows along line by line. No typing, no hunting, just flow.",
+    image: IMAGES.songAgent,
+    reverse: true,
+    tag: "Songs",
+  },
+  {
+    num: "03",
     label: "Multi-User Collaboration",
     description:
       "Your whole team works together live. Multiple operators, shared queues, one seamless show. No more stepping on each other.",
     image: IMAGES.multiUser,
-    reverse: true,
     tag: "Real-time",
-  },
-  {
-    num: "03",
-    label: "AI Auto Pilot",
-    description:
-      "AI anticipates the next slide, auto-advances lyrics, and keeps you one step ahead without lifting a finger.",
-    image: IMAGES.aiPilot,
-    tag: "AI",
   },
   {
     num: "04",

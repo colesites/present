@@ -123,6 +123,12 @@ export type SlideElementStyle = {
   flipX?: boolean;
   flipY?: boolean;
   objectFit?: "cover" | "contain" | "fill";
+  /** Extra space between letters, in canvas pixels. */
+  letterSpacing?: number;
+  /** Line height as a multiple of the font size; 1.2 when unset. */
+  lineHeight?: number;
+  /** A shape's paint: a colour, gradient or mix. Wins over `backgroundColor`. */
+  fill?: SlideFill;
   capitalization?:
   | "none"
   | "allCaps"
@@ -132,6 +138,22 @@ export type SlideElementStyle = {
   | "lowercase"
   | "capitalize";
 };
+
+/**
+ * How a shape is painted. A gradient runs across the shape at `angle`
+ * degrees (0 left to right, 90 top to bottom) as CSS draws one; a mix is a
+ * base colour with soft spots of colour, each at `x`, `y` (fractions of the
+ * shape) fading out at `size` times its longer side. The compositor reads the
+ * same (`compositor/fill.rs`).
+ */
+export type SlideFill =
+  | { kind: "color"; color: string }
+  | { kind: "gradient"; from: string; to: string; angle: number }
+  | {
+      kind: "mix";
+      base: string;
+      spots: Array<{ color: string; x: number; y: number; size: number }>;
+    };
 
 export type SlideTextRun = {
   text: string;
@@ -222,6 +244,17 @@ export type LibraryContent = {
     createdAt: number;
   };
   editorView?: "slides" | "source";
+  /**
+   * The theme last applied to the whole song, so slides rebuilt from its
+   * lyrics get it again. `look` is `features/themes/theme-look.mjs`'s.
+   */
+  theme?: LibraryTheme;
+};
+
+export type LibraryTheme = {
+  id: string;
+  name: string;
+  look: unknown;
 };
 
 export type LibraryItemDraft = {

@@ -58,13 +58,12 @@ pub enum Keep<'a> {
 
 impl Keep<'_> {
     fn wants(self, index: usize, element: &crate::services::slide::SlideElement) -> bool {
+        // Matched as change detection matched them.
         let named = |ids: &[String]| {
-            let key = if element.id.trim().is_empty() {
-                format!("#{index}")
-            } else {
-                element.id.clone()
-            };
-            ids.contains(&key)
+            ids.contains(&transition::change_detection::element_key(
+                index,
+                &element.id,
+            ))
         };
         match self {
             Self::Everything => true,
@@ -88,13 +87,40 @@ pub struct SceneCompositor {
     height: u32,
     /// The slide layers over transparency, valid while `cached_for` holds.
     cached_layers: Option<Pixmap>,
-    /// The last finished picture, for a whole-slide transition to come from.
-    last_picture: Option<Pixmap>,
+    /// The picture on screen before the one being drawn, for a whole-slide
+    /// transition to come from.
+    ///
+    /// Two buffers take turns rather than one being copied: the finished frame
+    /// used to be duplicated into a snapshot every frame — nine megabytes at
+    /// 1920x1200, allocated fresh each time, thirty times a second — in case a
+    /// transition started later. Now the previous frame is simply kept while
+    /// the next is drawn into the other buffer, and the two swap at the end.
+    previous: Option<Frame>,
+    /// The buffer the next frame is drawn into: the one that was on screen two
+    /// frames ago, whose contents are no longer needed.
+    spare: Option<Frame>,
     /// A transition part-way through, and the scene it is arriving from.
     ///
     /// The picture it came from cannot be recovered afterwards — the slide is
     /// gone — so it is kept here from the moment the change lands.
     running: Option<(transition::Running, OutputScene)>,
+    /// The two slide layers a changed-elements transition draws with: what
+    /// stays put and what arrives. Built once as the transition begins, and
+    /// the scene they were built from, so they are rebuilt only if it changes.
+    ///
+    /// Neither changes while the transition runs — they depend on the new
+    /// slide and on which elements move, and both are fixed the moment it
+    /// starts — but both were laid out and rasterised again on every frame.
+    /// That made each frame of the default transition cost about ninety
+    /// milliseconds at 1920x1200, so a 600 ms transition was drawn in eight
+    /// steps instead of thirty-six.
+    transition_layers: Option<(Pixmap, Pixmap, OutputScene)>,
+    /// The layer a changed-elements transition draws what moves into, kept
+    /// for the length of the transition rather than allocated every frame.
+    transition_scratch: Option<Pixmap>,
+    /// The frame a whole-slide transition composed its last picture in,
+    /// reused for the next one rather than allocated and cleared each frame.
+    whole_slide_spare: Option<Frame>,
     /// The scene the cache was built from. Compared structurally, which is what
     /// typing the scene in Stage 4 bought — the Electron path compared
     /// `JSON.stringify` output on every render (audit §5.5).
@@ -125,6 +151,13 @@ pub struct SceneCompositor {
     /// the window draws them above the timer, and the timer above the slide.
     overlay_layer: Option<(Pixmap, OverlayCounts)>,
     overlay_for: Option<OverlayKey>,
+    /// A scrolling message's words, drawn once and placed anew each frame
+    /// over the band in the overlay layer, and the message they were drawn
+    /// from.
+    marquee: Option<(
+        super::overlays::MarqueeStrip,
+        crate::services::output::MessageOverlay,
+    )>,
 }
 
 /// Everything `draw_message` and `draw_props` read.
@@ -132,22 +165,7 @@ pub struct SceneCompositor {
 struct OverlayKey {
     message: Option<crate::services::output::MessageOverlay>,
     props: Vec<crate::services::output::PropsOverlayItem>,
-    /// Which frame of a moving message this layer holds.
-    ///
-    /// The layer is cached and only redrawn when this key changes, which is
-    /// what a scrolling message needs to defeat: its contents are identical
-    /// from one frame to the next and only its position differs. A message
-    /// that does not move keeps this at zero and the layer is drawn once, as
-    /// before.
-    scroll_step: u64,
 }
-
-/// How many times a second a moving message is redrawn.
-///
-/// The whole overlay layer is rebuilt at each step, so this is a cost as well
-/// as a smoothness: thirty is smooth to the eye and leaves the rest of the
-/// frame budget alone.
-const MARQUEE_STEPS_PER_SECOND: f64 = 30.0;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct OverlayCounts {
@@ -184,7 +202,11 @@ impl SceneCompositor {
             height,
             cached_layers: None,
             cached_for: None,
-            last_picture: None,
+            previous: None,
+            spare: None,
+            transition_layers: None,
+            transition_scratch: None,
+            whole_slide_spare: None,
             running: None,
             last_rebuild: false,
             frame: None,
@@ -193,6 +215,7 @@ impl SceneCompositor {
             timer_for: None,
             overlay_layer: None,
             overlay_for: None,
+            marquee: None,
         }
     }
 
@@ -205,6 +228,46 @@ impl SceneCompositor {
         self.last_rebuild
     }
 
+    /// A transition is part-way through, so the next frame will look
+    /// different even though the scene has not changed.
+    ///
+    /// Anything that draws only when its scene changes has to ask this, and
+    /// does, through [`needs_drawing`](Self::needs_drawing).
+    pub fn is_animating(&self) -> bool {
+        self.running.is_some()
+    }
+
+    /// Whether a consumer that skips unchanged scenes has to draw this one.
+    ///
+    /// Yes when anything it last drew from differs (the scene, the video
+    /// frame, the size), and also when the picture moves by itself while the
+    /// scene stands still: a transition part-way through, or a message that
+    /// scrolls. The audience window and the operator's preview both skip
+    /// unchanged scenes, and both ask here. The preview used to decide for
+    /// itself and forgot transitions: it drew the first frame of each one,
+    /// which is mostly the slide being left, and kept showing it, so the
+    /// preview was always one slide behind whenever a transition was set.
+    pub fn needs_drawing(
+        &self,
+        last: Option<&(OutputScene, Option<f64>, (u32, u32))>,
+        scene: &OutputScene,
+        video: Option<f64>,
+        size: (u32, u32),
+    ) -> bool {
+        let moving_message = scene
+            .message_overlay
+            .as_ref()
+            .is_some_and(super::overlays::is_moving);
+        if moving_message || self.is_animating() {
+            return true;
+        }
+        !last.is_some_and(|(previous_scene, previous_video, previous_size)| {
+            *previous_size == size
+                && *previous_video == video
+                && !previous_scene.draws_differently(scene)
+        })
+    }
+
     /// Throw the cache away. For a resize, or a font change that would alter
     /// text the scene itself does not describe.
     pub fn invalidate(&mut self) {
@@ -215,6 +278,7 @@ impl SceneCompositor {
         self.timer_for = None;
         self.overlay_layer = None;
         self.overlay_for = None;
+        self.marquee = None;
     }
 
     /// The frame from the last successful `render`.
@@ -260,10 +324,15 @@ impl SceneCompositor {
         // from two different instants within one frame would tear.
         let now = Instant::now();
 
-        // Reuse the buffer when it is the right shape. Only its contents change
-        // between frames; its size changes when the output does.
-        let mut frame = match self.frame.take() {
-            Some(frame) if frame.width() == self.width && frame.height() == self.height => frame,
+        // The picture on screen stays readable while the next one is drawn into
+        // the spare buffer; a transition starting now comes from it. Each buffer
+        // is reused while it is the right shape, and only replaced when the
+        // output's size changes.
+        let right_shape =
+            |frame: &Frame| frame.width() == self.width && frame.height() == self.height;
+        self.previous = self.frame.take().filter(|frame| right_shape(frame));
+        let mut frame = match self.spare.take() {
+            Some(frame) if right_shape(&frame) => frame,
             _ => Frame::new(self.width, self.height)?,
         };
 
@@ -317,12 +386,9 @@ impl SceneCompositor {
         }
 
         // 4. The slide, only rebuilt when it changed.
-        match self.transition_layers(scene, loader, &mut report, now) {
-            Some(layers) => blend_over(&mut frame, &layers),
-            None => {
-                if let Some(layers) = self.layers_for(scene, loader, &mut report) {
-                    blend_over(&mut frame, layers);
-                }
+        if !self.draw_transition_layers(&mut frame, scene, loader, &mut report, now) {
+            if let Some(layers) = self.layers_for(scene, loader, &mut report) {
+                blend_over(&mut frame, layers);
             }
         }
 
@@ -342,6 +408,8 @@ impl SceneCompositor {
                 blend_over(&mut frame, overlays);
             }
         }
+        // 7. A scrolling message's words, over its band, where they are now.
+        self.draw_marquee(&mut frame, scene);
 
         // A whole-slide transition is between two *pictures*, background and
         // all — which is what the operator asked for when they chose it, and
@@ -349,9 +417,10 @@ impl SceneCompositor {
         // change of background video looked like nothing happening.
         let frame = self.blend_whole_frame(frame, now);
 
-        // Kept for the transition after this one to come from. The picture on
-        // screen cannot be recovered once the scene has moved.
-        self.last_picture = Some(frame.pixmap().to_owned());
+        // The one that was on screen becomes the next spare, and the one just
+        // drawn is what is on screen now — which is what the next frame's
+        // transition, if one starts, will come from.
+        self.spare = self.previous.take();
         self.frame = Some(frame);
         Some((self.frame.as_ref()?, report))
     }
@@ -370,12 +439,26 @@ impl SceneCompositor {
         }
         if running.is_over(now) {
             self.running = None;
+            self.transition_layers = None;
+            self.transition_scratch = None;
+            self.whole_slide_spare = None;
             return frame;
         }
-        let Some(mut out) = Frame::new(self.width, self.height) else {
-            return frame;
+        // Into the buffer the last frame of this transition was composed in,
+        // which holds nothing needed now; the one composed this frame takes
+        // its place for the next.
+        let mut out = match self.whole_slide_spare.take() {
+            Some(mut out) if out.width() == self.width && out.height() == self.height => {
+                out.clear(Color::BLACK);
+                out
+            }
+            _ => match Frame::new(self.width, self.height) {
+                Some(out) => out,
+                None => return frame,
+            },
         };
         running.draw(&mut out.pixmap_mut(), frame.pixmap(), now);
+        self.whole_slide_spare = Some(frame);
         out
     }
 
@@ -391,32 +474,47 @@ impl SceneCompositor {
         self.timer_layer.as_ref()
     }
 
-    /// The cached banner-and-props layer, redrawn if either changed.
-    fn overlays_for(
-        &mut self,
-        scene: &OutputScene,
-        loader: &dyn MediaLoader,
-    ) -> Option<(&Pixmap, OverlayCounts)> {
+    /// Put a scrolling message's words where they are at this instant.
+    ///
+    /// The band behind them is in the overlay layer, drawn once. The words
+    /// are drawn once too, and only placed here, every frame.
+    fn draw_marquee(&mut self, frame: &mut Frame, scene: &OutputScene) {
+        let Some(message) = scene
+            .message_overlay
+            .as_ref()
+            .filter(|message| super::overlays::is_moving(message))
+        else {
+            self.marquee = None;
+            return;
+        };
+        if self.marquee.as_ref().map(|(_, drawn_from)| drawn_from) != Some(message) {
+            self.marquee = super::overlays::MarqueeStrip::new(message, self.width, self.height)
+                .map(|strip| (strip, message.clone()));
+        }
+        let Some((strip, _)) = self.marquee.as_ref() else {
+            return;
+        };
         // Wall clock rather than the monotonic one: `shown_at_ms` is when the
         // operator sent the message, which is a time of day.
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
-        let elapsed_seconds = scene.message_overlay.as_ref().map_or(0.0, |message| {
-            (now_ms - message.shown_at_ms).max(0.0) / 1000.0
-        });
-        let moving = scene.message_overlay.as_ref().is_some_and(|message| {
-            matches!(message.animation.as_str(), "marquee-left" | "marquee-right")
-        });
+        let elapsed_seconds = (now_ms - message.shown_at_ms).max(0.0) / 1000.0;
+        strip.draw(&mut frame.pixmap_mut(), message, elapsed_seconds);
+    }
 
+    /// The cached banner-and-props layer, redrawn if either changed.
+    ///
+    /// A scrolling message's band is in it, and its words are not: those are
+    /// placed each frame by [`draw_marquee`](Self::draw_marquee).
+    fn overlays_for(
+        &mut self,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+    ) -> Option<(&Pixmap, OverlayCounts)> {
         let key = OverlayKey {
             message: scene.message_overlay.clone(),
             props: scene.props_overlay.clone(),
-            scroll_step: if moving {
-                (elapsed_seconds * MARQUEE_STEPS_PER_SECOND) as u64
-            } else {
-                0
-            },
         };
         if key.message.is_none() && key.props.is_empty() {
             return None;
@@ -431,7 +529,11 @@ impl SceneCompositor {
                 counts.drawn += props.drawn;
                 counts.deferred += props.deferred;
                 if let Some(message) = scene.message_overlay.as_ref() {
-                    super::overlays::draw_message(&mut view, message, elapsed_seconds);
+                    if super::overlays::is_moving(message) {
+                        super::overlays::draw_message_plate(&mut view, message);
+                    } else {
+                        super::overlays::draw_message(&mut view, message, 0.0);
+                    }
                     counts.drawn += 1;
                 }
             }
@@ -511,61 +613,81 @@ impl SceneCompositor {
         }
     }
 
-    /// The slide layers for this frame while a transition is running.
+    /// Draw this frame's slide layers while a changed-elements transition is
+    /// running, and say whether it did.
     ///
-    /// `None` when there is nothing in flight, and the ordinary cached layer
-    /// is used instead. The video is not in either: it is drawn beneath, so a
-    /// background carries on playing through a change of words without
-    /// anything here arranging it.
-    fn transition_layers(
+    /// `false` when there is nothing in flight, or when what is in flight is a
+    /// whole-slide transition — that is drawn at the end, over the finished
+    /// picture — and the ordinary cached layer is used instead. The video is
+    /// not in either: it is drawn beneath, so a background carries on playing
+    /// through a change of words without anything here arranging it.
+    fn draw_transition_layers(
         &mut self,
+        frame: &mut Frame,
         scene: &OutputScene,
         loader: &dyn MediaLoader,
         report: &mut Rendered,
         now: Instant,
-    ) -> Option<Pixmap> {
+    ) -> bool {
         self.start_transition_if_the_slide_moved(scene, loader, report, now);
 
-        let (running, from_scene) = self.running.as_ref()?;
+        let Some((running, _)) = self.running.as_ref() else {
+            return false;
+        };
         if running.is_over(now) {
             self.running = None;
-            return None;
+            self.transition_layers = None;
+            self.transition_scratch = None;
+            return false;
+        }
+        if running.mode() == transition::Mode::FullSlide {
+            return false;
         }
 
-        let mut out = Pixmap::new(self.width, self.height)?;
-        let (running, from_scene) = (running, from_scene.clone());
-        match running.mode() {
-            // Drawn at the end of the frame instead, over the finished
-            // picture: a whole-slide transition includes the background.
-            transition::Mode::FullSlide => return None,
-            transition::Mode::ChangedElements => {
-                // What did not change is drawn once, from the new slide,
-                // and never moves. Only the rest is animated over it.
-                let moving = running.changes().moving();
-                let still = self.build_layer(scene, loader, report, Keep::Except(&moving))?;
-                let to = self.build_layer(scene, loader, report, Keep::Only(&moving))?;
-                out.draw_pixmap(
-                    0,
-                    0,
-                    still.as_ref(),
-                    &tiny_skia::PixmapPaint::default(),
-                    Transform::identity(),
-                    None,
-                );
-                let mut animated = Pixmap::new(self.width, self.height)?;
-                running.draw(&mut animated.as_mut(), &to, now);
-                out.draw_pixmap(
-                    0,
-                    0,
-                    animated.as_ref(),
-                    &tiny_skia::PixmapPaint::default(),
-                    Transform::identity(),
-                    None,
-                );
-                let _ = from_scene;
-            }
+        // What did not change is drawn once, from the new slide, and never
+        // moves. Only the rest is animated over it. Both are built on the
+        // first frame and reused after it; only a slide that changes again
+        // mid-transition rebuilds them.
+        let moving = running.changes().moving();
+        let reusable = self
+            .transition_layers
+            .as_ref()
+            .is_some_and(|(_, _, built_for)| !layers_differ(built_for, scene));
+        if !reusable {
+            let still = self.build_layer(scene, loader, report, Keep::Except(&moving));
+            let to = self.build_layer(scene, loader, report, Keep::Only(&moving));
+            let (Some(still), Some(to)) = (still, to) else {
+                return false;
+            };
+            self.transition_layers = Some((still, to, scene.clone()));
         }
-        Some(out)
+        let (Some((running, _)), Some((still, to, _))) =
+            (self.running.as_ref(), self.transition_layers.as_ref())
+        else {
+            return false;
+        };
+
+        // What stays put goes straight onto the frame. What moves is drawn
+        // on nothing first and laid on after, because the arriving words
+        // replace the outgoing ones where they are laid — and replacing on
+        // the frame itself would take the video beneath with them. The layer
+        // is kept for the length of the transition rather than allocated for
+        // every frame of it.
+        blend_over(frame, still);
+        let mut moving = match self.transition_scratch.take() {
+            Some(mut layer) if layer.width() == self.width && layer.height() == self.height => {
+                super::parallel::for_each_band(layer.data_mut(), |bytes, _| bytes.fill(0));
+                layer
+            }
+            _ => match Pixmap::new(self.width, self.height) {
+                Some(layer) => layer,
+                None => return false,
+            },
+        };
+        running.draw(&mut moving.as_mut(), to, now);
+        blend_over(frame, &moving);
+        self.transition_scratch = Some(moving);
+        true
     }
 
     /// Begin one if this scene is a different slide and asks for it.
@@ -597,7 +719,9 @@ impl SceneCompositor {
 
         let from = match wanted.mode {
             // The picture that was on screen, background included.
-            transition::Mode::FullSlide => self.last_picture.clone(),
+            transition::Mode::FullSlide => {
+                self.previous.as_ref().map(|frame| frame.pixmap().clone())
+            }
             transition::Mode::ChangedElements => {
                 let moving = changes.moving();
                 self.build_layer(&previous, loader, report, Keep::Only(&moving))
@@ -608,6 +732,10 @@ impl SceneCompositor {
         };
         self.running = transition::Running::begin(from, wanted, changes, now)
             .map(|running| (running, previous));
+        // Which elements move depends on where the slide arrives from as well
+        // as where it arrives, so a new transition never inherits the last
+        // one's layers even when it lands on the same slide.
+        self.transition_layers = None;
 
         // The cache moves to the new slide as the transition begins, not when
         // it ends. Otherwise the next frame sees the cache still holding the
@@ -617,6 +745,19 @@ impl SceneCompositor {
             self.cached_layers = self.build_layer(scene, loader, report, Keep::Everything);
             self.cached_for = Some(scene.clone());
         }
+    }
+
+    /// A slide's own layers — its words, shapes and pictures — on nothing.
+    ///
+    /// For the transition picker's samples, which put real words over footage
+    /// of their own rather than over a video the output decoded.
+    pub fn slide_layer(&self, scene: &OutputScene) -> Option<Pixmap> {
+        self.build_layer(
+            scene,
+            &super::scene::NoMedia,
+            &mut Rendered::default(),
+            Keep::Everything,
+        )
     }
 
     /// Draw the slide layers of `scene`, keeping only what `keep` wants.
@@ -888,40 +1029,43 @@ fn blend_over(frame: &mut Frame, layers: &Pixmap) {
     if frame.width() != layers.width() || frame.height() != layers.height() {
         return;
     }
+    source_over(layers.pixels(), frame.pixmap_mut_pixels());
+}
 
-    super::parallel::zip_bands(
-        layers.pixels(),
-        frame.pixmap_mut_pixels(),
-        |source, destination| {
-            for (over, under) in source.iter().zip(destination.iter_mut()) {
-                let alpha = over.alpha();
-                if alpha == 0 {
-                    // Transparent: the frame already holds the answer.
-                    continue;
-                }
-                if alpha == 255 {
-                    // Opaque: the frame's pixel does not contribute.
-                    *under = *over;
-                    continue;
-                }
-
-                // Both sides are premultiplied, so source-over is one
-                // multiply-add per channel with no division.
-                let inverse = 255 - u32::from(alpha);
-                let mix = |src: u8, dst: u8| -> u8 {
-                    (u32::from(src) + (u32::from(dst) * inverse + 127) / 255).min(255) as u8
-                };
-                *under = tiny_skia::PremultipliedColorU8::from_rgba(
-                    mix(over.red(), under.red()),
-                    mix(over.green(), under.green()),
-                    mix(over.blue(), under.blue()),
-                    (u32::from(alpha) + (u32::from(under.alpha()) * inverse + 127) / 255).min(255)
-                        as u8,
-                )
-                .unwrap_or(*under);
+/// Premultiplied source-over, across cores.
+fn source_over(
+    source: &[tiny_skia::PremultipliedColorU8],
+    destination: &mut [tiny_skia::PremultipliedColorU8],
+) {
+    super::parallel::zip_bands(source, destination, |source, destination| {
+        for (over, under) in source.iter().zip(destination.iter_mut()) {
+            let alpha = over.alpha();
+            if alpha == 0 {
+                // Transparent: the frame already holds the answer.
+                continue;
             }
-        },
-    );
+            if alpha == 255 {
+                // Opaque: the frame's pixel does not contribute.
+                *under = *over;
+                continue;
+            }
+
+            // Both sides are premultiplied, so source-over is one
+            // multiply-add per channel with no division.
+            let inverse = 255 - u32::from(alpha);
+            let mix = |src: u8, dst: u8| -> u8 {
+                (u32::from(src) + (u32::from(dst) * inverse + 127) / 255).min(255) as u8
+            };
+            *under = tiny_skia::PremultipliedColorU8::from_rgba(
+                mix(over.red(), under.red()),
+                mix(over.green(), under.green()),
+                mix(over.blue(), under.blue()),
+                (u32::from(alpha) + (u32::from(under.alpha()) * inverse + 127) / 255).min(255)
+                    as u8,
+            )
+            .unwrap_or(*under);
+        }
+    });
 }
 
 /// A decoded frame as something tiny-skia can paint.
@@ -1097,6 +1241,66 @@ mod tests {
         );
     }
 
+    /// The old words fade out while the new ones fade in, over a video that
+    /// carries on beneath both.
+    ///
+    /// They used to stay at full strength under the arriving words until the
+    /// transition ended, then vanish in one frame — which is what made the
+    /// default transition look anything but smooth on the audience screen.
+    #[test]
+    fn the_old_words_fade_out_as_the_new_ones_fade_in() {
+        let block = |x: f64, colour: &str| {
+            json!([{
+                "id": "words", "type": "shape",
+                "x": x, "y": 20.0, "width": 30.0, "height": 60.0,
+                "style": { "backgroundColor": colour }
+            }])
+        };
+        let video = frame_of(100, 100, [0, 0, 0, 255]);
+        let first = OutputScene {
+            slide_elements: Some(block(10.0, "#ffffff")),
+            ..video_scene()
+        };
+        let second = OutputScene {
+            slide_elements: Some(block(60.0, "#ffffff")),
+            transition: Some(transition::Transition {
+                kind: "fade".to_owned(),
+                duration_ms: 400,
+                easing: transition::Easing::Linear,
+                ..transition::Transition::none()
+            }),
+            ..video_scene()
+        };
+
+        let mut compositor = SceneCompositor::new(100, 100);
+        compositor
+            .render(&first, Some(&video), &NoMedia)
+            .expect("the first slide");
+        compositor
+            .render(&second, Some(&video), &NoMedia)
+            .expect("the transition begins");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let (frame, _) = compositor
+            .render(&second, Some(&video), &NoMedia)
+            .expect("part way through");
+
+        let (old, _, _, _) = frame.pixel_at(25, 50).expect("a pixel");
+        let (new, _, _, _) = frame.pixel_at(75, 50).expect("a pixel");
+        assert!(
+            (40..=215).contains(&old),
+            "the old words are on their way out, not still at full strength: {old}"
+        );
+        assert!(
+            (40..=215).contains(&new),
+            "the new words are on their way in: {new}"
+        );
+        assert_eq!(
+            frame.pixel_at(50, 95),
+            Some((0, 0, 0, 255)),
+            "the video beneath carries on untouched"
+        );
+    }
+
     /// The owner's report: chosen on whole slide, with videos, nothing
     /// happened.
     ///
@@ -1143,6 +1347,149 @@ mod tests {
             red > 0 && blue > 0,
             "part way between the two backgrounds, not one or the other: {red},{blue}"
         );
+    }
+
+    /// What a consumer that skips unchanged scenes keeps: the preview and the
+    /// audience window both draw like this.
+    #[derive(Default)]
+    struct Skipping {
+        last: Option<(OutputScene, Option<f64>, (u32, u32))>,
+        shown: Option<(u8, u8, u8, u8)>,
+        draws: usize,
+    }
+
+    impl Skipping {
+        fn tick(&mut self, compositor: &mut SceneCompositor, scene: &OutputScene) {
+            if !compositor.needs_drawing(self.last.as_ref(), scene, None, (100, 100)) {
+                return;
+            }
+            let (frame, _) = compositor.render(scene, None, &NoMedia).expect("a frame");
+            self.shown = frame.pixel_at(50, 50);
+            self.last = Some((scene.clone(), None, (100, 100)));
+            self.draws += 1;
+        }
+    }
+
+    fn solid_slide(colour: &str, transition: Option<transition::Transition>) -> OutputScene {
+        OutputScene {
+            slide_elements: Some(json!([{
+                "id": "words", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0,
+                "style": { "backgroundColor": colour }
+            }])),
+            transition,
+            ..scene()
+        }
+    }
+
+    /// The preview was one slide behind whenever a transition was set: it
+    /// drew the first frame of the transition, mostly the slide being left,
+    /// and then kept that picture because the scene had not changed.
+    #[test]
+    fn a_consumer_that_skips_unchanged_scenes_draws_a_transition_to_its_end() {
+        let mut compositor = SceneCompositor::new(100, 100);
+        let mut preview = Skipping::default();
+        preview.tick(&mut compositor, &solid_slide("#ff0000", None));
+        assert_eq!(preview.shown, Some((255, 0, 0, 255)), "slide one");
+
+        let slide_two = solid_slide(
+            "#0000ff",
+            Some(transition::Transition {
+                kind: "fade".to_owned(),
+                duration_ms: 60,
+                ..transition::Transition::none()
+            }),
+        );
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_millis(200) {
+            preview.tick(&mut compositor, &slide_two);
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+        assert_eq!(
+            preview.shown,
+            Some((0, 0, 255, 255)),
+            "slide two, not the start of the fade"
+        );
+        assert!(
+            preview.draws > 3,
+            "drawn through the fade, not once: {}",
+            preview.draws
+        );
+
+        let draws = preview.draws;
+        for _ in 0..5 {
+            preview.tick(&mut compositor, &slide_two);
+        }
+        assert_eq!(preview.draws, draws, "and not again once it has ended");
+    }
+
+    #[test]
+    fn a_still_slide_is_drawn_once_and_a_scrolling_message_every_time() {
+        let mut compositor = SceneCompositor::new(100, 100);
+        let still = solid_slide("#ff0000", None);
+        let mut preview = Skipping::default();
+        for _ in 0..4 {
+            preview.tick(&mut compositor, &still);
+        }
+        assert_eq!(preview.draws, 1);
+
+        let scrolling = OutputScene {
+            message_overlay: Some(crate::services::output::MessageOverlay {
+                id: "m".to_owned(),
+                text: "Welcome".to_owned(),
+                position: "bottom".to_owned(),
+                theme_key: "default".to_owned(),
+                shown_at_ms: 0.0,
+                dismiss_mode: "manual".to_owned(),
+                animation: "marquee-left".to_owned(),
+                speed_seconds: 10.0,
+                font_scale: 1.0,
+            }),
+            ..still
+        };
+        let mut preview = Skipping::default();
+        for _ in 0..4 {
+            preview.tick(&mut compositor, &scrolling);
+        }
+        assert_eq!(
+            preview.draws, 4,
+            "a marquee moves while its scene stands still"
+        );
+    }
+
+    #[test]
+    fn a_scrolling_message_is_somewhere_new_on_frames_a_few_milliseconds_apart() {
+        // An output draws sixty frames a second. The words were moved only
+        // thirty times a second, so frames drawn close together were the same
+        // picture, and then the next leapt: the stutter an operator saw.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
+        let scrolling = OutputScene {
+            message_overlay: Some(crate::services::output::MessageOverlay {
+                id: "m".to_owned(),
+                text: "Welcome".to_owned(),
+                position: "top".to_owned(),
+                theme_key: "default".to_owned(),
+                shown_at_ms: now_ms - 500.0,
+                dismiss_mode: "manual".to_owned(),
+                animation: "marquee-left".to_owned(),
+                speed_seconds: 2.0,
+                font_scale: 1.0,
+            }),
+            ..scene()
+        };
+        let mut compositor = SceneCompositor::new(320, 180);
+        let first = compositor
+            .render(&scrolling, None, &NoMedia)
+            .map(|(frame, _)| frame.pixmap().data().to_vec())
+            .expect("a frame");
+        std::thread::sleep(std::time::Duration::from_millis(8));
+        let second = compositor
+            .render(&scrolling, None, &NoMedia)
+            .map(|(frame, _)| frame.pixmap().data().to_vec())
+            .expect("a frame");
+        assert_ne!(first, second, "the words moved between the two frames");
     }
 
     #[test]

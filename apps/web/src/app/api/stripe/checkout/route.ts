@@ -1,79 +1,67 @@
-import { auth } from "@clerk/nextjs/server";
 import { getStripe } from "@/lib/server/stripe";
+import {
+  BillingError,
+  billingErrorResponse,
+  currentSubscription,
+  ensureCustomer,
+  isPurchasable,
+  priceFor,
+  publishableKey,
+  requireUser,
+  siteOrigin,
+} from "@/lib/server/present-billing";
 
+/**
+ * Start paying, on Present's own checkout page.
+ *
+ * `{ lookupKey }` buys a plan; `{ mode: "setup" }` saves a new card for the
+ * plan already running. Either way the answer is a Checkout Session with
+ * `ui_mode: "elements"`: its client secret drives Stripe's Payment Element
+ * inside our page, and Stripe brings the customer back to `return_url`.
+ */
 export async function POST(request: Request) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-
-    const body = (await request.json()) as {
-      lookupKey: string;
-      successUrl?: string;
-      cancelUrl?: string;
-    };
-
-    if (!body.lookupKey) {
-      return new Response("Missing lookupKey", { status: 400 });
-    }
-
+    const { userId } = await requireUser();
+    const body = (await request.json().catch(() => ({}))) as { lookupKey?: unknown; mode?: unknown };
     const stripe = getStripe();
+    const customer = await ensureCustomer(stripe, userId);
+    const origin = siteOrigin(request);
 
-    // Resolve the price from the lookup key
-    const prices = await stripe.prices.list({
-      lookup_keys: [body.lookupKey],
-      limit: 1,
-    });
-
-    if (prices.data.length === 0) {
-      return new Response(`No price found for lookup key: ${body.lookupKey}`, {
-        status: 404,
+    if (body.mode === "setup") {
+      const session = await stripe.checkout.sessions.create({
+        ui_mode: "elements",
+        mode: "setup",
+        currency: "usd",
+        customer: customer.id,
+        return_url: `${origin}/checkout/complete?session_id={CHECKOUT_SESSION_ID}`,
+        setup_intent_data: { metadata: { userId } },
+        metadata: { userId, purpose: "payment-method" },
       });
+      return Response.json({ clientSecret: session.client_secret, publishableKey: publishableKey() });
     }
 
-    const priceId = prices.data[0].id;
-
-    // Find or create a Stripe customer for this user
-    const existingCustomers = await stripe.customers.search({
-      limit: 1,
-      query: `metadata["userId"]:"${userId}"`,
-    });
-
-    let customerId: string;
-
-    if (existingCustomers.data.length > 0) {
-      customerId = existingCustomers.data[0].id;
-    } else {
-      const customer = await stripe.customers.create({
-        metadata: { userId },
-      });
-      customerId = customer.id;
+    if (!isPurchasable(body.lookupKey)) {
+      throw new BillingError("Choose Pro or Power, monthly or yearly.");
+    }
+    // Someone already paying changes their plan from the Billing page, where
+    // the difference is prorated, rather than starting a second subscription.
+    if (await currentSubscription(stripe, customer.id)) {
+      return Response.json({ alreadySubscribed: true }, { status: 409 });
     }
 
-    const webAppUrl =
-      process.env.WEB_APP_URL ?? "http://localhost:3001";
-
+    const price = await priceFor(stripe, body.lookupKey);
     const session = await stripe.checkout.sessions.create({
+      ui_mode: "elements",
       mode: "subscription",
-      customer: customerId,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url:
-        body.successUrl ?? `${webAppUrl}/pricing?checkout=success`,
-      cancel_url:
-        body.cancelUrl ?? `${webAppUrl}/pricing?checkout=cancel`,
-      subscription_data: {
-        metadata: { userId },
-      },
-      metadata: { userId },
+      customer: customer.id,
+      line_items: [{ price: price.id, quantity: 1 }],
+      allow_promotion_codes: true,
+      return_url: `${origin}/checkout/complete?session_id={CHECKOUT_SESSION_ID}`,
+      subscription_data: { metadata: { userId } },
+      metadata: { userId, lookupKey: body.lookupKey },
     });
-
-    return Response.json({ url: session.url });
+    return Response.json({ clientSecret: session.client_secret, publishableKey: publishableKey() });
   } catch (error) {
-    console.error("[Stripe Checkout] Error:", error);
-    return new Response(
-      error instanceof Error ? error.message : "Checkout failed",
-      { status: 500 },
-    );
+    return billingErrorResponse(error, "checkout failed to start");
   }
 }

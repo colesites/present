@@ -4,6 +4,77 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-26
+
+Themes, a song agent, and a Settings window laid out again.
+
+### Added
+
+- Themes: a Themes panel with built-in themes, Pro and Power themes, and your
+  own. A theme is designed on the slide itself, dragging and resizing the words
+  and the box behind them, with the font, weight, spacing, line height,
+  outline, shadow, gradients and colour mixes. A background can be a colour, a
+  gradient, a mix, or an image or video from the media library. A built-in
+  theme can be changed as a copy.
+- A song agent. While it is on, it listens to the singing, moves the song on
+  screen along slide by slide, and says when the band starts another song from
+  the library, then waits for the operator to show it. Included with Pro and
+  Power.
+- An Agent page in Settings, in place of Speech to Search: the language and
+  microphone both agents listen with, whether a passage the Bible agent hears
+  goes straight on screen or waits in the Bible tab, whether it is added to the
+  service, the "next verse" and "previous verse" commands, and whether the song
+  agent follows the song and suggests others. Each starts as the agent behaved
+  before.
+- The editor's slide list shows each slide as it will look, and its sidebar is
+  shorter, in tabs.
+- A passage in a service opens in the Bible tab when it is chosen, and
+  Previous and Next step through the verses around it.
+- Every control in the menu bar: File, Edit, View, Presentation (slides,
+  items, layers, freeze, media playback and the timer), Screens, Window and
+  Help.
+- Workspace invitations. An admin invites an email address, and that person
+  accepts from the account menu or the website. Anyone who knew a workspace's
+  id could join it before.
+- Each plan, Free, Pro and Power, gets what it includes, from AI minutes to
+  members to themes.
+
+### Changed
+
+- Settings has five pages: Screens & sound, Agent, Slides, Timer and
+  Connections. Video sound is with the screens, the song and Bible fonts sit
+  beside a preview of a slide, and the Bible background is chosen from the
+  media picker.
+- Slide text draws its outline, shadow, letter spacing, line height, underline
+  and gradient fills on every screen, the same in the slide grid, the preview
+  and the audience output.
+- Every weight of every installed font can be chosen, not only Regular.
+- The app calls itself presentation software, for churches, conferences and
+  live events.
+- Services and libraries are there when the window opens, rather than filling
+  in a second or more later, and a church's workspace syncs as soon as its
+  organisation is known after signing in.
+
+### Fixed
+
+- Video skipped and transitions did not run on the audience screen. Video now
+  plays at a steady rate there, and transitions run as they do in the preview.
+- The preview showed the slide before the live one whenever a transition was
+  set.
+- A theme's box and background moved with the words during a transition.
+- Editing a song's lyrics while it was on screen left the old words on the
+  outputs until the slide was chosen again, and the slide grid lost its place.
+- A scrolling message stuttered, and the preview showed it twice, with a faint
+  copy behind it.
+- YouTube props showed "Error 153" in the installed app.
+- Worship stage videos froze on their first frame after switching videos or
+  showing media again.
+- The chosen microphone was forgotten when Settings opened.
+- The font list was cut off at the edge of its panel.
+- The Windows build failed at its last step, unable to find FFmpeg's import
+  libraries.
+- A band of empty space sat under the last row of slides.
+
 ## [0.4.0] - 2026-09-24
 
 Present's core is now Rust. The Electron main process is gone (tagged

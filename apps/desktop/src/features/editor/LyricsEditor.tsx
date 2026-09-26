@@ -20,7 +20,6 @@ import type {
 } from "../../shared/types";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import {
-  buildSlidesFromBody,
   createDraftFromLibraryItem,
   DEFAULT_CANVAS_SIZE,
   getCanvasSizeDimensions,
@@ -29,6 +28,7 @@ import {
   normalizeLibraryContent,
   normalizeLibrarySlide,
   normalizePresentationSettings,
+  rebuildSlidesFromLyrics,
   reorderLibrarySlides,
   reorderSlideElements,
   scaleSlidesToCanvas,
@@ -43,6 +43,7 @@ import { SlideList } from "./components/SlideList";
 import { EditorCanvas } from "./components/EditorCanvas";
 import { EditorInspector } from "./components/EditorInspector";
 import { useThemesModalStore } from "../../renderer/shared/store/themesModal";
+import { applyLookToSlides, normalizeLook } from "../themes/theme-look.mjs";
 
 interface LyricsEditorProps {
   libraryItem: LibraryItem | null;
@@ -317,6 +318,35 @@ export const LyricsEditor = memo(function LyricsEditor({
     lastItemKeyRef.current = itemKey;
   }, [activeDefaultTextStyle, libraryItem, selectedSlideId]);
 
+  // Hidden behind Show, the editor keeps its draft while the song can change
+  // there: a theme applied, lyrics saved from the mini window. The effect
+  // above takes those for save echoes of this draft. Coming back into view
+  // (an effect with no dependencies runs each time the view is shown) with
+  // nothing unsaved here, the editor takes the song as it is now.
+  useEffect(() => {
+    if (!libraryItem || String(draft._id) !== String(libraryItem._id)) return;
+    const payloadOf = (value: LibraryItemDraft, view: EditorViewMode) =>
+      JSON.stringify(
+        buildDraftWithNormalizedContent(
+          { ...value, title: value.title.trim(), content: { ...value.content, editorView: view } },
+          value.slides,
+          { ...value.content, editorView: view },
+          activeDefaultTextStyle,
+          { preserveBody: view === "source" },
+        ),
+      );
+    const incoming = createDraftFromLibraryItem(libraryItem, activeDefaultTextStyle);
+    const incomingPayload = payloadOf(
+      incoming,
+      incoming.content?.editorView === "source" ? "source" : "slides",
+    );
+    if (incomingPayload === latestSavedRef.current) return;
+    if (payloadOf(draft, editorView) !== latestSavedRef.current) return;
+    latestSavedRef.current = incomingPayload;
+    setDraft(incoming);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const selectedSlideIndex = useMemo(
     () => draft.slides.findIndex((slide) => slide.id === selectedSlideId),
     [draft.slides, selectedSlideId],
@@ -340,22 +370,26 @@ export const LyricsEditor = memo(function LyricsEditor({
     [selectedElementId, selectedSlide?.elements],
   );
 
+  const selectedElementType = selectedElement?.type ?? null;
   useEffect(() => {
     if (!selectedElementId) {
       return;
     }
 
-    if (!selectedElement) {
+    if (!selectedElementType) {
       setSelectedElementId(null);
       setInspectorTab(lastGeneralInspectorTabRef.current);
       return;
     }
 
-    const objectTab = getInspectorTabForElementType(selectedElement.type);
+    // On selecting an object, its tab. Only then: the sidebar's Song and
+    // Slide tabs stay open while the object is edited, not snapped back to
+    // it on every change.
+    const objectTab = getInspectorTabForElementType(selectedElementType);
     if (objectTab) {
       setInspectorTabState(objectTab);
     }
-  }, [selectedElement, selectedElementId, setInspectorTab]);
+  }, [selectedElementId, selectedElementType, setInspectorTab]);
 
   const applyDraft = useCallback(
     (
@@ -667,49 +701,67 @@ export const LyricsEditor = memo(function LyricsEditor({
     [applyDraft],
   );
 
-  // Listen for Theme-modal apply requests. When the Themes modal dispatches
-  // a payload, the editor patches the currently-selected slide's text
-  // elements with the theme's style and applies the background color. We
-  // consume the pending payload after applying so it only fires once.
-  const pendingTheme = useThemesModalStore((state) => state.pending);
-  const consumePendingTheme = useThemesModalStore(
-    (state) => state.consumePending,
-  );
-  const lastAppliedNonceRef = useRef<number>(0);
+  // The song open here is what the Themes panel applies to while the editor
+  // is in front. Hidden (Show view), the effect is cleaned up and the entry
+  // goes, so the panel turns to Show's song instead.
+  const setThemeTarget = useThemesModalStore((state) => state.setTarget);
+  const themeTargetId = libraryItem && libraryItem.type !== "scripture" ? String(libraryItem._id) : null;
   useEffect(() => {
-    if (!pendingTheme) return;
-    if (pendingTheme.nonce === lastAppliedNonceRef.current) return;
-    lastAppliedNonceRef.current = pendingTheme.nonce;
-
-    if (Object.keys(pendingTheme.style).length > 0) {
-      setAllTextElementsStyle(pendingTheme.style);
-    }
-
-    if (pendingTheme.backgroundColor !== null && selectedSlideId) {
-      const bg = pendingTheme.backgroundColor;
-      applyDraft((previous) => ({
-        ...previous,
-        slides: previous.slides.map((slide) =>
-          slide.id === selectedSlideId
-            ? {
-                ...slide,
-                backgroundColor: bg,
-                useBackgroundColor: true,
-              }
-            : slide,
-        ),
-      }));
-    }
-
-    toast.success("Theme applied");
-    consumePendingTheme();
+    if (!themeTargetId) return;
+    setThemeTarget("editor", {
+      surface: "editor",
+      libraryId: themeTargetId,
+      title: draft.title.trim() || "this song",
+      slides: draft.slides,
+      slideIndex: selectedSlideIndex >= 0 ? selectedSlideIndex : null,
+      canvasSize: currentCanvasSize,
+      themeId: draft.content?.theme?.id ?? null,
+    });
   }, [
-    applyDraft,
-    consumePendingTheme,
-    pendingTheme,
-    selectedSlideId,
-    setAllTextElementsStyle,
+    currentCanvasSize,
+    draft.content?.theme?.id,
+    draft.slides,
+    draft.title,
+    selectedSlideIndex,
+    setThemeTarget,
+    themeTargetId,
   ]);
+  useEffect(() => {
+    if (!themeTargetId) return;
+    return () => setThemeTarget("editor", null);
+  }, [setThemeTarget, themeTargetId]);
+
+  // A theme chosen in the panel, for this song: onto the draft, which saves
+  // as any edit does. The whole song records it, so slides rebuilt from the
+  // lyrics get it again; one slide does not.
+  const pendingTheme = useThemesModalStore((state) => state.pending);
+  const consumePendingTheme = useThemesModalStore((state) => state.consumePending);
+  useEffect(() => {
+    if (
+      !pendingTheme ||
+      pendingTheme.surface !== "editor" ||
+      pendingTheme.libraryId !== themeTargetId
+    ) {
+      return;
+    }
+    const { theme, onlySlideIndex, nonce } = pendingTheme;
+    consumePendingTheme(nonce);
+    applyDraft((previous) => ({
+      ...previous,
+      slides: applyLookToSlides(
+        previous.slides,
+        normalizeLook(theme.look),
+        canvasDimensions,
+        { onlySlideIndex },
+      ) as LibrarySlide[],
+      content: onlySlideIndex !== null ? previous.content : { ...previous.content, theme },
+    }));
+    toast.success(
+      onlySlideIndex !== null
+        ? `${theme.name} is on slide ${onlySlideIndex + 1}`
+        : `${theme.name} is on the whole song`,
+    );
+  }, [applyDraft, canvasDimensions, consumePendingTheme, pendingTheme, themeTargetId]);
 
   const handleSelectSlide = useCallback(
     (slideId: string | null) => {
@@ -950,8 +1002,9 @@ export const LyricsEditor = memo(function LyricsEditor({
         // 2. Re-flow the cleaned body into N-line slides (ignores any
         //    existing slide separators, so re-breaking to a new N works).
         const nextBody = breakLyricsIntoChunks(fixedBody, linesPerSlide);
-        const nextSlides = buildSlidesFromBody(
+        const nextSlides = rebuildSlidesFromLyrics(
           nextBody,
+          draft.slides,
           currentCanvasSize,
           activeDefaultTextStyle,
         );
@@ -982,6 +1035,7 @@ export const LyricsEditor = memo(function LyricsEditor({
       applyDraft,
       currentCanvasSize,
       draft.body,
+      draft.slides,
       editorView,
       onFixLyrics,
       setInspectorTab,
@@ -990,37 +1044,35 @@ export const LyricsEditor = memo(function LyricsEditor({
 
   const handleSourceBodyChange = useCallback(
     (nextBody: string) => {
-      const nextSlides = buildSlidesFromBody(
-        nextBody,
-        currentCanvasSize,
-        activeDefaultTextStyle,
-      );
-      setDraft((previous) =>
-        buildDraftWithNormalizedContent(
+      // The same slides with new words: each keeps its id, look and
+      // background, so the selection stays put and a live slide updates.
+      const kept = rebuildSlidesFromLyrics(nextBody, draft.slides, currentCanvasSize, activeDefaultTextStyle);
+      setDraft((previous) => {
+        return buildDraftWithNormalizedContent(
           {
             ...previous,
-            slides: nextSlides,
+            slides: kept,
             body: nextBody,
           },
-          nextSlides,
+          kept,
           previous.content,
           activeDefaultTextStyle,
           {
             preserveBody: true,
           },
-        ),
-      );
+        );
+      });
 
       setSelectedSlideId((current) => {
-        if (current && nextSlides.some((slide) => slide.id === current)) {
+        if (current && kept.some((slide) => slide.id === current)) {
           return current;
         }
-        return nextSlides[0]?.id ?? null;
+        return kept[0]?.id ?? current;
       });
       setSelectedElementId(null);
       setInspectorTab("slide");
     },
-    [activeDefaultTextStyle, currentCanvasSize, setInspectorTab],
+    [activeDefaultTextStyle, currentCanvasSize, draft.slides, setInspectorTab],
   );
 
   const handleAddSlide = useCallback(() => {
@@ -1258,9 +1310,9 @@ export const LyricsEditor = memo(function LyricsEditor({
           <ResizableHandle withHandle />
   
           <ResizablePanel
-            defaultSize={25}
-            minSize={20}
-            maxSize={35}
+            defaultSize={21}
+            minSize={17}
+            maxSize={32}
             className="bg-background border-l border-border"
           >
             <EditorInspector

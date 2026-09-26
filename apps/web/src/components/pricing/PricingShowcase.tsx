@@ -1,8 +1,13 @@
 "use client";
 
 import { Show, SignInButton, SignUpButton } from "@clerk/nextjs";
+import { useConvexAuth, useQuery } from "convex/react";
 import { Check, Zap } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+
+import { api } from "../../../../../packages/backend/convex/_generated/api";
 
 import { cn } from "@/lib/utils";
 
@@ -34,6 +39,9 @@ type PricingShowcaseProps = {
 
 const FEATURED_PLAN_SLUG = "pro";
 
+/** Higher plans include everything in lower ones. */
+const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, power: 2 };
+
 function computeMaxSavings(plans: StripePlan[]): number {
   let max = 0;
 
@@ -63,6 +71,11 @@ export function PricingShowcase({
   const [isLoadingPlans, setIsLoadingPlans] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const router = useRouter();
+  // The plan someone signed in is on, so the cards can say where they stand.
+  const { isAuthenticated } = useConvexAuth();
+  const billing = useQuery(api.billing.getMyBillingStatus, isAuthenticated ? {} : "skip");
+  const currentPlan = isAuthenticated ? (billing === undefined ? undefined : (billing?.planKey ?? "free")) : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -113,55 +126,11 @@ export function PricingShowcase({
 
   const maxSavings = useMemo(() => computeMaxSavings(plans), [plans]);
 
-  const handleCheckout = async (lookupKey: string) => {
+  // Payment happens on Present's own checkout page, with Stripe's Payment
+  // Element inside it, rather than on Stripe's hosted checkout.
+  const handleCheckout = (lookupKey: string) => {
     setCheckoutLoading(lookupKey);
-    try {
-      const response = await fetch("/api/stripe/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lookupKey,
-          successUrl: `${window.location.origin}${redirectUrl}?checkout=success`,
-          cancelUrl: `${window.location.origin}${redirectUrl}?checkout=cancel`,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-      const data = (await response.json()) as { url: string };
-      if (data.url) {
-        window.location.href = data.url;
-      }
-    } catch (error) {
-      console.error("[PricingShowcase] Checkout error:", error);
-    } finally {
-      setCheckoutLoading(null);
-    }
-  };
-
-  const handleManageSubscription = async () => {
-    try {
-      const response = await fetch("/api/stripe/portal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          returnUrl: `${window.location.origin}${redirectUrl}`,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-      const data = (await response.json()) as { url: string };
-      if (data.url) {
-        window.location.href = data.url;
-      }
-    } catch (error) {
-      console.error("[PricingShowcase] Portal error:", error);
-    }
+    router.push(`/checkout?plan=${encodeURIComponent(lookupKey)}`);
   };
 
   return (
@@ -277,11 +246,15 @@ export function PricingShowcase({
                     >
                       {plan.name}
                     </span>
-                    {isFeatured && (
+                    {currentPlan === plan.slug ? (
+                      <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                        Your plan
+                      </span>
+                    ) : isFeatured && !currentPlan ? (
                       <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
                         Most Popular
                       </span>
-                    )}
+                    ) : null}
                   </div>
 
                   {/* Price */}
@@ -349,7 +322,10 @@ export function PricingShowcase({
                         ) : (
                           <SignInButton
                             mode="modal"
-                            forceRedirectUrl={redirectUrl}
+                            // Straight on to paying for the plan they picked.
+                            forceRedirectUrl={
+                              lookupKey ? `/checkout?plan=${encodeURIComponent(lookupKey)}` : redirectUrl
+                            }
                           >
                             <button
                               type="button"
@@ -373,42 +349,15 @@ export function PricingShowcase({
                         )
                       }
                     >
-                      {isFreeLike ? (
-                        <a
-                          href="/dashboard"
-                          className={cn(
-                            "block w-full rounded-xl py-4 text-center text-sm font-bold transition-all active:scale-[0.98]",
-                            isFeatured
-                              ? "bg-primary text-white shadow-[0_0_20px_-5px_rgba(82,39,255,0.5)] hover:bg-primary/90"
-                              : "border border-white/10 bg-white/5 text-white hover:bg-white/10",
-                          )}
-                        >
-                          Included by default
-                        </a>
-                      ) : lookupKey ? (
-                        <button
-                          type="button"
-                          disabled={isCheckoutLoading}
-                          onClick={() => void handleCheckout(lookupKey)}
-                          className={cn(
-                            "w-full rounded-xl py-4 text-sm font-bold transition-all active:scale-[0.98] disabled:opacity-50",
-                            isFeatured
-                              ? "flex items-center justify-center gap-2 bg-primary text-white shadow-[0_0_20px_-5px_rgba(82,39,255,0.5)] hover:bg-primary/90"
-                              : "border border-white/10 bg-white/5 text-white hover:bg-white/10",
-                          )}
-                        >
-                          {isCheckoutLoading ? (
-                            "Loading..."
-                          ) : isFeatured ? (
-                            <>
-                              <Zap className="h-4 w-4 fill-white" />
-                              Get started
-                            </>
-                          ) : (
-                            "Get started"
-                          )}
-                        </button>
-                      ) : null}
+                      <SignedInAction
+                        planSlug={plan.slug}
+                        planName={plan.name}
+                        currentPlan={currentPlan}
+                        lookupKey={lookupKey}
+                        isFeatured={isFeatured}
+                        isLoading={isCheckoutLoading}
+                        onCheckout={handleCheckout}
+                      />
                     </Show>
                   </div>
                 </article>
@@ -472,5 +421,75 @@ function PricingSkeleton({ compact }: { compact: boolean }) {
         ))}
       </div>
     </div>
+  );
+}
+
+const ctaClass = (isFeatured: boolean) =>
+  cn(
+    "flex w-full items-center justify-center gap-2 rounded-xl py-4 text-sm font-bold transition-all active:scale-[0.98] disabled:opacity-50",
+    isFeatured
+      ? "bg-primary text-white shadow-[0_0_20px_-5px_rgba(82,39,255,0.5)] hover:bg-primary/90"
+      : "border border-white/10 bg-white/5 text-white hover:bg-white/10",
+  );
+
+/**
+ * A card's button for someone signed in, from the plan they're on. Their
+ * own plan says so; a lower one is already included; a higher one is an
+ * upgrade: straight to checkout from Free, and through Billing from a paid
+ * plan, where the switch is prorated rather than a second subscription.
+ */
+function SignedInAction({
+  planSlug,
+  planName,
+  currentPlan,
+  lookupKey,
+  isFeatured,
+  isLoading,
+  onCheckout,
+}: {
+  planSlug: string;
+  planName: string;
+  /** `undefined` while it loads. */
+  currentPlan: string | null | undefined;
+  lookupKey: string | null;
+  isFeatured: boolean;
+  isLoading: boolean;
+  onCheckout: (lookupKey: string) => void;
+}) {
+  if (currentPlan === undefined) {
+    return <div className="h-[52px] w-full animate-pulse rounded-xl bg-white/5" aria-hidden="true" />;
+  }
+  const current = currentPlan ?? "free";
+  if (planSlug === current) {
+    return (
+      <div className="space-y-2 text-center">
+        <p className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 py-4 text-sm font-bold text-white/70">
+          <Check className="h-4 w-4" /> Your current plan
+        </p>
+        {current !== "free" ? (
+          <Link href="/dashboard/billing" className="text-xs font-medium text-white/50 transition hover:text-white">
+            Manage in Billing
+          </Link>
+        ) : null}
+      </div>
+    );
+  }
+  if ((PLAN_RANK[planSlug] ?? 0) < (PLAN_RANK[current] ?? 0)) {
+    return <p className="py-4 text-center text-sm text-white/40">Included in your plan</p>;
+  }
+  if (!lookupKey) return null;
+  if (current === "free") {
+    return (
+      <button type="button" disabled={isLoading} onClick={() => onCheckout(lookupKey)} className={ctaClass(isFeatured)}>
+        {isFeatured ? <Zap className="h-4 w-4 fill-white" /> : null}
+        {isLoading ? "Loading…" : `Upgrade to ${planName}`}
+      </button>
+    );
+  }
+  return (
+    <Link href={`/dashboard/billing?plan=${encodeURIComponent(lookupKey)}`} className={ctaClass(isFeatured)}>
+      {isFeatured ? <Zap className="h-4 w-4 fill-white" /> : null}
+      Upgrade to {planName}
+    </Link>
   );
 }

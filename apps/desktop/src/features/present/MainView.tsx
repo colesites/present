@@ -48,7 +48,10 @@ import { fixLyrics } from "../../renderer/shared/lib/lyrics";
 import type { ServiceTemplate } from "../services/hooks/useServices";
 import { ScriptureSlide } from "../../features/scripture/lib/slides";
 import type { MediaPanelRef } from "../media/MediaPanel";
-import type { ScripturePanelRef } from "../scripture/components/ScripturePanel";
+import type {
+  BibleAgentSettings,
+  ScripturePanelRef,
+} from "../scripture/components/ScripturePanel";
 import type { LibrariesPanelRef } from "../shows/LibrariesPanel";
 
 export interface MainViewPresentState {
@@ -352,6 +355,7 @@ interface MainViewProps {
   speechSettings: {
     lang: string;
     inputDeviceId: string | null;
+    bible: BibleAgentSettings;
   };
   panelRefs: MainViewPanelRefs;
   outputState: MainViewOutputState;
@@ -782,7 +786,6 @@ export function MainView({
       onToggleTimerLayer: handleToggleTimerLayer,
       isMessageLayerEnabled,
       onToggleMessageLayer: handleToggleMessageLayer,
-      activeMessageOverlay,
       propsOverlay,
       timers,
       timerLayout,
@@ -817,7 +820,6 @@ export function MainView({
       handleToggleMessageLayer,
       handleToggleTextInOutput,
       handleToggleTimerLayer,
-      activeMessageOverlay,
       propsOverlay,
       hideBackgroundInOutput,
       isMessageLayerEnabled,
@@ -1010,6 +1012,7 @@ export function MainView({
                   showsPanelProps={showsPanelProps}
                   speechLang={speechSettings.lang}
                   speechInputDeviceId={speechSettings.inputDeviceId}
+                  bibleAgent={speechSettings.bible}
                   onSendScripture={handleScriptureOutput}
                   selectedServiceId={selectedServiceId}
                   onAddScriptureToService={onAddScriptureToService}
@@ -1128,6 +1131,7 @@ export function MainView({
         showsPanelProps={showsPanelProps}
         speechLang={speechSettings.lang}
         speechInputDeviceId={speechSettings.inputDeviceId}
+        bibleAgent={speechSettings.bible}
         onSendScripture={handleScriptureOutput}
         selectedServiceId={selectedServiceId}
         onAddScriptureToService={onAddScriptureToService}

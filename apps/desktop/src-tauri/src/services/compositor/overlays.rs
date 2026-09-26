@@ -59,35 +59,17 @@ fn theme_colors(theme_key: &str) -> (Option<Color>, Color) {
     }
 }
 
-/// Draw the message banner, if there is one.
-/// How far a marquee has travelled, 0 at the right edge and 1 fully off the
-/// left. `None` for a message that does not move.
-///
-/// The text crosses twice the frame's width — in from the right, out past the
-/// left — so a message is legible for roughly half its cycle whatever its
-/// length. `speed_seconds` is how long one crossing takes; a nonsense or
-/// missing speed falls back to ten seconds rather than dividing by zero.
-fn marquee_progress(overlay: &MessageOverlay, elapsed_seconds: f64) -> Option<f64> {
-    if !matches!(overlay.animation.as_str(), "marquee-left" | "marquee-right") {
-        return None;
-    }
-    let seconds = if overlay.speed_seconds.is_finite() && overlay.speed_seconds > 0.1 {
-        overlay.speed_seconds
-    } else {
-        10.0
-    };
-    let elapsed = elapsed_seconds.max(0.0);
-    Some((elapsed / seconds).rem_euclid(1.0))
+/// Where a message's band sits and what it is painted with, in frame pixels.
+struct MessageBand {
+    top: f32,
+    height: f32,
+    padding: f32,
+    font_size: f32,
+    plate: Option<Color>,
+    ink: Color,
 }
 
-pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay, elapsed_seconds: f64) {
-    if overlay.text.trim().is_empty() {
-        return;
-    }
-
-    let width = pixmap.width() as f32;
-    let height = pixmap.height() as f32;
-
+fn message_band(overlay: &MessageOverlay, width: f32, height: f32) -> MessageBand {
     // Six percent of the width, capped at the height's share — 64px on a
     // 1080-tall frame. The cap used to multiply the two terms together, which
     // squares a number already in pixels: on any real frame it came out in the
@@ -118,57 +100,233 @@ pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay, elapse
     };
 
     let (plate, ink) = theme_colors(&overlay.theme_key);
+    MessageBand {
+        top,
+        height: band_height,
+        padding,
+        font_size: scaled_font,
+        plate,
+        ink,
+    }
+}
 
-    if let Some(plate) = plate {
-        if let Some(path) = shapes::rounded_rect_path(0.0, top, width, band_height, 0.0) {
-            let mut paint = tiny_skia::Paint {
-                anti_alias: false,
-                ..tiny_skia::Paint::default()
-            };
-            paint.set_color(plate);
-            pixmap.fill_path(
-                &path,
-                &paint,
-                tiny_skia::FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
+/// Whether a message scrolls rather than standing still.
+pub fn is_moving(overlay: &MessageOverlay) -> bool {
+    matches!(overlay.animation.as_str(), "marquee-left" | "marquee-right")
+}
+
+/// Draw the message banner, if there is one.
+///
+/// A scrolling message is drawn where it is `elapsed_seconds` after it was
+/// sent. The compositor does not come here for one: it keeps the words as a
+/// [`MarqueeStrip`] and only moves them, frame by frame. A one-off frame can.
+pub fn draw_message(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay, elapsed_seconds: f64) {
+    if overlay.text.trim().is_empty() {
+        return;
+    }
+    draw_message_plate(pixmap, overlay);
+
+    if is_moving(overlay) {
+        if let Some(strip) = MarqueeStrip::new(overlay, pixmap.width(), pixmap.height()) {
+            strip.draw(pixmap, overlay, elapsed_seconds);
         }
+        return;
     }
 
-    let spec = match marquee_progress(overlay, elapsed_seconds) {
-        // Standing still: centred in the band, as before.
-        None => text::TextBox::new(
-            padding,
-            top + padding,
-            (width - padding * 2.0).max(1.0),
-            (band_height - padding * 2.0).max(1.0),
-            scaled_font,
-        )
-        .centred(),
-        // Moving: the box itself travels, and the text sits at its left edge.
-        // Left to right is the same journey read backwards.
-        Some(progress) => {
-            let travel = width * 2.0;
-            let offset = travel * progress as f32;
-            let x = if overlay.animation == "marquee-right" {
-                -width + offset
-            } else {
-                width - offset
-            };
-            text::TextBox::new(
-                x,
-                top + padding,
-                width.max(1.0),
-                (band_height - padding * 2.0).max(1.0),
-                scaled_font,
-            )
-        }
-    }
-    .with_color(ink)
+    let width = pixmap.width() as f32;
+    let band = message_band(overlay, width, pixmap.height() as f32);
+    // Standing still: centred in the band.
+    let spec = text::TextBox::new(
+        band.padding,
+        band.top + band.padding,
+        (width - band.padding * 2.0).max(1.0),
+        (band.height - band.padding * 2.0).max(1.0),
+        band.font_size,
+    )
+    .centred()
+    .with_color(band.ink)
     .with_weight(cosmic_text::Weight::SEMIBOLD);
-
     text::draw_box(pixmap, &overlay.text, &spec);
+}
+
+/// The band behind a message, without its words: what stays put while a
+/// scrolling message moves across it.
+pub fn draw_message_plate(pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay) {
+    if overlay.text.trim().is_empty() {
+        return;
+    }
+    let width = pixmap.width() as f32;
+    let band = message_band(overlay, width, pixmap.height() as f32);
+    let Some(plate) = band.plate else {
+        return;
+    };
+    if let Some(path) = shapes::rounded_rect_path(0.0, band.top, width, band.height, 0.0) {
+        let mut paint = tiny_skia::Paint {
+            anti_alias: false,
+            ..tiny_skia::Paint::default()
+        };
+        paint.set_color(plate);
+        pixmap.fill_path(
+            &path,
+            &paint,
+            tiny_skia::FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+}
+
+/// Room around the words in a [`MarqueeStrip`], for the edges of glyphs that
+/// reach past their advance and for the filtering of a part-pixel move.
+const STRIP_MARGIN: u32 = 2;
+
+/// The widest a scrolling message's words are kept drawn. A paragraph at a
+/// large size on a 4K wall would be hundreds of megabytes past this, so one
+/// that long is laid out again each frame instead.
+const MAX_STRIP_WIDTH: u32 = 16_384;
+
+/// A scrolling message's words, drawn once, to be slid along its band.
+///
+/// Scrolling used to redraw the whole overlay layer thirty times a second,
+/// laying the words out and rasterising them each time over a layer the size
+/// of the frame, and put them wherever the clock said at the moment of the
+/// redraw. On an output drawing sixty frames a second, each position was held
+/// for one frame, or two, or three: the stutter an operator sees. Now the
+/// words are drawn once, and every frame puts them where they are at that
+/// instant, to a fraction of a pixel.
+pub struct MarqueeStrip {
+    /// The words over transparency, as wide as they are, or `None` when that
+    /// is wider than [`MAX_STRIP_WIDTH`].
+    words: Option<tiny_skia::Pixmap>,
+    line: String,
+    text_width: f32,
+    /// Where the top of the words sits in the frame, on a whole pixel so a
+    /// move blurs nothing vertically.
+    top: f32,
+    frame_width: f32,
+    style: text::TextStyle,
+    ink: Color,
+}
+
+impl MarqueeStrip {
+    pub fn new(overlay: &MessageOverlay, frame_width: u32, frame_height: u32) -> Option<Self> {
+        if overlay.text.trim().is_empty() || !is_moving(overlay) {
+            return None;
+        }
+        let width = frame_width as f32;
+        let band = message_band(overlay, width, frame_height as f32);
+        let style = text::TextStyle {
+            font_size: band.font_size,
+            line_height: 0.0,
+            family: None,
+            weight: cosmic_text::Weight::SEMIBOLD,
+            italic: false,
+            letter_spacing_em: 0.0,
+            align: cosmic_text::Align::Left,
+            wrap: false,
+        };
+        // One line, however long: a scrolling message is read as it passes.
+        // Laid out as wide as the frame, a long one used to wrap onto lines
+        // below the band.
+        let line = overlay
+            .text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (text_height, text_width) = text::measure(&line, width.max(1.0), &style);
+        if text_width <= 0.0 {
+            return None;
+        }
+        let top = (band.top + ((band.height - text_height) / 2.0).max(0.0)).round();
+
+        let margin = STRIP_MARGIN as f32;
+        let strip_width = text_width.ceil() as u32 + STRIP_MARGIN * 2;
+        let strip_height = text_height.ceil().max(1.0) as u32 + STRIP_MARGIN * 2;
+        let words = if strip_width <= MAX_STRIP_WIDTH {
+            tiny_skia::Pixmap::new(strip_width, strip_height).map(|mut words| {
+                text::draw_paragraph(
+                    &mut words.as_mut(),
+                    &line,
+                    (margin, margin, text_width + 1.0),
+                    &style,
+                    band.ink,
+                    None,
+                    None,
+                );
+                words
+            })
+        } else {
+            None
+        };
+
+        Some(Self {
+            words,
+            line,
+            text_width,
+            top,
+            frame_width: width,
+            style,
+            ink: band.ink,
+        })
+    }
+
+    /// Where the left edge of the words is, `elapsed_seconds` after the
+    /// message was sent.
+    fn x_at(&self, overlay: &MessageOverlay, elapsed_seconds: f64) -> f64 {
+        // A nonsense or missing speed falls back to ten seconds rather than
+        // dividing by zero.
+        let seconds = if overlay.speed_seconds.is_finite() && overlay.speed_seconds > 0.1 {
+            overlay.speed_seconds
+        } else {
+            10.0
+        };
+        let frame_width = f64::from(self.frame_width);
+        let text_width = f64::from(self.text_width);
+        // Twice the frame's width in `speed_seconds`, the pace the setting has
+        // always meant. The words come in from one edge and are gone past the
+        // other before they come round again, so a longer message takes
+        // longer, rather than moving faster.
+        let pace = frame_width * 2.0 / seconds;
+        let travel = (frame_width + text_width).max(1.0);
+        let gone = (elapsed_seconds.max(0.0) * pace).rem_euclid(travel);
+        if overlay.animation == "marquee-right" {
+            gone - text_width
+        } else {
+            frame_width - gone
+        }
+    }
+
+    /// Draw the words where they are `elapsed_seconds` after the message was
+    /// sent.
+    pub fn draw(&self, pixmap: &mut PixmapMut<'_>, overlay: &MessageOverlay, elapsed_seconds: f64) {
+        let x = self.x_at(overlay, elapsed_seconds) as f32;
+        match &self.words {
+            Some(words) => {
+                let margin = STRIP_MARGIN as f32;
+                let paint = tiny_skia::PixmapPaint {
+                    quality: tiny_skia::FilterQuality::Bilinear,
+                    ..tiny_skia::PixmapPaint::default()
+                };
+                pixmap.draw_pixmap(
+                    0,
+                    0,
+                    words.as_ref(),
+                    &paint,
+                    Transform::from_translate(x - margin, self.top - margin),
+                    None,
+                );
+            }
+            None => text::draw_paragraph(
+                pixmap,
+                &self.line,
+                (x, self.top, self.text_width + 1.0),
+                &self.style,
+                self.ink,
+                None,
+                None,
+            ),
+        }
+    }
 }
 
 /// Where a prop sits, in frame pixels.
@@ -695,6 +853,63 @@ mod tests {
         let later = ink_at(3.0);
         assert!(!early.is_empty() && !later.is_empty(), "the text is drawn");
         assert_ne!(early, later, "and it is somewhere else a moment later");
+    }
+
+    #[test]
+    fn a_marquee_moves_a_little_every_frame_not_in_jumps() {
+        // Sixty frames a second, one second of them: the words must move on
+        // every frame, and by about the same amount each time. Scrolling was
+        // redrawn thirty times a second, at whatever instant the redraw fell
+        // on, so frames repeated and then leapt.
+        let mut overlay = message("top", "transparent", "Offering by transfer");
+        overlay.animation = "marquee-left".to_owned();
+        overlay.speed_seconds = 8.0;
+        let strip = MarqueeStrip::new(&overlay, 640, 360).expect("a strip");
+        let steps: Vec<f64> = (0..60)
+            .map(|frame| {
+                let at = |n: f64| strip.x_at(&overlay, 1.0 + n / 60.0);
+                at(f64::from(frame)) - at(f64::from(frame + 1))
+            })
+            .collect();
+        let expected = 640.0 * 2.0 / 8.0 / 60.0;
+        for step in steps {
+            assert!(
+                (step - expected).abs() < 0.001,
+                "each frame moves {expected:.3}px, one moved {step:.3}px"
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_scrolling_message_stays_on_one_line_in_its_band() {
+        // Laid out as wide as the frame, a long message wrapped, and its
+        // second line was drawn below the banner, over the slide.
+        let mut overlay = message(
+            "top",
+            "info",
+            "The car park by the east doors is full, please use the overflow lot across the road",
+        );
+        overlay.animation = "marquee-left".to_owned();
+        let mut frame = Frame::new(320, 180).expect("frame");
+        draw_message(&mut frame.pixmap_mut(), &overlay, 3.0);
+        let band = message_band(&overlay, 320.0, 180.0);
+        let below = (band.height.ceil() as u32 + 2).min(180);
+        assert!(
+            ink_in_rows(&frame, 0, below) > 0,
+            "the words are in the band"
+        );
+        assert_eq!(ink_in_rows(&frame, below, 180), 0, "and nothing under it");
+    }
+
+    #[test]
+    fn a_message_scrolling_right_comes_in_from_the_left() {
+        let mut overlay = message("top", "transparent", "Welcome");
+        overlay.animation = "marquee-right".to_owned();
+        overlay.speed_seconds = 10.0;
+        let strip = MarqueeStrip::new(&overlay, 640, 360).expect("a strip");
+        let start = strip.x_at(&overlay, 0.0);
+        assert!(start < 0.0, "it starts off the left edge, at {start}");
+        assert!(strip.x_at(&overlay, 1.0) > start, "and moves right");
     }
 
     #[test]

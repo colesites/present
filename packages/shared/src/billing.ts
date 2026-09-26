@@ -7,12 +7,33 @@ export type PresentBillingStatus =
   | "inactive"
   | "unknown";
 
+/** How far a plan's presentation themes go (the themes feature reads this). */
+export type PresentThemeTier = "basic" | "custom" | "advanced";
+
+/**
+ * What a plan includes. The same numbers are in each Stripe product's
+ * feature list, which is what customers read; these are what the app holds
+ * them to. Change one, change the other.
+ */
 export interface PresentPlanDefinition {
   key: PresentPlanKey;
   label: string;
-  monthlySpeechLimitSeconds: number;
   isPaid: boolean;
+  /** AI projection: speech-to-search listening time a month. */
+  monthlySpeechLimitSeconds: number;
+  /** "Bible & song AI projection". Without it, AI projection is Bible only. */
+  songAiProjection: boolean;
+  /** AI lyrics fixes a month, or `null` for unlimited. */
+  monthlyLyricsFixes: number | null;
+  /** People in one workspace, the admins included. */
+  workspaceMembers: number;
+  /** Cloud storage. Recorded for when media syncs; nothing counts it yet. */
+  cloudStorageBytes: number;
+  themes: PresentThemeTier;
 }
+
+const MB = 1024 * 1024;
+const GB = 1024 * MB;
 
 export const UNLIMITED_SPEECH_QUOTA_SECONDS = 100 * 365 * 24 * 60 * 60;
 
@@ -26,22 +47,54 @@ export const PRESENT_PLAN_DEFINITIONS: Record<
   free: {
     key: "free",
     label: "Free",
-    monthlySpeechLimitSeconds: 60 * 60,
     isPaid: false,
+    monthlySpeechLimitSeconds: 30 * 60,
+    songAiProjection: false,
+    monthlyLyricsFixes: 5,
+    workspaceMembers: 2,
+    cloudStorageBytes: 500 * MB,
+    themes: "basic",
   },
   pro: {
     key: "pro",
     label: "Pro",
-    monthlySpeechLimitSeconds: 15 * 60 * 60,
     isPaid: true,
+    monthlySpeechLimitSeconds: 4 * 60 * 60,
+    songAiProjection: true,
+    monthlyLyricsFixes: 100,
+    workspaceMembers: 5,
+    cloudStorageBytes: 2 * GB,
+    themes: "custom",
   },
   power: {
     key: "power",
     label: "Power",
-    monthlySpeechLimitSeconds: 30 * 60 * 60,
     isPaid: true,
+    monthlySpeechLimitSeconds: 100 * 60 * 60,
+    songAiProjection: true,
+    monthlyLyricsFixes: null,
+    workspaceMembers: 20,
+    cloudStorageBytes: 100 * GB,
+    themes: "advanced",
   },
 };
+
+/** Plans in order, so "the better of two" is a comparison. */
+export const PRESENT_PLAN_ORDER: PresentPlanKey[] = ["free", "pro", "power"];
+
+export const betterPlan = (left: PresentPlanKey, right: PresentPlanKey): PresentPlanKey =>
+  PRESENT_PLAN_ORDER.indexOf(right) > PRESENT_PLAN_ORDER.indexOf(left) ? right : left;
+
+/**
+ * Subscription states that still get what was paid for. `past_due` keeps it
+ * while Stripe retries the card; cancelled, unpaid and never-completed
+ * subscriptions do not.
+ */
+const ENTITLED_STATUSES = new Set(["active", "trialing", "past_due"]);
+
+/** The plan a subscription actually gives, given the state it is in. */
+export const effectivePlanKey = (planKey: PresentPlanKey, status: string | null | undefined): PresentPlanKey =>
+  planKey === "free" || ENTITLED_STATUSES.has((status ?? "").toLowerCase()) ? planKey : "free";
 
 const FREE_ALIASES = ["free", "free_plan", "free_plan_yr", "community", "starter"];
 const PRO_ALIASES = ["pro", "pro_plan", "pro_plan_yr", "professional"];

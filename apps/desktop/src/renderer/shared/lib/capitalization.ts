@@ -38,7 +38,12 @@ export function applyCapitalization(
   }
 
   if (mode === "titleCase") {
-    return text.replace(/\b(\p{L})/gu, (letter) => letter.toUpperCase());
+    // A letter after anything but a letter, digit or apostrophe: "it's" is
+    // "It's", not "It'S". The compositor's `title_case` is the same.
+    return text.replace(
+      /(^|[^\p{L}\p{N}'\u2019])(\p{L})/gu,
+      (_match, before: string, letter: string) => `${before}${letter.toUpperCase()}`,
+    );
   }
 
   if (mode === "lineStart") {

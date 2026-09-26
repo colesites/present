@@ -12,6 +12,7 @@ import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { CanvasSlideLayer } from "../shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../shared/components/ScriptureTextLayer";
 import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
+import { youtubeEmbedUrl } from "../../shared/lib/youtube-embed.mjs";
 
 const DEFAULT_SCREEN_LAYOUT: ScreenComposerLayout = {
   id: "live-default",
@@ -51,7 +52,6 @@ const DEFAULT_SCREEN_LAYOUT: ScreenComposerLayout = {
   ],
 };
 
-const YOUTUBE_EMBED_ORIGIN = "https://present.app";
 
 export function OutputWindow() {
   const [state, setState] = useState<OutputState>({
@@ -202,12 +202,7 @@ export function OutputWindow() {
 
   const legacyVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  useEffect(() => {
-    const video = legacyVideoRef.current;
-    if (!video || state.mediaType !== "video") {
-      return;
-    }
-
+  const followOperator = (video: HTMLVideoElement) => {
     syncMirrorVideo(video, {
       positionSeconds: state.videoCurrentTime,
       sampledAtMs: state.videoTimeSampledAtMs,
@@ -222,9 +217,25 @@ export function OutputWindow() {
     } else {
       video.pause();
     }
+  };
+
+  // The element exists only while media is shown, and a new or remounted one
+  // starts paused, so showing media again is part of what this follows; a
+  // newly loaded video also catches up in `onLoadedData` (the worship stage
+  // stayed on a still frame for want of both).
+  useEffect(() => {
+    const video = legacyVideoRef.current;
+    if (!video || state.mediaType !== "video") {
+      return;
+    }
+    followOperator(video);
+    // `followOperator` reads the same state listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    state.hideBackground,
     state.mediaType,
     state.mediaUrl,
+    state.showMedia,
     state.videoCurrentTime,
     state.videoTimeSampledAtMs,
     state.isVideoPlaying,
@@ -477,6 +488,7 @@ export function OutputWindow() {
               loop={state.videoSettings.loop}
               muted
               playsInline
+              onLoadedData={(event) => followOperator(event.currentTarget)}
               style={{ filter: state.mediaFilterCSS }}
             >
               <track kind="captions" />
@@ -868,7 +880,7 @@ function YouTubePropLayer({
   style: React.CSSProperties;
 }) {
   const src = useMemo(
-    () => getYouTubeEmbedUrl(youtubeUrl, getElapsedSeconds(shownAtMs)),
+    () => youtubeEmbedUrl(youtubeUrl, { startSeconds: getElapsedSeconds(shownAtMs) }),
     [shownAtMs, youtubeUrl],
   );
 
@@ -878,7 +890,9 @@ function YouTubePropLayer({
   // in Electron; under this shell it is an unknown element that renders
   // nothing, which is why a YouTube prop that worked before the migration went
   // blank on every screen. Its Electron-only attributes — `partition`,
-  // `allowpopups`, `httpreferrer` — went with it.
+  // `allowpopups`, `httpreferrer` — went with it. What `httpreferrer` did,
+  // giving YouTube a referrer to accept, the website's wrapper page now does
+  // (`shared/lib/youtube-embed.mjs`).
   return (
     <iframe
       src={src}
@@ -1072,47 +1086,6 @@ function CapturePropLayer({
       <track kind="captions" />
     </video>
   );
-}
-
-function getYouTubeEmbedUrl(value: string, startSeconds = 0): string | null {
-  try {
-    const url = new URL(value.trim());
-    let videoId: string | null = null;
-    if (url.hostname === "youtu.be") {
-      videoId = url.pathname.split("/").filter(Boolean)[0] ?? null;
-    } else if (url.hostname.endsWith("youtube.com")) {
-      if (url.pathname === "/watch") {
-        videoId = url.searchParams.get("v");
-      } else {
-        const parts = url.pathname.split("/").filter(Boolean);
-        if (["embed", "shorts", "live"].includes(parts[0] ?? "")) {
-          videoId = parts[1] ?? null;
-        }
-      }
-    }
-
-    if (!videoId) return null;
-    const params = new URLSearchParams({
-      autoplay: "1",
-      controls: "0",
-      disablekb: "1",
-      fs: "0",
-      iv_load_policy: "3",
-      loop: "1",
-      modestbranding: "1",
-      mute: "1",
-      origin: YOUTUBE_EMBED_ORIGIN,
-      playsinline: "1",
-      playlist: videoId,
-      rel: "0",
-    });
-    if (startSeconds > 0) {
-      params.set("start", String(startSeconds));
-    }
-    return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
-  } catch {
-    return null;
-  }
 }
 
 function getElapsedSeconds(startedAtMs?: number): number {

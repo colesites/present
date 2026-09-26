@@ -65,8 +65,45 @@ export default defineSchema({
     // Deprecated Clerk fields kept temporarily for migration
     clerkSubscriptionId: v.optional(v.string()),
     clerkSubscriptionItemId: v.optional(v.string()),
+    // On the allowlist (so on Power), recorded when they sign in. The list is
+    // by email, which only the signed-in user's own token carries; this lets
+    // a workspace's member limit count an allowlisted admin while somebody
+    // else is the one joining (`entitlements.ts`).
+    allowlisted: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
+
+  // An invitation to join a workspace, sent to an email address. Accepting
+  // it — on the website or in the desktop app — is the only way into a
+  // workspace besides creating one (`invites.ts`).
+  workspaceInvites: defineTable({
+    orgId: v.id("organizations"),
+    // Lower-cased; only someone signed in with this address can accept.
+    email: v.string(),
+    role: v.string(), // "admin" or "user"
+    userRole: v.optional(v.string()),
+    // The secret in the invitation link.
+    token: v.string(),
+    invitedBy: v.string(),
+    invitedByName: v.optional(v.string()),
+    status: v.string(), // "pending", "accepted", "declined" or "revoked"
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    respondedAt: v.optional(v.number()),
+    emailSentAt: v.optional(v.number()),
+    emailError: v.optional(v.string()),
+  })
+    .index("by_token", ["token"])
+    .index("by_org", ["orgId"])
+    .index("by_email", ["email"]),
+
+  // AI lyrics fixes used, a row per person per billing period.
+  aiLyricsFixUsage: defineTable({
+    userId: v.string(),
+    periodKey: v.string(),
+    count: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user_period", ["userId", "periodKey"]),
 
   speechQuotaAllowlist: defineTable({
     email: v.string(),
@@ -275,23 +312,29 @@ export default defineSchema({
     .index("by_org", ["orgId"])
     .index("by_org_order", ["orgId", "order"]),
 
-  // Lyric / slide theme presets — fonts, colors, alignment that can be
-  // applied to a slide via the Themes modal in the editor.
+  // Themes people saved: a workspace's, or one person's when they work
+  // outside a workspace. The built-in themes live in the app, not here.
   themes: defineTable({
-    orgId: v.id("organizations"),
+    // The workspace's, or unset for a personal theme.
+    orgId: v.optional(v.id("organizations")),
+    // Whose personal theme this is, when there is no workspace.
+    ownerUserId: v.optional(v.string()),
+    createdBy: v.optional(v.string()),
     name: v.string(),
-    // Opaque style payload; matches the SlideElementStyle shape so the
-    // editor can apply it directly to text elements without translation.
+    // The look, as the desktop's `theme-look.mjs` describes it. Themes from
+    // before looks have only `style` and `backgroundColor`.
+    look: v.optional(v.any()),
+    // The old Themes modal's payload: a SlideElementStyle for text elements.
     style: v.any(),
     backgroundColor: v.optional(v.string()),
-    // Preview swatch for the Themes modal grid.
     previewColor: v.string(),
     order: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_org", ["orgId"])
-    .index("by_org_order", ["orgId", "order"]),
+    .index("by_org_order", ["orgId", "order"])
+    .index("by_owner_order", ["ownerUserId", "order"]),
 
   // Keep playlists for backward compat
   playlists: defineTable({

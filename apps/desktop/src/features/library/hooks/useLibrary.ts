@@ -15,6 +15,7 @@ import {
   removeLibraryItemLocal,
   upsertLibraryItem,
 } from "../../../renderer/shared/offline/localData";
+import { useFirstLoad } from "../../../renderer/shared/hooks/useFirstLoad";
 import {
   buildSlidesFromBody,
   createComposedLibraryDraft,
@@ -150,6 +151,8 @@ export function useLibrary(
       normalizeLibraryItem(item, defaultTextStyle),
     )
   );
+  // Loading, not empty, until this machine's copy or Convex has answered.
+  const isLoading = useFirstLoad(workspaceId, libraryItems.length > 0);
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(
     null,
@@ -443,7 +446,7 @@ export function useLibrary(
 
   return {
     libraryItems,
-    isLoading: false,
+    isLoading,
     filteredItems,
     selectedItem,
     selectedItemId,

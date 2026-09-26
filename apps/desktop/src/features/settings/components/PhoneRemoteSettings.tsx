@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  SettingsBlock,
+  SettingsGroup,
+  SettingsNumber,
+  SettingsRow,
+  SettingsSwitch,
+} from "./settings-ui";
+import {
   getRemoteStatus,
   setRemoteSettings,
   type RemoteStatus,
@@ -32,82 +39,70 @@ export function PhoneRemoteSettings() {
 
   if (!status) {
     return (
-      <section className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Phone remote
-        </h3>
-        <p className="text-[11px] text-muted-foreground">
-          {failed ? "Unable to read the remote settings" : "Reading the remote settings…"}
-        </p>
-      </section>
+      <SettingsGroup title="Phone remote">
+        <SettingsRow
+          label="Phone remote"
+          description={failed ? "Unable to read the remote settings." : "Reading the remote settings…"}
+        />
+      </SettingsGroup>
     );
   }
 
   const { config, url, qrSvg, error } = status;
+  const problem = failed ? "Unable to save the remote settings." : error;
 
   return (
-    <section className="space-y-3">
-      <div className="space-y-1">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Phone remote
-        </h3>
-        <p className="text-[11px] text-muted-foreground">
-          Move the slides from a phone on the same network. Scan the code to join; it
-          works without internet, and the code changes each time the remote starts.
-        </p>
-      </div>
-
-      <label className="flex items-center gap-2 text-xs">
-        <input
-          type="checkbox"
-          className="accent-primary"
+    <SettingsGroup
+      title="Phone remote"
+      description="Move the slides from a phone on the same network. It works without internet."
+    >
+      <SettingsRow
+        label="Phone remote"
+        description={
+          problem ? (
+            <span className="text-red-400">{problem}</span>
+          ) : config.enabled ? (
+            "On. Scan the code below to join; it changes each time the remote starts."
+          ) : (
+            "Off."
+          )
+        }
+      >
+        <SettingsSwitch
+          label="Phone remote"
           checked={config.enabled}
-          onChange={(event) => save({ ...config, enabled: event.target.checked })}
+          onChange={(enabled) => save({ ...config, enabled })}
         />
-        <span>Phone remote</span>
-      </label>
-
-      <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span className="w-20">Port</span>
-        <input
-          type="number"
+      </SettingsRow>
+      <SettingsRow label="Port" description="Change it only if something else on this computer uses it.">
+        <SettingsNumber
+          label="Phone remote port"
+          value={config.port}
           min={1}
           max={65535}
-          className="w-24 rounded border border-border bg-background px-2 py-1 text-xs"
-          value={config.port}
-          onChange={(event) => {
-            const port = Number(event.target.value);
-            if (Number.isInteger(port) && port > 0 && port < 65536) {
-              save({ ...config, port });
-            }
-          }}
+          onChange={(port) => save({ ...config, port })}
         />
-      </label>
-
-      {failed ? (
-        <p className="text-[11px] text-destructive">Unable to save the remote settings</p>
-      ) : null}
-      {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
-
+      </SettingsRow>
       {config.enabled && url ? (
-        <div className="flex items-start gap-3">
+        <SettingsBlock className="flex items-center gap-4">
           {qrSvg ? (
             <div
-              className="h-[132px] w-[132px] shrink-0 overflow-hidden rounded bg-white p-1"
+              className="h-[120px] w-[120px] flex-none overflow-hidden rounded-lg bg-white p-1.5"
               // The code is an SVG the core drew; it comes from no network.
               dangerouslySetInnerHTML={{ __html: qrSvg }}
             />
           ) : null}
-          <div className="space-y-1">
-            <p className="text-[11px] text-muted-foreground">Scan, or type this in:</p>
-            <code className="block break-all text-[11px]">{url}</code>
-            <p className="text-[11px] text-muted-foreground">
-              Anyone with this address can move the slides, so keep the code on the
-              operator&apos;s screen.
+          <div className="min-w-0 space-y-1.5">
+            <p className="text-[12px] text-muted-foreground">Scan it, or type this address:</p>
+            <code className="block select-all break-all rounded-md bg-background/60 px-2 py-1 text-[12px] text-foreground">
+              {url}
+            </code>
+            <p className="text-[12px] leading-[18px] text-muted-foreground">
+              Anyone with this address can move the slides, so keep the code on the operator&apos;s screen.
             </p>
           </div>
-        </div>
+        </SettingsBlock>
       ) : null}
-    </section>
+    </SettingsGroup>
   );
 }

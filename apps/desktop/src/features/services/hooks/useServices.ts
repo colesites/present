@@ -24,6 +24,7 @@ import {
   replaceOrgServices,
   upsertService,
 } from "../../../renderer/shared/offline/localData";
+import { useFirstLoad } from "../../../renderer/shared/hooks/useFirstLoad";
 
 const LEGACY_SERVICE_TEMPLATE_KEY = "present-service-template-groups-v1";
 const SERVICE_TEMPLATES_KEY = "present-service-templates-v1";
@@ -479,6 +480,8 @@ export function useServices(
   const [services, setServices] = useState<Service[]>(() =>
     readOrgServices(workspaceId)
   );
+  // Loading, not empty, until this machine's copy or Convex has answered.
+  const isLoading = useFirstLoad(workspaceId, services.length > 0);
   const [initialServiceTemplates] = useState<ServiceTemplate[]>(() =>
     loadServiceTemplates(),
   );
@@ -1729,7 +1732,7 @@ export function useServices(
 
   return {
     services,
-    isLoading: false,
+    isLoading,
     selectedService,
     selectedServiceId,
     isInsideService,

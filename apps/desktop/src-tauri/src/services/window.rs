@@ -275,6 +275,18 @@ pub fn open(
 
     let window = builder.build()?;
 
+    // On Windows and Linux the application menu is a bar inside each window.
+    // It belongs on the operator's, and on nothing an audience or a stage
+    // might see: a menu bar across the projector is exactly what a
+    // congregation notices. macOS has one bar for the whole app, at the top of
+    // the screen, and nothing in any window to take away.
+    #[cfg(not(target_os = "macos"))]
+    if spec.role != WindowRole::Main {
+        if let Err(error) = window.remove_menu() {
+            tracing::warn!(label = %spec.label, %error, "could not take the menu bar off a window");
+        }
+    }
+
     // Shown when its page has drawn (`window_ready`), not when the document
     // has loaded: between the two a webview is white, which is what an operator
     // saw opening the app and a congregation saw when the output opened.

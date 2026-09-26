@@ -3,11 +3,14 @@
 import {
   memo,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   startTransition,
+  type CSSProperties,
 } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, Loader2, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useFontCatalog } from "../hooks/useFontCatalog";
@@ -17,15 +20,20 @@ interface FontFamilySelectProps {
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  /** For the button itself, where `className` is for the box around it. */
+  triggerClassName?: string;
 }
 
 export const FontFamilySelect = memo(function FontFamilySelect({
   value,
   onChange,
   className,
+  triggerClassName,
 }: FontFamilySelectProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [isInstalling, setIsInstalling] = useState(false);
@@ -60,7 +68,10 @@ export const FontFamilySelect = memo(function FontFamilySelect({
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target;
-      if (!(target instanceof Node) || !rootRef.current?.contains(target)) {
+      if (
+        !(target instanceof Node) ||
+        (!rootRef.current?.contains(target) && !menuRef.current?.contains(target))
+      ) {
         setOpen(false);
         setQuery("");
       }
@@ -68,6 +79,8 @@ export const FontFamilySelect = memo(function FontFamilySelect({
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // Only the list closes, not the panel or dialog it sits in.
+        event.preventDefault();
         setOpen(false);
         setQuery("");
       }
@@ -78,6 +91,40 @@ export const FontFamilySelect = memo(function FontFamilySelect({
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
+
+  // The list floats over everything, placed from the button, so a narrow
+  // sidebar or a scrolling panel never cuts it off.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const trigger = rootRef.current?.getBoundingClientRect();
+      if (!trigger) return;
+      const gap = 6;
+      const margin = 8;
+      const width = Math.min(Math.max(trigger.width, 288), window.innerWidth - margin * 2);
+      const left = Math.min(Math.max(margin, trigger.left), window.innerWidth - width - margin);
+      const below = window.innerHeight - trigger.bottom - gap - margin;
+      const above = trigger.top - gap - margin;
+      const openUp = below < 280 && above > below;
+      const maxHeight = Math.min(448, openUp ? above : below);
+      setMenuStyle({
+        position: "fixed",
+        left,
+        width,
+        maxHeight,
+        ...(openUp
+          ? { bottom: window.innerHeight - trigger.top + gap }
+          : { top: trigger.bottom + gap }),
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
     };
   }, [open]);
 
@@ -121,6 +168,7 @@ export const FontFamilySelect = memo(function FontFamilySelect({
         onClick={() => setOpen((current) => !current)}
         className={cn(
           "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-left text-sm text-foreground outline-none transition hover:border-primary/40 focus:ring-1 focus:ring-primary/40",
+          triggerClassName,
           open && "border-primary/50",
         )}
       >
@@ -138,8 +186,12 @@ export const FontFamilySelect = memo(function FontFamilySelect({
         />
       </button>
 
-      {open ? (
-        <div className="absolute left-0 top-[calc(100%+6px)] z-50 flex max-h-[28rem] w-[22rem] max-w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl">
+      {open && menuStyle ? createPortal(
+        <div
+          ref={menuRef}
+          style={menuStyle}
+          className="z-[200] flex flex-col overflow-hidden rounded-xl border border-border bg-popover text-foreground shadow-2xl"
+        >
           <div className="border-b border-border/70 p-3">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -177,7 +229,7 @@ export const FontFamilySelect = memo(function FontFamilySelect({
                 No fonts match “{query.trim()}”.
               </div>
             ) : (
-              <div className="max-h-[18rem] overflow-y-auto p-2">
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 {filteredFamilies.map((family) => {
                   const isSelected = family === normalizedValue;
                   return (
@@ -211,7 +263,8 @@ export const FontFamilySelect = memo(function FontFamilySelect({
               </div>
             ) : null}
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );

@@ -22,7 +22,8 @@ interface UseSpeechRecognitionOptions {
   inputDeviceId?: string | null;
   sessionToken?: string | null;
   keyterms?: string[];
-  usageSource?: "bible" | "library";
+  // "song" is the library's voice search, a Pro and Power feature.
+  usageSource?: "bible" | "library" | "song";
   throwOnStartFailure?: boolean;
 }
 

@@ -1,8 +1,8 @@
 {
   "name": "@present/desktop",
   "productName": "Present",
-  "version": "0.4.0",
-  "description": "Church presentation software for worship services",
+  "version": "0.4.1",
+  "description": "Presentation software for churches, conferences and live events",
   "private": true,
   "scripts": {
     "tauri": "tauri",

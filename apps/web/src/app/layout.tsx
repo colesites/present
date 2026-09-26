@@ -22,8 +22,8 @@ export const metadata: Metadata = {
   // the title says what the thing is as well as what it is called. The
   // template gives every other page the same suffix without repeating it.
   title: {
-    default: "Present — Presentation software for churches and live events",
-    template: "%s — Present",
+    default: "Present | Presentation software for churches and live events",
+    template: "%s | Present",
   },
   description:
     "Present is presentation software for churches, conferences and live events. Cloud libraries, real-time collaboration, instant scripture search, and a confidence view built for running a service live.",
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
     "scripture projection",
   ],
   openGraph: {
-    title: "Present — Presentation software for churches and live events",
+    title: "Present | Presentation software for churches and live events",
     description:
       "Cloud libraries, real-time collaboration, instant scripture search, and a confidence view built for running a service live.",
     siteName: "Present",

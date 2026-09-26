@@ -28,6 +28,20 @@ function loopbackRedirect(value: string | undefined): string | null {
   }
 }
 
+/**
+ * Organisation setup, for an account with none yet, carrying the loopback
+ * address with it. Without it a development desktop that sent someone through
+ * setup was handed the session by `present://`, which is the installed app's,
+ * and never signed in.
+ */
+function setupPath(sessionToken: string, comeBackTo: string | null): string {
+  const setup = new URLSearchParams({ source: "desktop", sessionToken });
+  if (comeBackTo) {
+    setup.set("redirect", comeBackTo);
+  }
+  return `/dashboard/organization/setup?${setup.toString()}`;
+}
+
 export default async function DesktopCallbackPage({
   searchParams,
 }: {
@@ -59,21 +73,13 @@ export default async function DesktopCallbackPage({
 
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!convexUrl) {
-    redirect(
-      `/dashboard/organization/setup?source=desktop&sessionToken=${encodeURIComponent(
-        sessionToken
-      )}`
-    );
+    redirect(setupPath(sessionToken, comeBackTo));
   }
 
   const convex = new ConvexHttpClient(convexUrl, { auth: clerkConvexToken });
   const organizations = await convex.query(api.users.listMyOrganizations, {});
   if (!organizations || organizations.length === 0) {
-    redirect(
-      `/dashboard/organization/setup?source=desktop&sessionToken=${encodeURIComponent(
-        sessionToken
-      )}`
-    );
+    redirect(setupPath(sessionToken, comeBackTo));
   }
 
   const launch = new URLSearchParams({ sessionToken });

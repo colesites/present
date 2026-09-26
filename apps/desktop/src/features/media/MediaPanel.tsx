@@ -66,6 +66,7 @@ import {
 } from "../../renderer/shared/components/ui/resizable";
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
 import { VideoThumbnail } from "./components/VideoThumbnail";
+import { useMenuCommand } from "../../renderer/tauri/menu-commands";
 
 type MediaFilter = "all" | "images" | "videos";
 
@@ -394,6 +395,11 @@ export const MediaPanel = memo(
         );
       }
     };
+
+    // File ▸ Import ▸ Media Folder… in the application menu.
+    useMenuCommand("media.add-folder", () => {
+      void handleAddFolder();
+    });
 
     const removeMediaFromServices = useMutation(
       api.services.removeMediaForFolder

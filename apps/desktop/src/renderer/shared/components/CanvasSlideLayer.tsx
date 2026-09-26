@@ -16,6 +16,8 @@ import type {
   SlideTextBody,
 } from "../../../shared/types";
 import type { LibraryStyle } from "../../../shared/types/output-window";
+import { applyCapitalization } from "../lib/capitalization";
+import { paintFill, readFill } from "../lib/slide-fill";
 
 const DEFAULT_CANVAS_SIZE: CanvasSizePreset = "1920x1080";
 const CANVAS_DIMENSIONS: Record<
@@ -37,6 +39,7 @@ type TextRun = {
     fontStyle: string;
     color: string;
     underline: boolean;
+    strike: boolean;
     textAlign: "left" | "center" | "right" | "justify";
     lineHeight: number;
     letterSpacing: number;
@@ -132,6 +135,7 @@ function parseStructuredTextBody(
         fontStyle: run.fontStyle ?? defaultStyle.fontStyle,
         color: run.color ?? defaultStyle.color,
         underline: run.underline ?? defaultStyle.underline,
+        strike: defaultStyle.strike,
         textAlign: paragraphAlign,
         lineHeight: paragraphLineHeight,
         letterSpacing: run.letterSpacing ?? defaultStyle.letterSpacing,
@@ -179,6 +183,11 @@ function toCanvasFont(style: TextRun["style"]) {
   return `${style.fontStyle} ${style.fontWeight} ${Math.max(1, style.fontSize)}px "${style.fontFamily}"`;
 }
 
+/** Whether this webview's canvas spaces letters itself (Safari 18, Chrome 99). */
+const canvasSpacesLetters =
+  typeof CanvasRenderingContext2D !== "undefined" &&
+  "letterSpacing" in CanvasRenderingContext2D.prototype;
+
 function measureTextWidth(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -189,7 +198,41 @@ function measureTextWidth(
   if (style.letterSpacing === 0 || text.length <= 1) {
     return base;
   }
-  return base + (text.length - 1) * style.letterSpacing;
+  return base + (Array.from(text).length - 1) * style.letterSpacing;
+}
+
+/**
+ * Draw (fill or stroke) text with extra space between its letters: by the
+ * canvas where it can, letter by letter where it can't. Measured as
+ * `measureTextWidth` measures it, so centred lines stay centred.
+ */
+function drawSpacedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  spacing: number,
+  mode: "fill" | "stroke",
+) {
+  const draw = (value: string, at: number) =>
+    mode === "fill" ? ctx.fillText(value, at, y) : ctx.strokeText(value, at, y);
+  if (!spacing) {
+    draw(text, x);
+    return;
+  }
+  if (canvasSpacesLetters) {
+    const context = ctx as CanvasRenderingContext2D & { letterSpacing: string };
+    const previous = context.letterSpacing;
+    context.letterSpacing = `${spacing}px`;
+    draw(text, x);
+    context.letterSpacing = previous;
+    return;
+  }
+  let cursor = x;
+  for (const character of Array.from(text)) {
+    draw(character, cursor);
+    cursor += ctx.measureText(character).width + spacing;
+  }
 }
 
 function splitToTokens(text: string): string[] {
@@ -335,15 +378,18 @@ function drawUnderlinedText(
   style: TextRun["style"],
   measuredWidth: number
 ) {
-  ctx.fillText(text, x, baselineY);
-  if (!style.underline || !text.trim()) return;
-  const underlineY = baselineY + Math.max(1, style.fontSize * 0.08);
-  ctx.beginPath();
-  ctx.lineWidth = Math.max(1, style.fontSize * 0.06);
-  ctx.strokeStyle = style.color;
-  ctx.moveTo(x, underlineY);
-  ctx.lineTo(x + measuredWidth, underlineY);
-  ctx.stroke();
+  drawSpacedText(ctx, text, x, baselineY, style.letterSpacing, "fill");
+  if ((!style.underline && !style.strike) || !text.trim()) return;
+  // In the words' own paint, so a gradient runs through its lines too. The
+  // compositor draws them at the same heights.
+  const thickness = Math.max(1, style.fontSize * 0.06);
+  const lines = [
+    ...(style.underline ? [baselineY + Math.max(1, style.fontSize * 0.08)] : []),
+    ...(style.strike ? [baselineY - style.fontSize * 0.28] : []),
+  ];
+  for (const lineY of lines) {
+    ctx.fillRect(x, lineY - thickness / 2, measuredWidth, thickness);
+  }
 }
 
 function buildRoundedRectPath(
@@ -643,7 +689,13 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
         const borderWidth =
           (styleData.borderWidth ?? 0) * Math.min(scaleX, scaleY);
         applyShadow(ctx, parsedShadow, scaleX, scaleY);
-        if (
+        // A theme's gradient or mix of colours, else the plain colour.
+        const fill = readFill(styleData.fill);
+        if (fill) {
+          ctx.beginPath();
+          buildRoundedRectPath(ctx, 0, 0, w, h, borderRadius);
+          paintFill(ctx, fill, w, h);
+        } else if (
           styleData.backgroundColor &&
           styleData.backgroundColor !== "transparent"
         ) {
@@ -725,15 +777,23 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
           fontWeight: resolveFontWeight(styleData, libraryStyle),
           fontStyle: resolveFontStyle(styleData, libraryStyle),
           color: styleData.color ?? "#ffffff",
-          underline: styleData.textDecoration?.includes("underline") ?? false,
+          underline:
+            styleData.fontUnderline === true ||
+            (styleData.textDecoration?.includes("underline") ?? false),
+          strike: styleData.textDecoration?.includes("line-through") ?? false,
           textAlign: resolveTextAlign(styleData),
           lineHeight: Math.max(
             1,
             (styleData.fontSize ?? libraryStyle.fontSize) *
               Math.min(scaleX, scaleY) *
-              1.2
+              (styleData.lineHeight && styleData.lineHeight >= 0.5 && styleData.lineHeight <= 4
+                ? styleData.lineHeight
+                : 1.2)
           ),
-          letterSpacing: 0,
+          letterSpacing:
+            typeof styleData.letterSpacing === "number" && Number.isFinite(styleData.letterSpacing)
+              ? styleData.letterSpacing * Math.min(scaleX, scaleY)
+              : 0,
         };
         const gradientFill = createTextGradient(ctx, w, h, styleData);
         applyShadow(ctx, parsedShadow, scaleX, scaleY);
@@ -748,21 +808,37 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
               spaceAfter: 0,
             }));
 
+        // All caps and the other cases, as the audience renderer applies them,
+        // before anything is measured, so lines wrap as they'll be seen.
+        const casedParagraphs = styleData.capitalization
+          ? paragraphs.map((paragraph) => ({
+              ...paragraph,
+              runs: paragraph.runs.map((run) => ({
+                ...run,
+                text: applyCapitalization(run.text, styleData.capitalization),
+              })),
+            }))
+          : paragraphs;
+        const outlineWidth =
+          styleData.strokeWidth && styleData.strokeWidth > 0 && styleData.strokeColor
+            ? styleData.strokeWidth * Math.min(scaleX, scaleY)
+            : 0;
+
         const shouldAutoFitScriptureText =
           element.contentRole === "scriptureVerse" ||
           element.contentRole === "scriptureFooter";
         const scaledParagraphs = shouldAutoFitScriptureText
           ? scaleParagraphs(
-              paragraphs,
+              casedParagraphs,
               resolveScriptureAutoFitScale(
                 ctx,
-                paragraphs,
+                casedParagraphs,
                 contentWidth,
                 contentHeight,
                 0.3
               )
             )
-          : paragraphs;
+          : casedParagraphs;
 
         const measurement = measureTextBlock(ctx, scaledParagraphs, contentWidth);
         const laidOut = measurement.laidOut;
@@ -802,6 +878,20 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
               ctx.fillStyle = gradientFill ?? runStyle.color;
               ctx.textAlign = "left";
               ctx.textBaseline = "alphabetic";
+              if (outlineWidth > 0 && run.text.trim()) {
+                // Twice as wide, half of it under the fill: what shows is an
+                // outline of `strokeWidth` outside the letters, as the
+                // audience renderer draws it. Only the outline casts the
+                // shadow; a second one from the fill would darken the edge.
+                ctx.save();
+                ctx.lineJoin = "round";
+                ctx.miterLimit = 2;
+                ctx.lineWidth = outlineWidth * 2;
+                ctx.strokeStyle = styleData.strokeColor as string;
+                drawSpacedText(ctx, run.text, cursorX, baselineY, runStyle.letterSpacing, "stroke");
+                ctx.restore();
+                applyShadow(ctx, null, scaleX, scaleY);
+              }
               drawUnderlinedText(
                 ctx,
                 run.text,
@@ -810,6 +900,9 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
                 runStyle,
                 measured.width
               );
+              if (outlineWidth > 0) {
+                applyShadow(ctx, parsedShadow, scaleX, scaleY);
+              }
               cursorX += measured.width;
             }
 

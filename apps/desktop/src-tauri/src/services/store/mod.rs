@@ -38,6 +38,8 @@ pub enum Kind {
     Library,
     Service,
     Message,
+    /// A workspace's saved themes, cached from Convex for when it is offline.
+    Theme,
 }
 
 impl Kind {
@@ -47,6 +49,7 @@ impl Kind {
             Kind::Library => "library",
             Kind::Service => "service",
             Kind::Message => "message",
+            Kind::Theme => "theme",
         }
     }
 }
@@ -351,6 +354,7 @@ fn kind_from(value: &str) -> Kind {
         "category" => Kind::Category,
         "service" => Kind::Service,
         "message" => Kind::Message,
+        "theme" => Kind::Theme,
         _ => Kind::Library,
     }
 }
@@ -653,6 +657,7 @@ mod tests {
             (Kind::Library, "library"),
             (Kind::Service, "service"),
             (Kind::Message, "message"),
+            (Kind::Theme, "theme"),
         ] {
             assert_eq!(serde_json::to_value(kind).unwrap(), json!(name));
             assert_eq!(

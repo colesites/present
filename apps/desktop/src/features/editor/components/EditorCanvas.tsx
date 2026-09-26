@@ -21,6 +21,8 @@ import type {
   SlideElementType,
 } from "../../../shared/types";
 import { getCanvasSizeDimensions } from "../../library/lib/library-items";
+import { fillToCss, readFill } from "../../../renderer/shared/lib/slide-fill";
+import { SlideMediaBackdrop } from "../../../renderer/shared/components/SlideMediaBackdrop";
 
 interface EditorCanvasProps {
   editorView: "slides" | "source";
@@ -382,6 +384,7 @@ export const EditorCanvas = memo(function EditorCanvas({
             backgroundColor: selectedSlideBackground ?? "#000000",
           }}
         >
+          <SlideMediaBackdrop backgroundId={selectedSlide?.backgroundId} />
           {selectedSlide?.elements?.map((element, elementIndex) => (
             <div
               key={element.id}
@@ -419,7 +422,16 @@ export const EditorCanvas = memo(function EditorCanvas({
                     element.type === "text"
                       ? `calc(${((element.style?.fontSize ?? 120) * EDITOR_PREVIEW_TEXT_SIZE_MULTIPLIER) / 10.8} * 1cqw)`
                       : undefined,
-                  lineHeight: "1.2",
+                  lineHeight: String(
+                    element.style?.lineHeight && element.style.lineHeight >= 0.5 && element.style.lineHeight <= 4
+                      ? element.style.lineHeight
+                      : 1.2,
+                  ),
+                  // Canvas pixels, scaled as the size is.
+                  letterSpacing:
+                    element.type === "text" && element.style?.letterSpacing
+                      ? `calc(${(element.style.letterSpacing * EDITOR_PREVIEW_TEXT_SIZE_MULTIPLIER) / 10.8} * 1cqw)`
+                      : undefined,
                   transform: `rotate(${element.style?.rotation ?? 0}deg) scaleX(${element.style?.flipX ? -1 : 1}) scaleY(${element.style?.flipY ? -1 : 1})`,
                   containerType: 'size',
                 touchAction:
@@ -624,7 +636,11 @@ export const EditorCanvas = memo(function EditorCanvas({
                 <div 
                   className="h-full w-full pointer-events-none"
                   style={{
-                    backgroundColor: element.style?.backgroundColor,
+                    background: (() => {
+                      const fill = readFill(element.style?.fill);
+                      return fill ? fillToCss(fill, element.width, element.height) : undefined;
+                    })(),
+                    backgroundColor: readFill(element.style?.fill) ? undefined : element.style?.backgroundColor,
                     border: `${element.style?.borderWidth ?? 0}px solid ${element.style?.borderColor ?? "transparent"}`,
                     borderRadius: `${element.style?.borderRadius ?? 0}px`,
                     opacity: element.style?.opacity ?? 1

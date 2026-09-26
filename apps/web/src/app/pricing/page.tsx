@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { HelpButton } from "@/components/help/HelpCenter";
 import { PricingShowcase } from "@/components/pricing/PricingShowcase";
 
 export default function PricingPage() {
@@ -22,13 +23,14 @@ export default function PricingPage() {
               Built for every stage
             </h1>
             <p className="text-base leading-7 text-white/55 sm:text-lg">
-              Choose the plan that fits your congregation. From local small groups to global cathedrals.
+              Choose the plan that fits your team, from a weekly small group to a packed conference hall.
             </p>
           </div>
         </div>
 
         <PricingShowcase redirectUrl="/pricing" />
       </div>
+      <HelpButton />
     </main>
   );
 }

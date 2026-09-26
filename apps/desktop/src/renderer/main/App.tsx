@@ -23,15 +23,24 @@ import type { ContentSource, ViewMode } from "../../shared/types";
 import type { OutputTextPosition } from "../../shared/types/output-window";
 import type { HeaderSearchScope } from "../../features/header/AppHeader";
 import {
+  desktopWebBaseUrl,
   ensureFreshDesktopAccessToken,
   useDesktopSessionStore,
 } from "../shared/store/desktopSession";
+import { markStartup } from "../shared/lib/startup-timeline";
+import {
+  runMenuCommand,
+  useMenuChecks,
+  useMenuCommand,
+  useMenuCommandListener,
+} from "../tauri/menu-commands";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { resolveVerifiedOrganizationId } from "../shared/lib/organization-scope-policy.mjs";
 import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvider";
-import { ThemesModal } from "../../features/themes";
+import { ThemesPanel } from "../../features/themes";
 import { useThemesModalStore } from "../shared/store/themesModal";
+import { useMediaLibraryStore } from "../shared/store/mediaLibrary";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
 import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
@@ -96,6 +105,9 @@ function AuthenticatedHome({ windowType }: { windowType: string | null }) {
   const clearSession = useDesktopSessionStore((state) => state.clearSession);
   const isConvexAuthReady = useDesktopConvexAuthReady();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  useEffect(() => {
+    if (isConvexAuthenticated) markStartup("convex-authenticated");
+  }, [isConvexAuthenticated]);
   const [isOnline, setIsOnline] = useState(() =>
     typeof navigator === "undefined" ? true : navigator.onLine
   );
@@ -506,7 +518,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       ? "show"
       : viewMode;
   const contentSource: ContentSource = "my-creations";
-  const isAutopilotEnabled = false;
   const isBibleActive =
     effectiveViewMode === "show" && bottomTab === "scripture";
   const isLibrariesActive =
@@ -522,6 +533,10 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // Shared Data hooks (lifted for Settings vs Present toggling)
   const mediaState = useMediaFolders();
   const { folders, allMediaItems, selectMediaForOutput } = mediaState;
+  // The media library, for what draws slides' image and video backgrounds.
+  useEffect(() => {
+    useMediaLibraryStore.getState().setItems(allMediaItems);
+  }, [allMediaItems]);
   const settings = useAppSettings({ folders, allMediaItems });
   const {
     settingsOutputDisplayId,
@@ -810,6 +825,60 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     }
   }, []);
 
+  // The application menu (`services/app_menu.rs`). Each item does what the
+  // header's own button does; the ones that belong to a panel bring the panel
+  // on screen and hand over to it.
+  useMenuCommandListener();
+  useMenuCommand("view.show", () => {
+    setBottomTab("media");
+    setViewMode("show");
+  });
+  useMenuCommand("view.libraries", () => {
+    setBottomTab("shows");
+    setViewMode("show");
+  });
+  useMenuCommand("view.edit", () => setViewMode("edit"));
+  useMenuCommand("view.bible", () => {
+    setBottomTab("scripture");
+    setViewMode("show");
+  });
+  useMenuCommand("view.browser", () => setViewMode("browser"));
+  useMenuCommand("view.themes", () => useThemesModalStore.getState().open());
+  useMenuCommand("file.new-library-item", () => {
+    setBottomTab("shows");
+    setViewMode("show");
+    runMenuCommand("library.new-item");
+  });
+  useMenuCommand("file.new-library", () => {
+    setBottomTab("shows");
+    setViewMode("show");
+    runMenuCommand("library.create");
+  });
+  useMenuCommand("file.new-service", () => {
+    setViewMode("show");
+    runMenuCommand("services.create");
+  });
+  useMenuCommand("file.add-media-folder", () => {
+    setBottomTab("media");
+    setViewMode("show");
+    runMenuCommand("media.add-folder");
+  });
+  useMenuCommand("screens.media-stage", () => {
+    void (isMediaStageLive ? closeMediaStageWindow() : openMediaStageWindow());
+  });
+  useMenuCommand("screens.worship-stage", () => {
+    void (isWorshipStageLive ? closeWorshipStageWindow() : openWorshipStageWindow());
+  });
+  useMenuCommand("screens.looks", () => void openLooksWindow());
+  useMenuCommand("screens.composer", () => void openScreenComposerWindow());
+  useMenuCommand("help.website", () => {
+    void window.electronAPI?.openExternalBrowser?.(desktopWebBaseUrl());
+  });
+  useMenuCommand("help.download", () => {
+    void window.electronAPI?.openExternalBrowser?.(`${desktopWebBaseUrl()}/download`);
+  });
+  useMenuChecks({ mediaStage: isMediaStageLive, worshipStage: isWorshipStageLive });
+
   useGlobalShortcuts({
     enabled: !isSettingsWindow && effectiveViewMode !== "browser",
     setBottomTab,
@@ -835,7 +904,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       showsPanelRef={showsPanelRef}
       mediaPanelRef={mediaPanelRef}
       scripturePanelRef={scripturePanelRef}
-      isAutopilotEnabled={isAutopilotEnabled}
       showTextInOutput={showTextInOutput}
       setShowTextInOutput={setShowTextInOutput}
       showMediaInOutput={showMediaInOutput}
@@ -929,15 +997,10 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
         </div>
       ) : null}
 
-      {/* Themes modal lives at the top of the tree so any view (editor or
-          show mode) can open it. The editor watches the modal's "pending"
-          payload and applies it to the selected slide. */}
-      <ThemesModal
-        orgId={localOrgId}
-        onApplyTheme={(payload) =>
-          useThemesModalStore.getState().dispatchApply(payload)
-        }
-      />
+      {/* The Themes panel lives at the top of the tree so any view can open
+          it. It applies to the song the view in front publishes, through
+          the themes store; see `store/themesModal.ts`. */}
+      <ThemesPanel workspaceId={localOrgId} />
       <AiOperatorRoot
         sessionToken={sessionToken}
         speechInputDeviceId={settings.settingsSpeechInputDeviceId}

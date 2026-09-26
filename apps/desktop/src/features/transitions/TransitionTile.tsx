@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check } from "lucide-react";
 
-import { transitionSampleUrl, type TransitionPreset } from "../../renderer/tauri/transitions";
+import {
+  transitionSampleUrl,
+  type TransitionMode,
+  type TransitionPreset,
+} from "../../renderer/tauri/transitions";
 import { cn } from "../../renderer/shared/lib/utils";
 
 /** Frames in one play. Enough to read the movement, few enough to preload. */
@@ -22,14 +26,17 @@ const SAMPLE_HEIGHT = 180;
  *
  * The frames come from the engine that runs the transition for real
  * (`transition-sample://`), so nothing here can look like one thing in the
- * menu and behave like another on screen.
+ * menu and behave like another on screen. They are real lyrics over a moving
+ * background, drawn as `mode` would draw them.
  */
 export function TransitionTile({
   preset,
+  mode,
   selected,
   onChoose,
 }: {
   preset: TransitionPreset;
+  mode: TransitionMode;
   selected: boolean;
   onChoose: () => void;
 }) {
@@ -39,9 +46,9 @@ export function TransitionTile({
   const frames = useMemo(
     () =>
       Array.from({ length: STEPS + 1 }, (_, index) =>
-        transitionSampleUrl(preset.id, index / STEPS, SAMPLE_WIDTH, SAMPLE_HEIGHT),
+        transitionSampleUrl(preset.id, index / STEPS, SAMPLE_WIDTH, SAMPLE_HEIGHT, mode),
       ),
-    [preset.id],
+    [mode, preset.id],
   );
 
   useEffect(

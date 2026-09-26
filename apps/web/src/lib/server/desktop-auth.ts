@@ -6,7 +6,7 @@ const DESKTOP_SESSION_TOKEN_VERSION = 1;
 const DESKTOP_SESSION_TOKEN_TYPE = "present-desktop-session";
 
 /**
- * What a computer keeps after it has signed in — and it keeps it.
+ * What a computer keeps after it has signed in, and it keeps it.
  *
  * There is no expiry. Signing in on the desktop opens a browser, as Claude's,
  * ChatGPT's and ProPresenter's do, and like them what is kept afterwards lasts
@@ -20,7 +20,7 @@ const DESKTOP_SESSION_TOKEN_TYPE = "present-desktop-session";
  * banned, locked or deleted. Tokens are checked against those on every
  * refresh, so revoking one takes effect within the hour.
  *
- * `iat` therefore matters — it is what revocation compares against — and older
+ * `iat` therefore matters (it is what revocation compares against), and older
  * tokens that still carry an `exp` are honoured rather than expired, so
  * nobody is signed out by this change.
  */

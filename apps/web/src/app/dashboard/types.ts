@@ -3,17 +3,37 @@ export type DashboardSection =
   | "services"
   | "library"
   | "bible"
-  | "pricing"
+  | "members"
+  | "billing"
   | "accounts"
   | "settings";
+
+export interface DashboardLibrarySlide {
+  id?: string;
+  text: string;
+  label?: string;
+  labelColor?: string;
+  modifier?: string;
+  sectionRepeat?: string;
+  elements?: unknown[];
+  backgroundId?: string;
+  backgroundColor?: string;
+  useBackgroundColor?: boolean;
+}
 
 export interface DashboardLibraryItem {
   _id: string;
   title: string;
+  body?: string;
   categoryId?: string;
   updatedAt?: number;
+  createdAt?: number;
   _creationTime: number;
-  slides: Array<{ text: string }>;
+  slides: DashboardLibrarySlide[];
+  content?: {
+    presentation?: { artist?: string; author?: string; canvasSize?: string; [key: string]: unknown };
+    [key: string]: unknown;
+  };
 }
 
 export interface DashboardOrganization {
@@ -27,24 +47,43 @@ export interface DashboardOrganizationListItem {
   name: string;
   slug: string;
   logo?: string;
-  createdAt?: string | Date;
+  createdAt?: number;
 }
+
+export type ServiceItemType = "library" | "media" | "scripture" | "presentation" | "group";
+
+export interface ServiceEntry {
+  type: ServiceItemType;
+  refId: string;
+  label?: string;
+  labelIsCustom?: boolean;
+  groupId?: string | null;
+  presentation?: { title?: string; sourceType?: string };
+  addedAt: number;
+}
+
+export interface ServiceGroupEntry {
+  id: string;
+  name: string;
+  order: number;
+}
+
+export type ServiceLayoutEntry = { type: "group"; id: string } | { type: "item"; key: string };
 
 export interface DashboardServiceItem {
   _id: string;
   _creationTime: number;
-  date: number;
-  title: string;
+  name: string;
+  /** As the desktop app writes it: an ISO date, "YYYY-MM-DD". */
+  date?: string;
   order?: number;
+  archivedAt?: number;
+  items: ServiceEntry[];
+  groups?: ServiceGroupEntry[];
+  layout?: ServiceLayoutEntry[];
+  createdAt: number;
 }
 
-
-export interface DashboardClientProps {
-  org: DashboardOrganization | null;
-  libraryItems: DashboardLibraryItem[];
-  shouldAutoOpen: boolean;
-  section: DashboardSection;
-}
 
 export function getInitials(value: string) {
   return value

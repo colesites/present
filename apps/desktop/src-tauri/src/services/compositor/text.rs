@@ -134,8 +134,63 @@ fn capitalize(text: &str, mode: Option<&str>) -> String {
             text.to_uppercase()
         }
         Some(value) if value.eq_ignore_ascii_case("lowercase") => text.to_lowercase(),
+        Some(value)
+            if value.eq_ignore_ascii_case("titleCase")
+                || value.eq_ignore_ascii_case("capitalize") =>
+        {
+            title_case(text)
+        }
+        Some(value) if value.eq_ignore_ascii_case("lineStart") => text
+            .split('\n')
+            .map(first_letter_upper)
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => text.to_owned(),
     }
+}
+
+/// Each word's first letter in capitals, as `applyCapitalization`'s
+/// `titleCase` does: a letter that follows anything but a letter, a digit or
+/// an apostrophe, so "it's" is "It's".
+fn title_case(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_word = false;
+    for character in text.chars() {
+        if character.is_alphabetic() && !in_word {
+            out.extend(character.to_uppercase());
+        } else {
+            out.push(character);
+        }
+        in_word = character.is_alphanumeric() || matches!(character, '\'' | '\u{2019}');
+    }
+    out
+}
+
+/// The first letter of a line in capitals, whatever comes before it.
+fn first_letter_upper(line: &str) -> String {
+    match line
+        .char_indices()
+        .find(|(_, character)| character.is_alphabetic())
+    {
+        Some((index, character)) => {
+            let mut out = String::with_capacity(line.len());
+            out.push_str(&line[..index]);
+            out.extend(character.to_uppercase());
+            out.push_str(&line[index + character.len_utf8()..]);
+            out
+        }
+        None => line.to_owned(),
+    }
+}
+
+/// A number the style carries that this build does not model as a field.
+fn extra_number(style: Option<&SlideElementStyle>, key: &str) -> Option<f32> {
+    style?
+        .extra
+        .get(key)?
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .map(|value| value as f32)
 }
 
 /// Draw one `text` element.
@@ -340,7 +395,11 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         .unwrap_or(48.0) as f32
         * uniform)
         .max(1.0);
-    let line_height = font_size * DEFAULT_LINE_HEIGHT;
+    // Line height as a multiple of the size (`lineHeight`), 1.2 unless set.
+    let line_height = font_size
+        * extra_number(style, "lineHeight")
+            .filter(|value| (0.5..=4.0).contains(value))
+            .unwrap_or(DEFAULT_LINE_HEIGHT);
 
     let text_color = style
         .and_then(|s| s.color.as_deref())
@@ -388,6 +447,12 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     if let Some(family) = family.as_deref() {
         attrs = attrs.family(Family::Name(family));
     }
+    // `letterSpacing` is in canvas pixels, as the size is; cosmic-text wants
+    // it as a fraction of the size.
+    if let Some(spacing) = extra_number(style, "letterSpacing").filter(|value| *value != 0.0) {
+        let canvas_size = font_size / uniform.max(f32::EPSILON);
+        attrs = attrs.letter_spacing((spacing / canvas_size).clamp(-0.5, 2.0));
+    }
 
     let align = horizontal_align(style.and_then(|s| s.text_align.as_deref()));
     buffer.set_text(&body, &attrs, Shaping::Advanced, Some(align));
@@ -406,6 +471,11 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
             laid_out,
         );
 
+    // A shadow or an outline reaches past the glyphs, so the scratch is padded
+    // to hold them; the glyphs themselves are still clipped to the box.
+    let effects = TextEffects::of(style, uniform, text_color);
+    let pad = effects.pad();
+
     // Glyphs are rasterised into a scratch pixmap and composited once.
     //
     // This is the difference between a frame budget and a slideshow.
@@ -419,17 +489,23 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     // It is also what makes rotation correct rather than merely fast: the
     // element's transform is applied to the finished text as an image, not to
     // each glyph box separately.
+    let box_width = (width.ceil() as i32).max(1);
+    let box_height = (height.ceil() as i32).max(1);
     let Some(mut scratch) =
-        tiny_skia::Pixmap::new((width.ceil() as u32).max(1), (height.ceil() as u32).max(1))
+        tiny_skia::Pixmap::new((box_width + 2 * pad) as u32, (box_height + 2 * pad) as u32)
     else {
         return;
     };
     let scratch_width = scratch.width() as i32;
-    let scratch_height = scratch.height() as i32;
 
     let base = text_color.to_color_u8();
-    let (base_r, base_g, base_b) = (base.red(), base.green(), base.blue());
-    let base_alpha = f32::from(base.alpha()) / 255.0;
+    let base_ink = (
+        base.red(),
+        base.green(),
+        base.blue(),
+        f32::from(base.alpha()) / 255.0,
+    );
+    let gradient = TextGradient::of(style, width, height);
     let mut ink = InkBounds::default();
 
     buffer.draw(
@@ -437,29 +513,34 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         cache,
         cosmic_text::Color::rgba(255, 255, 255, 255),
         |x, y, w, h, coverage| {
-            let alpha = coverage.a();
-            if alpha == 0 {
+            let coverage = coverage.a();
+            if coverage == 0 {
                 return;
             }
-            let alpha = f32::from(alpha) / 255.0 * base_alpha;
-            if alpha <= 0.0 {
-                return;
-            }
+            let coverage = f32::from(coverage) / 255.0;
 
             for offset_row in 0..h as i32 {
                 for offset_col in 0..w as i32 {
-                    let px = offset_x as i32 + x + offset_col;
-                    let py = offset_y as i32 + y + offset_row;
-                    if px < 0 || py < 0 || px >= scratch_width || py >= scratch_height {
+                    let bx = offset_x as i32 + x + offset_col;
+                    let by = offset_y as i32 + y + offset_row;
+                    if bx < 0 || by < 0 || bx >= box_width || by >= box_height {
                         continue;
                     }
+                    let (r, g, b, a) = gradient.as_ref().map_or(base_ink, |gradient| {
+                        gradient.at(bx as f32 + 0.5, by as f32 + 0.5)
+                    });
+                    let alpha = coverage * a;
+                    if alpha <= 0.0 {
+                        continue;
+                    }
+                    let (px, py) = (bx + pad, by + pad);
                     ink.include(px, py);
                     blend(
                         &mut scratch,
                         (py * scratch_width + px) as usize,
-                        base_r,
-                        base_g,
-                        base_b,
+                        r,
+                        g,
+                        b,
                         alpha,
                     );
                 }
@@ -467,7 +548,460 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         },
     );
 
-    composite(pixmap, &scratch, ink, viewport.element_transform(element));
+    // Underline and strikethrough, a line under or through each laid-out
+    // line of words, at the heights the canvas draws them.
+    let decoration = Decoration::of(style);
+    if decoration.underline || decoration.strike {
+        let thickness = (font_size * 0.06).max(1.0);
+        for run in buffer.layout_runs() {
+            let Some((left, right)) =
+                run.glyphs
+                    .iter()
+                    .fold(None, |span: Option<(f32, f32)>, glyph| {
+                        let (low, high) = (glyph.x, glyph.x + glyph.w);
+                        Some(span.map_or((low, high), |(a, b)| (a.min(low), b.max(high))))
+                    })
+            else {
+                continue;
+            };
+            let mut lines = Vec::with_capacity(2);
+            if decoration.underline {
+                lines.push(run.line_y + (font_size * 0.08).max(1.0));
+            }
+            if decoration.strike {
+                lines.push(run.line_y - font_size * 0.28);
+            }
+            for centre in lines {
+                let top = (offset_y + centre - thickness / 2.0).round() as i32;
+                let rows = thickness.round().max(1.0) as i32;
+                let from = (offset_x + left).floor() as i32;
+                let to = (offset_x + right).ceil() as i32;
+                for by in top.max(0)..(top + rows).min(box_height) {
+                    for bx in from.max(0)..to.min(box_width) {
+                        let (r, g, b, a) = gradient.as_ref().map_or(base_ink, |gradient| {
+                            gradient.at(bx as f32 + 0.5, by as f32 + 0.5)
+                        });
+                        if a <= 0.0 {
+                            continue;
+                        }
+                        let (px, py) = (bx + pad, by + pad);
+                        ink.include(px, py);
+                        blend(&mut scratch, (py * scratch_width + px) as usize, r, g, b, a);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(outline) = effects.outline {
+        outline_under(&mut scratch, &mut ink, outline.radius, outline.color);
+    }
+    if let Some(shadow) = effects.shadow {
+        shadow_under(&mut scratch, &mut ink, &shadow);
+    }
+
+    let transform = viewport
+        .element_transform(element)
+        .pre_translate(-pad as f32, -pad as f32);
+    composite(pixmap, &scratch, ink, transform);
+}
+
+/// The lines drawn with the words: `fontUnderline`, or `textDecoration` naming
+/// `underline` or `line-through`.
+#[derive(Debug, Clone, Copy, Default)]
+struct Decoration {
+    underline: bool,
+    strike: bool,
+}
+
+impl Decoration {
+    fn of(style: Option<&SlideElementStyle>) -> Self {
+        let Some(style) = style else {
+            return Self::default();
+        };
+        let named = style
+            .text_decoration
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        Self {
+            underline: style.font_underline == Some(true) || named.contains("underline"),
+            strike: named.contains("line-through"),
+        }
+    }
+}
+
+/// Words filled with a gradient (`textFillMode: "gradient"`), laid out as the
+/// canvas lays it (`createTextGradient` in `CanvasSlideLayer.tsx`): a line
+/// through the middle of the box at `gradientAngle` degrees (315 when unset),
+/// reaching the box's longer side each way, `gradientFromColor` at its start.
+#[derive(Debug, Clone, Copy)]
+struct TextGradient {
+    from: [f32; 4],
+    to: [f32; 4],
+    centre: (f32, f32),
+    direction: (f32, f32),
+    radius: f32,
+}
+
+impl TextGradient {
+    fn of(style: Option<&SlideElementStyle>, width: f32, height: f32) -> Option<Self> {
+        let style = style?;
+        if style.text_fill_mode.as_deref() != Some("gradient") {
+            return None;
+        }
+        let channels = |value: Option<&str>| -> Option<[f32; 4]> {
+            let color = color::with_opacity(color::parse(value?)?, style.opacity);
+            Some([
+                color.red() * 255.0,
+                color.green() * 255.0,
+                color.blue() * 255.0,
+                color.alpha(),
+            ])
+        };
+        let from = channels(style.gradient_from_color.as_deref())?;
+        let to = channels(style.gradient_to_color.as_deref())?;
+        let degrees = style
+            .gradient_angle
+            .filter(|angle| angle.is_finite())
+            .unwrap_or(315.0);
+        let radians = (degrees as f32).to_radians();
+        Some(Self {
+            from,
+            to,
+            centre: (width / 2.0, height / 2.0),
+            direction: (radians.cos(), radians.sin()),
+            radius: width.max(height).max(1.0),
+        })
+    }
+
+    /// The colour at a point in the box, as straight RGB and an alpha.
+    fn at(&self, x: f32, y: f32) -> (u8, u8, u8, f32) {
+        let along = (x - self.centre.0) * self.direction.0 + (y - self.centre.1) * self.direction.1;
+        let t = ((along + self.radius) / (2.0 * self.radius)).clamp(0.0, 1.0);
+        let mix = |index: usize| self.from[index] + (self.to[index] - self.from[index]) * t;
+        let channel = |index: usize| mix(index).round().clamp(0.0, 255.0) as u8;
+        (channel(0), channel(1), channel(2), mix(3).clamp(0.0, 1.0))
+    }
+}
+
+/// A text element's outline: how far it reaches past the glyphs, in frame
+/// pixels, and its colour.
+#[derive(Debug, Clone, Copy)]
+struct Outline {
+    radius: f32,
+    color: tiny_skia::Color,
+}
+
+/// What a text element draws around its glyphs: an outline (`strokeColor`,
+/// `strokeWidth`) and a shadow (`shadow`, CSS `dx dy blur color`), both in
+/// canvas pixels, as the slide grid's canvas reads them.
+#[derive(Debug, Clone, Copy, Default)]
+struct TextEffects {
+    outline: Option<Outline>,
+    shadow: Option<Shadow>,
+}
+
+impl TextEffects {
+    fn of(style: Option<&SlideElementStyle>, scale: f32, text_color: tiny_skia::Color) -> Self {
+        let Some(style) = style else {
+            return Self::default();
+        };
+        let outline = style
+            .stroke_width
+            .filter(|width| width.is_finite() && *width > 0.0)
+            .and_then(|width| {
+                let color = style.stroke_color.as_deref().and_then(color::parse)?;
+                // Faded with the text, as the whole element fades on the canvas.
+                let color = color::with_opacity(color, style.opacity);
+                Some(Outline {
+                    radius: (width as f32 * scale).min(MAX_OUTLINE_PX),
+                    color,
+                })
+            })
+            .filter(|outline| outline.radius >= 0.5);
+        let shadow = style
+            .shadow
+            .as_deref()
+            .and_then(|value| parse_css_shadow(value, scale))
+            .map(|mut shadow| {
+                // The shadow fades with the text too.
+                shadow.color.apply_opacity(text_color.alpha());
+                shadow
+            });
+        Self { outline, shadow }
+    }
+
+    /// How far past the text box the outline and shadow can reach.
+    fn pad(&self) -> i32 {
+        let outline = self.outline.map_or(0.0, |outline| outline.radius);
+        let shadow = self.shadow.map_or(0.0, |shadow| {
+            shadow.dx.abs().max(shadow.dy.abs()) + 3.0 * shadow.sigma.max(0.0)
+        });
+        if outline == 0.0 && shadow == 0.0 {
+            return 0;
+        }
+        (outline + shadow).ceil() as i32 + 2
+    }
+}
+
+/// An outline wider than this is a block, not an outline. Frame pixels.
+const MAX_OUTLINE_PX: f32 = 48.0;
+
+/// A CSS shadow, `dx dy [blur] [color]` in canvas pixels, optionally inside
+/// `drop-shadow(...)`, scaled to the frame. `none`, empty or unreadable is no
+/// shadow. A missing colour is the canvas's default, black at 35%.
+fn parse_css_shadow(value: &str, scale: f32) -> Option<Shadow> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let inner = match trimmed.get(..12) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("drop-shadow(") => {
+            trimmed[12..].trim_end().trim_end_matches(')')
+        }
+        _ => trimmed,
+    };
+
+    let mut rest = inner.trim();
+    let mut lengths: Vec<f32> = Vec::with_capacity(3);
+    while lengths.len() < 3 {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let token = &rest[..end];
+        let number = token.strip_suffix("px").unwrap_or(token);
+        match number.parse::<f32>() {
+            Ok(length) if length.is_finite() => {
+                lengths.push(length);
+                rest = rest[end..].trim_start();
+            }
+            _ => break,
+        }
+    }
+    if lengths.len() < 2 {
+        return None;
+    }
+    let color = if rest.is_empty() {
+        tiny_skia::Color::from_rgba8(0, 0, 0, 89)
+    } else {
+        color::parse(rest)?
+    };
+    Some(Shadow {
+        dx: lengths[0] * scale,
+        dy: lengths[1] * scale,
+        // A CSS blur length is twice the Gaussian's standard deviation.
+        sigma: lengths.get(2).copied().unwrap_or(0.0).max(0.0) * scale / 2.0,
+        color,
+    })
+}
+
+/// The maximum over each centred window of `2 * half + 1` values, into
+/// `out`: van Herk / Gil-Werman, so its cost doesn't grow with the window.
+fn sliding_max(row: &[u8], half: usize, out: &mut [u8]) {
+    let n = row.len();
+    if n == 0 {
+        return;
+    }
+    if half == 0 {
+        out[..n].copy_from_slice(row);
+        return;
+    }
+    let size = 2 * half + 1;
+    let mut forward = vec![0u8; n];
+    let mut backward = vec![0u8; n];
+    for i in 0..n {
+        forward[i] = if i % size == 0 {
+            row[i]
+        } else {
+            forward[i - 1].max(row[i])
+        };
+    }
+    for i in (0..n).rev() {
+        backward[i] = if i == n - 1 || (i + 1) % size == 0 {
+            row[i]
+        } else {
+            backward[i + 1].max(row[i])
+        };
+    }
+    for (x, slot) in out.iter_mut().enumerate().take(n) {
+        let left = x.saturating_sub(half);
+        let right = (x + half).min(n - 1);
+        // Within one block, or across two: the suffix of the left block and
+        // the prefix of the right.
+        *slot = if left / size == right / size {
+            row[left..=right].iter().copied().max().unwrap_or(0)
+        } else {
+            backward[left].max(forward[right])
+        };
+    }
+}
+
+/// `over`, with `tint` at `alpha` beneath it: premultiplied source-over.
+fn over_tint(
+    over: tiny_skia::PremultipliedColorU8,
+    tint: tiny_skia::ColorU8,
+    alpha: u32,
+) -> tiny_skia::PremultipliedColorU8 {
+    let inverse = 255 - u32::from(over.alpha());
+    let below = |channel: u8| (u32::from(channel) * alpha + 127) / 255;
+    let out_alpha = (u32::from(over.alpha()) + (alpha * inverse + 127) / 255).min(255) as u8;
+    let mix = |top: u8, channel: u8| {
+        ((u32::from(top) + (below(channel) * inverse + 127) / 255).min(u32::from(out_alpha))) as u8
+    };
+    tiny_skia::PremultipliedColorU8::from_rgba(
+        mix(over.red(), tint.red()),
+        mix(over.green(), tint.green()),
+        mix(over.blue(), tint.blue()),
+        out_alpha,
+    )
+    .unwrap_or(over)
+}
+
+/// Grow the ink by `radius` in every direction, in `color`, under the glyphs.
+///
+/// A disc of that radius, as the union of centred rows: each row a sliding
+/// maximum as wide as the disc is at that height. The glyphs' own
+/// anti-aliasing carries over to the outline's edge.
+fn outline_under(
+    scratch: &mut tiny_skia::Pixmap,
+    ink: &mut InkBounds,
+    radius: f32,
+    color: tiny_skia::Color,
+) {
+    let Some((left, top, right, bottom)) = ink.area else {
+        return;
+    };
+    let reach = radius.round().max(1.0) as i32;
+    let (width, height) = (scratch.width() as i32, scratch.height() as i32);
+    let (left, top) = ((left - reach).max(0), (top - reach).max(0));
+    let (right, bottom) = (
+        (right + reach).min(width - 1),
+        (bottom + reach).min(height - 1),
+    );
+    let (region_width, region_height) = ((right - left + 1) as usize, (bottom - top + 1) as usize);
+    let at = |x: usize, y: usize| (top as usize + y) * width as usize + left as usize + x;
+
+    let pixels = scratch.pixels();
+    let mut alpha = vec![0u8; region_width * region_height];
+    for y in 0..region_height {
+        for x in 0..region_width {
+            alpha[y * region_width + x] = pixels.get(at(x, y)).map_or(0, |pixel| pixel.alpha());
+        }
+    }
+
+    let mut grown = vec![0u8; region_width * region_height];
+    let mut row_max = vec![0u8; region_width];
+    for dy in -reach..=reach {
+        let half = f64::from(reach * reach - dy * dy).sqrt().floor() as usize;
+        for y in 0..region_height as i32 {
+            let source = y + dy;
+            if source < 0 || source >= region_height as i32 {
+                continue;
+            }
+            let from = source as usize * region_width;
+            sliding_max(&alpha[from..from + region_width], half, &mut row_max);
+            let to = y as usize * region_width;
+            for (slot, value) in grown[to..to + region_width].iter_mut().zip(&row_max) {
+                *slot = (*slot).max(*value);
+            }
+        }
+    }
+
+    let tint = color.to_color_u8();
+    let pixels = scratch.pixels_mut();
+    for y in 0..region_height {
+        for x in 0..region_width {
+            let coverage = grown[y * region_width + x];
+            if coverage == 0 {
+                continue;
+            }
+            let Some(slot) = pixels.get_mut(at(x, y)) else {
+                continue;
+            };
+            let outline_alpha = u32::from(coverage) * u32::from(tint.alpha()) / 255;
+            *slot = over_tint(*slot, tint, outline_alpha);
+        }
+    }
+    ink.include(left, top);
+    ink.include(right, bottom);
+}
+
+/// A blurred, tinted, offset copy of everything in the scratch, beneath it.
+/// Drawn in the element's own space, so it turns with a rotated box.
+fn shadow_under(scratch: &mut tiny_skia::Pixmap, ink: &mut InkBounds, shadow: &Shadow) {
+    let Some((left, top, right, bottom)) = ink.area else {
+        return;
+    };
+    let spread = (shadow.sigma * 3.0).ceil() as i32 + 1;
+    let (width, height) = (scratch.width() as i32, scratch.height() as i32);
+    let (left, top) = ((left - spread).max(0), (top - spread).max(0));
+    let (right, bottom) = (
+        (right + spread).min(width - 1),
+        (bottom + spread).min(height - 1),
+    );
+    let (region_width, region_height) = ((right - left + 1) as usize, (bottom - top + 1) as usize);
+
+    let tint = shadow.color.to_color_u8();
+    let pixels = scratch.pixels();
+    let mut region = Vec::with_capacity(region_width * region_height);
+    for y in 0..region_height {
+        for x in 0..region_width {
+            let index = (top as usize + y) * width as usize + left as usize + x;
+            let coverage = pixels.get(index).map_or(0, |pixel| pixel.alpha());
+            let alpha = (u32::from(coverage) * u32::from(tint.alpha()) + 127) / 255;
+            let premultiply = |channel: u8| ((u32::from(channel) * alpha + 127) / 255) as u8;
+            region.push(
+                tiny_skia::PremultipliedColorU8::from_rgba(
+                    premultiply(tint.red()),
+                    premultiply(tint.green()),
+                    premultiply(tint.blue()),
+                    alpha as u8,
+                )
+                .unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT),
+            );
+        }
+    }
+    super::filters::blur(&mut region, region_width, region_height, shadow.sigma, 1.0);
+
+    let (dx, dy) = (shadow.dx.round() as i32, shadow.dy.round() as i32);
+    let pixels = scratch.pixels_mut();
+    for y in 0..region_height as i32 {
+        let target_y = top + y + dy;
+        if target_y < 0 || target_y >= height {
+            continue;
+        }
+        for x in 0..region_width as i32 {
+            let target_x = left + x + dx;
+            if target_x < 0 || target_x >= width {
+                continue;
+            }
+            let cast = region[y as usize * region_width + x as usize];
+            if cast.alpha() == 0 {
+                continue;
+            }
+            let Some(slot) = pixels.get_mut((target_y * width + target_x) as usize) else {
+                continue;
+            };
+            let inverse = 255 - u32::from(slot.alpha());
+            let mix = |top: u8, below: u8| {
+                (u32::from(top) + (u32::from(below) * inverse + 127) / 255).min(255) as u8
+            };
+            *slot = tiny_skia::PremultipliedColorU8::from_rgba(
+                mix(slot.red(), cast.red()),
+                mix(slot.green(), cast.green()),
+                mix(slot.blue(), cast.blue()),
+                mix(slot.alpha(), cast.alpha()),
+            )
+            .unwrap_or(*slot);
+        }
+    }
+    ink.include(
+        (left + dx).clamp(0, width - 1),
+        (top + dy).clamp(0, height - 1),
+    );
+    ink.include(
+        (right + dx).clamp(0, width - 1),
+        (bottom + dy).clamp(0, height - 1),
+    );
 }
 
 /// The rectangle of a scratch pixmap that holds any ink, inclusive.
@@ -1198,5 +1732,262 @@ mod tests {
         assert_eq!(weight_of(Some(&numeric)), Weight(700));
         assert_eq!(weight_of(Some(&nonsense)), Weight::NORMAL);
         assert_eq!(weight_of(None), Weight::NORMAL);
+    }
+
+    #[test]
+    fn a_css_shadow_reads_as_the_canvas_reads_it() {
+        let shadow = parse_css_shadow("0 4px 12px rgba(0,0,0,0.8)", 1.0).expect("shadow");
+        assert_eq!((shadow.dx, shadow.dy, shadow.sigma), (0.0, 4.0, 6.0));
+        assert!((shadow.color.alpha() - 0.8).abs() < 0.01);
+
+        let wrapped = parse_css_shadow("drop-shadow(2px -3px 4px #ff0000)", 2.0).expect("shadow");
+        assert_eq!((wrapped.dx, wrapped.dy, wrapped.sigma), (4.0, -6.0, 4.0));
+
+        let default_colour = parse_css_shadow("1 1", 1.0).expect("shadow");
+        assert!((default_colour.color.alpha() - 0.35).abs() < 0.01);
+
+        for none in ["", "none", "NONE", "soft", "1px"] {
+            assert!(parse_css_shadow(none, 1.0).is_none(), "{none:?}");
+        }
+    }
+
+    #[test]
+    fn the_sliding_maximum_matches_the_slow_one() {
+        let row: Vec<u8> = (0..97u32).map(|i| ((i * 37 + 11) % 251) as u8).collect();
+        let mut out = vec![0u8; row.len()];
+        for half in 0..9 {
+            sliding_max(&row, half, &mut out);
+            for (x, got) in out.iter().enumerate() {
+                let from = x.saturating_sub(half);
+                let to = (x + half).min(row.len() - 1);
+                let expected = row[from..=to].iter().copied().max().unwrap();
+                assert_eq!(*got, expected, "half {half}, x {x}");
+            }
+        }
+    }
+
+    fn count_pixels(frame: &Frame, test: impl Fn(u8, u8, u8) -> bool) -> usize {
+        (0..frame.height())
+            .flat_map(|y| (0..frame.width()).map(move |x| (x, y)))
+            .filter_map(|(x, y)| frame.pixel_at(x, y))
+            .filter(|(r, g, b, _)| test(*r, *g, *b))
+            .count()
+    }
+
+    #[test]
+    fn an_outline_is_drawn_around_the_glyphs() {
+        let plain = render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": "Grace",
+            "style": { "fontSize": 60.0, "color": "#ffffff" }
+        }));
+        let outlined = render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": "Grace",
+            "style": { "fontSize": 60.0, "color": "#ffffff", "strokeColor": "#ff0000", "strokeWidth": 3.0 }
+        }));
+        let red = |r: u8, g: u8, b: u8| r > 150 && g < 90 && b < 90;
+        assert_eq!(count_pixels(&plain, red), 0);
+        assert!(count_pixels(&outlined, red) > 150, "no outline pixels");
+        // The glyphs are still white on top of it.
+        assert!(count_pixels(&outlined, |r, g, b| r > 220 && g > 220 && b > 220) > 100);
+    }
+
+    #[test]
+    fn a_shadow_falls_below_the_glyphs() {
+        let frame = render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": "Grace",
+            "style": { "fontSize": 60.0, "color": "#ffffff", "shadow": "0 8px 0 #00ff00", "verticalAlign": "top" }
+        }));
+        let green = |r: u8, g: u8, b: u8| g > 150 && r < 100 && b < 100;
+        assert!(count_pixels(&frame, green) > 100, "no shadow pixels");
+        // Green only shows where the shadow is not under white glyphs, so the
+        // lowest green row is lower than the lowest white one.
+        let lowest = |test: &dyn Fn(u8, u8, u8) -> bool| {
+            (0..frame.height())
+                .rev()
+                .find(|&y| {
+                    (0..frame.width()).any(|x| {
+                        frame
+                            .pixel_at(x, y)
+                            .is_some_and(|(r, g, b, _)| test(r, g, b))
+                    })
+                })
+                .unwrap_or(0)
+        };
+        let white = |r: u8, g: u8, b: u8| r > 220 && g > 220 && b > 220;
+        assert!(
+            lowest(&green) > lowest(&white),
+            "the shadow isn't below the text"
+        );
+    }
+
+    #[test]
+    fn no_shadow_or_outline_leaves_the_box_as_it_was() {
+        assert_eq!(TextEffects::default().pad(), 0);
+        let style = SlideElementStyle {
+            shadow: Some("none".into()),
+            stroke_width: Some(0.0),
+            stroke_color: Some("#fff".into()),
+            ..SlideElementStyle::default()
+        };
+        assert_eq!(
+            TextEffects::of(Some(&style), 1.0, tiny_skia::Color::WHITE).pad(),
+            0
+        );
+    }
+
+    /// The average red and blue of the ink in a column band.
+    fn red_and_blue_in_columns(frame: &Frame, from_x: u32, to_x: u32) -> (f64, f64) {
+        let (mut red, mut blue, mut count) = (0.0, 0.0, 0.0);
+        for y in 0..frame.height() {
+            for x in from_x..to_x.min(frame.width()) {
+                if let Some((r, g, b, _)) = frame.pixel_at(x, y) {
+                    if r > 40 || g > 40 || b > 40 {
+                        red += f64::from(r);
+                        blue += f64::from(b);
+                        count += 1.0;
+                    }
+                }
+            }
+        }
+        assert!(count > 0.0, "no ink between {from_x} and {to_x}");
+        (red / count, blue / count)
+    }
+
+    #[test]
+    fn a_gradient_runs_across_the_words_as_the_canvas_draws_it() {
+        let frame = render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": "MMMMMMMMMMMM",
+            "style": {
+                "fontSize": 48.0, "textFillMode": "gradient",
+                "gradientFromColor": "#ff0000", "gradientToColor": "#0000ff", "gradientAngle": 0.0
+            }
+        }));
+        let (left_red, left_blue) = red_and_blue_in_columns(&frame, 0, 200);
+        let (right_red, right_blue) = red_and_blue_in_columns(&frame, 200, 400);
+        assert!(
+            left_red > right_red,
+            "red fades left to right: {left_red} then {right_red}"
+        );
+        assert!(
+            right_blue > left_blue,
+            "blue grows left to right: {left_blue} then {right_blue}"
+        );
+    }
+
+    #[test]
+    fn a_gradient_meets_the_box_where_the_canvas_puts_it() {
+        let style: SlideElementStyle = serde_json::from_value(json!({
+            "textFillMode": "gradient",
+            "gradientFromColor": "#000000", "gradientToColor": "#ffffff", "gradientAngle": 0.0
+        }))
+        .expect("style");
+        let gradient = TextGradient::of(Some(&style), 100.0, 50.0).expect("a gradient");
+        // The line reaches the longer side past the middle each way, so the
+        // box itself spans the middle half of it.
+        assert_eq!(gradient.at(50.0, 25.0).0, 128);
+        assert_eq!(gradient.at(0.0, 25.0).0, 64);
+        assert_eq!(gradient.at(100.0, 25.0).0, 191);
+    }
+
+    #[test]
+    fn a_gradient_missing_a_colour_is_the_plain_colour() {
+        let style: SlideElementStyle = serde_json::from_value(json!({
+            "textFillMode": "gradient", "gradientFromColor": "#ff0000", "color": "#00ff00"
+        }))
+        .expect("style");
+        assert!(TextGradient::of(Some(&style), 100.0, 50.0).is_none());
+    }
+
+    /// The columns and rows ink lands in: its left, right, top and bottom.
+    fn ink_extent(frame: &Frame) -> (u32, u32, u32, u32) {
+        let (mut left, mut right, mut top, mut bottom) = (u32::MAX, 0, u32::MAX, 0);
+        for y in 0..frame.height() {
+            for x in 0..frame.width() {
+                if let Some((r, g, b, _)) = frame.pixel_at(x, y) {
+                    if r > 40 || g > 40 || b > 40 {
+                        left = left.min(x);
+                        right = right.max(x);
+                        top = top.min(y);
+                        bottom = bottom.max(y);
+                    }
+                }
+            }
+        }
+        (left, right, top, bottom)
+    }
+
+    fn words(style: serde_json::Value, content: &str) -> Frame {
+        render(json!({
+            "id": "a", "type": "text",
+            "x": 0.0, "y": 0.0, "width": 400.0, "height": 200.0,
+            "content": content,
+            "style": style
+        }))
+    }
+
+    #[test]
+    fn letter_spacing_spreads_the_words() {
+        let (left, right, _, _) = ink_extent(&words(json!({ "fontSize": 24.0 }), "spacing"));
+        let (wide_left, wide_right, _, _) = ink_extent(&words(
+            json!({ "fontSize": 24.0, "letterSpacing": 8.0 }),
+            "spacing",
+        ));
+        assert!(
+            wide_right - wide_left > right - left + 30,
+            "{} against {}",
+            wide_right - wide_left,
+            right - left
+        );
+    }
+
+    #[test]
+    fn line_height_spreads_the_lines() {
+        let (_, _, top, bottom) = ink_extent(&words(json!({ "fontSize": 24.0 }), "one\ntwo"));
+        let (_, _, tall_top, tall_bottom) = ink_extent(&words(
+            json!({ "fontSize": 24.0, "lineHeight": 2.4 }),
+            "one\ntwo",
+        ));
+        assert!(
+            tall_bottom - tall_top > bottom - top + 15,
+            "{} against {}",
+            tall_bottom - tall_top,
+            bottom - top
+        );
+    }
+
+    #[test]
+    fn an_underline_is_drawn_under_the_words() {
+        let (_, _, _, bottom) = ink_extent(&words(json!({ "fontSize": 30.0 }), "mm"));
+        let (_, _, _, underlined) = ink_extent(&words(
+            json!({ "fontSize": 30.0, "textDecoration": "underline" }),
+            "mm",
+        ));
+        assert!(underlined > bottom, "{underlined} against {bottom}");
+        let (_, _, _, from_flag) = ink_extent(&words(
+            json!({ "fontSize": 30.0, "fontUnderline": true }),
+            "mm",
+        ));
+        assert_eq!(from_flag, underlined, "fontUnderline is the same line");
+    }
+
+    #[test]
+    fn title_case_and_first_letters_match_the_canvas() {
+        assert_eq!(
+            capitalize("amazing grace, how sweet", Some("titleCase")),
+            "Amazing Grace, How Sweet"
+        );
+        assert_eq!(capitalize("it's well", Some("titleCase")), "It's Well");
+        assert_eq!(
+            capitalize("  holy\n(and) true", Some("lineStart")),
+            "  Holy\n(And) true"
+        );
     }
 }

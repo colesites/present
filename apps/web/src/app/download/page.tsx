@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Apple, ArrowDownToLine, Terminal } from "lucide-react";
+import { HelpButton } from "@/components/help/HelpCenter";
 import { Footer, Navbar } from "@/components/home/Layout";
 import {
   getDesktopDownloadTargets,
@@ -95,7 +96,7 @@ function DownloadPlatformCard({ target }: { target: DesktopDownloadTarget }) {
  * Everything published before the current release.
  *
  * A church that has standardised on a version, or one that hit a problem with
- * the newest, needs the one they had back — and a bucket cannot be browsed
+ * the newest, needs the one they had back, and a bucket cannot be browsed
  * from a page, so the list comes from the manifest. Collapsed by default: it
  * is a way out, not the thing most people came for.
  */
@@ -176,7 +177,7 @@ export default async function DownloadPage() {
               </h1>
 
               <p className="mt-6 max-w-[34rem] px-2 text-[0.98rem] leading-relaxed text-white/88 sm:mt-8 sm:text-[1.3rem] sm:text-white font-medium text-center">
-                Present keeps a team fast under pressure — cloud-synced libraries, instant scripture search, browser output, and a clean confidence view built for anything running live.
+                Present keeps a team fast under pressure: cloud-synced libraries, instant scripture search, browser output, and a clean confidence view built for anything running live.
               </p>
 
               <div className="mt-10 grid w-full gap-4 sm:mt-14 sm:gap-6 lg:grid-cols-3">
@@ -202,6 +203,7 @@ export default async function DownloadPage() {
       </main>
 
       <Footer />
+      <HelpButton />
     </div>
   );
 }
