@@ -70,6 +70,37 @@ interface CanvasSlideLayerProps {
   style?: CSSProperties;
 }
 
+/** Two plain objects with the same keys holding the same values. */
+function sameFields(first: object | undefined, second: object | undefined): boolean {
+  if (first === second) return true;
+  if (!first || !second) return false;
+  const a = first as Record<string, unknown>;
+  const b = second as Record<string, unknown>;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => Object.is(a[key], b[key]));
+}
+
+/**
+ * Whether a slide canvas has anything new to draw.
+ *
+ * Its callers build `libraryStyle`, and often `style`, as an object literal
+ * on every render, so comparing them by identity found every render new, and
+ * every canvas in the slide grid was drawn again whenever the grid rendered:
+ * each slide change, and more. For a song with a theme, whose words have a
+ * soft shadow and a gradient that are slow to draw on a canvas, that was a
+ * stall on every click. They are compared by what they hold.
+ */
+function canvasPropsEqual(previous: CanvasSlideLayerProps, next: CanvasSlideLayerProps): boolean {
+  return (
+    previous.text === next.text &&
+    previous.elements === next.elements &&
+    previous.canvasSize === next.canvasSize &&
+    previous.className === next.className &&
+    sameFields(previous.libraryStyle, next.libraryStyle) &&
+    sameFields(previous.style, next.style)
+  );
+}
+
 function resolveCanvasSize(value?: CanvasSizePreset | null): CanvasSizePreset {
   if (value && value in CANVAS_DIMENSIONS) {
     return value;
@@ -946,4 +977,4 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
       />
     </div>
   );
-});
+}, canvasPropsEqual);
