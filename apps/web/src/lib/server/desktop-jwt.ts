@@ -190,15 +190,19 @@ export const isDesktopJwtTrusted = async (): Promise<boolean> => {
         cache: "no-store",
         signal: AbortSignal.timeout(3_000),
       });
-      const published = response.ok
-        ? ((await response.json()) as { keys?: Array<{ kid?: string; n?: string }> })
-        : null;
+      if (!response.ok) {
+        throw new Error(`${issuer}/.well-known/jwks.json answered ${response.status}`);
+      }
+      const published = (await response.json()) as { keys?: Array<{ kid?: string; n?: string }> };
       trusted = Boolean(
         published?.keys?.some((key) => key.kid === signing.kid && key.n === ours.n),
       );
     } catch {
-      // Unreachable is not trusted: Convex could not reach it either.
-      trusted = false;
+      // Unreachable is not trusted the first time: Convex could not reach it
+      // either. Once this key has been seen published, a check that is slow
+      // or fails keeps the answer it had, so a bad moment never sends every
+      // computer back to Clerk's session, which may have ended long ago.
+      trusted = trust?.trusted === true;
     }
   }
 

@@ -307,8 +307,10 @@ function AuthenticatedHome({ windowType }: { windowType: string | null }) {
 
     if (sessionExpiresAtMs && sessionExpiresAtMs <= Date.now()) {
       if (isOnline) {
-        clearSession();
-        setError("Session expired. Please sign in again.");
+        // This computer's clock is not the judge (`expiredSessionAction`):
+        // the server renews the session, or answers 401 and signs it out.
+        setAuthStatus(user ? "authenticated" : "loading");
+        void ensureFreshDesktopAccessToken();
       } else if (user) {
         setAuthStatus("authenticated");
         setError("Session expired. Reconnect to verify your account.");

@@ -7,6 +7,7 @@ import {
   verifyDesktopSessionToken,
 } from "../../../../../lib/server/desktop-auth";
 import {
+  isDesktopJwtConfigured,
   isDesktopJwtTrusted,
   signConvexAccessToken,
 } from "../../../../../lib/server/desktop-jwt";
@@ -86,6 +87,28 @@ export async function POST(request: Request) {
       const session = await client.sessions.getSession(claims.sessionId);
 
       if (session.userId !== claims.userId || session.status !== "active") {
+        // With the desktop's own credential set up, Clerk is only asked
+        // because checking the key failed a moment ago. Its browser session
+        // ending then is not this computer being signed out, so unless the
+        // account says so, the desktop is told to try again, and keeps its
+        // session and goes on presenting meanwhile.
+        if (isDesktopJwtConfigured()) {
+          const user = await client.users.getUser(claims.userId).catch((error: unknown) =>
+            (error as { status?: unknown })?.status === 404 ? ("gone" as const) : null,
+          );
+          const signedOut =
+            user === "gone" ||
+            (user !== null &&
+              (user.banned ||
+                user.locked ||
+                isDesktopSessionRevoked(claims.issuedAt, user.privateMetadata)));
+          if (!signedOut) {
+            return NextResponse.json(
+              { error: "Present couldn't renew the sign-in just now. Try again shortly." },
+              { headers: noStoreHeaders, status: 503 }
+            );
+          }
+        }
         return NextResponse.json(
           { error: "Session is no longer active." },
           { headers: noStoreHeaders, status: 401 }

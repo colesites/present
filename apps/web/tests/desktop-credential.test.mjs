@@ -231,3 +231,37 @@ test("tokens are signed only once the issuer publishes this key", async (t) => {
   };
   assert.equal(await offline.isDesktopJwtTrusted(), false, "an issuer nobody can reach vouches for nothing");
 });
+
+test("a key seen published stays trusted through a check that fails", async (t) => {
+  // Every instance of the site checks its own key over the network. A slow
+  // answer must not send computers back to Clerk's session, which would sign
+  // out any whose browser session ended long ago.
+  const realFetch = globalThis.fetch;
+  const realNow = Date.now;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+    Date.now = realNow;
+  });
+  t.mock.method(console, "warn", () => {});
+  const site = await import(`../src/lib/server/desktop-jwt.ts?held=${Math.random()}`);
+  const ourKeys = await site.desktopJwks();
+  globalThis.fetch = async () => new Response(JSON.stringify(ourKeys), { status: 200 });
+  assert.equal(await site.isDesktopJwtTrusted(), true);
+
+  // Past the time it is believed for, the check is made again, and fails.
+  let now = realNow();
+  Date.now = () => now;
+  now += 11 * 60_000;
+  globalThis.fetch = async () => {
+    throw new Error("timed out");
+  };
+  assert.equal(await site.isDesktopJwtTrusted(), true, "a timeout keeps the answer it had");
+  now += 11 * 60_000;
+  globalThis.fetch = async () => new Response("", { status: 502 });
+  assert.equal(await site.isDesktopJwtTrusted(), true, "so does an error page");
+
+  // A published list without the key is an answer, and is believed.
+  now += 11 * 60_000;
+  globalThis.fetch = async () => new Response(JSON.stringify({ keys: [] }), { status: 200 });
+  assert.equal(await site.isDesktopJwtTrusted(), false, "a list without it is not a failure");
+});
