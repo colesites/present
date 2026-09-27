@@ -3,27 +3,40 @@
 //! Two groups, as ProPresenter has them: **Audience**, what the room sees,
 //! and **Stage**, the confidence monitors. Each starts with the screens the
 //! app always had — the audience output, the media stage and the worship
-//! stage — and the operator can add more to either: a second projector
-//! showing the audience picture, a monitor at the back of the room with the
-//! worship stage on it.
+//! stage — and the operator can add more to either.
 //!
-//! A screen is drawn at its own size, which is the picture's resolution, and
-//! that picture is put on its output either filling it or fitted inside it.
-//! Its colour is what shows behind everything else on it.
+//! A screen is one picture. It goes to one output or more, by its type:
+//!
+//! * **Single**: one output.
+//! * **Mirror**: the same picture on every output.
+//! * **Grouped**: one large picture cut across a grid of outputs, a wall of
+//!   TVs showing one image.
+//! * **Edge blend**: one wide picture across projectors side by side, their
+//!   edges overlapping and faded into each other so the join cannot be seen.
+//!
+//! An output is a display, or an NDI source on the network. Its **Output
+//! Target** says where on it the picture goes: the whole of it, or a custom
+//! rectangle in its own pixels (an LED wall whose processor takes a 1080p
+//! signal and shows only part of it). Each output has its own colour
+//! adjustments and corner pin, for projectors that are not the same or not
+//! square to their screen.
+//!
+//! The picture's size follows from that: the first output's target, and for a
+//! grouped or blended screen the whole grid or row of them.
 //!
 //! The three screens the app always had keep their windows and everything
-//! that already knows them by name (`output`, `media-stage`,
-//! `worship-stage`); an added one has a window of its own, `audience-<id>` or
-//! `stage-<id>`. The output chosen for each is kept with the display
-//! preferences, by the screen's id, which for the first three is the name
-//! their role was always stored under.
+//! that already knows them by name (`output`, `media-stage`, `worship-stage`);
+//! an added screen's window is `audience-<id>` or `stage-<id>`, and a screen's
+//! second and later outputs add `--<output id>` to it. The display each output
+//! goes to is kept with the display preferences under [`display_key`], which
+//! for a screen's first output is its id: for the first three, the name their
+//! role was always stored under.
 //!
 //! No Tauri types.
 
 use serde::{Deserialize, Serialize};
 
 use super::display::ScreenRole;
-use crate::state::display_state::Resolution;
 
 /// The audience output's id: `ScreenRole::Audience`'s stored name.
 pub const AUDIENCE: &str = "audience";
@@ -32,12 +45,24 @@ pub const MEDIA: &str = "media";
 /// The worship stage's id.
 pub const WORSHIP: &str = "worship";
 
+/// Every screen's first output, which cannot be removed.
+pub const MAIN_OUTPUT: &str = "main";
+
 /// Label prefixes for the windows of added screens.
 pub const AUDIENCE_WINDOW_PREFIX: &str = "audience-";
 pub const STAGE_WINDOW_PREFIX: &str = "stage-";
+/// Between a screen's window label and an output's id, for its second and
+/// later outputs' windows.
+pub const OUTPUT_SEPARATOR: &str = "--";
 
 /// A name is shown in a list and across a screen by Identify; this is plenty.
 const MAX_NAME: usize = 40;
+/// More outputs than this for one screen is a mistake, not a setup.
+pub const MAX_OUTPUTS: usize = 16;
+/// A picture wider or taller than this is not drawn.
+const MAX_SIDE: u32 = 16_384;
+/// What a picture with no output to take its size from is drawn at.
+pub const FALLBACK_SIZE: (u32, u32) = (1920, 1080);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -46,35 +71,250 @@ pub enum ScreenGroup {
     Stage,
 }
 
-/// What a stage screen shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum StageLayout {
-    /// What is on screen and what is next, with the clock: the media desk's.
-    Media,
-    /// The words, large, for the band.
-    Worship,
+pub enum ScreenType {
+    #[default]
+    Single,
+    Mirror,
+    Grouped,
+    EdgeBlend,
 }
 
-impl StageLayout {
-    /// The page's `?window=` value.
-    pub fn page(self) -> &'static str {
-        match self {
-            StageLayout::Media => "media-stage",
-            StageLayout::Worship => "worship-stage",
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutputKind {
+    /// A display connected to this computer.
+    #[default]
+    Display,
+    /// An NDI source on the network, for a streaming computer or a switcher.
+    Ndi,
+}
+
+/// Where the picture goes on its output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", tag = "kind")]
+pub enum OutputTarget {
+    /// The whole output, at its own resolution.
+    #[default]
+    Full,
+    /// A rectangle of it, in its own pixels, the rest left black.
+    Custom {
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    },
+}
+
+/// An output's colour, for projectors that do not match or a room that is
+/// too bright. Every value at its default changes nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ColorAdjust {
+    /// 1 as it is; 0.5 half as bright.
+    pub brightness: f32,
+    /// 1 as it is.
+    pub contrast: f32,
+    /// 1 as it is; 0 grey.
+    pub saturation: f32,
+    /// Degrees round the colour wheel.
+    pub hue: f32,
+    /// How far black is lifted, 0 to 1: a projector's black is not black,
+    /// and where two blended projectors overlap it is twice as bright, so the
+    /// rest is lifted to match.
+    pub black_level: f32,
+}
+
+impl Default for ColorAdjust {
+    fn default() -> Self {
+        Self {
+            brightness: 1.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            hue: 0.0,
+            black_level: 0.0,
         }
     }
 }
 
-/// How the picture goes on its output.
+impl ColorAdjust {
+    pub fn is_identity(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn sanitized(self) -> Self {
+        let clamp = |value: f32, low: f32, high: f32, fallback: f32| {
+            if value.is_finite() {
+                value.clamp(low, high)
+            } else {
+                fallback
+            }
+        };
+        Self {
+            brightness: clamp(self.brightness, 0.0, 2.0, 1.0),
+            contrast: clamp(self.contrast, 0.0, 2.0, 1.0),
+            saturation: clamp(self.saturation, 0.0, 2.0, 1.0),
+            hue: clamp(self.hue, -180.0, 180.0, 0.0),
+            black_level: clamp(self.black_level, 0.0, 0.5, 0.0),
+        }
+    }
+}
+
+/// How far each corner of the picture is moved on its output, in the
+/// output's pixels, to square it up on a screen the projector is not square
+/// to. All zero changes nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CornerPin {
+    pub top_left: [f32; 2],
+    pub top_right: [f32; 2],
+    pub bottom_right: [f32; 2],
+    pub bottom_left: [f32; 2],
+}
+
+impl CornerPin {
+    pub fn is_identity(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn sanitized(self) -> Self {
+        let point = |[x, y]: [f32; 2]| {
+            let clamp = |value: f32| {
+                if value.is_finite() {
+                    value.clamp(-(MAX_SIDE as f32), MAX_SIDE as f32)
+                } else {
+                    0.0
+                }
+            };
+            [clamp(x), clamp(y)]
+        };
+        Self {
+            top_left: point(self.top_left),
+            top_right: point(self.top_right),
+            bottom_right: point(self.bottom_right),
+            bottom_left: point(self.bottom_left),
+        }
+    }
+}
+
+/// How the overlap between blended projectors fades.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum OutputTarget {
-    /// Stretched to the whole output.
+pub enum BlendCurve {
+    /// A straight fade.
+    Linear,
+    /// Curved, as most projectors' brightness is.
     #[default]
-    Full,
-    /// Its own shape, inside the output, with black at the edges.
-    Fit,
+    Cubic,
+    /// Curved more.
+    Quadratic,
+}
+
+impl BlendCurve {
+    /// How much of the picture shows at `t` across the overlap, 0 at the
+    /// outer edge to 1 where the overlap ends. Two overlapping outputs'
+    /// weights add up to one at every point, so the join is as bright as the
+    /// rest.
+    pub fn weight(self, t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            BlendCurve::Linear => t,
+            BlendCurve::Cubic => t * t * (3.0 - 2.0 * t),
+            BlendCurve::Quadratic => {
+                if t < 0.5 {
+                    2.0 * t * t
+                } else {
+                    1.0 - 2.0 * (1.0 - t) * (1.0 - t)
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EdgeBlendSetup {
+    /// How much neighbouring outputs overlap, in their own pixels.
+    pub overlap: u32,
+    pub curve: BlendCurve,
+}
+
+impl Default for EdgeBlendSetup {
+    fn default() -> Self {
+        Self {
+            overlap: 240,
+            curve: BlendCurve::Cubic,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GridSetup {
+    /// Outputs across; the rows follow from how many outputs there are.
+    pub columns: u32,
+}
+
+impl Default for GridSetup {
+    fn default() -> Self {
+        Self { columns: 2 }
+    }
+}
+
+/// One output of a screen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputSetup {
+    pub id: String,
+    #[serde(default)]
+    pub kind: OutputKind,
+    /// The source's name on the network, for an NDI output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ndi_name: Option<String>,
+    #[serde(default)]
+    pub target: OutputTarget,
+    #[serde(default)]
+    pub color: ColorAdjust,
+    #[serde(default)]
+    pub corners: CornerPin,
+}
+
+impl OutputSetup {
+    pub fn new(id: &str, kind: OutputKind) -> Self {
+        Self {
+            id: id.to_owned(),
+            kind,
+            ndi_name: None,
+            target: OutputTarget::Full,
+            color: ColorAdjust::default(),
+            corners: CornerPin::default(),
+        }
+    }
+
+    fn sanitized(mut self) -> Self {
+        self.target = match self.target {
+            OutputTarget::Full => OutputTarget::Full,
+            OutputTarget::Custom {
+                x,
+                y,
+                width,
+                height,
+            } => OutputTarget::Custom {
+                x: x.clamp(-(MAX_SIDE as i32), MAX_SIDE as i32),
+                y: y.clamp(-(MAX_SIDE as i32), MAX_SIDE as i32),
+                width: width.clamp(16, MAX_SIDE),
+                height: height.clamp(16, MAX_SIDE),
+            },
+        };
+        self.color = self.color.sanitized();
+        self.corners = self.corners.sanitized();
+        self.ndi_name = self
+            .ndi_name
+            .map(|name| name.trim().chars().take(64).collect::<String>())
+            .filter(|name| !name.is_empty());
+        self
+    }
 }
 
 /// One screen.
@@ -84,45 +324,49 @@ pub struct ScreenSetup {
     pub id: String,
     pub group: ScreenGroup,
     pub name: String,
-    /// A stage screen's layout. The two built in are fixed.
+    /// A stage screen's layout, by its id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub layout: Option<StageLayout>,
-    /// The size the picture is drawn at. `None`: its output's own.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size: Option<Resolution>,
+    pub layout: Option<String>,
     /// Behind everything on it. `None`: black.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     #[serde(default)]
-    pub target: OutputTarget,
+    pub screen_type: ScreenType,
+    /// Its outputs, the first always [`MAIN_OUTPUT`]. A single screen uses
+    /// the first alone; the others are kept for when it is not single again.
+    #[serde(default)]
+    pub outputs: Vec<OutputSetup>,
+    #[serde(default)]
+    pub grid: GridSetup,
+    #[serde(default)]
+    pub blend: EdgeBlendSetup,
 }
 
 impl ScreenSetup {
     /// The three every setup has, as they start.
     pub fn built_ins() -> [ScreenSetup; 3] {
-        let screen = |id: &str, group, name: &str, layout| ScreenSetup {
-            id: id.to_owned(),
-            group,
-            name: name.to_owned(),
-            layout,
-            size: None,
-            color: None,
-            target: OutputTarget::Full,
-        };
         [
-            screen(AUDIENCE, ScreenGroup::Audience, "Screen", None),
-            screen(
-                MEDIA,
-                ScreenGroup::Stage,
-                "Media stage",
-                Some(StageLayout::Media),
+            new_screen(
+                AUDIENCE.to_owned(),
+                ScreenGroup::Audience,
+                "Screen".to_owned(),
             ),
-            screen(
-                WORSHIP,
-                ScreenGroup::Stage,
-                "Worship stage",
-                Some(StageLayout::Worship),
-            ),
+            ScreenSetup {
+                layout: Some(MEDIA.to_owned()),
+                ..new_screen(
+                    MEDIA.to_owned(),
+                    ScreenGroup::Stage,
+                    "Media stage".to_owned(),
+                )
+            },
+            ScreenSetup {
+                layout: Some(WORSHIP.to_owned()),
+                ..new_screen(
+                    WORSHIP.to_owned(),
+                    ScreenGroup::Stage,
+                    "Worship stage".to_owned(),
+                )
+            },
         ]
     }
 
@@ -140,18 +384,28 @@ impl ScreenSetup {
         }
     }
 
-    /// What a stage screen shows. The worship stage's, for one that never
-    /// chose.
-    pub fn stage_layout(&self) -> StageLayout {
-        match self.id.as_str() {
-            MEDIA => StageLayout::Media,
-            WORSHIP => StageLayout::Worship,
-            _ => self.layout.unwrap_or(StageLayout::Worship),
+    /// The stage layout it shows.
+    pub fn stage_layout(&self) -> &str {
+        self.layout.as_deref().unwrap_or(match self.id.as_str() {
+            MEDIA => MEDIA,
+            _ => WORSHIP,
+        })
+    }
+
+    /// The outputs in use: the first alone for a single screen.
+    pub fn active_outputs(&self) -> &[OutputSetup] {
+        match self.screen_type {
+            ScreenType::Single => &self.outputs[..self.outputs.len().min(1)],
+            _ => &self.outputs,
         }
     }
 
-    /// The label of this screen's window.
-    pub fn window_label(&self) -> String {
+    pub fn output(&self, id: &str) -> Option<&OutputSetup> {
+        self.outputs.iter().find(|output| output.id == id)
+    }
+
+    /// The label of its first output's window, which the others add to.
+    fn base_label(&self) -> String {
         match self.id.as_str() {
             AUDIENCE => "output".to_owned(),
             MEDIA => "media-stage".to_owned(),
@@ -161,6 +415,24 @@ impl ScreenSetup {
                 ScreenGroup::Stage => format!("{STAGE_WINDOW_PREFIX}{id}"),
             },
         }
+    }
+
+    /// The label of the window for one of its outputs.
+    pub fn window_label(&self, output: &str) -> String {
+        if output == MAIN_OUTPUT {
+            self.base_label()
+        } else {
+            format!("{}{OUTPUT_SEPARATOR}{output}", self.base_label())
+        }
+    }
+
+    /// Every window it has while on: one per display output in use.
+    pub fn window_labels(&self) -> Vec<String> {
+        self.active_outputs()
+            .iter()
+            .filter(|output| output.kind == OutputKind::Display)
+            .map(|output| self.window_label(&output.id))
+            .collect()
     }
 
     /// Only what an operator may change, and within bounds.
@@ -174,14 +446,40 @@ impl ScreenSetup {
         } else {
             name
         };
-        self.size = self.size.map(Resolution::sanitized);
         self.color = self
             .color
             .map(|color| color.trim().chars().take(32).collect::<String>())
             .filter(|color| !color.is_empty());
-        if self.group == ScreenGroup::Audience {
-            self.layout = None;
+        self.layout = match self.group {
+            ScreenGroup::Audience => None,
+            ScreenGroup::Stage => self
+                .layout
+                .map(|layout| layout.trim().chars().take(64).collect::<String>())
+                .filter(|layout| !layout.is_empty()),
+        };
+
+        // Outputs: unique usable ids, the first always the main one, and
+        // never none.
+        let mut seen = std::collections::HashSet::new();
+        let mut outputs: Vec<OutputSetup> = self
+            .outputs
+            .into_iter()
+            .filter(|output| output.id == MAIN_OUTPUT || is_usable_output_id(&output.id))
+            .filter(|output| seen.insert(output.id.clone()))
+            .map(OutputSetup::sanitized)
+            .take(MAX_OUTPUTS)
+            .collect();
+        match outputs.iter().position(|output| output.id == MAIN_OUTPUT) {
+            Some(0) => {}
+            Some(at) => {
+                let main = outputs.remove(at);
+                outputs.insert(0, main);
+            }
+            None => outputs.insert(0, OutputSetup::new(MAIN_OUTPUT, OutputKind::Display)),
         }
+        self.outputs = outputs;
+        self.grid.columns = self.grid.columns.clamp(1, MAX_OUTPUTS as u32);
+        self.blend.overlap = self.blend.overlap.min(MAX_SIDE / 2);
         self
     }
 }
@@ -190,27 +488,57 @@ pub fn is_built_in(id: &str) -> bool {
     matches!(id, AUDIENCE | MEDIA | WORSHIP)
 }
 
-/// Which screen a window belongs to, by its label.
-pub fn screen_id_for_label(label: &str) -> Option<&str> {
-    match label {
-        "output" => Some(AUDIENCE),
-        "media-stage" => Some(MEDIA),
-        "worship-stage" => Some(WORSHIP),
-        _ => label
-            .strip_prefix(AUDIENCE_WINDOW_PREFIX)
-            .or_else(|| label.strip_prefix(STAGE_WINDOW_PREFIX))
-            .filter(|id| is_usable_id(id)),
-    }
-}
-
 /// An id that is safe in a window label and a URL, and is not a built-in's.
 pub fn is_usable_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 32
         && !is_built_in(id)
+        && !id.contains(OUTPUT_SEPARATOR)
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// An output id other than the main one: letters and digits only, so it can
+/// follow the separator in a label unambiguously.
+pub fn is_usable_output_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 16
+        && id != MAIN_OUTPUT
+        && id.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Which screen and output a window belongs to, by its label.
+pub fn screen_for_label(label: &str) -> Option<(&str, &str)> {
+    let (base, output) = match label.rsplit_once(OUTPUT_SEPARATOR) {
+        Some((base, output)) if is_usable_output_id(output) => (base, output),
+        _ => (label, MAIN_OUTPUT),
+    };
+    let screen = match base {
+        "output" => AUDIENCE,
+        "media-stage" => MEDIA,
+        "worship-stage" => WORSHIP,
+        _ => base
+            .strip_prefix(AUDIENCE_WINDOW_PREFIX)
+            .or_else(|| base.strip_prefix(STAGE_WINDOW_PREFIX))
+            .filter(|id| is_usable_id(id))?,
+    };
+    Some((screen, output))
+}
+
+/// Which screen a window belongs to, by its label.
+pub fn screen_id_for_label(label: &str) -> Option<&str> {
+    screen_for_label(label).map(|(screen, _)| screen)
+}
+
+/// Where the display an output goes to is stored: the screen's id for its
+/// first output, so the built-in three keep their roles' saved choices.
+pub fn display_key(screen: &str, output: &str) -> String {
+    if output == MAIN_OUTPUT {
+        screen.to_owned()
+    } else {
+        format!("{screen}/{output}")
+    }
 }
 
 /// Every screen, the three built in first in their groups and the added ones
@@ -219,14 +547,14 @@ pub fn is_usable_id(id: &str) -> bool {
 pub fn arranged(stored: &[ScreenSetup]) -> Vec<ScreenSetup> {
     let built_in = ScreenSetup::built_ins().map(|default| {
         let Some(saved) = stored.iter().find(|screen| screen.id == default.id) else {
-            return default;
+            return default.sanitized();
         };
-        // What is chosen is kept; what the screen is, is not the operator's
-        // to change.
+        // What is chosen is kept; which group it is in is not the
+        // operator's to change.
         ScreenSetup {
             id: default.id.clone(),
             group: default.group,
-            layout: default.layout,
+            layout: saved.layout.clone().or(default.layout.clone()),
             ..saved.clone()
         }
         .sanitized()
@@ -268,36 +596,55 @@ pub fn next_name(screens: &[ScreenSetup], group: ScreenGroup) -> String {
         .unwrap_or_else(|| word.to_owned())
 }
 
-/// A new screen, sanitized.
+/// A new screen, sanitized, with its main output of `kind`.
 pub fn new_screen(id: String, group: ScreenGroup, name: String) -> ScreenSetup {
     ScreenSetup {
         id,
         group,
         name,
-        layout: (group == ScreenGroup::Stage).then_some(StageLayout::Worship),
-        size: None,
+        layout: (group == ScreenGroup::Stage).then(|| WORSHIP.to_owned()),
         color: None,
-        target: OutputTarget::Full,
+        screen_type: ScreenType::Single,
+        outputs: vec![OutputSetup::new(MAIN_OUTPUT, OutputKind::Display)],
+        grid: GridSetup::default(),
+        blend: EdgeBlendSetup::default(),
     }
     .sanitized()
 }
 
 /// A change to one screen, as Screen Configuration sends it. A field left out
-/// is left as it is; `size` and `color` can be set to `null` to go back to
-/// the output's own size and to black.
+/// is left as it is; `color` can be `null`, for black.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScreenPatch {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default, deserialize_with = "present")]
-    pub size: Option<Option<Resolution>>,
-    #[serde(default, deserialize_with = "present")]
     pub color: Option<Option<String>>,
+    #[serde(default)]
+    pub layout: Option<String>,
+    #[serde(default)]
+    pub screen_type: Option<ScreenType>,
+    #[serde(default)]
+    pub grid: Option<GridSetup>,
+    #[serde(default)]
+    pub blend: Option<EdgeBlendSetup>,
+}
+
+/// A change to one output of a screen.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputPatch {
+    #[serde(default)]
+    pub kind: Option<OutputKind>,
+    #[serde(default, deserialize_with = "present")]
+    pub ndi_name: Option<Option<String>>,
     #[serde(default)]
     pub target: Option<OutputTarget>,
     #[serde(default)]
-    pub layout: Option<StageLayout>,
+    pub color: Option<ColorAdjust>,
+    #[serde(default)]
+    pub corners: Option<CornerPin>,
 }
 
 fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
@@ -315,36 +662,445 @@ impl ScreenPatch {
         if let Some(name) = self.name {
             next.name = name;
         }
-        if let Some(size) = self.size {
-            next.size = size;
-        }
         if let Some(color) = self.color {
             next.color = color;
         }
-        if let Some(target) = self.target {
-            next.target = target;
-        }
-        if let (Some(layout), false) = (self.layout, screen.is_built_in()) {
+        if let Some(layout) = self.layout {
             next.layout = Some(layout);
+        }
+        if let Some(screen_type) = self.screen_type {
+            next.screen_type = screen_type;
+        }
+        if let Some(grid) = self.grid {
+            next.grid = grid;
+        }
+        if let Some(blend) = self.blend {
+            next.blend = blend;
         }
         next.sanitized()
     }
+}
+
+impl OutputPatch {
+    /// `screen` with this change made to its output `output`.
+    pub fn apply(self, screen: &ScreenSetup, output: &str) -> Option<ScreenSetup> {
+        let mut next = screen.clone();
+        let changing = next.outputs.iter_mut().find(|each| each.id == output)?;
+        if let Some(kind) = self.kind {
+            changing.kind = kind;
+        }
+        if let Some(name) = self.ndi_name {
+            changing.ndi_name = name;
+        }
+        if let Some(target) = self.target {
+            changing.target = target;
+        }
+        if let Some(color) = self.color {
+            changing.color = color;
+        }
+        if let Some(corners) = self.corners {
+            changing.corners = corners;
+        }
+        Some(next.sanitized())
+    }
+}
+
+/// `screen` with another output, of `kind`, and that output's id.
+pub fn with_output(screen: &ScreenSetup, id: String, kind: OutputKind) -> Option<ScreenSetup> {
+    if screen.outputs.len() >= MAX_OUTPUTS || !is_usable_output_id(&id) {
+        return None;
+    }
+    let mut next = screen.clone();
+    next.outputs.push(OutputSetup::new(&id, kind));
+    // A second output makes a single screen a mirror: the operator added it
+    // to see the picture there too.
+    if next.screen_type == ScreenType::Single {
+        next.screen_type = ScreenType::Mirror;
+    }
+    Some(next.sanitized())
+}
+
+/// `screen` without its output `id`. The main output stays.
+pub fn without_output(screen: &ScreenSetup, id: &str) -> Option<ScreenSetup> {
+    if id == MAIN_OUTPUT || screen.output(id).is_none() {
+        return None;
+    }
+    let mut next = screen.clone();
+    next.outputs.retain(|output| output.id != id);
+    if next.outputs.len() == 1 {
+        next.screen_type = ScreenType::Single;
+    }
+    Some(next.sanitized())
+}
+
+/// Which part of the screen's picture an output shows, and how.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputGeometry {
+    /// The part of the picture it shows, as fractions of it: x, y, width,
+    /// height.
+    pub source: [f64; 4],
+    /// Where on the output it goes, in the output's pixels, or `None` for
+    /// the whole output.
+    pub target: Option<[f64; 4]>,
+    /// How far in from its left and right edges it fades into its
+    /// neighbour, as fractions of its width. Zero without a neighbour.
+    pub blend_left: f64,
+    pub blend_right: f64,
+    pub curve: BlendCurve,
+}
+
+/// A screen's picture: its size, in output pixels, and what each output in
+/// use shows of it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenLayout {
+    pub canvas: (u32, u32),
+    pub outputs: Vec<(String, OutputGeometry)>,
+}
+
+/// Lay a screen's picture out over its outputs. `size_of` is an output's own
+/// resolution, where it has one: its display's, while it is connected.
+pub fn layout(
+    screen: &ScreenSetup,
+    size_of: impl Fn(&OutputSetup) -> Option<(u32, u32)>,
+) -> ScreenLayout {
+    let outputs = screen.active_outputs();
+    let target_size = |output: &OutputSetup| match output.target {
+        OutputTarget::Custom { width, height, .. } => (width, height),
+        OutputTarget::Full => size_of(output).unwrap_or(FALLBACK_SIZE),
+    };
+    let target_rect = |output: &OutputSetup| match output.target {
+        OutputTarget::Custom {
+            x,
+            y,
+            width,
+            height,
+        } => Some([
+            f64::from(x),
+            f64::from(y),
+            f64::from(width),
+            f64::from(height),
+        ]),
+        OutputTarget::Full => None,
+    };
+    let (cell_width, cell_height) = outputs.first().map_or(FALLBACK_SIZE, target_size);
+    let whole = |output: &OutputSetup| OutputGeometry {
+        source: [0.0, 0.0, 1.0, 1.0],
+        target: target_rect(output),
+        blend_left: 0.0,
+        blend_right: 0.0,
+        curve: screen.blend.curve,
+    };
+    let count = outputs.len().max(1) as u32;
+    let clamp =
+        |(width, height): (u32, u32)| (width.clamp(16, MAX_SIDE), height.clamp(16, MAX_SIDE));
+
+    match screen.screen_type {
+        ScreenType::Single | ScreenType::Mirror => ScreenLayout {
+            canvas: clamp((cell_width, cell_height)),
+            outputs: outputs
+                .iter()
+                .map(|output| (output.id.clone(), whole(output)))
+                .collect(),
+        },
+        ScreenType::Grouped => {
+            let columns = screen.grid.columns.clamp(1, count);
+            let rows = count.div_ceil(columns);
+            let canvas = clamp((cell_width * columns, cell_height * rows));
+            ScreenLayout {
+                canvas,
+                outputs: outputs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, output)| {
+                        let (column, row) = (index as u32 % columns, index as u32 / columns);
+                        let (across, down) = (f64::from(columns), f64::from(rows));
+                        (
+                            output.id.clone(),
+                            OutputGeometry {
+                                source: [
+                                    f64::from(column) / across,
+                                    f64::from(row) / down,
+                                    1.0 / across,
+                                    1.0 / down,
+                                ],
+                                ..whole(output)
+                            },
+                        )
+                    })
+                    .collect(),
+            }
+        }
+        ScreenType::EdgeBlend => {
+            let overlap = screen.blend.overlap.min(cell_width.saturating_sub(1) / 2);
+            let step = cell_width - overlap;
+            let width = step * (count - 1) + cell_width;
+            let canvas = clamp((width, cell_height));
+            let (total, cell, blend) = (
+                f64::from(width),
+                f64::from(cell_width),
+                f64::from(overlap) / f64::from(cell_width.max(1)),
+            );
+            ScreenLayout {
+                canvas,
+                outputs: outputs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, output)| {
+                        let index = index as u32;
+                        (
+                            output.id.clone(),
+                            OutputGeometry {
+                                source: [f64::from(index * step) / total, 0.0, cell / total, 1.0],
+                                blend_left: if index > 0 { blend } else { 0.0 },
+                                blend_right: if index + 1 < count { blend } else { 0.0 },
+                                ..whole(output)
+                            },
+                        )
+                    })
+                    .collect(),
+            }
+        }
+    }
+}
+
+/// The projective transform that moves the corners of a `width` by `height`
+/// rectangle by `pin`, as a column-major 4×4 matrix for Core Animation and
+/// CSS `matrix3d`, origin at the top left. `None` when the corners fold over.
+pub fn corner_pin_matrix(width: f64, height: f64, pin: &CornerPin) -> Option<[f64; 16]> {
+    if pin.is_identity() || width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let corner =
+        |[x, y]: [f32; 2], base_x: f64, base_y: f64| (base_x + f64::from(x), base_y + f64::from(y));
+    let (x0, y0) = corner(pin.top_left, 0.0, 0.0);
+    let (x1, y1) = corner(pin.top_right, width, 0.0);
+    let (x2, y2) = corner(pin.bottom_right, width, height);
+    let (x3, y3) = corner(pin.bottom_left, 0.0, height);
+
+    // The square-to-quad homography (Heckbert), then scaled from the unit
+    // square to the rectangle.
+    let (dx1, dx2, dx3) = (x1 - x2, x3 - x2, x0 - x1 + x2 - x3);
+    let (dy1, dy2, dy3) = (y1 - y2, y3 - y2, y0 - y1 + y2 - y3);
+    let determinant = dx1 * dy2 - dx2 * dy1;
+    if determinant.abs() < 1e-9 {
+        return None;
+    }
+    let g = (dx3 * dy2 - dx2 * dy3) / determinant;
+    let h = (dx1 * dy3 - dx3 * dy1) / determinant;
+    let a = x1 - x0 + g * x1;
+    let b = x3 - x0 + h * x3;
+    let c = x0;
+    let d = y1 - y0 + g * y1;
+    let e = y3 - y0 + h * y3;
+    let f = y0;
+    // From pixels to the unit square first.
+    let (a, b, d, e, g, h) = (
+        a / width,
+        b / height,
+        d / width,
+        e / height,
+        g / width,
+        h / height,
+    );
+    // [x', y', w'] = [[a b c] [d e f] [g h 1]] · [x y 1], as a 4×4 with z kept.
+    Some([
+        a, d, 0.0, g, //
+        b, e, 0.0, h, //
+        0.0, 0.0, 1.0, 0.0, //
+        c, f, 0.0, 1.0,
+    ])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn with_outputs(screen_type: ScreenType, count: usize) -> ScreenSetup {
+        let mut screen = new_screen("wall".into(), ScreenGroup::Audience, "Wall".into());
+        for index in 1..count {
+            screen = with_output(&screen, format!("o{index}"), OutputKind::Display).unwrap();
+        }
+        ScreenSetup {
+            screen_type,
+            ..screen
+        }
+    }
+
     #[test]
     fn a_new_setup_has_the_three_screens_the_app_always_had() {
         let screens = arranged(&[]);
         let ids: Vec<&str> = screens.iter().map(|screen| screen.id.as_str()).collect();
         assert_eq!(ids, [AUDIENCE, MEDIA, WORSHIP]);
-        let labels: Vec<String> = screens.iter().map(ScreenSetup::window_label).collect();
+        let labels: Vec<String> = screens
+            .iter()
+            .map(|s| s.window_label(MAIN_OUTPUT))
+            .collect();
         assert_eq!(labels, ["output", "media-stage", "worship-stage"]);
         assert_eq!(screens[0].name, "Screen");
-        assert_eq!(screens[1].stage_layout(), StageLayout::Media);
-        assert_eq!(screens[2].stage_layout(), StageLayout::Worship);
+        assert_eq!(screens[1].stage_layout(), MEDIA);
+        assert_eq!(screens[2].stage_layout(), WORSHIP);
+        assert!(screens.iter().all(|screen| screen.outputs.len() == 1));
+    }
+
+    #[test]
+    fn a_screen_saved_before_it_had_outputs_gets_its_main_one() {
+        let saved: ScreenSetup = serde_json::from_value(serde_json::json!({
+            "id": "lobby", "group": "audience", "name": "Lobby",
+            "size": { "width": 1280, "height": 720 }, "target": "fit"
+        }))
+        .expect("an older screen still reads");
+        let lobby = &arranged(&[saved])[1];
+        assert_eq!(lobby.outputs.len(), 1);
+        assert_eq!(lobby.outputs[0].id, MAIN_OUTPUT);
+        assert_eq!(lobby.outputs[0].target, OutputTarget::Full);
+    }
+
+    #[test]
+    fn every_output_has_a_window_label_that_leads_back_to_it() {
+        let wall = with_outputs(ScreenType::Mirror, 3);
+        let labels = wall.window_labels();
+        assert_eq!(
+            labels,
+            ["audience-wall", "audience-wall--o1", "audience-wall--o2"]
+        );
+        assert_eq!(screen_for_label("audience-wall--o2"), Some(("wall", "o2")));
+        assert_eq!(
+            screen_for_label("audience-wall"),
+            Some(("wall", MAIN_OUTPUT))
+        );
+        assert_eq!(screen_for_label("output--o1"), Some((AUDIENCE, "o1")));
+        assert_eq!(screen_for_label("media-stage"), Some((MEDIA, MAIN_OUTPUT)));
+        assert_eq!(screen_for_label("settings"), None);
+        assert_eq!(display_key("wall", "o2"), "wall/o2");
+        assert_eq!(display_key(AUDIENCE, MAIN_OUTPUT), AUDIENCE);
+    }
+
+    #[test]
+    fn a_single_screen_uses_its_first_output_alone() {
+        let mut wall = with_outputs(ScreenType::Mirror, 2);
+        wall.screen_type = ScreenType::Single;
+        assert_eq!(wall.window_labels(), ["audience-wall"]);
+        let laid = layout(&wall, |_| Some((1920, 1080)));
+        assert_eq!(laid.outputs.len(), 1);
+        assert_eq!(laid.canvas, (1920, 1080));
+    }
+
+    #[test]
+    fn a_custom_target_sizes_the_picture_and_places_it() {
+        let mut screen = new_screen("led".into(), ScreenGroup::Audience, "LED".into());
+        screen.outputs[0].target = OutputTarget::Custom {
+            x: 100,
+            y: 50,
+            width: 1536,
+            height: 864,
+        };
+        let laid = layout(&screen, |_| Some((1920, 1080)));
+        assert_eq!(laid.canvas, (1536, 864));
+        assert_eq!(laid.outputs[0].1.target, Some([100.0, 50.0, 1536.0, 864.0]));
+    }
+
+    #[test]
+    fn a_grouped_screen_is_cut_into_its_grid() {
+        let mut wall = with_outputs(ScreenType::Grouped, 4);
+        wall.grid.columns = 2;
+        let laid = layout(&wall, |_| Some((1920, 1080)));
+        assert_eq!(laid.canvas, (3840, 2160));
+        assert_eq!(laid.outputs[0].1.source, [0.0, 0.0, 0.5, 0.5]);
+        assert_eq!(laid.outputs[1].1.source, [0.5, 0.0, 0.5, 0.5]);
+        assert_eq!(laid.outputs[3].1.source, [0.5, 0.5, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn edge_blended_outputs_overlap_and_fade_only_where_they_meet() {
+        let mut row = with_outputs(ScreenType::EdgeBlend, 3);
+        row.blend.overlap = 240;
+        let laid = layout(&row, |_| Some((1920, 1080)));
+        // Three 1920s with two overlaps of 240.
+        assert_eq!(laid.canvas, (5280, 1080));
+        let [left, middle, right] = [&laid.outputs[0].1, &laid.outputs[1].1, &laid.outputs[2].1];
+        assert_eq!(
+            (left.blend_left, right.blend_right),
+            (0.0, 0.0),
+            "no fade at the outer edges"
+        );
+        assert!(
+            (left.blend_right - 0.125).abs() < 1e-9 && (middle.blend_left - 0.125).abs() < 1e-9
+        );
+        // The middle one starts where the first's overlap begins.
+        assert!((middle.source[0] - 1680.0 / 5280.0).abs() < 1e-9);
+        assert!((middle.source[2] - 1920.0 / 5280.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn blended_edges_add_up_to_the_whole_picture() {
+        for curve in [BlendCurve::Linear, BlendCurve::Cubic, BlendCurve::Quadratic] {
+            for step in 0..=10 {
+                let t = f64::from(step) / 10.0;
+                let sum = curve.weight(t) + curve.weight(1.0 - t);
+                assert!((sum - 1.0).abs() < 1e-9, "{curve:?} at {t} adds to {sum}");
+            }
+            assert_eq!(curve.weight(0.0), 0.0);
+            assert_eq!(curve.weight(1.0), 1.0);
+        }
+    }
+
+    #[test]
+    fn a_corner_pin_moves_the_corners_where_it_says() {
+        let pin = CornerPin {
+            top_left: [40.0, 20.0],
+            top_right: [-30.0, 0.0],
+            bottom_right: [0.0, -10.0],
+            bottom_left: [10.0, 0.0],
+        };
+        let m = corner_pin_matrix(1920.0, 1080.0, &pin).expect("a transform");
+        let apply = |x: f64, y: f64| {
+            let (px, py, pw) = (
+                m[0] * x + m[4] * y + m[12],
+                m[1] * x + m[5] * y + m[13],
+                m[3] * x + m[7] * y + m[15],
+            );
+            (px / pw, py / pw)
+        };
+        let close = |(ax, ay): (f64, f64), (bx, by): (f64, f64)| {
+            (ax - bx).abs() < 1e-6 && (ay - by).abs() < 1e-6
+        };
+        assert!(close(apply(0.0, 0.0), (40.0, 20.0)));
+        assert!(close(apply(1920.0, 0.0), (1890.0, 0.0)));
+        assert!(close(apply(1920.0, 1080.0), (1920.0, 1070.0)));
+        assert!(close(apply(0.0, 1080.0), (10.0, 1080.0)));
+        assert_eq!(
+            corner_pin_matrix(1920.0, 1080.0, &CornerPin::default()),
+            None,
+            "nothing to move"
+        );
+    }
+
+    #[test]
+    fn outputs_are_added_and_taken_away_but_the_main_one_stays() {
+        let screen = new_screen("lobby".into(), ScreenGroup::Audience, "Lobby".into());
+        let two = with_output(&screen, "b2".into(), OutputKind::Ndi).unwrap();
+        assert_eq!(
+            two.screen_type,
+            ScreenType::Mirror,
+            "a second output mirrors"
+        );
+        assert_eq!(two.outputs[1].kind, OutputKind::Ndi);
+        assert!(
+            with_output(&two, "b2".into(), OutputKind::Display)
+                .unwrap()
+                .outputs
+                .len()
+                == 2,
+            "no doubles"
+        );
+        assert!(without_output(&two, MAIN_OUTPUT).is_none());
+        let one = without_output(&two, "b2").unwrap();
+        assert_eq!(
+            (one.outputs.len(), one.screen_type),
+            (1, ScreenType::Single)
+        );
     }
 
     #[test]
@@ -358,87 +1114,34 @@ mod tests {
             .map(|screen| screen.id)
             .collect();
         assert_eq!(ids, [AUDIENCE, "lobby", MEDIA, WORSHIP, "back"]);
-        let lobby = &arranged(&stored)[1];
-        assert_eq!(lobby.window_label(), "audience-lobby");
-        assert_eq!(screen_id_for_label("audience-lobby"), Some("lobby"));
-        assert_eq!(screen_id_for_label("stage-back"), Some("back"));
-        assert_eq!(screen_id_for_label("output"), Some(AUDIENCE));
-        assert_eq!(screen_id_for_label("settings"), None);
-    }
-
-    #[test]
-    fn a_built_in_screen_keeps_what_it_is_whatever_was_stored() {
-        let stored = vec![ScreenSetup {
-            id: MEDIA.into(),
-            group: ScreenGroup::Audience,
-            name: "  Desk  ".into(),
-            layout: Some(StageLayout::Worship),
-            size: Some(Resolution {
-                width: 1280,
-                height: 720,
-            }),
-            color: None,
-            target: OutputTarget::Fit,
-        }];
-        let media = arranged(&stored)
-            .into_iter()
-            .find(|screen| screen.id == MEDIA)
-            .unwrap();
-        assert_eq!(media.group, ScreenGroup::Stage);
-        assert_eq!(media.stage_layout(), StageLayout::Media);
-        assert_eq!(media.name, "Desk", "renamed, and trimmed");
-        assert_eq!(media.target, OutputTarget::Fit);
-        assert_eq!(media.size.map(|size| size.width), Some(1280));
-    }
-
-    #[test]
-    fn nothing_unsafe_or_doubled_becomes_a_window() {
-        let stored = vec![
-            new_screen("../x".into(), ScreenGroup::Audience, "Bad".into()),
-            new_screen("output".into(), ScreenGroup::Audience, "Clash".into()),
-            new_screen("twice".into(), ScreenGroup::Stage, "One".into()),
-            new_screen("twice".into(), ScreenGroup::Stage, "Two".into()),
-        ];
-        let ids: Vec<String> = arranged(&stored)
-            .into_iter()
-            .map(|screen| screen.id)
-            .collect();
-        assert_eq!(ids, [AUDIENCE, "output", MEDIA, WORSHIP, "twice"]);
-        // "output" is an unusual id, but only built-in ids are refused: the
-        // window is `audience-output`, which clashes with nothing.
-        assert_eq!(
-            arranged(&stored)[1].window_label(),
-            "audience-output".to_owned()
-        );
-    }
-
-    #[test]
-    fn a_new_screen_is_numbered_after_what_its_group_has() {
-        let screens = arranged(&[]);
-        assert_eq!(next_name(&screens, ScreenGroup::Audience), "Screen 2");
-        assert_eq!(next_name(&screens, ScreenGroup::Stage), "Stage 3");
     }
 
     #[test]
     fn a_change_leaves_out_what_it_does_not_mention() {
         let screen = new_screen("lobby".into(), ScreenGroup::Audience, "Lobby".into());
-        let patch: ScreenPatch = serde_json::from_value(serde_json::json!({
-            "size": { "width": 1280, "height": 720 },
-            "color": "#102030"
-        }))
+        let patch: ScreenPatch = serde_json::from_value(
+            serde_json::json!({ "color": "#102030", "screenType": "grouped" }),
+        )
         .unwrap();
         let changed = patch.apply(&screen);
         assert_eq!(changed.name, "Lobby");
         assert_eq!(changed.color.as_deref(), Some("#102030"));
-        assert_eq!(changed.size.map(|size| size.height), Some(720));
+        assert_eq!(changed.screen_type, ScreenType::Grouped);
 
-        let back: ScreenPatch =
-            serde_json::from_value(serde_json::json!({ "size": null, "color": null })).unwrap();
-        let reset = back.apply(&changed);
+        let target: OutputPatch = serde_json::from_value(serde_json::json!({
+            "target": { "kind": "custom", "x": 0, "y": 0, "width": 1280, "height": 720 },
+            "color": { "brightness": 9 }
+        }))
+        .unwrap();
+        let aimed = target.apply(&changed, MAIN_OUTPUT).unwrap();
+        assert!(matches!(
+            aimed.outputs[0].target,
+            OutputTarget::Custom { width: 1280, .. }
+        ));
+        assert_eq!(aimed.outputs[0].color.brightness, 2.0, "kept within bounds");
         assert_eq!(
-            (reset.size, reset.color),
-            (None, None),
-            "null is back to the defaults"
+            aimed.outputs[0].color.contrast, 1.0,
+            "the rest at their defaults"
         );
 
         let blank: ScreenPatch =

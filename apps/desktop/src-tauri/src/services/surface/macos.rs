@@ -83,8 +83,9 @@ pub struct MacPresenter {
 
 const SIZE_REFRESH: Duration = Duration::from_millis(250);
 
-/// When the size was read, and what it was — `None` for a window gone.
-type SizeReading = (Instant, Option<(u32, u32)>);
+/// When the size was read, and what it and the scale were — `None` for a
+/// window gone.
+type SizeReading = (Instant, Option<((u32, u32), f64)>);
 
 impl MacPresenter {
     /// Insert the native view below the webview of the window labelled `label`.
@@ -154,12 +155,13 @@ fn set_draws_background(webview: &NSView, draws: bool) {
     }
 }
 
-/// Wrap premultiplied BGRA bytes as a `CGImage` without copying them.
-fn image_from(width: u32, height: u32, bgra: Vec<u8>) -> Option<CFRetained<CGImage>> {
+/// Wrap premultiplied BGRA bytes as a `CGImage` without copying them. The
+/// same frame can be every output's of a mirrored screen at once.
+fn image_from(width: u32, height: u32, bgra: Arc<Vec<u8>>) -> Option<CFRetained<CGImage>> {
     unsafe extern "C-unwind" fn release(info: *mut c_void, _data: NonNull<c_void>, _size: usize) {
         // SAFETY: `info` is the box leaked below, released exactly once, by
         // Core Graphics, when the provider is freed.
-        drop(unsafe { Box::from_raw(info.cast::<Vec<u8>>()) });
+        drop(unsafe { Box::from_raw(info.cast::<Arc<Vec<u8>>>()) });
     }
 
     let expected = (width as usize)
@@ -176,7 +178,7 @@ fn image_from(width: u32, height: u32, bgra: Vec<u8>) -> Option<CFRetained<CGIma
     let provider = unsafe { CGDataProvider::with_data(info, data, expected, Some(release)) };
     let Some(provider) = provider else {
         // SAFETY: the provider was not created, so nothing else owns the box.
-        drop(unsafe { Box::from_raw(info.cast::<Vec<u8>>()) });
+        drop(unsafe { Box::from_raw(info.cast::<Arc<Vec<u8>>>()) });
         return None;
     };
     let space = CGColorSpace::new_device_rgb()?;
@@ -202,7 +204,7 @@ fn image_from(width: u32, height: u32, bgra: Vec<u8>) -> Option<CFRetained<CGIma
 }
 
 impl Presenter for MacPresenter {
-    fn present(&mut self, width: u32, height: u32, bgra: Vec<u8>) -> Result<(), String> {
+    fn present(&mut self, width: u32, height: u32, bgra: Arc<Vec<u8>>) -> Result<(), String> {
         let image = SendImage(image_from(width, height, bgra).ok_or("could not wrap the frame")?);
         // Newest wins: this replaces a frame the main thread has not got to.
         *self
@@ -250,49 +252,36 @@ impl Presenter for MacPresenter {
             })
     }
 
-    fn set_fit(&mut self, fit: bool) {
-        let view = self.view;
-        let _ = self.app.run_on_main_thread(move || {
-            // SAFETY: the view was retained in `attach` and is released only
-            // by `Drop`, also on the main thread, after this.
-            let view = unsafe { &*(view.0 as *const NSView) };
-            if let Some(layer) = view.layer() {
-                // SAFETY: both are Core Animation's own constants.
-                let gravity = unsafe {
-                    if fit {
-                        objc2_quartz_core::kCAGravityResizeAspect
-                    } else {
-                        objc2_quartz_core::kCAGravityResize
-                    }
-                };
-                CATransaction::begin();
-                CATransaction::setDisableActions(true);
-                layer.setContentsGravity(gravity);
-                CATransaction::commit();
-            }
-        });
+    fn size(&self) -> Option<(u32, u32)> {
+        self.reading().map(|(size, _)| size)
     }
 
-    fn size(&self) -> Option<(u32, u32)> {
-        if let Some((read_at, size)) = self.size.get() {
-            if read_at.elapsed() < SIZE_REFRESH {
-                return size;
-            }
-        }
-        let size = self.read_size();
-        self.size.set(Some((Instant::now(), size)));
-        size
+    fn scale(&self) -> f64 {
+        self.reading().map_or(1.0, |(_, scale)| scale)
     }
 }
 
 impl MacPresenter {
-    fn read_size(&self) -> Option<(u32, u32)> {
+    /// The window's size in its CSS pixels, and its scale, read at most
+    /// every [`SIZE_REFRESH`].
+    fn reading(&self) -> Option<((u32, u32), f64)> {
+        if let Some((read_at, reading)) = self.size.get() {
+            if read_at.elapsed() < SIZE_REFRESH {
+                return reading;
+            }
+        }
+        let reading = self.read_size();
+        self.size.set(Some((Instant::now(), reading)));
+        reading
+    }
+
+    fn read_size(&self) -> Option<((u32, u32), f64)> {
         let window = self.app.get_webview_window(&self.label)?;
         let physical = window.inner_size().ok()?;
         let scale = window.scale_factor().ok()?;
         let width = (f64::from(physical.width) / scale).round() as u32;
         let height = (f64::from(physical.height) / scale).round() as u32;
-        (width > 0 && height > 0).then_some((width, height))
+        (width > 0 && height > 0).then_some(((width, height), scale))
     }
 }
 

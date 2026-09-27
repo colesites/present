@@ -228,28 +228,35 @@ pub fn reconcile_all(app: &AppHandle) {
         }
     }
 
-    // The screens added in Screen Configuration, each on the output chosen
-    // for it. One whose output has gone stays where it is, as the built-in
-    // ones do when there is nothing to move to.
+    // Every other output window of Screen Configuration's screens, each on
+    // the display chosen for it. One whose display has gone stays where it
+    // is, as the built-in ones do when there is nothing to move to.
     for screen in state.snapshot().screens() {
-        if screen.is_built_in() || app.get_webview_window(&screen.window_label()).is_none() {
-            continue;
-        }
-        let Some(spec) = crate::services::window_spec::screen_spec(&screen) else {
-            continue;
-        };
-        match monitors::resolve_screen(app, &state, &screen) {
-            Ok(Some(display)) => {
-                if let Err(error) = window::reconcile(app, &spec, Some(&display)) {
-                    tracing::error!(label = %spec.label, %error, "reconcile failed");
-                }
+        for output in screen.active_outputs() {
+            let first_of_built_in =
+                screen.is_built_in() && output.id == crate::services::screens::MAIN_OUTPUT;
+            if first_of_built_in {
+                continue;
             }
-            Ok(None) => tracing::warn!(
-                label = %spec.label,
-                "an added screen's output is not connected; leaving it where it is"
-            ),
-            Err(error) => {
-                tracing::error!(label = %spec.label, %error, "could not resolve a display")
+            let Some(spec) = crate::services::window_spec::output_spec(&screen, &output.id) else {
+                continue;
+            };
+            if app.get_webview_window(&spec.label).is_none() {
+                continue;
+            }
+            match monitors::resolve_output(app, &state, &screen, &output.id) {
+                Ok(Some(display)) => {
+                    if let Err(error) = window::reconcile(app, &spec, Some(&display)) {
+                        tracing::error!(label = %spec.label, %error, "reconcile failed");
+                    }
+                }
+                Ok(None) => tracing::warn!(
+                    label = %spec.label,
+                    "an output's display is not connected; leaving it where it is"
+                ),
+                Err(error) => {
+                    tracing::error!(label = %spec.label, %error, "could not resolve a display")
+                }
             }
         }
     }

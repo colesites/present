@@ -10,6 +10,7 @@ import type {
 } from "../../shared/types/screen-composer";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { useOwnScreen } from "../tauri/screens";
+import { ScreenCanvas } from "../shared/components/ScreenCanvas";
 import { CanvasSlideLayer } from "../shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../shared/components/ScriptureTextLayer";
 import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
@@ -285,7 +286,7 @@ export function OutputWindow() {
           ) : null}
           <p
             className={cn(
-              "text-[clamp(24px,4vw,88px)] font-semibold text-white",
+              "text-[clamp(24px,4cqw,88px)] font-semibold text-white",
               state.timerTimeUp?.blink && "present-time-up-blink",
             )}
             style={state.timerTimeUp ? { color: state.timerTimeUp.color } : undefined}
@@ -464,143 +465,149 @@ export function OutputWindow() {
         item.kind === "video",
     );
     return (
-      <div className="relative h-screen w-screen overflow-hidden bg-transparent">
-        {isComposerEnabled
-          ? regions
-              .filter((region) => region.source === "camera-feed")
-              .map((region) => (
-                <div
-                  key={region.id}
-                  className="absolute overflow-hidden"
-                  style={{
-                    left: `${region.x}%`,
-                    top: `${region.y}%`,
-                    width: `${region.width}%`,
-                    height: `${region.height}%`,
-                    padding: `${region.padding}px`,
-                  }}
-                >
+      <ScreenCanvas effects={!nativeSurface}>
+        <div className="relative h-full w-full overflow-hidden bg-transparent">
+          {isComposerEnabled
+            ? regions
+                .filter((region) => region.source === "camera-feed")
+                .map((region) => (
                   <div
-                    className="relative h-full w-full overflow-hidden"
-                    style={{ borderRadius: `${region.borderRadius}px` }}
+                    key={region.id}
+                    className="absolute overflow-hidden"
+                    style={{
+                      left: `${region.x}%`,
+                      top: `${region.y}%`,
+                      width: `${region.width}%`,
+                      height: `${region.height}%`,
+                      padding: `${region.padding}px`,
+                    }}
                   >
-                    {renderRegionContent(region)}
+                    <div
+                      className="relative h-full w-full overflow-hidden"
+                      style={{ borderRadius: `${region.borderRadius}px` }}
+                    >
+                      {renderRegionContent(region)}
+                    </div>
                   </div>
-                </div>
-              ))
-          : null}
-        <PropsOverlayLayer items={webOnlyProps} />
-      </div>
+                ))
+            : null}
+          <PropsOverlayLayer items={webOnlyProps} />
+        </div>
+      </ScreenCanvas>
     );
   }
 
   if (!isComposerEnabled) {
     return (
-      <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden" style={screenBackground}>
-        {state.showMedia && state.mediaUrl && !state.hideBackground ? (
-          state.mediaType === "video" ? (
-            <video
-              ref={legacyVideoRef}
-              aria-label="Output media video"
-              src={state.mediaUrl}
-              className="absolute inset-0 h-full w-full object-contain"
-              loop={state.videoSettings.loop}
-              muted
-              playsInline
-              onLoadedData={(event) => followOperator(event.currentTarget)}
-              style={{ filter: state.mediaFilterCSS }}
-            >
-              <track kind="captions" />
-            </video>
-          ) : (
-            <OutputImageLayer
-              url={state.mediaUrl}
-              fitMode="contain"
+      <ScreenCanvas effects={!nativeSurface}>
+        <div className="relative flex h-full w-full items-center justify-center overflow-hidden" style={screenBackground}>
+          {state.showMedia && state.mediaUrl && !state.hideBackground ? (
+            state.mediaType === "video" ? (
+              <video
+                ref={legacyVideoRef}
+                aria-label="Output media video"
+                src={state.mediaUrl}
+                className="absolute inset-0 h-full w-full object-contain"
+                loop={state.videoSettings.loop}
+                muted
+                playsInline
+                onLoadedData={(event) => followOperator(event.currentTarget)}
+                style={{ filter: state.mediaFilterCSS }}
+              >
+                <track kind="captions" />
+              </video>
+            ) : (
+              <OutputImageLayer
+                url={state.mediaUrl}
+                fitMode="contain"
+                className="absolute inset-0"
+                filter={state.mediaFilterCSS}
+              />
+            )
+          ) : null}
+
+          {state.slideBackgroundColor ? (
+            <div
               className="absolute inset-0"
-              filter={state.mediaFilterCSS}
+              style={{ backgroundColor: state.slideBackgroundColor }}
             />
-          )
-        ) : null}
+          ) : null}
 
-        {state.slideBackgroundColor ? (
-          <div
-            className="absolute inset-0"
-            style={{ backgroundColor: state.slideBackgroundColor }}
-          />
-        ) : null}
+          {state.showText ? (
+            shouldUseScriptureTextLayer ? (
+              <ScriptureTextLayer
+                text={state.slideText}
+                footer={state.slideFooter}
+                fontFamily={state.scriptureStyle.fontFamily}
+                fontSize={state.scriptureStyle.fontSize}
+                fontWeight={state.scriptureStyle.fontWeight}
+                footerFontSize={state.scriptureStyle.footerFontSize}
+                footerFontFamily={state.scriptureStyle.fontFamily}
+                footerFontWeight={state.scriptureStyle.fontWeight}
+                textAlign={state.scriptureStyle.textAlign}
+                verticalAlign={state.scriptureStyle.verticalAlign}
+                footerAlign={state.scriptureStyle.footerAlign}
+                footerPosition={state.scriptureStyle.footerPosition}
+                maxFontSize={state.scriptureStyle.fontSize}
+                minScale={0.3}
+                fitScale={1}
+                containerClassName="absolute inset-0 z-10 flex flex-col p-12"
+                bodyClassName="min-h-0 w-full flex-1"
+                textClassName="pointer-events-none select-none leading-relaxed text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
+                footerClassName="mt-4 uppercase tracking-wide text-white/90 drop-shadow-md"
+              />
+            ) : (
+              <CanvasSlideLayer
+                text={state.slideText}
+                elements={renderableSlideElements}
+                canvasSize={state.slideCanvasSize}
+                libraryStyle={state.libraryStyle}
+                className="absolute inset-0 z-10"
+              />
+            )
+          ) : null}
 
-        {state.showText ? (
-          shouldUseScriptureTextLayer ? (
-            <ScriptureTextLayer
-              text={state.slideText}
-              footer={state.slideFooter}
-              fontFamily={state.scriptureStyle.fontFamily}
-              fontSize={state.scriptureStyle.fontSize}
-              fontWeight={state.scriptureStyle.fontWeight}
-              footerFontSize={state.scriptureStyle.footerFontSize}
-              footerFontFamily={state.scriptureStyle.fontFamily}
-              footerFontWeight={state.scriptureStyle.fontWeight}
-              textAlign={state.scriptureStyle.textAlign}
-              verticalAlign={state.scriptureStyle.verticalAlign}
-              footerAlign={state.scriptureStyle.footerAlign}
-              footerPosition={state.scriptureStyle.footerPosition}
-              maxFontSize={state.scriptureStyle.fontSize}
-              minScale={0.3}
-              fitScale={1}
-              containerClassName="absolute inset-0 z-10 flex flex-col p-12"
-              bodyClassName="min-h-0 w-full flex-1"
-              textClassName="pointer-events-none select-none leading-relaxed text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
-              footerClassName="mt-4 uppercase tracking-wide text-white/90 drop-shadow-md"
-            />
-          ) : (
-            <CanvasSlideLayer
-              text={state.slideText}
-              elements={renderableSlideElements}
-              canvasSize={state.slideCanvasSize}
-              libraryStyle={state.libraryStyle}
-              className="absolute inset-0 z-10"
-            />
-          )
-        ) : null}
-
-        {/* Overlays must render in the default (non-composer) path too —
-            this is the common output mode. */}
-        <TimerOverlayLayer state={state} />
-        <PropsOverlayLayer items={state.propsOverlay ?? null} />
-        <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
-      </div>
+          {/* Overlays must render in the default (non-composer) path too —
+              this is the common output mode. */}
+          <TimerOverlayLayer state={state} />
+          <PropsOverlayLayer items={state.propsOverlay ?? null} />
+          <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
+        </div>
+      </ScreenCanvas>
     );
   }
 
   return (
-    <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden" style={screenBackground}>
-      {regions.map((region) => (
-        <div
-          key={region.id}
-          className="absolute overflow-hidden"
-          style={{
-            left: `${region.x}%`,
-            top: `${region.y}%`,
-            width: `${region.width}%`,
-            height: `${region.height}%`,
-            padding: `${region.padding}px`,
-          }}
-        >
+    <ScreenCanvas effects={!nativeSurface}>
+      <div className="relative flex h-full w-full items-center justify-center overflow-hidden" style={screenBackground}>
+        {regions.map((region) => (
           <div
-            className="relative h-full w-full overflow-hidden border border-white/10 bg-black"
+            key={region.id}
+            className="absolute overflow-hidden"
             style={{
-              borderRadius: `${region.borderRadius}px`,
-              backgroundColor: region.backgroundColor,
+              left: `${region.x}%`,
+              top: `${region.y}%`,
+              width: `${region.width}%`,
+              height: `${region.height}%`,
+              padding: `${region.padding}px`,
             }}
           >
-            {renderRegionContent(region)}
+            <div
+              className="relative h-full w-full overflow-hidden border border-white/10 bg-black"
+              style={{
+                borderRadius: `${region.borderRadius}px`,
+                backgroundColor: region.backgroundColor,
+              }}
+            >
+              {renderRegionContent(region)}
+            </div>
           </div>
-        </div>
-      ))}
-      {!hasCountdownRegion ? <TimerOverlayLayer state={state} /> : null}
-      <PropsOverlayLayer items={state.propsOverlay ?? null} />
-      <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
-    </div>
+        ))}
+        {!hasCountdownRegion ? <TimerOverlayLayer state={state} /> : null}
+        <PropsOverlayLayer items={state.propsOverlay ?? null} />
+        <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
+      </div>
+    </ScreenCanvas>
   );
 }
 
@@ -700,7 +707,7 @@ function TimerOverlayLayer({ state }: { state: OutputState }) {
       >
         {label && !nameBannerEnabled && titlePosition === "top" ? (
           <div
-            className="max-w-[40vw] overflow-hidden text-ellipsis whitespace-nowrap font-medium uppercase tracking-wider"
+            className="max-w-[40cqw] overflow-hidden text-ellipsis whitespace-nowrap font-medium uppercase tracking-wider"
             style={{ color: nameColor, fontSize: `${nameFontPx}px` }}
           >
             {label}
@@ -714,7 +721,7 @@ function TimerOverlayLayer({ state }: { state: OutputState }) {
         </div>
         {label && !nameBannerEnabled && titlePosition !== "top" ? (
           <div
-            className="max-w-[40vw] overflow-hidden text-ellipsis whitespace-nowrap font-medium uppercase tracking-wider"
+            className="max-w-[40cqw] overflow-hidden text-ellipsis whitespace-nowrap font-medium uppercase tracking-wider"
             style={{ color: nameColor, fontSize: `${nameFontPx}px` }}
           >
             {label}
@@ -775,7 +782,7 @@ function MessageOverlayLayer({
         <span
           className="block whitespace-nowrap font-semibold leading-tight"
           style={{
-            fontSize: `calc(min(5vw, 56px) * ${overlay.fontScale ?? 1})`,
+            fontSize: `calc(min(5cqw, 56px) * ${overlay.fontScale ?? 1})`,
             animation: `${direction} ${duration}s linear infinite`,
             animationDelay: "0s",
           }}
@@ -793,7 +800,7 @@ function MessageOverlayLayer({
     >
       <span
         className="text-center font-semibold leading-tight"
-        style={{ fontSize: `calc(min(6vw, 64px) * ${overlay.fontScale ?? 1})` }}
+        style={{ fontSize: `calc(min(6cqw, 64px) * ${overlay.fontScale ?? 1})` }}
       >
         {overlay.text}
       </span>

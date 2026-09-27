@@ -14,11 +14,12 @@ use tauri::{AppHandle, Manager};
 use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
 use crate::services::media_protocol;
 use crate::services::output::OutputScene;
-use crate::services::screens::OutputTarget;
+use crate::services::screen_picture::{self, Arrangement, Plan};
+use crate::services::screens::screen_for_label;
 use crate::services::video::{self, VideoDecoder};
 use crate::state::{DisplayState, FileState, OutputState};
 
-use super::SurfaceSource;
+use super::{OutputView, SurfaceSource};
 use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed};
 
 pub struct AppSurfaceSource {
@@ -36,6 +37,10 @@ pub struct AppSurfaceSource {
     /// What the last presented frame was drawn from, so an unchanged slide is
     /// not handed to the view again.
     last: Option<(OutputScene, Option<f64>, (u32, u32))>,
+    /// The screen laid out over its windows, as of the last render.
+    plan: Option<Plan>,
+    /// Which output each window is.
+    outputs: Vec<(String, String)>,
 }
 
 impl AppSurfaceSource {
@@ -49,41 +54,55 @@ impl AppSurfaceSource {
             regions: RegionVideos::new(),
             open: scoped_opener(app_for_opening),
             last: None,
+            plan: None,
+            outputs: Vec::new(),
         }
     }
 }
 
 impl SurfaceSource for AppSurfaceSource {
-    fn canvas(&mut self, window: (u32, u32)) -> ((u32, u32), bool) {
-        let Some(screen) = self
+    fn render(&mut self, views: &[OutputView], out: &mut Vec<u8>) -> Result<bool, String> {
+        let screen = self
             .app
             .try_state::<DisplayState>()
             .and_then(|displays| displays.screen(&self.screen))
-        else {
-            return (window, false);
-        };
+            .ok_or_else(|| format!("screen {} is no longer set up", self.screen))?;
+
+        // The screen over its windows, from what Screen Configuration says
+        // now: a change there shows at once.
+        self.outputs = views
+            .iter()
+            .filter_map(|view| {
+                let (_, output) = screen_for_label(&view.label)?;
+                Some((view.label.clone(), output.to_owned()))
+            })
+            .collect();
+        let sizes: Vec<(String, (u32, u32), f64)> = views
+            .iter()
+            .zip(&self.outputs)
+            .map(|(view, (_, output))| (output.clone(), view.size, view.scale))
+            .collect();
+        let plan = screen_picture::plan(&screen, &sizes);
         let base = screen
             .color
             .as_deref()
             .and_then(crate::services::compositor::color::parse)
             .unwrap_or(tiny_skia::Color::BLACK);
-        if self.compositor.set_base(base) {
+        if self.compositor.set_base(base) || self.plan.as_ref() != Some(&plan) {
             // The scene has not changed, but the picture has.
             self.last = None;
         }
-        let size = screen.size.map_or(window, |size| (size.width, size.height));
-        (size, screen.target == OutputTarget::Fit)
-    }
+        let size = plan.canvas;
+        self.plan = Some(plan);
 
-    fn render(&mut self, size: (u32, u32), out: &mut Vec<u8>) -> Result<bool, String> {
         let Self {
             app,
-            screen: _,
             compositor,
             video,
             regions,
             open,
             last,
+            ..
         } = self;
         let (Some(output), Some(files)) =
             (app.try_state::<OutputState>(), app.try_state::<FileState>())
@@ -118,6 +137,20 @@ impl SurfaceSource for AppSurfaceSource {
         rendered.write_bgra_premultiplied(out);
         *last = Some((scene, shown, size));
         Ok(true)
+    }
+
+    fn canvas_size(&self) -> (u32, u32) {
+        self.plan.as_ref().map_or((1920, 1080), |plan| plan.canvas)
+    }
+
+    fn arrangement(&self, label: &str) -> Option<Arrangement> {
+        let (_, output) = self.outputs.iter().find(|(each, _)| each == label)?;
+        self.plan
+            .as_ref()?
+            .arrangements
+            .iter()
+            .find(|(id, _)| id == output)
+            .map(|(_, arrangement)| *arrangement)
     }
 }
 

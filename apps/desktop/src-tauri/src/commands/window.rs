@@ -152,16 +152,25 @@ pub async fn open_window(
         &spec,
         target.as_ref().map(|resolved| &resolved.display),
     )?;
-    // The audience is a group: every audience screen added in Screen
-    // Configuration goes on with the Output.
-    if role == WindowRole::Output {
-        crate::commands::screens::set_added_open(
-            &app,
-            crate::services::screens::ScreenGroup::Audience,
-            true,
-        );
+    // A built-in screen's other outputs go on with it, and the audience is a
+    // group: every audience screen added in Screen Configuration goes on with
+    // the Output.
+    if let Some(screen) = built_in_screen(role) {
+        crate::commands::screens::follow_built_in(&app, screen, true);
     }
     Ok(true)
+}
+
+/// The Screen Configuration screen a built-in window role is the first
+/// output of.
+fn built_in_screen(role: WindowRole) -> Option<&'static str> {
+    use crate::services::screens::{AUDIENCE, MEDIA, WORSHIP};
+    match role {
+        WindowRole::Output => Some(AUDIENCE),
+        WindowRole::MediaStage => Some(MEDIA),
+        WindowRole::WorshipStage => Some(WORSHIP),
+        _ => None,
+    }
 }
 
 /// Close a window. `false` when it was not open — matching the Electron
@@ -178,12 +187,8 @@ pub async fn close_window(app: AppHandle, role: WindowRole) -> AppResult<bool> {
             "An added screen is closed with close_screen.".to_owned(),
         ));
     }
-    if role == WindowRole::Output {
-        crate::commands::screens::set_added_open(
-            &app,
-            crate::services::screens::ScreenGroup::Audience,
-            false,
-        );
+    if let Some(screen) = built_in_screen(role) {
+        crate::commands::screens::follow_built_in(&app, screen, false);
     }
     window::close(&app, role.label())
 }

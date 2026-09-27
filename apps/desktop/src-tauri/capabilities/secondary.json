@@ -10,6 +10,9 @@
     "looks",
     "screen-composer",
     "mini-lyrics-*",
+    "output--*",
+    "media-stage--*",
+    "worship-stage--*",
     "audience-*",
     "stage-*",
     "splash"

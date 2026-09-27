@@ -10,12 +10,11 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
-#[cfg(target_os = "macos")]
-use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::services::screens::screen_id_for_label;
 use crate::services::surface::{SurfaceStatus, SurfaceWorker};
 
 /// Sent to every window with a [`SurfaceChanged`] when either half changes.
@@ -34,18 +33,17 @@ pub struct SurfaceChanged {
     pub status: SurfaceStatus,
 }
 
+/// One screen's native drawing: its worker, and which of its windows have
+/// frames on them.
 #[derive(Default)]
 struct Slot {
     worker: Option<SurfaceWorker>,
-    /// Bumped by every attach and detach, so an attach still waiting for the
-    /// last view to go does not go ahead after the operator changed their mind
-    /// or the window closed.
-    generation: u64,
-    presenting: bool,
+    presenting: HashMap<String, bool>,
 }
 
-/// One native view per audience window: the Output, and each audience screen
-/// added in Screen Configuration, by window label.
+/// One native view per audience window, drawn by one worker per screen: the
+/// Output and the audience screens added in Screen Configuration, and each of
+/// their outputs.
 #[derive(Default)]
 pub struct OutputSurfaceState {
     slots: Mutex<HashMap<String, Slot>>,
@@ -56,9 +54,17 @@ impl OutputSurfaceState {
         Self::default()
     }
 
+    /// Whether the window labelled `label` has frames on its native view.
     pub fn status(&self, label: &str) -> SurfaceStatus {
+        let presenting = screen_id_for_label(label).is_some_and(|screen| {
+            self.slots()
+                .get(screen)
+                .and_then(|slot| slot.presenting.get(label))
+                .copied()
+                .unwrap_or(false)
+        });
         SurfaceStatus {
-            presenting: self.slots().get(label).is_some_and(|slot| slot.presenting),
+            presenting,
             supported: SUPPORTED,
         }
     }
@@ -69,128 +75,106 @@ impl OutputSurfaceState {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Put the native view on the window labelled `label`, drawing the
-    /// audience screen `screen`.
+    /// Put a native view on the window labelled `label`, drawn with the rest
+    /// of its screen's windows.
     ///
     /// Returns at once; the attach runs on its own thread. It needs the main
     /// thread to answer, and both callers — the window being built, and a
     /// synchronous command — may be on the main thread themselves.
-    pub fn attach(self: &Arc<Self>, app: &AppHandle, label: &str, screen: &str) {
+    pub fn attach(self: &Arc<Self>, app: &AppHandle, label: &str) {
         if !SUPPORTED {
             // Windows and Linux have no native view yet, so the webview keeps
             // drawing there, as it always has.
             return;
         }
-        let generation = {
-            let mut slots = self.slots();
-            let slot = slots.entry(label.to_owned()).or_default();
-            slot.generation += 1;
-            slot.generation
+        let Some(screen) = screen_id_for_label(label).map(str::to_owned) else {
+            return;
         };
         let state = Arc::clone(self);
         let app = app.clone();
-        let (label, screen) = (label.to_owned(), screen.to_owned());
+        let label = label.to_owned();
         let spawned = std::thread::Builder::new()
             .name("audience-surface-attach".to_owned())
-            .spawn(move || state.attach_now(&app, &label, &screen, generation));
+            .spawn(move || state.attach_now(&app, &label, &screen));
         if let Err(error) = spawned {
-            tracing::error!(%error, "could not start attaching the native audience view");
+            tracing::error!(%error, "could not start attaching a native audience view");
         }
     }
 
     #[cfg(target_os = "macos")]
-    fn attach_now(self: &Arc<Self>, app: &AppHandle, label: &str, screen: &str, generation: u64) {
+    fn attach_now(self: &Arc<Self>, app: &AppHandle, label: &str, screen: &str) {
         use crate::services::surface::macos::MacPresenter;
         use crate::services::surface::stream::AppSurfaceSource;
-
-        let current = |slots: &HashMap<String, Slot>| {
-            slots
-                .get(label)
-                .is_some_and(|slot| slot.generation == generation)
-        };
-
-        // A view still being taken down goes first; two views under one
-        // webview would be two pictures fighting over one window.
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            {
-                let slots = self.slots();
-                if !current(&slots) {
-                    return;
-                }
-                match slots.get(label).and_then(|slot| slot.worker.as_ref()) {
-                    Some(worker) if !worker.is_finished() && !worker.is_stopping() => return,
-                    Some(worker) if !worker.is_finished() => {}
-                    _ => break,
-                }
-            }
-            if Instant::now() >= deadline {
-                tracing::warn!(
-                    label,
-                    "the previous native audience view never went; not attaching another"
-                );
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        use crate::services::surface::Presenter;
 
         // Not under the lock: this waits on the main thread, and the main
-        // thread takes the lock when the window closes.
-        let presenter = match MacPresenter::attach(app, label) {
-            Ok(presenter) => presenter,
+        // thread takes the lock when a window closes.
+        let presenter: Box<dyn Presenter> = match MacPresenter::attach(app, label) {
+            Ok(presenter) => Box::new(presenter),
             Err(error) => {
-                tracing::error!(%error, label, "could not put a native view on the audience window");
+                tracing::error!(%error, label, "could not put a native view on an audience window");
                 return;
             }
         };
 
         let mut slots = self.slots();
-        if !current(&slots) {
-            // Dropping it takes the view away again.
-            return;
-        }
-        let state = Arc::clone(self);
-        let events = app.clone();
-        let owner = label.to_owned();
-        let on_presenting = Arc::new(move |presenting: bool| {
-            if let Some(slot) = state.slots().get_mut(&owner) {
-                slot.presenting = presenting;
-            }
-            tracing::info!(presenting, label = %owner, "native audience view");
-            emit(&events, &owner, state.status(&owner));
-        });
-        let source = AppSurfaceSource::new(app.clone(), screen);
-        match SurfaceWorker::spawn(source, presenter, on_presenting) {
-            Ok(worker) => {
-                if let Some(slot) = slots.get_mut(label) {
-                    slot.worker = Some(worker);
+        let slot = slots.entry(screen.to_owned()).or_default();
+        let presenter = match &slot.worker {
+            Some(worker) => {
+                if worker.add(label, presenter) {
+                    return;
+                }
+                // It has stopped; a new one starts with this window.
+                match MacPresenter::attach(app, label) {
+                    Ok(again) => Box::new(again) as Box<dyn Presenter>,
+                    Err(error) => {
+                        tracing::error!(%error, label, "could not put a native view on an audience window");
+                        return;
+                    }
                 }
             }
+            None => presenter,
+        };
+
+        let state = Arc::clone(self);
+        let events = app.clone();
+        let owner = screen.to_owned();
+        let on_presenting = Arc::new(move |label: &str, presenting: bool| {
+            if let Some(slot) = state.slots().get_mut(&owner) {
+                slot.presenting.insert(label.to_owned(), presenting);
+            }
+            tracing::info!(presenting, label, "native audience view");
+            emit(&events, label, state.status(label));
+        });
+        let source = AppSurfaceSource::new(app.clone(), screen);
+        match SurfaceWorker::spawn(source, vec![(label.to_owned(), presenter)], on_presenting) {
+            Ok(worker) => slot.worker = Some(worker),
             Err(error) => {
-                tracing::error!(%error, label, "could not start the native audience view")
+                tracing::error!(%error, screen, "could not start drawing a screen natively")
             }
         }
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn attach_now(
-        self: &Arc<Self>,
-        _app: &AppHandle,
-        _label: &str,
-        _screen: &str,
-        _generation: u64,
-    ) {
-    }
+    fn attach_now(self: &Arc<Self>, _app: &AppHandle, _label: &str, _screen: &str) {}
 
-    /// Hand the picture back to the webview of `label` and take the view
-    /// away. Never waits: see [`SurfaceWorker::signal_stop`].
+    /// Hand the window labelled `label` back to its webview and take its view
+    /// away; the screen's other windows go on. Never waits: see
+    /// [`SurfaceWorker::signal_stop`].
     pub fn detach(&self, label: &str) {
+        let Some(screen) = screen_id_for_label(label) else {
+            return;
+        };
         let mut slots = self.slots();
-        let slot = slots.entry(label.to_owned()).or_default();
-        slot.generation += 1;
-        slot.presenting = false;
+        let Some(slot) = slots.get_mut(screen) else {
+            return;
+        };
+        slot.presenting.remove(label);
         if let Some(worker) = &slot.worker {
-            worker.signal_stop();
+            worker.remove(label);
+            if worker.labels().is_empty() {
+                worker.signal_stop();
+            }
         }
     }
 }
@@ -234,34 +218,27 @@ mod tests {
     }
 
     #[test]
-    fn detaching_with_nothing_attached_cancels_a_pending_attach() {
+    fn each_window_says_whether_its_own_view_has_frames() {
         let state = OutputSurfaceState::new();
-        let generation = |state: &OutputSurfaceState| {
-            state
-                .slots()
-                .get("output")
-                .map_or(0, |slot| slot.generation)
-        };
-        let before = generation(&state);
-        state.detach("output");
-        assert_eq!(generation(&state), before + 1);
-        assert!(state.slots()["output"].worker.is_none());
-    }
-
-    #[test]
-    fn each_audience_window_has_a_view_of_its_own() {
-        let state = OutputSurfaceState::new();
-        state.detach("audience-lobby");
-        assert_eq!(generation_of(&state, "audience-lobby"), 1);
-        assert_eq!(
-            generation_of(&state, "output"),
-            0,
-            "the Output's is untouched"
+        state
+            .slots()
+            .entry("audience".into())
+            .or_default()
+            .presenting
+            .insert("output--b".into(), true);
+        assert!(state.status("output--b").presenting);
+        assert!(
+            !state.status("output").presenting,
+            "the screen's other window has none yet"
         );
-        assert!(!state.status("audience-lobby").presenting);
-    }
-
-    fn generation_of(state: &OutputSurfaceState, label: &str) -> u64 {
-        state.slots().get(label).map_or(0, |slot| slot.generation)
+        state.detach("output--b");
+        assert!(
+            !state.status("output--b").presenting,
+            "handed back when it goes"
+        );
+        assert!(
+            !state.status("settings").presenting,
+            "a window that is no screen's"
+        );
     }
 }

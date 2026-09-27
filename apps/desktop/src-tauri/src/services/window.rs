@@ -316,13 +316,11 @@ pub fn open(
     crate::services::webview_crash::watch(&window);
 
     // The compositor draws every audience window, where the platform has a
-    // native view for it: the Output, and each audience screen added.
+    // native view for it: each output of the Output's screen and of every
+    // audience screen added.
     if matches!(spec.role, WindowRole::Output | WindowRole::AudienceScreen) {
-        if let (Some(surface), Some(screen)) = (
-            app.try_state::<Arc<OutputSurfaceState>>(),
-            crate::services::screens::screen_id_for_label(&spec.label),
-        ) {
-            surface.attach(app, &spec.label, screen);
+        if let Some(surface) = app.try_state::<Arc<OutputSurfaceState>>() {
+            surface.attach(app, &spec.label);
         }
     }
 

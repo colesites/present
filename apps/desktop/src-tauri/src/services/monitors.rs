@@ -174,24 +174,42 @@ pub fn resolve_role_among(
     })
 }
 
-/// The display a screen in Screen Configuration goes to right now: its role's
-/// for the three built in (Automatic included), and for an added screen the
-/// one chosen for it, while that is connected.
-pub fn resolve_screen(
+/// The display one output of a screen goes to right now: for the first
+/// output of the three built in, their role's (Automatic included), and for
+/// every other the one chosen for it, while that is connected.
+pub fn resolve_output(
     app: &AppHandle,
     state: &DisplayState,
     screen: &crate::services::screens::ScreenSetup,
+    output: &str,
 ) -> AppResult<Option<Display>> {
-    if let Some(role) = screen.role() {
-        return Ok(resolve_role(app, state, role)?.map(|resolved| resolved.display));
+    let identified = current_displays(app)?;
+    Ok(resolve_output_among(
+        &identified,
+        &state.snapshot(),
+        screen,
+        output,
+    ))
+}
+
+/// [`resolve_output`] over monitors already read.
+pub fn resolve_output_among(
+    identified: &[(DisplayKey, Display)],
+    preferences: &crate::state::display_state::DisplayPreferences,
+    screen: &crate::services::screens::ScreenSetup,
+    output: &str,
+) -> Option<Display> {
+    if output == crate::services::screens::MAIN_OUTPUT {
+        if let Some(role) = screen.role() {
+            return resolve_role_among(identified, preferences, role)
+                .map(|resolved| resolved.display);
+        }
     }
-    let Some(key) = state.snapshot().display_for_screen(&screen.id).cloned() else {
-        return Ok(None);
-    };
-    Ok(current_displays(app)?
-        .into_iter()
-        .find(|(candidate, _)| *candidate == key)
-        .map(|(_, display)| display))
+    let key = preferences.display_for_output(&screen.id, output)?;
+    identified
+        .iter()
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, display)| display.clone())
 }
 
 /// The scale factor the OS reports for the monitor containing `bounds`.

@@ -155,31 +155,35 @@ impl DisplayPreferences {
         }
     }
 
-    /// Take an added screen away, and its output with it. The three built in
-    /// stay.
+    /// Take an added screen away, and its outputs' displays with it. The
+    /// three built in stay.
     pub fn remove_screen(&mut self, id: &str) -> bool {
         if screens::is_built_in(id) {
             return false;
         }
         let before = self.screens.len();
         self.screens.retain(|screen| screen.id != id);
-        self.displays.remove(id);
+        let nested = format!("{id}/");
+        self.displays
+            .retain(|key, _| key != id && !key.starts_with(&nested));
         self.screens.len() != before
     }
 
-    /// The output chosen for a screen, by its id. For the three built in this
-    /// is the role's display: their ids are the names roles are stored under.
-    pub fn display_for_screen(&self, id: &str) -> Option<&DisplayKey> {
-        self.displays.get(id)
+    /// The display chosen for one output of a screen. For the first output of
+    /// the three built in this is the role's display: their ids are the names
+    /// roles are stored under.
+    pub fn display_for_output(&self, screen: &str, output: &str) -> Option<&DisplayKey> {
+        self.displays.get(&screens::display_key(screen, output))
     }
 
-    pub fn set_screen_display(&mut self, id: &str, key: Option<DisplayKey>) {
+    pub fn set_output_display(&mut self, screen: &str, output: &str, key: Option<DisplayKey>) {
+        let stored = screens::display_key(screen, output);
         match key {
             Some(key) => {
-                self.displays.insert(id.to_owned(), key);
+                self.displays.insert(stored, key);
             }
             None => {
-                self.displays.remove(id);
+                self.displays.remove(&stored);
             }
         }
     }

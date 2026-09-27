@@ -17,18 +17,23 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 - Screen configuration, as ProPresenter has it. Screens ▸ Configure Screens…
   (⌥⌘1) opens Screens & sound with two groups: Audience, which starts with
   one screen, and Stage, which starts with the media stage and the worship
-  stage. The + beside each adds a screen on any connected output, such as a
-  second projector with the audience picture or a monitor at the back with a
-  stage layout. Added audience screens go on and off with the audience
-  output. Each screen can be renamed, and has an output, an output target
-  (Full stretches it to the output, Fit keeps its shape), a size to draw at,
-  and a screen color behind everything on it. Drawing a 4K television's
-  picture at 1080p is lighter for the computer. The connected displays are
-  drawn where the computer arranges them; click one to send a screen there.
-  Identify shows each screen's name, or its output's, on the screen itself.
-  Display settings opens the computer's own settings, where a display's
-  resolution is changed. The NDI size is now with the NDI settings, under
-  Connections.
+  stage. The + beside each adds a screen on a connected display, as an NDI
+  source, or as a placeholder with no output yet. Added audience screens go on
+  and off with the audience output.
+  - A screen is Single, Mirror (the same picture on several outputs),
+    Grouped (one picture cut across a grid of outputs, like a wall of TVs) or
+    Edge blend (one wide picture across projectors side by side, the overlap
+    faded with a linear, cubic or quadratic curve).
+  - Each output has an Output Target, Full (the whole output at its own
+    resolution) or Custom (a rectangle of it, in its pixels, for an LED
+    processor or a framed picture), and its own Color (brightness, contrast,
+    saturation, hue, black level) and Corner Pin tabs.
+  - Each screen can be renamed and given a screen color. Identify shows each
+    screen's name, or its display's, on the screen itself.
+  - The connected displays are drawn where the computer arranges them; click
+    one to send an output there. Display settings opens the computer's own,
+    where a display's resolution is changed.
+  - The NDI size is now with the NDI settings, under Connections.
 - The timer's clock can have a background: none, black, dimmed or a color.
   With the banner on, the name's banner goes at the top or the bottom.
 - The Screen Composer lists its regions as layers, the top one first, to
@@ -56,7 +61,9 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   videos rather than playing each one.
 - Media chosen for a region in the Screen Composer did not reach the screen,
   or only when the operator window was next clicked. Changes now reach it at
-  once.
+  once. The composer's regions are filled from the operator window's own
+  panels while a region is selected, rather than from a second media library
+  in its settings.
 - A countdown in the Screen Composer always had a dark shade behind it. A
   region's background is now chosen: none, black, dark or a color.
 - With Settings open, turning a stage screen off from the Screens menu turned
