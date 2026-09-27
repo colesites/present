@@ -272,6 +272,7 @@ pub fn run() {
             commands::display::set_preferred_resolution,
             commands::display::get_preferred_resolution,
             commands::display::reconcile_displays,
+            commands::display::open_display_settings,
             commands::window::open_window,
             commands::window::close_window,
             commands::window::open_mini_lyrics_window,

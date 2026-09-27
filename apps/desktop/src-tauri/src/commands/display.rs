@@ -78,6 +78,31 @@ pub fn get_preferred_resolution(
     Ok(state.snapshot().resolution_for(role))
 }
 
+/// Where the operating system sets a display's own resolution and
+/// arrangement. Present never changes those itself: they are the computer's,
+/// and a wrong mode can leave a projector showing nothing.
+fn display_settings_url() -> Option<&'static str> {
+    if cfg!(target_os = "macos") {
+        Some("x-apple.systempreferences:com.apple.preference.displays")
+    } else if cfg!(target_os = "windows") {
+        Some("ms-settings:display")
+    } else {
+        None
+    }
+}
+
+/// Open the system's display settings, from Screens & sound.
+#[tauri::command]
+pub fn open_display_settings(app: AppHandle) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let url = display_settings_url()
+        .ok_or_else(|| AppError::Invalid("No display settings to open here.".to_owned()))?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| AppError::Invalid(format!("Could not open the display settings: {error}")))
+}
+
 /// Put every open full-screen window back on the display its role resolves to.
 ///
 /// The hot-plug watcher does this automatically. This exposes it so an operator

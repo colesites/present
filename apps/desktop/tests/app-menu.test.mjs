@@ -85,7 +85,7 @@ test("the window reports every tick the menu has, under the same name", () => {
   assert.deepEqual([...ticks].sort(), [...known].sort(), "the Rust ticks and MenuCheck have drifted");
 
   const reported = new Set(
-    [...renderer.matchAll(/useMenuChecks\(\{([^}]*)\}\)/g)].flatMap((match) =>
+    [...renderer.matchAll(/useMenuChecks\(\s*\{([^}]*)\}/g)].flatMap((match) =>
       [...match[1].matchAll(/([a-zA-Z]+):/g)].map((key) => key[1]),
     ),
   );
@@ -105,4 +105,14 @@ test("menu shortcuts leave typing alone", () => {
     assert.ok(keys.startsWith("CmdOrCtrl+"), `"${keys}" is a shortcut without a modifier`);
     assert.ok(!/^CmdOrCtrl\+[TM]$/.test(keys), `${keys} belongs to the window`);
   }
+});
+
+test("only the operator window carries out the menu", () => {
+  // Tauri sends the menu's events to every window, and the Settings window is
+  // the same App. Listening there too did each command twice: a stage screen
+  // turned off from the menu came straight back on.
+  const app = read("src/renderer/main/App.tsx");
+  assert.match(app, /useMenuCommandListener\(!isSettingsWindow\)/);
+  assert.match(commands, /if \(!enabled \|\| !isTauriShell\(\)\) return;/);
+  assert.match(app, /useMenuChecks\(\{ mediaStage: [^}]*\}, !isSettingsWindow\)/);
 });

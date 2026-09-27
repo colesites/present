@@ -97,10 +97,17 @@ export function useMenuCommand(command: string, handler: Handler): void {
 const isTauriShell = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-/** Listen for the menu. Mounted once, by the operator window. */
-export function useMenuCommandListener(): void {
+/**
+ * Listen for the menu. Mounted once, by the operator window, and `enabled`
+ * only there.
+ *
+ * Tauri delivers the menu's events to every window, and the Settings window
+ * is the same app: listening there too carried each command out twice while
+ * Settings was open, so closing a stage screen from the menu opened it again.
+ */
+export function useMenuCommandListener(enabled = true): void {
   useEffect(() => {
-    if (!isTauriShell()) return;
+    if (!enabled || !isTauriShell()) return;
     let detach: (() => void) | null = null;
     let cancelled = false;
 
@@ -118,7 +125,7 @@ export function useMenuCommandListener(): void {
       cancelled = true;
       detach?.();
     };
-  }, []);
+  }, [enabled]);
 }
 
 /** What the menu's ticks report, by the key `app_menu.rs` files them under. */
@@ -136,14 +143,15 @@ export type MenuCheck =
 
 /**
  * Keep the menu's ticks on what this window says is on. Only the keys given
- * are reported, so each part of the window reports what it owns.
+ * are reported, so each part of the window reports what it owns, and nothing
+ * while not `enabled`.
  */
-export function useMenuChecks(checks: Partial<Record<MenuCheck, boolean>>): void {
+export function useMenuChecks(checks: Partial<Record<MenuCheck, boolean>>, enabled = true): void {
   const key = JSON.stringify(checks);
   useEffect(() => {
-    if (!isTauriShell()) return;
+    if (!enabled || !isTauriShell()) return;
     void import("@tauri-apps/api/core")
       .then(({ invoke }) => invoke("set_menu_checks", { checks: JSON.parse(key) as Record<string, boolean> }))
       .catch((): undefined => undefined);
-  }, [key]);
+  }, [enabled, key]);
 }

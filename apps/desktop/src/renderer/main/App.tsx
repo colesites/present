@@ -51,6 +51,7 @@ import { ScreenComposerWindow } from "../../features/screen-composer";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
 import { MiniLyricsWindow } from "../../features/editor";
 import { areDisplayListsEqual } from "../shared/lib/display-list";
+import { ScreenIdentify } from "../shared/components/ScreenIdentify";
 
 const ROOT_DISPLAY_REFRESH_INTERVAL_MS = 15_000;
 
@@ -67,10 +68,20 @@ export default function Home() {
     return <MiniLyricsWindow />;
   }
   if (windowType === "media-stage") {
-    return <StageDisplayWindow />;
+    return (
+      <>
+        <StageDisplayWindow />
+        <ScreenIdentify name="Media stage" />
+      </>
+    );
   }
   if (windowType === "worship-stage") {
-    return <WorshipStageDisplayWindow />;
+    return (
+      <>
+        <WorshipStageDisplayWindow />
+        <ScreenIdentify name="Worship stage" />
+      </>
+    );
   }
   if (windowType === "looks") {
     return <LooksWindow />;
@@ -831,7 +842,21 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // The application menu (`services/app_menu.rs`). Each item does what the
   // header's own button does; the ones that belong to a panel bring the panel
   // on screen and hand over to it.
-  useMenuCommandListener();
+  useMenuCommandListener(!isSettingsWindow);
+  // Screens ▸ Configure Screens…: Settings, open at Screens & sound.
+  useMenuCommand("screens.configure", () => {
+    try {
+      window.localStorage.setItem("present-settings-section", "screens");
+    } catch {
+      // Settings opens where it was left instead.
+    }
+    void import("@tauri-apps/api/event")
+      .then(({ emitTo }) => emitTo("settings", "settings:section", "screens"))
+      .catch((): void => undefined);
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke("open_window", { role: "settings", options: null }))
+      .catch((error: unknown) => console.error("[Menu] could not open the screen settings", error));
+  });
   useMenuCommand("view.show", () => {
     setBottomTab("media");
     setViewMode("show");
@@ -880,7 +905,9 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   useMenuCommand("help.download", () => {
     void window.electronAPI?.openExternalBrowser?.(`${desktopWebBaseUrl()}/download`);
   });
-  useMenuChecks({ mediaStage: isMediaStageLive, worshipStage: isWorshipStageLive });
+  // The Settings window is this component too, with no stage screens of its
+  // own: reporting from there would clear the ticks while they are open.
+  useMenuChecks({ mediaStage: isMediaStageLive, worshipStage: isWorshipStageLive }, !isSettingsWindow);
 
   useGlobalShortcuts({
     enabled: !isSettingsWindow && effectiveViewMode !== "browser",

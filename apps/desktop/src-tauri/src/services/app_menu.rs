@@ -281,6 +281,12 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
 
     // --- Screens -----------------------------------------------------------
     let screens = SubmenuBuilder::new(app, "Screens")
+        .item(&keyed(
+            "screens.configure",
+            "Configure Screens…",
+            "CmdOrCtrl+Alt+1",
+        )?)
+        .separator()
         .item(&check("output", "screens.output", "Audience Output")?)
         .item(&check("mediaStage", "screens.media-stage", "Media Stage")?)
         .item(&check(

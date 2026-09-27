@@ -14,6 +14,32 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   It never restarts on its own, and asks first while the audience screen is
   open. This version has to be installed by hand once; the ones after it
   arrive this way.
+- Screens ▸ Configure Screens… (⌥⌘1) opens Screens & sound, now laid out as
+  a screen configuration: the audience screen and the two stage screens in a
+  list, each turned on and off there, and the connected displays drawn where
+  the computer has them, to scale. Clicking a display sends the chosen screen
+  to it, and a screen that is on moves at once. Identify shows each screen's
+  name on it. The page warns when two screens go to the same display or one
+  goes to the main screen, and Display settings opens the computer's own
+  settings, where a display's resolution is changed.
+- The timer's clock can have a background: none, black, dimmed or a color.
+  With the banner on, the name's banner goes at the top or the bottom.
+- The Screen Composer lists its regions as layers, the top one first, to
+  choose any of them and put it above or below another.
+
+### Fixed
+
+- A change in Settings, such as the Bible font size, reached the operator
+  window only after something else was done there. It now applies at once.
+  The song settings are for new songs and lyrics made into slides; a song
+  already made keeps its own fonts.
+- The Screen Composer was heavy on screen. Every region's video was decoded
+  at the size of the whole screen; each is now decoded at the size of its
+  region, and the composer shows stills of them instead of playing each one.
+- A countdown in the Screen Composer always had a dark shade behind it. A
+  region's background is now chosen: none, black, dark or a color.
+- With Settings open, turning a stage screen off from the Screens menu turned
+  it straight back on, and the menu's ticks for the stage screens went off.
 
 ## [0.4.3] - 2026-09-27
 

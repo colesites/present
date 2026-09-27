@@ -333,6 +333,26 @@ export function SettingsScreen({
   selectMediaForOutput,
 }: SettingsScreenProps) {
   const [section, setSection] = useState<SectionKey>(readSection);
+  // Screens ▸ Configure Screens… in the menu, with Settings already open.
+  useEffect(() => {
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<string>("settings:section", ({ payload }) => {
+          if (SECTIONS.some((each) => each.key === payload)) setSection(payload as SectionKey);
+        }),
+      )
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else detach = unlisten;
+      })
+      .catch((): void => undefined);
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, []);
   const choose = (next: SectionKey) => {
     setSection(next);
     try {
@@ -385,7 +405,13 @@ export function SettingsScreen({
       setSettingsOutputDisplayId(displayId);
     }
     if (window.electronAPI?.setPreferredDisplay) {
-      void window.electronAPI.setPreferredDisplay(role, displayId);
+      // A screen that is on moves to its new place now, not the next time it
+      // is turned on.
+      void window.electronAPI
+        .setPreferredDisplay(role, displayId)
+        .then(() => import("@tauri-apps/api/core"))
+        .then(({ invoke }) => invoke("reconcile_displays"))
+        .catch((error: unknown) => console.error("[Settings] could not move the screen", error));
     } else if (role === "audience" && window.electronAPI?.setPreferredOutputDisplay) {
       void window.electronAPI.setPreferredOutputDisplay(displayId);
     }
