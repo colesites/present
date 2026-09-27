@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ColorInput, Segmented } from "../../../renderer/shared/components/style-controls";
+import { DEFAULT_TIME_UP, type TimeUpSettings } from "../../../renderer/shared/hooks/useTimers";
 import { cn } from "../../../renderer/shared/lib/utils";
 import {
+  SETTINGS_FIELD,
   SettingsBlock,
   SettingsButton,
   SettingsButtonGroup,
@@ -27,6 +29,8 @@ export interface TimerLayoutValue {
   titlePosition: "top" | "bottom";
   /** Behind the clock, or "" for nothing. */
   boxColor: string;
+  /** What shows once the live timer runs out. */
+  timeUp: TimeUpSettings;
 }
 
 /** The backgrounds offered behind the clock, and "Color" for any other. */
@@ -115,7 +119,9 @@ export function TimerSettings({
     return (Object.keys(layout) as Array<keyof TimerLayoutValue>).some((key) =>
       key === "xPercent" || key === "yPercent"
         ? roundPercent(clampPercent(draft[key])) !== roundPercent(clampPercent(layout[key]))
-        : draft[key] !== layout[key],
+        : key === "timeUp"
+          ? JSON.stringify(draft.timeUp) !== JSON.stringify(layout.timeUp)
+          : draft[key] !== layout[key],
     );
   }, [draft, layout]);
 
@@ -363,6 +369,56 @@ export function TimerSettings({
         ) : null}
       </SettingsGroup>
 
+      <SettingsGroup
+        title="When time is up"
+        description="Once the live timer runs out and no other timer follows it."
+      >
+        <div className="flex">
+          <div className="flex flex-none items-center border-r border-border/60 p-4">
+            <TimeUpPreview layout={current} />
+          </div>
+          <div className="min-w-0 flex-1 divide-y divide-border/60">
+            <SettingsRow label="Show a message" description="Instead of the clock stopped at 00:00:00." className="min-h-[52px]">
+              <SettingsSwitch
+                label="Show a message when time is up"
+                checked={current.timeUp.enabled}
+                onChange={(enabled) => update({ timeUp: { ...current.timeUp, enabled } })}
+              />
+            </SettingsRow>
+            {current.timeUp.enabled ? (
+              <>
+                <SettingsRow label="Message" className="min-h-[52px]">
+                  <input
+                    aria-label="Time up message"
+                    value={current.timeUp.text}
+                    maxLength={40}
+                    placeholder={DEFAULT_TIME_UP.text}
+                    onChange={(event) => update({ timeUp: { ...current.timeUp, text: event.target.value } })}
+                    className={cn(SETTINGS_FIELD, "w-[180px]")}
+                  />
+                </SettingsRow>
+                <SettingsRow label="Color" className="min-h-[52px]">
+                  <div className="w-[180px]">
+                    <ColorInput
+                      label="Time up color"
+                      value={current.timeUp.color}
+                      onChange={(color) => update({ timeUp: { ...current.timeUp, color } })}
+                    />
+                  </div>
+                </SettingsRow>
+                <SettingsRow label="Blink" className="min-h-[52px]">
+                  <SettingsSwitch
+                    label="Blink the message"
+                    checked={current.timeUp.blink}
+                    onChange={(blink) => update({ timeUp: { ...current.timeUp, blink } })}
+                  />
+                </SettingsRow>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </SettingsGroup>
+
       {/* Changes wait here until they are applied. */}
       <div
         className={cn(
@@ -382,5 +438,51 @@ export function TimerSettings({
         </div>
       </div>
     </SettingsPage>
+  );
+}
+
+/**
+ * The screen once time is up, in miniature: the message as the screens show
+ * it, in its colour and blinking if it will, or the stopped clock without it.
+ */
+function TimeUpPreview({ layout }: { layout: TimerLayoutValue }) {
+  const { timeUp } = layout;
+  const scale = 117 / 1080;
+  const clockFont = Math.min(Math.max(layout.clockFontPx, MIN_CLOCK_FONT), MAX_CLOCK_FONT);
+  const nameFont = Math.min(Math.max(layout.nameFontPx, MIN_NAME_FONT), MAX_NAME_FONT);
+  const name = (
+    <div
+      style={{ fontSize: Math.max(4, nameFont * scale), color: layout.nameColor }}
+      className="whitespace-nowrap font-medium uppercase tracking-wider"
+    >
+      Sermon
+    </div>
+  );
+  return (
+    <div className="relative flex aspect-video w-[208px] flex-none items-center justify-center overflow-hidden rounded-lg bg-black ring-1 ring-white/10">
+      <div
+        className="text-center font-semibold"
+        style={{
+          backgroundColor: layout.boxColor || "transparent",
+          padding: `${clockFont * 0.12 * scale}px ${clockFont * 0.25 * scale}px`,
+          borderRadius: clockFont * 0.12 * scale,
+        }}
+      >
+        {!layout.nameBannerEnabled && layout.titlePosition === "top" ? name : null}
+        <div
+          className={cn(
+            "whitespace-nowrap leading-none tabular-nums",
+            timeUp.enabled && timeUp.blink && "present-time-up-blink",
+          )}
+          style={{
+            fontSize: Math.max(8, clockFont * scale),
+            color: timeUp.enabled ? timeUp.color : layout.clockColor,
+          }}
+        >
+          {timeUp.enabled ? timeUp.text.trim() || DEFAULT_TIME_UP.text : "00:00:00"}
+        </div>
+        {!layout.nameBannerEnabled && layout.titlePosition !== "top" ? name : null}
+      </div>
+    </div>
   );
 }

@@ -17,6 +17,7 @@ import { PhoneRemoteSettings } from "./PhoneRemoteSettings";
 import { ScreensSettings, type ScreenRole } from "./ScreensSettings";
 import { SlidesSettings } from "./SlidesSettings";
 import { TimerSettings } from "./TimerSettings";
+import { DEFAULT_TIME_UP, type TimeUpSettings } from "../../../renderer/shared/hooks/useTimers";
 import {
   SETTINGS_FIELD,
   SettingsGroup,
@@ -225,6 +226,8 @@ interface SettingsScreenProps {
   setSettingsTimerTitlePosition: (value: "top" | "bottom") => void;
   settingsTimerBoxColor?: string;
   setSettingsTimerBoxColor: (value: string) => void;
+  settingsTimerTimeUp?: TimeUpSettings;
+  setSettingsTimerTimeUp: (value: TimeUpSettings) => void;
   settingsOutputDisplayId: number | null;
   setSettingsOutputDisplayId: (value: number | null) => void;
   settingsScreenDisplayIds: Record<ScreenRole, number | null>;
@@ -313,6 +316,8 @@ export function SettingsScreen({
   setSettingsTimerTitlePosition,
   settingsTimerBoxColor = "",
   setSettingsTimerBoxColor,
+  settingsTimerTimeUp = DEFAULT_TIME_UP,
+  setSettingsTimerTimeUp,
   setSettingsOutputDisplayId,
   settingsScreenDisplayIds,
   setSettingsScreenDisplayIds,
@@ -489,6 +494,7 @@ export function SettingsScreen({
               nameBannerColor: settingsTimerNameBannerColor,
               titlePosition: settingsTimerTitlePosition,
               boxColor: settingsTimerBoxColor,
+              timeUp: settingsTimerTimeUp,
             }}
             onApply={(layout) => {
               setSettingsTimerXPercent(layout.xPercent);
@@ -502,6 +508,7 @@ export function SettingsScreen({
               setSettingsTimerNameBannerColor(layout.nameBannerColor);
               setSettingsTimerTitlePosition(layout.titlePosition);
               setSettingsTimerBoxColor(layout.boxColor);
+              setSettingsTimerTimeUp(layout.timeUp);
             }}
           />
         );

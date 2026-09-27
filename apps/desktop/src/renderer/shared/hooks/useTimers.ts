@@ -23,7 +23,54 @@ export type TimerConfig = {
 export type TimerItem = TimerConfig & {
   isRunning: boolean;
   secondsValue: number;
+  /**
+   * It ran to its end and stopped there, rather than being paused or reset.
+   * What the screens show as "time up". Not kept across a restart.
+   */
+  finished?: boolean;
 };
+
+/** What the screens show once the live timer has run out (Settings, Timer). */
+export type TimeUpSettings = {
+  /** Show the message rather than the finished clock's 00:00:00. */
+  enabled: boolean;
+  text: string;
+  color: string;
+  blink: boolean;
+};
+
+export const DEFAULT_TIME_UP: TimeUpSettings = {
+  enabled: true,
+  text: "TIME UP",
+  color: "#ef4444",
+  blink: true,
+};
+
+export function normalizeTimeUp(value: unknown): TimeUpSettings {
+  if (!value || typeof value !== "object") return DEFAULT_TIME_UP;
+  const candidate = value as Partial<TimeUpSettings>;
+  return {
+    enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : DEFAULT_TIME_UP.enabled,
+    text: typeof candidate.text === "string" ? candidate.text.slice(0, 40) : DEFAULT_TIME_UP.text,
+    color:
+      typeof candidate.color === "string" && candidate.color.trim()
+        ? candidate.color.trim()
+        : DEFAULT_TIME_UP.color,
+    blink: typeof candidate.blink === "boolean" ? candidate.blink : DEFAULT_TIME_UP.blink,
+  };
+}
+
+/** Whether the screens show the time-up message for this timer now. */
+export function isTimeUpShowing(timer: TimerItem | null, timeUp: TimeUpSettings): boolean {
+  return Boolean(timer?.finished && !timer.isRunning && timeUp.enabled);
+}
+
+/** The words the screens show for the live timer, "time up" included. */
+export function getLiveTimerText(timer: TimerItem | null, timeUp: TimeUpSettings): string {
+  if (!timer) return "00:00:00";
+  if (isTimeUpShowing(timer, timeUp)) return timeUp.text.trim() || DEFAULT_TIME_UP.text;
+  return getTimerDisplay(timer);
+}
 
 type StoredTimerState = {
   timers: TimerItem[];
@@ -366,11 +413,10 @@ export function useTimers(): UseTimersResult {
 
           const nextTimer = getNextTimerToStart(currentTimers, index);
           const completeTimer = (secondsValue: number) => {
-            if (!nextTimer) {
-              return { ...timer, isRunning: false, secondsValue };
+            if (nextTimer) {
+              nextExpandedTimerId = nextTimer.id;
             }
-            nextExpandedTimerId = nextTimer.id;
-            return { ...timer, isRunning: false, secondsValue };
+            return { ...timer, isRunning: false, secondsValue, finished: true };
           };
 
           if (timer.type === "countdownToTime") {
@@ -412,6 +458,7 @@ export function useTimers(): UseTimersResult {
             ...timer,
             isRunning: true,
             secondsValue: startTimerValue(timer),
+            finished: false,
           };
         });
       setTimers(nextTimers);
@@ -460,6 +507,7 @@ export function useTimers(): UseTimersResult {
             ...next,
             isRunning: false,
             secondsValue: getInitialTimerValue(next),
+            finished: false,
           };
         }),
       );
@@ -490,12 +538,14 @@ export function useTimers(): UseTimersResult {
     setExpandedTimerId(id);
     setSelectedTimerId(id);
     setTimers((previous) =>
-      previous.map((timer) => {
+      previous.map((candidate) => {
         // A new live timer replaces any current one, so two timers can never
         // run at once (and compete for the audience output).
-        if (timer.id !== id) {
-          return timer.isRunning ? { ...timer, isRunning: false } : timer;
+        if (candidate.id !== id) {
+          return candidate.isRunning ? { ...candidate, isRunning: false } : candidate;
         }
+        // Played again, or paused, it is no longer the one that ran out.
+        const timer = { ...candidate, finished: false };
         if (timer.isRunning) return { ...timer, isRunning: false };
 
         if (timer.type === "countdownToTime") {
@@ -537,6 +587,7 @@ export function useTimers(): UseTimersResult {
               ...timer,
               isRunning: false,
               secondsValue: getInitialTimerValue(timer),
+              finished: false,
             }
           : timer,
       ),
@@ -567,10 +618,11 @@ export function useTimers(): UseTimersResult {
             secondsValue:
               targetSeconds > 0 ? Math.min(nextValue, targetSeconds) : nextValue,
             isRunning: false,
+            finished: false,
           };
         }
         const nextValue = Math.max(timer.secondsValue + delta, 0);
-        return { ...timer, secondsValue: nextValue, isRunning: false };
+        return { ...timer, secondsValue: nextValue, isRunning: false, finished: false };
       }),
     );
   }, []);

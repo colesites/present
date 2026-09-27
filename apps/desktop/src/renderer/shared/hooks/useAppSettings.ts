@@ -8,6 +8,7 @@ import {
 } from "../../../features/settings/lib/constants";
 import { MediaItem, MediaFolder } from "../../../features/media/hooks/useMediaFolders";
 import { useAudioDeviceSync } from "./useAudioRouting";
+import { DEFAULT_TIME_UP, normalizeTimeUp, type TimeUpSettings } from "./useTimers";
 import type {
   ScriptureFooterPosition,
   ScriptureTextAlign,
@@ -195,6 +196,9 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   >("bottom");
   // Nothing behind the clock unless one is chosen, as the screens drew it.
   const [settingsTimerBoxColor, setSettingsTimerBoxColor] = useState("");
+  // A blinking red TIME UP instead of 00:00:00, unless turned off.
+  const [settingsTimerTimeUp, setSettingsTimerTimeUp] =
+    useState<TimeUpSettings>(DEFAULT_TIME_UP);
   const [settingsOutputDisplayId, setSettingsOutputDisplayId] = useState<
     number | null
   >(DEFAULT_OUTPUT_DISPLAY_ID);
@@ -361,6 +365,9 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     }
     if (typeof parsed.timerBoxColor === "string") {
       setSettingsTimerBoxColor(parsed.timerBoxColor.trim());
+    }
+    if (parsed.timerTimeUp !== undefined) {
+      setSettingsTimerTimeUp(normalizeTimeUp(parsed.timerTimeUp));
     }
     if (parsed.outputDisplayId === null) {
       setSettingsOutputDisplayId(null);
@@ -559,6 +566,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         timerNameBannerColor: settingsTimerNameBannerColor,
         timerTitlePosition: settingsTimerTitlePosition,
         timerBoxColor: settingsTimerBoxColor,
+        timerTimeUp: settingsTimerTimeUp,
         outputDisplayId: settingsOutputDisplayId,
         screenDisplayIds: settingsScreenDisplayIds,
         screenResolutions: settingsScreenResolutions,
@@ -612,6 +620,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsTimerNameBannerColor,
     settingsTimerTitlePosition,
     settingsTimerBoxColor,
+    settingsTimerTimeUp,
     settingsOutputDisplayId,
     settingsScreenDisplayIds,
     settingsScreenResolutions,
@@ -753,6 +762,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsTimerTitlePosition,
     settingsTimerBoxColor,
     setSettingsTimerBoxColor,
+    settingsTimerTimeUp,
+    setSettingsTimerTimeUp,
     settingsOutputDisplayId,
     setSettingsOutputDisplayId,
     settingsScreenDisplayIds,

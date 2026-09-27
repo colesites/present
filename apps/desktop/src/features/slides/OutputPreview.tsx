@@ -39,8 +39,8 @@ import type {
   CanvasSizePreset,
   SlideElement,
 } from "../../shared/types";
-import type { UseTimersResult } from "../../renderer/shared/hooks";
-import { getTimerDisplay } from "../../renderer/shared/hooks";
+import type { TimeUpSettings, UseTimersResult } from "../../renderer/shared/hooks";
+import { DEFAULT_TIME_UP, getLiveTimerText, isTimeUpShowing } from "../../renderer/shared/hooks";
 import type {
   OutputTextPosition,
   PropsOverlayItem,
@@ -124,6 +124,7 @@ interface OutputPreviewProps {
     nameBannerEnabled: boolean;
     nameBannerColor: string;
     titlePosition: "top" | "bottom";
+    timeUp?: TimeUpSettings;
   };
   previewTarget?: OutputPreviewTarget;
   onPreviewTargetChange?: (target: OutputPreviewTarget) => void;
@@ -294,9 +295,9 @@ export const OutputPreview = memo(function OutputPreview({
   // Timer label/text are derived from the shared `useTimers` hook. Local
   // aliases preserve the existing JSX read sites in the preview thumbnail.
   const timerLabelForOutput = activeTimer?.name ?? "Timer Name";
-  const timerTextForOutput = activeTimer
-    ? getTimerDisplay(activeTimer)
-    : "00:00:00";
+  const timeUp = timerLayout.timeUp ?? DEFAULT_TIME_UP;
+  const timerTextForOutput = getLiveTimerText(activeTimer, timeUp);
+  const timeUpShowing = isTimeUpShowing(activeTimer, timeUp);
   const previewTextPositionStyle = useMemo(
     () => ({
       left: `${textPosition.xPercent}%`,
@@ -459,6 +460,7 @@ export const OutputPreview = memo(function OutputPreview({
                 nextRepeat={worshipNextRepeat}
                 timerLabel={timerLabelForOutput}
                 timerText={timerTextForOutput}
+                timerTimeUp={timeUpShowing ? { color: timeUp.color, blink: timeUp.blink } : null}
               />
             ) : null}
 
@@ -857,7 +859,13 @@ export const OutputPreview = memo(function OutputPreview({
               <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 {activeTimer?.name ?? "Timer"}
               </span>
-              <span className="ml-auto text-xs font-semibold tabular-nums text-foreground">
+              <span
+                className={cn(
+                  "ml-auto text-xs font-semibold tabular-nums text-foreground",
+                  timeUpShowing && timeUp.blink && "present-time-up-blink",
+                )}
+                style={timeUpShowing ? { color: timeUp.color } : undefined}
+              >
                 {timerTextForOutput}
               </span>
             </div>
@@ -1014,6 +1022,7 @@ function MediaStagePreview({
   nextRepeat,
   timerLabel,
   timerText,
+  timerTimeUp,
 }: {
   currentText: string | null;
   currentFooter?: string | null;
@@ -1025,6 +1034,8 @@ function MediaStagePreview({
   nextRepeat?: string | null;
   timerLabel: string;
   timerText: string;
+  /** Once the timer has run out: its colour, and whether it blinks. */
+  timerTimeUp?: { color: string; blink: boolean } | null;
 }) {
   const [clockText, setClockText] = useState(() =>
     new Date().toLocaleTimeString([], {
@@ -1072,7 +1083,13 @@ function MediaStagePreview({
           <p className="truncate text-[9px] uppercase tracking-[0.14em] text-zinc-500">
             {timerLabel}
           </p>
-          <p className="truncate text-2xl font-semibold tabular-nums text-red-400">
+          <p
+            className={cn(
+              "truncate text-2xl font-semibold tabular-nums text-red-400",
+              timerTimeUp?.blink && "present-time-up-blink",
+            )}
+            style={timerTimeUp ? { color: timerTimeUp.color } : undefined}
+          >
             {timerText}
           </p>
         </div>

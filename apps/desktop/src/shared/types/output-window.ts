@@ -70,6 +70,8 @@ export type OutputState = {
   timerText?: string | null;
   timerRunning?: boolean;
   timerVisible?: boolean;
+  /** Once the live timer has run out: the message's colour, and whether it blinks. */
+  timerTimeUp?: { color: string; blink: boolean } | null;
 
   scriptureStyle: ScriptureStyle;
   libraryStyle: LibraryStyle;

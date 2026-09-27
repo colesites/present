@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useLooksConfig } from "../../renderer/shared/hooks";
+import { cn } from "../../renderer/shared/lib/utils";
 
 type StageWindowState = {
   currentText: string | null;
@@ -15,6 +16,8 @@ type StageWindowState = {
   timerText: string | null;
   timerLabel: string | null;
   timerVisible: boolean;
+  /** Once the timer has run out: the message's colour, and whether it blinks. */
+  timerTimeUp: TimeUpStyle | null;
 };
 
 const initialState: StageWindowState = {
@@ -29,6 +32,7 @@ const initialState: StageWindowState = {
   timerText: null,
   timerLabel: null,
   timerVisible: true,
+  timerTimeUp: null,
 };
 
 function formatClock(date: Date) {
@@ -81,6 +85,7 @@ export function StageDisplayWindow() {
             typeof message.timerVisible === "boolean"
               ? message.timerVisible
               : previous.timerVisible,
+          timerTimeUp: asTimeUp(message.timerTimeUp),
         }));
       } else if (message.type === "clear") {
         setState(initialState);
@@ -145,7 +150,8 @@ export function StageDisplayWindow() {
               <MetricCard
                 label={state.timerLabel ?? "Time Remaining"}
                 value={state.timerText ?? "--:--:--"}
-                valueClassName="text-[#e35f4a]"
+                valueClassName={cn("text-[#e35f4a]", state.timerTimeUp?.blink && "present-time-up-blink")}
+                valueColor={state.timerTimeUp?.color}
                 visible={stageLooks.layers.props}
               />
               <MetricCard
@@ -160,6 +166,14 @@ export function StageDisplayWindow() {
       </div>
     </div>
   );
+}
+
+type TimeUpStyle = { color: string; blink: boolean };
+
+function asTimeUp(value: unknown): TimeUpStyle | null {
+  if (!value || typeof value !== "object") return null;
+  const { color, blink } = value as Partial<TimeUpStyle>;
+  return { color: typeof color === "string" ? color : "#ef4444", blink: blink === true };
 }
 
 function asText(value: unknown): string | null {
@@ -223,17 +237,24 @@ function MetricCard({
   label,
   value,
   valueClassName,
+  valueColor,
   visible,
 }: {
   label: string;
   value: string;
   valueClassName: string;
+  valueColor?: string;
   visible: boolean;
 }) {
   return (
     <div className="relative overflow-hidden rounded-lg border border-zinc-500/70 bg-black/80 px-4 py-2">
       {visible ? (
-        <p className={`text-center text-6xl font-medium ${valueClassName}`}>{value}</p>
+        <p
+          className={`text-center text-6xl font-medium ${valueClassName}`}
+          style={valueColor ? { color: valueColor } : undefined}
+        >
+          {value}
+        </p>
       ) : (
         <p className="text-center text-4xl text-zinc-700">--:--</p>
       )}

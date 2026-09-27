@@ -33,7 +33,8 @@ import {
   useStageBroadcast,
   useShowVideoSync,
   useTimers,
-  getTimerDisplay,
+  getLiveTimerText,
+  isTimeUpShowing,
 } from "../../renderer/shared/hooks";
 import type { useAppSettings } from "../../renderer/shared/hooks/useAppSettings";
 import {
@@ -360,6 +361,7 @@ export function PresentContainer({
     settingsTimerNameBannerColor,
     settingsTimerTitlePosition,
     settingsTimerBoxColor,
+    settingsTimerTimeUp,
     settingsLibraryFontFamily,
     settingsLibraryFontSize,
     settingsLibraryFontWeight,
@@ -1831,9 +1833,13 @@ export function PresentContainer({
     const payload = {
       type: "timer-update",
       timerLabel: activeTimer?.name ?? "Timer Name",
-      timerText: activeTimer ? getTimerDisplay(activeTimer) : "00:00:00",
+      timerText: getLiveTimerText(activeTimer, settingsTimerTimeUp),
       timerRunning: activeTimer?.isRunning ?? false,
       timerVisible: isTimerLayerEnabled,
+      // Once it has run out: the message's colour, and whether it blinks.
+      timerTimeUp: isTimeUpShowing(activeTimer, settingsTimerTimeUp)
+        ? { color: settingsTimerTimeUp.color, blink: settingsTimerTimeUp.blink }
+        : null,
     };
     window.electronAPI.sendToOutput(payload);
     if (window.electronAPI.sendToStage) {
@@ -1842,10 +1848,12 @@ export function PresentContainer({
     window.electronAPI.sendToWorshipStage?.(payload);
   }, [
     isTimerLayerEnabled,
+    settingsTimerTimeUp,
     timers.activeTimer,
     timers.activeTimer?.isRunning,
     timers.activeTimer?.secondsValue,
     timers.activeTimer?.name,
+    timers.activeTimer?.finished,
   ]);
 
   // Resolve the active prop IDs into the full overlay payload that
@@ -2426,6 +2434,7 @@ export function PresentContainer({
             nameBannerEnabled: settingsTimerNameBannerEnabled,
             nameBannerColor: settingsTimerNameBannerColor,
             titlePosition: settingsTimerTitlePosition,
+            timeUp: settingsTimerTimeUp,
           },
           updateFontStyle,
         }}

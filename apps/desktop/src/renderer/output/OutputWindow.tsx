@@ -270,7 +270,13 @@ export function OutputWindow() {
               {state.timerLabel}
             </p>
           ) : null}
-          <p className="text-[clamp(24px,4vw,88px)] font-semibold text-white">
+          <p
+            className={cn(
+              "text-[clamp(24px,4vw,88px)] font-semibold text-white",
+              state.timerTimeUp?.blink && "present-time-up-blink",
+            )}
+            style={state.timerTimeUp ? { color: state.timerTimeUp.color } : undefined}
+          >
             {state.timerText || "00:00:00"}
           </p>
         </div>
@@ -640,7 +646,8 @@ function TimerOverlayLayer({ state }: { state: OutputState }) {
     32,
     160,
   );
-  const clockColor = layout?.clockColor || "#ffffff";
+  const timeUp = state.timerTimeUp ?? null;
+  const clockColor = timeUp?.color || layout?.clockColor || "#ffffff";
   const nameColor = layout?.nameColor || "#ffffff";
   const nameBannerEnabled = Boolean(layout?.nameBannerEnabled);
   const titlePosition = layout?.titlePosition === "top" ? "top" : "bottom";
@@ -687,7 +694,7 @@ function TimerOverlayLayer({ state }: { state: OutputState }) {
           </div>
         ) : null}
         <div
-          className="whitespace-nowrap leading-none"
+          className={cn("whitespace-nowrap leading-none", timeUp?.blink && "present-time-up-blink")}
           style={{ color: clockColor, fontSize: `${clockFontPx}px` }}
         >
           {state.timerText}

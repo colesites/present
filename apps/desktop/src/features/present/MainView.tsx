@@ -43,7 +43,7 @@ import type {
 import { SidebarRail } from "../sidebar-rail";
 import type { LibrarySearchMode } from "../library/hooks";
 import { MediaPanel } from "../media";
-import type { UseTimersResult } from "../../renderer/shared/hooks";
+import type { TimeUpSettings, UseTimersResult } from "../../renderer/shared/hooks";
 import { fixLyrics } from "../../renderer/shared/lib/lyrics";
 import type { ServiceTemplate } from "../services/hooks/useServices";
 import { ScriptureSlide } from "../../features/scripture/lib/slides";
@@ -219,6 +219,7 @@ export interface MainViewStyleState {
     nameBannerEnabled: boolean;
     nameBannerColor: string;
     titlePosition: "top" | "bottom";
+    timeUp?: TimeUpSettings;
   };
   updateFontStyle: (style: Partial<PlaybackState>) => void;
 }

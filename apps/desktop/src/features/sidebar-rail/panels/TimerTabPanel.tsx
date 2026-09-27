@@ -207,6 +207,11 @@ export function TimerTabPanel({
                     </p>
                     <p className="truncate text-[11px] text-muted-foreground tabular-nums">
                       {getTimerDisplay(timer)}
+                      {timer.finished && !timer.isRunning ? (
+                        <span className="ml-1.5 font-semibold uppercase tracking-wide text-red-400">
+                          · Time up
+                        </span>
+                      ) : null}
                     </p>
                   </div>
 

@@ -139,6 +139,23 @@
   scrollbar-color: var(--primary) transparent;
 }
 
+/* A timer that has run out: lit for most of each second, as the audience
+   screen's compositor blinks it (`overlays::time_up_lit`). */
+@keyframes present-time-up-blink {
+  0%,
+  59.9% {
+    opacity: 1;
+  }
+  60%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.present-time-up-blink {
+  animation: present-time-up-blink 1s linear infinite;
+}
+
 /* Caret color blink - slow and obvious */
 @keyframes caret-color-blink {
   0%,

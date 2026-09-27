@@ -170,6 +170,8 @@ struct ComposerClockKey {
     layout: Option<serde_json::Value>,
     text: Option<String>,
     label: Option<String>,
+    time_up: Option<crate::services::output::TimeUpStyle>,
+    lit: bool,
 }
 
 /// A video playing in a screen composer region, by the region's id: this
@@ -199,16 +201,29 @@ struct TimerKey {
     text: Option<String>,
     label: Option<String>,
     layout: Option<crate::services::output::TimerLayout>,
+    time_up: Option<crate::services::output::TimeUpStyle>,
+    /// A blinking "time up" is drawn twice a second, lit and dark.
+    lit: bool,
 }
 
 impl TimerKey {
-    fn of(scene: &OutputScene) -> Self {
+    fn of(scene: &OutputScene, lit: bool) -> Self {
         Self {
             text: scene.timer_text.clone(),
             label: scene.timer_label.clone(),
             layout: scene.timer_layout.clone(),
+            time_up: scene.timer_time_up.clone(),
+            lit,
         }
     }
+}
+
+/// Now, in milliseconds since the Unix epoch: what a blinking "time up"
+/// keeps time by.
+fn wall_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis())
 }
 
 impl SceneCompositor {
@@ -284,7 +299,27 @@ impl SceneCompositor {
                     .iter()
                     .any(|region| region.video_url().is_some())
             });
-        if moving_message || region_video || self.is_animating() {
+        // A blinking "time up" goes dark and lit again while the scene stands
+        // still: drawn each time it turns, and not in between.
+        let blink_turned = super::overlays::timer_blinks(scene) && {
+            let lit = super::overlays::timer_lit(scene, wall_ms());
+            // A composer countdown region shows the timer instead, when there
+            // is one; `render` draws one or the other.
+            let in_region = scene.screen_composer_enabled
+                && scene.screen_composer_layout().is_some_and(|layout| {
+                    layout
+                        .regions
+                        .iter()
+                        .any(|region| region.source == super::composer::ComposerSource::Countdown)
+                });
+            let drawn = if in_region {
+                self.composer_clock.as_ref().map(|(_, key)| key.lit)
+            } else {
+                self.timer_for.as_ref().map(|key| key.lit)
+            };
+            drawn != Some(lit)
+        };
+        if moving_message || region_video || blink_turned || self.is_animating() {
             return true;
         }
         !last.is_some_and(|(previous_scene, previous_video, previous_size)| {
@@ -530,10 +565,16 @@ impl SceneCompositor {
 
     /// The cached timer layer, redrawn if what it shows changed.
     fn timer_for(&mut self, scene: &OutputScene) -> Option<&Pixmap> {
-        let key = TimerKey::of(scene);
+        let lit = super::overlays::timer_lit(scene, wall_ms());
+        let key = TimerKey::of(scene, lit);
         if self.timer_for.as_ref() != Some(&key) || self.timer_layer.is_none() {
             let mut layer = Pixmap::new(self.width, self.height)?;
-            super::overlays::draw_timer(&mut layer.as_mut(), scene, scene.timer_layout.as_ref());
+            super::overlays::draw_timer_at(
+                &mut layer.as_mut(),
+                scene,
+                scene.timer_layout.as_ref(),
+                lit,
+            );
             self.timer_layer = Some(layer);
             self.timer_for = Some(key);
         }
@@ -816,10 +857,13 @@ impl SceneCompositor {
         layout: Option<&super::composer::ComposerLayout>,
     ) -> Option<&Pixmap> {
         let layout = layout?;
+        let lit = super::overlays::timer_lit(scene, wall_ms());
         let key = ComposerClockKey {
             layout: scene.screen_composer_layout.clone(),
             text: scene.timer_text.clone(),
             label: scene.timer_label.clone(),
+            time_up: scene.timer_time_up.clone(),
+            lit,
         };
         let current = self
             .composer_clock
@@ -842,8 +886,9 @@ impl SceneCompositor {
                 super::overlays::draw_region_clock(
                     &mut layer.as_mut(),
                     region,
-                    scene.timer_label.as_deref(),
+                    scene,
                     clock,
+                    lit,
                     frame_width,
                     frame_height,
                 );
@@ -1420,6 +1465,7 @@ fn layers_differ(cached: &OutputScene, scene: &OutputScene) -> bool {
         timer_text: None,
         timer_running: false,
         timer_visible: false,
+        timer_time_up: None,
         timer_layout: None,
         message_overlay: None,
         props_overlay: Vec::new(),

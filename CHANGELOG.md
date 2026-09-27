@@ -26,6 +26,12 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   With the banner on, the name's banner goes at the top or the bottom.
 - The Screen Composer lists its regions as layers, the top one first, to
   choose any of them and put it above or below another.
+- When the live timer runs out and no other timer follows it, the screens
+  show a blinking red TIME UP instead of 00:00:00: the audience screen, the
+  stage screen, the preview and a composer countdown region. The message, its
+  colour and the blinking are chosen in Settings, Timer, under When time is
+  up, and it can be turned off there. Playing the timer again, resetting it or
+  changing its time takes the message away.
 
 ### Fixed
 
@@ -40,6 +46,11 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   region's background is now chosen: none, black, dark or a color.
 - With Settings open, turning a stage screen off from the Screens menu turned
   it straight back on, and the menu's ticks for the stage screens went off.
+- A desktop could be signed out when the website took more than three
+  seconds to check its own signing key: it fell back to the browser session
+  that started the sign-in, which may have ended long before. It now keeps
+  the session and tries again, and it never signs out on the computer's own
+  clock.
 
 ## [0.4.3] - 2026-09-27
 

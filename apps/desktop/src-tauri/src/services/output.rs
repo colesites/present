@@ -117,6 +117,17 @@ pub struct TimerLayout {
     pub box_color: Option<String>,
 }
 
+/// How the live timer looks once it has run out, `timerTimeUp` on the wire:
+/// its words are then the operator's message (Settings, Timer), drawn in this
+/// colour, and blinking if asked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeUpStyle {
+    pub color: String,
+    #[serde(default)]
+    pub blink: bool,
+}
+
 /// The banner message currently on screen. `MessageOverlay` in
 /// `src/shared/types/index.ts:45-58`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -232,6 +243,9 @@ pub struct OutputScene {
     pub timer_text: Option<String>,
     pub timer_running: bool,
     pub timer_visible: bool,
+    /// Set while the live timer has run out and nothing followed it.
+    #[serde(default)]
+    pub timer_time_up: Option<TimeUpStyle>,
 }
 
 impl Default for OutputScene {
@@ -268,6 +282,7 @@ impl Default for OutputScene {
             timer_text: None,
             timer_running: false,
             timer_visible: false,
+            timer_time_up: None,
         }
     }
 }
@@ -426,6 +441,8 @@ pub enum OutputUpdate {
         timer_running: bool,
         #[serde(default)]
         timer_visible: Option<bool>,
+        #[serde(default)]
+        timer_time_up: Option<TimeUpStyle>,
     },
     /// Blank the slide and the media, leaving everything else alone.
     Clear,
@@ -570,10 +587,12 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
             timer_text,
             timer_running,
             timer_visible,
+            timer_time_up,
         } => {
             scene.timer_label = timer_label.filter(|value| !value.is_empty());
             scene.timer_text = timer_text.filter(|value| !value.is_empty());
             scene.timer_running = timer_running;
+            scene.timer_time_up = timer_time_up;
             if let Some(value) = timer_visible {
                 scene.timer_visible = value;
             }
@@ -925,6 +944,7 @@ mod tests {
                 timer_text: Some("00:00".to_owned()),
                 timer_running: true,
                 timer_visible: Some(true),
+                timer_time_up: None,
             },
         );
 
@@ -932,6 +952,37 @@ mod tests {
         assert_eq!(scene.timer_text.as_deref(), Some("00:00"));
         assert!(scene.timer_running);
         assert!(scene.timer_visible);
+    }
+
+    #[test]
+    fn time_up_arrives_with_the_timer_and_leaves_with_the_next_update() {
+        let update: OutputUpdate = serde_json::from_value(serde_json::json!({
+            "type": "timer-update",
+            "timerText": "TIME UP",
+            "timerRunning": false,
+            "timerVisible": true,
+            "timerTimeUp": { "color": "#ef4444", "blink": true },
+        }))
+        .expect("the operator window's payload");
+        let mut scene = OutputScene::default();
+        apply(&mut scene, update);
+        assert_eq!(
+            scene.timer_time_up,
+            Some(TimeUpStyle {
+                color: "#ef4444".to_owned(),
+                blink: true
+            })
+        );
+
+        // Played again or reset: the next update says nothing of it.
+        let running: OutputUpdate = serde_json::from_value(serde_json::json!({
+            "type": "timer-update",
+            "timerText": "00:05:00",
+            "timerRunning": true,
+        }))
+        .expect("an update from before time up existed");
+        apply(&mut scene, running);
+        assert_eq!(scene.timer_time_up, None);
     }
 
     #[test]
