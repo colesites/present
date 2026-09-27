@@ -96,6 +96,7 @@ fn main() {
             name_banner_enabled: false,
             name_banner_color: "#000000".to_owned(),
             title_position: "bottom".to_owned(),
+            box_color: None,
         }),
         ..OutputScene::default()
     };
