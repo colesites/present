@@ -8,6 +8,7 @@ import {
   Camera,
   Clock3,
   Copy,
+  Info,
   SendToBack,
   LayoutGrid,
   Play,
@@ -27,10 +28,8 @@ import {
   SelectValue,
 } from "../../renderer/shared/components/ui/select";
 import { cn } from "../../renderer/shared/lib/utils";
-import { MediaPicker } from "../../renderer/shared/components/MediaPicker";
 import { VideoThumbnail } from "../media/components/VideoThumbnail";
 import { useMediaLibraryStore } from "../../renderer/shared/store/mediaLibrary";
-import type { MediaItem } from "../media/hooks/useMediaFolders";
 import type { ScreenComposerController } from "./useScreenComposerState";
 import type {
   ScreenComposerPreset,
@@ -408,35 +407,44 @@ const RegionPreviewContent = memo(function RegionPreviewContent({
  * What a region shows from the media library, chosen here. The choice goes to
  * the screen at once if the region is on it.
  */
-function RegionMediaField({
+/**
+ * What a region shows, and where it comes from. Nothing is picked here: the
+ * operator window's own panels fill the selected region, as they fill the
+ * screen, so there is one media library and one list of slides to learn.
+ */
+function RegionContentField({
   label,
-  url,
-  name,
-  onChoose,
+  shown,
+  instruction,
+  onClear,
 }: {
   label: string;
-  url: string | null;
-  name: string | null;
-  onChoose: (item: MediaItem | null) => void;
+  /** What it shows now, or `null` for nothing yet. */
+  shown: string | null;
+  instruction: string;
+  onClear?: () => void;
 }) {
-  const items = useMediaLibraryStore((state) => state.items);
-  const chosen = url ? items.find((item) => item.url === url) ?? null : null;
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
         <label className="block text-[11px] text-muted-foreground">{label}</label>
-        {url ? (
+        {shown && onClear ? (
           <button
             type="button"
-            onClick={() => onChoose(null)}
+            onClick={onClear}
             className="text-[11px] text-muted-foreground transition hover:text-foreground"
           >
             Clear
           </button>
         ) : null}
       </div>
-      <p className="truncate text-[12px] text-foreground">{chosen?.name ?? name ?? "Nothing chosen"}</p>
-      <MediaPicker value={chosen?.id ?? null} onChoose={(item) => onChoose(item)} />
+      <p className={cn("truncate text-[12.5px]", shown ? "text-foreground" : "text-muted-foreground")}>
+        {shown ?? "Nothing yet"}
+      </p>
+      <p className="flex gap-2 rounded-md border border-primary/25 bg-primary/[0.07] px-2.5 py-2 text-[11.5px] leading-[17px] text-foreground/85">
+        <Info className="mt-[2px] h-3.5 w-3.5 flex-none text-primary" aria-hidden />
+        <span>{instruction}</span>
+      </p>
     </div>
   );
 }
@@ -979,18 +987,14 @@ export function ScreenComposerWorkspace({
               </div>
 
               {selectedRegion.source === "video" ? (
-                <RegionMediaField
+                <RegionContentField
                   label="Media"
-                  url={selectedRegion.mediaUrl}
-                  name={selectedRegion.mediaLabel}
-                  onChoose={(item) =>
+                  shown={selectedRegion.mediaUrl ? selectedRegion.mediaLabel ?? "Media" : null}
+                  instruction="With this region selected, choose an image or a video in the Media panel of the operator window. It shows here instead of on the whole screen."
+                  onClear={() =>
                     composer.updateRegion(
                       selectedRegion.id,
-                      {
-                        mediaUrl: item?.url ?? null,
-                        mediaType: item?.type ?? null,
-                        mediaLabel: item?.name ?? null,
-                      },
+                      { mediaUrl: null, mediaType: null, mediaLabel: null },
                       { live: true },
                     )
                   }
@@ -998,21 +1002,34 @@ export function ScreenComposerWorkspace({
               ) : null}
 
               {selectedRegion.source === "slides" ? (
-                <RegionMediaField
-                  label="Background behind the slide"
-                  url={selectedRegion.backgroundMediaUrl ?? null}
-                  name={selectedRegion.backgroundMediaLabel ?? null}
-                  onChoose={(item) =>
-                    composer.updateRegion(
-                      selectedRegion.id,
-                      {
-                        backgroundMediaUrl: item?.url ?? null,
-                        backgroundMediaType: item?.type ?? null,
-                        backgroundMediaLabel: item?.name ?? null,
-                      },
-                      { live: true },
-                    )
-                  }
+                <>
+                  <RegionContentField
+                    label="Slide"
+                    shown={selectedRegion.slideText?.trim() ? selectedRegion.slideText.trim().split("\n")[0] : null}
+                    instruction="With this region selected, click a slide in the operator window. The region follows the slides you show."
+                  />
+                  <RegionContentField
+                    label="Behind the slide"
+                    shown={
+                      selectedRegion.backgroundMediaUrl ? selectedRegion.backgroundMediaLabel ?? "Media" : null
+                    }
+                    instruction="Choose media in the Media panel while this region is selected to put it behind the slide."
+                    onClear={() =>
+                      composer.updateRegion(
+                        selectedRegion.id,
+                        { backgroundMediaUrl: null, backgroundMediaType: null, backgroundMediaLabel: null },
+                        { live: true },
+                      )
+                    }
+                  />
+                </>
+              ) : null}
+
+              {selectedRegion.source === "countdown" ? (
+                <RegionContentField
+                  label="Timer"
+                  shown={null}
+                  instruction="Shows the timer running in the Timers panel of the operator window, with its name above it."
                 />
               ) : null}
 
