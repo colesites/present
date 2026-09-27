@@ -904,9 +904,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   useMenuCommand("help.website", () => {
     void window.electronAPI?.openExternalBrowser?.(desktopWebBaseUrl());
   });
-  useMenuCommand("help.download", () => {
-    void window.electronAPI?.openExternalBrowser?.(`${desktopWebBaseUrl()}/download`);
-  });
   // The Settings window is this component too, with no stage screens of its
   // own: reporting from there would clear the ticks while they are open.
   useMenuChecks({ mediaStage: isMediaStageLive, worshipStage: isWorshipStageLive }, !isSettingsWindow);

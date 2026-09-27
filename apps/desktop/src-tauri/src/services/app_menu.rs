@@ -310,9 +310,9 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
         .build()?;
 
     // --- Help --------------------------------------------------------------
-    let help = SubmenuBuilder::new(app, "Help")
-        .item(&item("help.website", "Present Website")?)
-        .item(&item("help.download", "Download the Latest Version")?);
+    // No "Download the Latest Version": Present updates itself (Check for
+    // Updates…), and a download beside it only invited reinstalling by hand.
+    let help = SubmenuBuilder::new(app, "Help").item(&item("help.website", "Present Website")?);
     #[cfg(desktop)]
     let help = if mac {
         help
