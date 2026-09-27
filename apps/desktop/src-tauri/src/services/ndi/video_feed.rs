@@ -400,13 +400,23 @@ pub fn region_decode_size(
     let Some((_, _, width, height)) = region.inner_rect(frame.0 as f32, frame.1 as f32) else {
         return (16, 16);
     };
-    let covering = (
-        width.max(height * 16.0 / 9.0),
-        height.max(width * 9.0 / 16.0),
-    );
+    // A widescreen video fitted inside this box comes back the size the
+    // region shows it at, which the compositor copies rather than scales
+    // (`compositor::video_blit`): covering the region, or inside it for a
+    // region set to contain.
+    let fitted = match region.fit_mode.to_object_fit() {
+        crate::services::compositor::images::ObjectFit::Contain => (
+            width.min(height * 16.0 / 9.0),
+            height.min(width * 9.0 / 16.0),
+        ),
+        _ => (
+            width.max(height * 16.0 / 9.0),
+            height.max(width * 9.0 / 16.0),
+        ),
+    };
     let even =
         |value: f32, most: u32| ((value.ceil() as u32).div_ceil(2) * 2).clamp(16, most.max(16));
-    (even(covering.0, frame.0), even(covering.1, frame.1))
+    (even(fitted.0, frame.0), even(fitted.1, frame.1))
 }
 
 /// The videos playing in screen composer regions, one feed each, by region.
@@ -636,6 +646,13 @@ mod tests {
             region_decode_size(&region(100.0, 100.0), (1920, 1080)),
             (1920, 1080)
         );
+        // One set to contain shows the whole picture inside it, so it is
+        // decoded at that size: the strip's width, and a widescreen height.
+        let contained = crate::services::compositor::composer::ComposerRegion {
+            fit_mode: crate::services::compositor::composer::ComposerFit::Contain,
+            ..region(25.0, 100.0)
+        };
+        assert_eq!(region_decode_size(&contained, (1920, 1080)), (480, 270));
     }
 
     #[test]

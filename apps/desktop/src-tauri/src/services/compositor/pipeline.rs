@@ -162,6 +162,20 @@ pub struct SceneCompositor {
     /// change once a second, and the regions, which can hold a whole slide
     /// each, do not.
     composer_clock: Option<(Pixmap, ComposerClockKey)>,
+    /// Which frame of each composer region's video the last picture showed,
+    /// by region id: a picture is drawn again when one of them moves on, and
+    /// not in between.
+    drawn_regions: Vec<(String, f64)>,
+}
+
+/// Which frame of each region's video `regions` holds, in a comparable form.
+fn region_marks(regions: &[RegionFrame<'_>]) -> Vec<(String, f64)> {
+    let mut marks: Vec<(String, f64)> = regions
+        .iter()
+        .map(|(id, frame)| (id.clone(), frame.presentation_seconds))
+        .collect();
+    marks.sort_by(|left, right| left.0.cmp(&right.0));
+    marks
 }
 
 /// Everything the composer's clocks are drawn from.
@@ -248,6 +262,7 @@ impl SceneCompositor {
             overlay_for: None,
             marquee: None,
             composer_clock: None,
+            drawn_regions: Vec::new(),
         }
     }
 
@@ -284,21 +299,19 @@ impl SceneCompositor {
         last: Option<&(OutputScene, Option<f64>, (u32, u32))>,
         scene: &OutputScene,
         video: Option<f64>,
+        regions: &[RegionFrame<'_>],
         size: (u32, u32),
     ) -> bool {
         let moving_message = scene
             .message_overlay
             .as_ref()
             .is_some_and(super::overlays::is_moving);
-        // A video playing in a composer region moves while the scene stands
-        // still, as the background video would if it were the scene's own.
-        let region_video = scene.screen_composer_enabled
-            && scene.screen_composer_layout().is_some_and(|layout| {
-                layout
-                    .regions
-                    .iter()
-                    .any(|region| region.video_url().is_some())
-            });
+        // A composer region's video moves while the scene stands still, as
+        // the background video does: drawn again when a region has a new
+        // frame. It used to be drawn again on every tick while any region
+        // had a video, sixty whole frames a second for a 25-frame clip, which
+        // is what made a composed screen heavy.
+        let region_video = region_marks(regions) != self.drawn_regions;
         // A blinking "time up" goes dark and lit again while the scene stands
         // still: drawn each time it turns, and not in between.
         let blink_turned = super::overlays::timer_blinks(scene) && {
@@ -396,6 +409,7 @@ impl SceneCompositor {
         loader: &dyn MediaLoader,
     ) -> Option<(&Frame, Rendered)> {
         let mut report = Rendered::default();
+        self.drawn_regions = region_marks(regions);
         // One reading of the clock for the whole frame: a transition drawn
         // from two different instants within one frame would tear.
         let now = Instant::now();
@@ -837,13 +851,13 @@ impl SceneCompositor {
             let Some((_, video)) = regions.iter().find(|(id, _)| *id == region.id) else {
                 continue;
             };
-            if let Some(picture) = video_to_pixmap(video) {
-                super::overlays::draw_region_video(
-                    &mut frame.pixmap_mut(),
-                    region,
-                    &picture,
-                    frame_width,
-                    frame_height,
+            if let Some(rect) = region.inner_rect(frame_width, frame_height) {
+                super::video_blit::blit_video(
+                    frame,
+                    video,
+                    rect,
+                    region.fit_mode.to_object_fit(),
+                    region.radius(frame_height),
                 );
             }
         }
@@ -1703,7 +1717,7 @@ mod tests {
 
     impl Skipping {
         fn tick(&mut self, compositor: &mut SceneCompositor, scene: &OutputScene) {
-            if !compositor.needs_drawing(self.last.as_ref(), scene, None, (100, 100)) {
+            if !compositor.needs_drawing(self.last.as_ref(), scene, None, &[], (100, 100)) {
                 return;
             }
             let (frame, _) = compositor.render(scene, None, &NoMedia).expect("a frame");
@@ -2545,17 +2559,7 @@ mod tests {
             })),
             ..scene()
         };
-        assert!(
-            compositor.needs_drawing(None, &scene, None, (200, 100))
-                && compositor.needs_drawing(
-                    Some(&(scene.clone(), None, (200, 100))),
-                    &scene,
-                    None,
-                    (200, 100)
-                ),
-            "a region's video moves while the scene stands still"
-        );
-
+        assert!(compositor.needs_drawing(None, &scene, None, &[], (200, 100)));
         let (frame, _) = compositor.render(&scene, None, &NoMedia).expect("frame");
         assert_eq!(
             frame.pixel_at(50, 50),
@@ -2565,6 +2569,11 @@ mod tests {
 
         let video = frame_of(64, 36, [0, 255, 0, 255]);
         let frames = [("left".to_owned(), &video)];
+        let drawn = Some((scene.clone(), None, (200, 100)));
+        assert!(
+            compositor.needs_drawing(drawn.as_ref(), &scene, None, &frames, (200, 100)),
+            "a region's first frame moves the picture while the scene stands still"
+        );
         let (frame, _) = compositor
             .render_with_regions(&scene, None, &frames, &NoMedia)
             .expect("frame");
@@ -2577,6 +2586,20 @@ mod tests {
             frame.pixel_at(150, 50),
             Some((0, 0, 0, 255)),
             "and only there"
+        );
+
+        assert!(
+            !compositor.needs_drawing(drawn.as_ref(), &scene, None, &frames, (200, 100)),
+            "the same frame is not drawn twice"
+        );
+        let next = VideoFrame {
+            presentation_seconds: 0.04,
+            ..frame_of(64, 36, [0, 255, 0, 255])
+        };
+        let moved_on = [("left".to_owned(), &next)];
+        assert!(
+            compositor.needs_drawing(drawn.as_ref(), &scene, None, &moved_on, (200, 100)),
+            "the next one is"
         );
     }
 

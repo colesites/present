@@ -96,9 +96,10 @@ impl PreviewSource {
         let region_frames = self.regions.frames_for(&scene, now, size, &self.open);
         // The same question the audience window asks, so a transition is drawn
         // to its end here too, rather than its first frame kept.
-        let unchanged = !self
-            .compositor
-            .needs_drawing(self.last.as_ref(), &scene, shown, size);
+        let unchanged =
+            !self
+                .compositor
+                .needs_drawing(self.last.as_ref(), &scene, shown, &region_frames, size);
         if unchanged && !self.picture.is_empty() {
             return Ok(&self.picture);
         }

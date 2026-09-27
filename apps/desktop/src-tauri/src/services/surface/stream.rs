@@ -72,7 +72,8 @@ impl SurfaceSource for AppSurfaceSource {
 
         // A transition or a scrolling message moves while the scene stands
         // still, so "unchanged" is the compositor's to say, not just the scene's.
-        let unchanged = !compositor.needs_drawing(last.as_ref(), &scene, shown, size);
+        let unchanged =
+            !compositor.needs_drawing(last.as_ref(), &scene, shown, &region_frames, size);
         if unchanged {
             return Ok(false);
         }

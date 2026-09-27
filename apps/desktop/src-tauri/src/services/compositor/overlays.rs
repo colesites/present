@@ -809,28 +809,6 @@ pub fn draw_region_image(
     true
 }
 
-/// A frame of a composer region's video, fitted inside its plate.
-pub fn draw_region_video(
-    pixmap: &mut PixmapMut<'_>,
-    region: &super::composer::ComposerRegion,
-    picture: &tiny_skia::Pixmap,
-    frame_width: f32,
-    frame_height: f32,
-) {
-    let Some((x, y, width, height)) = region.inner_rect(frame_width, frame_height) else {
-        return;
-    };
-    images::draw(
-        pixmap,
-        picture,
-        Transform::from_translate(x, y),
-        width,
-        height,
-        region.fit_mode.to_object_fit(),
-        None,
-    );
-}
-
 /// A countdown region's clock, and the timer's name above it.
 ///
 /// Sized to the region: the clock as large as fits a third of its height or

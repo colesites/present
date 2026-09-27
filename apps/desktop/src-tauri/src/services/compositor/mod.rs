@@ -26,6 +26,7 @@ pub mod shapes;
 pub mod slide_text;
 pub mod text;
 pub mod transition;
+pub mod video_blit;
 
 pub use frame::Frame;
 pub use loader::ScopedMediaLoader;
