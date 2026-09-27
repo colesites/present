@@ -16,6 +16,15 @@
     }
   },
   "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://present.multivrs.space/api/desktop/update/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    },
     "deep-link": {
       "desktop": {
         "schemes": [

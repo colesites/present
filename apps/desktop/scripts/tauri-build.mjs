@@ -34,7 +34,28 @@ if (process.platform === "win32") {
   run("bash", [path.join("scripts", "build-ffmpeg.sh")]);
 }
 run(process.execPath, [path.join("scripts", "stage-tauri-ffmpeg.mjs")]);
-run("bun", ["run", "tauri", "build", ...process.argv.slice(2)], {
+
+// Update packages (a `.app.tar.gz` on macOS, the installers on Windows, each
+// with a `.sig`) are made only when the key to sign them is here. Asked for
+// without it, `tauri build` fails, and a build with no key has nothing to
+// sign them with anyway. `services/updates.rs` is what installs them.
+const updaterArgs = [];
+if (process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
+  const conf = JSON.parse(
+    fs.readFileSync(path.join(DESKTOP_DIR, "src-tauri", "tauri.conf.json"), "utf8"),
+  );
+  if (!conf.plugins?.updater?.pubkey?.trim()) {
+    console.warn(
+      "[tauri-build] signing updates, but tauri.conf.json has no plugins.updater.pubkey: this build will not accept its own updates",
+    );
+  }
+  updaterArgs.push("--config", JSON.stringify({ bundle: { createUpdaterArtifacts: true } }));
+  console.log("[tauri-build] signing update packages");
+} else {
+  console.log("[tauri-build] no TAURI_SIGNING_PRIVATE_KEY: no update packages");
+}
+
+run("bun", ["run", "tauri", "build", ...updaterArgs, ...process.argv.slice(2)], {
   ...process.env,
   FFMPEG_DIR: PREFIX,
   PRESENT_BUNDLE_BUILD: "1",

@@ -41,6 +41,7 @@ import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvi
 import { ThemesPanel } from "../../features/themes";
 import { useThemesModalStore } from "../shared/store/themesModal";
 import { useMediaLibraryStore } from "../shared/store/mediaLibrary";
+import { useUpdateNotice } from "../tauri/updates";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
 import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
@@ -537,6 +538,8 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   useEffect(() => {
     useMediaLibraryStore.getState().setItems(allMediaItems);
   }, [allMediaItems]);
+  // "Present 0.4.4 is ready", with a Restart button, once one is downloaded.
+  useUpdateNotice();
   const settings = useAppSettings({ folders, allMediaItems });
   const {
     settingsOutputDisplayId,

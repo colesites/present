@@ -85,6 +85,10 @@ jobs:
         env:
           CONVEX_URL: https://wary-iguana-735.convex.cloud
           WEB_APP_URL: https://present.multivrs.space
+          # Signs the update packages the app updates itself from. Without
+          # these secrets the build still succeeds and makes none.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun run --filter @present/desktop tauri:build
 
       # The LGPL asks that whoever gets the app can get FFmpeg's source, so it
@@ -101,6 +105,7 @@ jobs:
             apps/desktop/src-tauri/ffmpeg/cache/ffmpeg-*.tar.xz
             apps/desktop/src-tauri/target/release/bundle/**/*.dmg
             apps/desktop/src-tauri/target/release/bundle/**/*.app.tar.gz
+            apps/desktop/src-tauri/target/release/bundle/**/*.sig
           if-no-files-found: error
 
       - name: Publish to R2

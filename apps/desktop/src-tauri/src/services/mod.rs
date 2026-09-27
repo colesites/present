@@ -45,6 +45,8 @@ pub mod store;
 pub mod surface;
 pub mod system_fonts;
 pub mod thumbnails;
+#[cfg(desktop)]
+pub mod updates;
 pub mod video;
 pub mod web_storage;
 pub mod webview_crash;
