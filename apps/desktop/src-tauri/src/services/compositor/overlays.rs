@@ -505,6 +505,83 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
         .and_then(|l| color::parse(&l.clock_color))
         .unwrap_or(Color::WHITE);
 
+    // The box behind the clock, when one is chosen: around the clock, and the
+    // name too when it sits with the clock rather than in its banner.
+    if let (Some(fill), Some(clock)) = (
+        layout
+            .and_then(|l| l.box_color.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(color::parse),
+        scene.timer_text.as_deref().filter(|t| !t.trim().is_empty()),
+    ) {
+        let name = scene
+            .timer_label
+            .as_deref()
+            .filter(|l| !l.trim().is_empty())
+            .filter(|_| !layout.is_some_and(|l| l.name_banner_enabled));
+        let name_font = layout.map_or(24.0, |l| clamp(l.name_font_px, 8.0, 200.0)) * of_reference;
+        let above = layout.is_some_and(|l| l.title_position == "top");
+        let width_of = |words: &str, size: f32, weight: cosmic_text::Weight| {
+            text::measure(
+                words,
+                frame_width,
+                &text::TextStyle {
+                    font_size: size,
+                    line_height: 0.0,
+                    family: None,
+                    weight,
+                    italic: false,
+                    letter_spacing_em: 0.0,
+                    align: cosmic_text::Align::Left,
+                    wrap: false,
+                },
+            )
+            .1
+        };
+        let centre_x = frame_width * x_percent / 100.0;
+        let centre_y = frame_height * y_percent / 100.0;
+        let mut width = width_of(clock, clock_font, cosmic_text::Weight::BOLD);
+        let (mut top, mut bottom) = (centre_y - clock_font * 0.6, centre_y + clock_font * 0.6);
+        if let Some(name) = name {
+            width = width.max(width_of(name, name_font, cosmic_text::Weight::NORMAL));
+            // Where the name is drawn below: a box 1.6 of its size tall, a
+            // little way above or below the clock's.
+            let (clock_box, name_box, gap) = (clock_font * 1.6, name_font * 1.6, name_font * 0.3);
+            let name_top = if above {
+                centre_y - clock_box / 2.0 - gap - name_box
+            } else {
+                centre_y + clock_box / 2.0 + gap
+            };
+            let name_middle = name_top + name_box / 2.0;
+            top = top.min(name_middle - name_font * 0.6);
+            bottom = bottom.max(name_middle + name_font * 0.6);
+        }
+        let (pad_x, pad_y) = (clock_font * 0.25, clock_font * 0.12);
+        let rect = (
+            centre_x - width / 2.0 - pad_x,
+            top - pad_y,
+            width + pad_x * 2.0,
+            bottom - top + pad_y * 2.0,
+        );
+        if let Some(path) =
+            shapes::rounded_rect_path(rect.0, rect.1, rect.2, rect.3, clock_font * 0.12)
+        {
+            let mut paint = tiny_skia::Paint {
+                anti_alias: true,
+                ..tiny_skia::Paint::default()
+            };
+            paint.set_color(fill);
+            pixmap.fill_path(
+                &path,
+                &paint,
+                tiny_skia::FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+    }
+
     if let Some(clock) = scene.timer_text.as_deref().filter(|t| !t.trim().is_empty()) {
         // The clock is centred on its point, so the box is built around it
         // rather than starting at it.
@@ -1146,7 +1223,43 @@ mod tests {
             name_banner_enabled: false,
             name_banner_color: "#000000".to_owned(),
             title_position: "bottom".to_owned(),
+            box_color: None,
         }
+    }
+
+    #[test]
+    fn the_clock_has_a_box_behind_it_only_when_one_is_chosen() {
+        let scene = OutputScene {
+            timer_visible: true,
+            timer_text: Some("05:00".to_owned()),
+            ..OutputScene::default()
+        };
+        // Sampled beside the digits, inside where a box would be.
+        let beside_the_clock = |layout: &TimerLayout| {
+            let mut frame = Frame::new(640, 360).expect("frame");
+            draw_timer(&mut frame.pixmap_mut(), &scene, Some(layout));
+            frame.pixel_at(320, 160)
+        };
+        assert_eq!(
+            beside_the_clock(&layout()),
+            Some((0, 0, 0, 255)),
+            "no box by default, as the screens drew it"
+        );
+        let boxed = TimerLayout {
+            box_color: Some("#ff0000".to_owned()),
+            ..layout()
+        };
+        let mut frame = Frame::new(640, 360).expect("frame");
+        draw_timer(&mut frame.pixmap_mut(), &scene, Some(&boxed));
+        let reds = frame
+            .pixmap()
+            .pixels()
+            .iter()
+            .filter(|pixel| pixel.red() > 200 && pixel.green() < 60)
+            .count();
+        assert!(reds > 800, "a red box around the clock: {reds} red pixels");
+        let corner = frame.pixel_at(2, 2);
+        assert_eq!(corner, Some((0, 0, 0, 255)), "only around the clock");
     }
 
     #[test]

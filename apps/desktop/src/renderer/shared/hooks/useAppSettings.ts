@@ -193,6 +193,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   const [settingsTimerTitlePosition, setSettingsTimerTitlePosition] = useState<
     "top" | "bottom"
   >("bottom");
+  // Nothing behind the clock unless one is chosen, as the screens drew it.
+  const [settingsTimerBoxColor, setSettingsTimerBoxColor] = useState("");
   const [settingsOutputDisplayId, setSettingsOutputDisplayId] = useState<
     number | null
   >(DEFAULT_OUTPUT_DISPLAY_ID);
@@ -356,6 +358,9 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     }
     if (parsed.timerTitlePosition === "top" || parsed.timerTitlePosition === "bottom") {
       setSettingsTimerTitlePosition(parsed.timerTitlePosition);
+    }
+    if (typeof parsed.timerBoxColor === "string") {
+      setSettingsTimerBoxColor(parsed.timerBoxColor.trim());
     }
     if (parsed.outputDisplayId === null) {
       setSettingsOutputDisplayId(null);
@@ -553,6 +558,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         timerNameBannerEnabled: settingsTimerNameBannerEnabled,
         timerNameBannerColor: settingsTimerNameBannerColor,
         timerTitlePosition: settingsTimerTitlePosition,
+        timerBoxColor: settingsTimerBoxColor,
         outputDisplayId: settingsOutputDisplayId,
         screenDisplayIds: settingsScreenDisplayIds,
         screenResolutions: settingsScreenResolutions,
@@ -605,6 +611,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsTimerNameBannerEnabled,
     settingsTimerNameBannerColor,
     settingsTimerTitlePosition,
+    settingsTimerBoxColor,
     settingsOutputDisplayId,
     settingsScreenDisplayIds,
     settingsScreenResolutions,
@@ -744,6 +751,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsTimerNameBannerColor,
     settingsTimerTitlePosition,
     setSettingsTimerTitlePosition,
+    settingsTimerBoxColor,
+    setSettingsTimerBoxColor,
     settingsOutputDisplayId,
     setSettingsOutputDisplayId,
     settingsScreenDisplayIds,

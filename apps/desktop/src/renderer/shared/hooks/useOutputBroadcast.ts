@@ -74,6 +74,7 @@ type Params = {
     nameBannerEnabled: boolean;
     nameBannerColor: string;
     titlePosition: "top" | "bottom";
+    boxColor?: string;
   };
   screenComposerEnabled: boolean;
   screenComposerLayout: ScreenComposerLayout;
@@ -182,6 +183,7 @@ export function useOutputBroadcast({
     nameBannerEnabled,
     nameBannerColor,
     titlePosition,
+    boxColor = "",
   } = timerLayout;
 
   useEffect(() => {
@@ -273,6 +275,7 @@ export function useOutputBroadcast({
         nameBannerEnabled,
         nameBannerColor,
         titlePosition,
+        boxColor,
       },
       screenComposerEnabled,
       screenComposerLayout,
@@ -416,6 +419,7 @@ export function useOutputBroadcast({
     nameBannerEnabled,
     nameBannerColor,
     titlePosition,
+    boxColor,
     screenComposerEnabled,
     screenComposerLayout,
     messageOverlay,

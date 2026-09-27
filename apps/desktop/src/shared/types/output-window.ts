@@ -84,6 +84,8 @@ export type OutputState = {
     nameBannerEnabled: boolean;
     nameBannerColor: string;
     titlePosition: "top" | "bottom";
+    /** Behind the clock, or "" for nothing. */
+    boxColor?: string;
   };
   screenComposerEnabled?: boolean;
   screenComposerLayout?: ScreenComposerLayout | null;

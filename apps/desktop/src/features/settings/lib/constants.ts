@@ -31,6 +31,8 @@ export type Settings = {
   timerNameBannerEnabled: boolean;
   timerNameBannerColor: string;
   timerTitlePosition: "top" | "bottom";
+  /** Behind the clock: a colour, or "" for nothing. */
+  timerBoxColor?: string;
   outputDisplayId?: number | null;
   screenDisplayIds?: {
     audience?: number | null;

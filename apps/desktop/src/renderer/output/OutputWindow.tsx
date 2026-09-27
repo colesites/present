@@ -650,7 +650,10 @@ function TimerOverlayLayer({ state }: { state: OutputState }) {
     <>
       {label && nameBannerEnabled ? (
         <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-50 flex items-center justify-center px-6 text-center font-medium uppercase tracking-wider"
+          className={cn(
+            "pointer-events-none absolute inset-x-0 z-50 flex items-center justify-center px-6 text-center font-medium uppercase tracking-wider",
+            titlePosition === "top" ? "top-0" : "bottom-0",
+          )}
           style={{
             backgroundColor: layout?.nameBannerColor || "rgba(0,0,0,0.65)",
             color: nameColor,
@@ -663,11 +666,16 @@ function TimerOverlayLayer({ state }: { state: OutputState }) {
       ) : null}
 
       <div
-        className="pointer-events-none absolute z-50 box-border rounded-md bg-black/65 px-4 py-2 text-center font-semibold tracking-wide text-white"
+        className="pointer-events-none absolute z-50 box-border text-center font-semibold tracking-wide text-white"
         style={{
           left: `${xPercent}%`,
           top: `${yPercent}%`,
           transform: "translate(-50%, -50%)",
+          // As the compositor draws it: nothing behind the clock unless a
+          // background is chosen (Settings, Timer).
+          backgroundColor: layout?.boxColor?.trim() || "transparent",
+          padding: `${clockFontPx * 0.12}px ${clockFontPx * 0.25}px`,
+          borderRadius: clockFontPx * 0.12,
         }}
       >
         {label && !nameBannerEnabled && titlePosition === "top" ? (

@@ -223,6 +223,8 @@ interface SettingsScreenProps {
   setSettingsTimerNameBannerColor: (value: string) => void;
   settingsTimerTitlePosition: "top" | "bottom";
   setSettingsTimerTitlePosition: (value: "top" | "bottom") => void;
+  settingsTimerBoxColor?: string;
+  setSettingsTimerBoxColor: (value: string) => void;
   settingsOutputDisplayId: number | null;
   setSettingsOutputDisplayId: (value: number | null) => void;
   settingsScreenDisplayIds: Record<ScreenRole, number | null>;
@@ -309,6 +311,8 @@ export function SettingsScreen({
   setSettingsTimerNameBannerColor,
   settingsTimerTitlePosition,
   setSettingsTimerTitlePosition,
+  settingsTimerBoxColor = "",
+  setSettingsTimerBoxColor,
   setSettingsOutputDisplayId,
   settingsScreenDisplayIds,
   setSettingsScreenDisplayIds,
@@ -458,6 +462,7 @@ export function SettingsScreen({
               nameBannerEnabled: settingsTimerNameBannerEnabled,
               nameBannerColor: settingsTimerNameBannerColor,
               titlePosition: settingsTimerTitlePosition,
+              boxColor: settingsTimerBoxColor,
             }}
             onApply={(layout) => {
               setSettingsTimerXPercent(layout.xPercent);
@@ -470,6 +475,7 @@ export function SettingsScreen({
               setSettingsTimerNameBannerEnabled(layout.nameBannerEnabled);
               setSettingsTimerNameBannerColor(layout.nameBannerColor);
               setSettingsTimerTitlePosition(layout.titlePosition);
+              setSettingsTimerBoxColor(layout.boxColor);
             }}
           />
         );

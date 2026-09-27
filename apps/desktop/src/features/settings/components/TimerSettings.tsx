@@ -25,7 +25,20 @@ export interface TimerLayoutValue {
   nameBannerEnabled: boolean;
   nameBannerColor: string;
   titlePosition: "top" | "bottom";
+  /** Behind the clock, or "" for nothing. */
+  boxColor: string;
 }
+
+/** The backgrounds offered behind the clock, and "Color" for any other. */
+const BOX_CHOICES: Array<{ value: string; label: string; color: string }> = [
+  { value: "none", label: "None", color: "" },
+  { value: "black", label: "Black", color: "#000000" },
+  { value: "dimmed", label: "Dimmed", color: "rgba(0, 0, 0, 0.65)" },
+  { value: "color", label: "Color", color: "#1e293b" },
+];
+
+const boxChoiceOf = (color: string) =>
+  BOX_CHOICES.find((choice) => choice.value !== "color" && choice.color === color.trim())?.value ?? "color";
 
 const MIN_CLOCK_FONT = 12;
 const MAX_CLOCK_FONT = 400;
@@ -155,7 +168,7 @@ export function TimerSettings({
               dragStart.current = null;
               setDragging(false);
             }}
-            className="relative mx-auto aspect-video w-full max-w-[560px] touch-none select-none overflow-hidden rounded-lg bg-gradient-to-br from-zinc-800 via-zinc-900 to-black ring-1 ring-white/10"
+            className="relative mx-auto aspect-video w-full max-w-[560px] touch-none select-none overflow-hidden rounded-lg bg-black ring-1 ring-white/10"
           >
             <div className="pointer-events-none absolute inset-[5%] rounded border border-dashed border-white/10" />
             {current.nameBannerEnabled ? (
@@ -166,7 +179,10 @@ export function TimerSettings({
                   fontSize: nameFont * scale,
                   height: current.nameBannerHeightPx * scale,
                 }}
-                className="absolute inset-x-0 top-0 z-20 flex items-center justify-center font-medium uppercase tracking-wider"
+                className={cn(
+                  "absolute inset-x-0 z-20 flex items-center justify-center font-medium uppercase tracking-wider",
+                  current.titlePosition === "top" ? "top-0" : "bottom-0",
+                )}
               >
                 Timer name
               </div>
@@ -181,14 +197,18 @@ export function TimerSettings({
                 setDragging(true);
               }}
               className={cn(
-                "absolute z-20 rounded-md bg-black/65 text-center font-semibold tracking-wide text-white shadow-lg outline outline-1",
-                dragging ? "cursor-grabbing outline-primary" : "cursor-grab outline-primary/50 hover:outline-primary",
+                "absolute z-20 rounded-md text-center font-semibold tracking-wide text-white outline outline-1",
+                dragging
+                  ? "cursor-grabbing outline-primary"
+                  : "cursor-grab outline-dashed outline-primary/40 hover:outline-primary",
               )}
               style={{
                 left: `${x}%`,
                 top: `${y}%`,
                 transform: "translate(-50%, -50%)",
-                padding: `${8 * scale}px ${16 * scale}px`,
+                padding: `${clockFont * 0.12 * scale}px ${clockFont * 0.25 * scale}px`,
+                backgroundColor: current.boxColor || "transparent",
+                borderRadius: clockFont * 0.12 * scale,
               }}
             >
               {showNameInBox && current.titlePosition === "top" ? nameLine : null}
@@ -243,6 +263,30 @@ export function TimerSettings({
             <ColorInput label="Clock color" value={current.clockColor} onChange={(value) => update({ clockColor: value })} />
           </div>
         </SettingsRow>
+        <SettingsRow label="Background" description="Behind the clock, and the name when it sits with it.">
+          <Segmented
+            label="Background behind the clock"
+            className="w-[260px]"
+            value={boxChoiceOf(current.boxColor)}
+            onChange={(value) => {
+              const choice = BOX_CHOICES.find((each) => each.value === value);
+              if (choice) update({ boxColor: choice.color });
+            }}
+            options={BOX_CHOICES.map(({ value, label }) => ({ value, label }))}
+          />
+        </SettingsRow>
+        {boxChoiceOf(current.boxColor) === "color" ? (
+          <SettingsRow label="Background color">
+            <div className="w-[180px]">
+              <ColorInput
+                label="Background color"
+                alpha
+                value={current.boxColor}
+                onChange={(value) => update({ boxColor: value })}
+              />
+            </div>
+          </SettingsRow>
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup title="Name" description="The timer's name, like Sermon or Offering.">
@@ -261,20 +305,33 @@ export function TimerSettings({
             <ColorInput label="Name color" value={current.nameColor} onChange={(value) => update({ nameColor: value })} />
           </div>
         </SettingsRow>
-        <SettingsRow label="Place" disabled={current.nameBannerEnabled} description="Above or below the clock.">
+        <SettingsRow
+          label="Place"
+          description={
+            current.nameBannerEnabled
+              ? "The banner across the top or the bottom of the screen."
+              : "Above or below the clock."
+          }
+        >
           <Segmented
-            label="Name above or below the clock"
+            label={current.nameBannerEnabled ? "Banner at the top or bottom" : "Name above or below the clock"}
             className="w-[168px]"
-            disabled={current.nameBannerEnabled}
             value={current.titlePosition}
             onChange={(value) => update({ titlePosition: value === "top" ? "top" : "bottom" })}
-            options={[
-              { value: "top", label: "Above" },
-              { value: "bottom", label: "Below" },
-            ]}
+            options={
+              current.nameBannerEnabled
+                ? [
+                    { value: "top", label: "Top" },
+                    { value: "bottom", label: "Bottom" },
+                  ]
+                : [
+                    { value: "top", label: "Above" },
+                    { value: "bottom", label: "Below" },
+                  ]
+            }
           />
         </SettingsRow>
-        <SettingsRow label="Banner" description="The name across the top of the screen instead.">
+        <SettingsRow label="Banner" description="The name in a band across the screen instead.">
           <SettingsSwitch
             label="Name as a banner"
             checked={current.nameBannerEnabled}

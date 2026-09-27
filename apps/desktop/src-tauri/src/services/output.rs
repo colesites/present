@@ -110,6 +110,11 @@ pub struct TimerLayout {
     pub name_banner_enabled: bool,
     pub name_banner_color: String,
     pub title_position: String,
+    /// Behind the clock, and the name when it sits with the clock. None, or
+    /// an empty string, for nothing: what the screens drew before it could be
+    /// chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub box_color: Option<String>,
 }
 
 /// The banner message currently on screen. `MessageOverlay` in
