@@ -1,7 +1,7 @@
 {
   "name": "@present/desktop",
   "productName": "Present",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Presentation software for churches, conferences and live events",
   "private": true,
   "scripts": {

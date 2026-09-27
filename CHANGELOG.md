@@ -4,7 +4,7 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
-## [0.4.3] - 2026-09-27
+## [0.4.4] - 2026-09-27
 
 ### Added
 
@@ -14,6 +14,8 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   It never restarts on its own, and asks first while the audience screen is
   open. This version has to be installed by hand once; the ones after it
   arrive this way.
+
+## [0.4.3] - 2026-09-27
 
 ### Fixed
 
