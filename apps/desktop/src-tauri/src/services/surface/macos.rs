@@ -250,6 +250,29 @@ impl Presenter for MacPresenter {
             })
     }
 
+    fn set_fit(&mut self, fit: bool) {
+        let view = self.view;
+        let _ = self.app.run_on_main_thread(move || {
+            // SAFETY: the view was retained in `attach` and is released only
+            // by `Drop`, also on the main thread, after this.
+            let view = unsafe { &*(view.0 as *const NSView) };
+            if let Some(layer) = view.layer() {
+                // SAFETY: both are Core Animation's own constants.
+                let gravity = unsafe {
+                    if fit {
+                        objc2_quartz_core::kCAGravityResizeAspect
+                    } else {
+                        objc2_quartz_core::kCAGravityResize
+                    }
+                };
+                CATransaction::begin();
+                CATransaction::setDisableActions(true);
+                layer.setContentsGravity(gravity);
+                CATransaction::commit();
+            }
+        });
+    }
+
     fn size(&self) -> Option<(u32, u32)> {
         if let Some((read_at, size)) = self.size.get() {
             if read_at.elapsed() < SIZE_REFRESH {

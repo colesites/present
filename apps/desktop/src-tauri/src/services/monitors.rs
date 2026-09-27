@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 use tauri::AppHandle;
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::AppResult;
 use crate::services::display::{select_preferred_display, Display, Rect, ScreenRole};
 use crate::services::display_identity::{identify, DisplayKey, MonitorSnapshot};
 use crate::services::display_names;
@@ -134,11 +134,19 @@ pub fn resolve_role(
     role: ScreenRole,
 ) -> AppResult<Option<ResolvedDisplay>> {
     let identified = current_displays(app)?;
-    if identified.is_empty() {
-        return Ok(None);
-    }
+    Ok(resolve_role_among(&identified, &state.snapshot(), role))
+}
 
-    let preferences = state.snapshot();
+/// [`resolve_role`] over monitors already read, for a caller resolving
+/// several roles at once.
+pub fn resolve_role_among(
+    identified: &[(DisplayKey, Display)],
+    preferences: &crate::state::display_state::DisplayPreferences,
+    role: ScreenRole,
+) -> Option<ResolvedDisplay> {
+    if identified.is_empty() {
+        return None;
+    }
     let wanted = preferences.display_for(role);
 
     // Translate the persisted key into the id the selection rule works with.
@@ -158,13 +166,32 @@ pub fn resolve_role(
         .find(|display| display.is_primary)
         .map_or(displays[0].id, |display| display.id);
 
-    let selected = select_preferred_display(&displays, primary_id, preferred_id)
-        .ok_or_else(|| AppError::NotFound("display".to_owned()))?;
+    let selected = select_preferred_display(&displays, primary_id, preferred_id)?;
 
-    Ok(Some(ResolvedDisplay {
+    Some(ResolvedDisplay {
         display: selected.clone(),
         is_explicit: preferred_id.is_some_and(|id| id == selected.id),
-    }))
+    })
+}
+
+/// The display a screen in Screen Configuration goes to right now: its role's
+/// for the three built in (Automatic included), and for an added screen the
+/// one chosen for it, while that is connected.
+pub fn resolve_screen(
+    app: &AppHandle,
+    state: &DisplayState,
+    screen: &crate::services::screens::ScreenSetup,
+) -> AppResult<Option<Display>> {
+    if let Some(role) = screen.role() {
+        return Ok(resolve_role(app, state, role)?.map(|resolved| resolved.display));
+    }
+    let Some(key) = state.snapshot().display_for_screen(&screen.id).cloned() else {
+        return Ok(None);
+    };
+    Ok(current_displays(app)?
+        .into_iter()
+        .find(|(candidate, _)| *candidate == key)
+        .map(|(_, display)| display))
 }
 
 /// The scale factor the OS reports for the monitor containing `bounds`.

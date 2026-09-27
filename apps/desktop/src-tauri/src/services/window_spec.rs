@@ -30,8 +30,13 @@ pub enum WindowRole {
     Settings,
     Looks,
     ScreenComposer,
-    /// Quick lyric editor. The only role with more than one live instance.
+    /// Quick lyric editor. One window per song being edited.
     MiniLyrics,
+    /// An audience screen added in Screen Configuration, beside the Output.
+    /// One window per screen, `audience-<id>`.
+    AudienceScreen,
+    /// A stage screen added in Screen Configuration, `stage-<id>`.
+    StageScreen,
 }
 
 impl WindowRole {
@@ -57,6 +62,9 @@ impl WindowRole {
             WindowRole::Looks => "looks",
             WindowRole::ScreenComposer => "screen-composer",
             WindowRole::MiniLyrics => "mini-lyrics",
+            // Prefixes: each screen's window adds its id.
+            WindowRole::AudienceScreen => "audience",
+            WindowRole::StageScreen => "stage",
         }
     }
 
@@ -301,7 +309,66 @@ pub fn spec_for(role: WindowRole) -> WindowSpec {
         WindowRole::MiniLyrics => {
             unreachable!("mini-lyrics windows are per-library; use mini_lyrics_spec")
         }
+        WindowRole::AudienceScreen | WindowRole::StageScreen => {
+            unreachable!("an added screen's window is per screen; use screen_spec")
+        }
     }
+}
+
+/// The window for a screen in Screen Configuration: the built-in role's for
+/// the three the app always had, and one of its own for an added screen.
+/// `None` for an id that could not be a window's.
+pub fn screen_spec(screen: &super::screens::ScreenSetup) -> Option<WindowSpec> {
+    use super::screens::ScreenGroup;
+
+    if let Some(role) = screen.role() {
+        return Some(spec_for(match role {
+            ScreenRole::Audience => WindowRole::Output,
+            ScreenRole::Media => WindowRole::MediaStage,
+            ScreenRole::Worship => WindowRole::WorshipStage,
+        }));
+    }
+    if !super::screens::is_usable_id(&screen.id) {
+        return None;
+    }
+    let id = &screen.id;
+    Some(match screen.group {
+        // As the Output is, in every way that matters on a projector.
+        ScreenGroup::Audience => WindowSpec {
+            role: WindowRole::AudienceScreen,
+            label: screen.window_label(),
+            title: screen.name.clone(),
+            url: format!("output.html?screen={id}"),
+            placement: Placement::FillRoleDisplay {
+                role: ScreenRole::Audience,
+            },
+            background: Rgb::BLACK,
+            crash_policy: CrashPolicy::ReloadAlways,
+            focus_on_show: false,
+            show_watchdog_ms: SHOW_WATCHDOG_MS,
+        },
+        ScreenGroup::Stage => {
+            let layout = screen.stage_layout();
+            WindowSpec {
+                role: WindowRole::StageScreen,
+                label: screen.window_label(),
+                title: screen.name.clone(),
+                url: format!("index.html?window={}&screen={id}", layout.page()),
+                placement: Placement::FillRoleDisplay {
+                    role: ScreenRole::Worship,
+                },
+                background: match layout {
+                    super::screens::StageLayout::Media => Rgb::APP_CHROME,
+                    super::screens::StageLayout::Worship => Rgb::BLACK,
+                },
+                crash_policy: CrashPolicy::Ignore,
+                // Opened from Settings with the operator mid-task: it goes on
+                // its screen without taking the keyboard.
+                focus_on_show: false,
+                show_watchdog_ms: SHOW_WATCHDOG_MS,
+            }
+        }
+    })
 }
 
 /// Library ids come from the frontend, and they end up in both a window label
@@ -357,6 +424,19 @@ pub fn crash_policy_for_label(label: &str) -> Option<CrashPolicy> {
         .find(|role| role.label() == label)
     {
         return Some(spec_for(role).crash_policy);
+    }
+
+    // An added screen's window: an audience one reloads as the Output does,
+    // and a stage one is left as the stage displays are.
+    if label.starts_with(super::screens::AUDIENCE_WINDOW_PREFIX)
+        && super::screens::screen_id_for_label(label).is_some()
+    {
+        return Some(CrashPolicy::ReloadAlways);
+    }
+    if label.starts_with(super::screens::STAGE_WINDOW_PREFIX)
+        && super::screens::screen_id_for_label(label).is_some()
+    {
+        return Some(CrashPolicy::Ignore);
     }
 
     let mini_lyrics_prefix = format!("{}-", WindowRole::MiniLyrics.label());
@@ -787,5 +867,49 @@ mod tests {
                 "{role:?} could stay hidden forever if its first paint never arrives"
             );
         }
+    }
+
+    #[test]
+    fn an_added_screen_has_a_window_of_its_own_like_its_groups() {
+        use crate::services::screens::{arranged, new_screen, ScreenGroup, StageLayout};
+
+        let lobby = new_screen("lobby".into(), ScreenGroup::Audience, "Lobby".into());
+        let spec = screen_spec(&lobby).expect("a window");
+        assert_eq!(spec.label, "audience-lobby");
+        assert_eq!(spec.url, "output.html?screen=lobby");
+        assert_eq!(
+            spec.background,
+            Rgb::BLACK,
+            "a projector never flashes white"
+        );
+        assert!(!spec.focus_on_show, "and never takes the keyboard");
+        assert!(spec.placement.is_fullscreen());
+        assert_eq!(
+            crash_policy_for_label(&spec.label),
+            Some(CrashPolicy::ReloadAlways),
+            "it recovers as the Output does"
+        );
+
+        let mut back = new_screen("back".into(), ScreenGroup::Stage, "Back".into());
+        back.layout = Some(StageLayout::Media);
+        let spec = screen_spec(&back).expect("a window");
+        assert_eq!(spec.label, "stage-back");
+        assert_eq!(spec.url, "index.html?window=media-stage&screen=back");
+        assert_eq!(
+            crash_policy_for_label(&spec.label),
+            Some(CrashPolicy::Ignore)
+        );
+
+        // The three built in are the windows they always were.
+        let labels: Vec<String> = arranged(&[])
+            .iter()
+            .map(|screen| screen_spec(screen).expect("a window").label)
+            .collect();
+        assert_eq!(labels, ["output", "media-stage", "worship-stage"]);
+        assert_eq!(
+            crash_policy_for_label("stage-"),
+            None,
+            "a label that names no screen"
+        );
     }
 }

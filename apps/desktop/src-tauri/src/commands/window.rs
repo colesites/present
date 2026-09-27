@@ -133,6 +133,11 @@ pub async fn open_window(
             "Mini lyrics windows are opened with open_mini_lyrics_window.".to_owned(),
         ));
     }
+    if matches!(role, WindowRole::AudienceScreen | WindowRole::StageScreen) {
+        return Err(AppError::Invalid(
+            "An added screen is opened with open_screen.".to_owned(),
+        ));
+    }
 
     let spec = spec_for(role);
     let options = options.unwrap_or_default();
@@ -147,6 +152,15 @@ pub async fn open_window(
         &spec,
         target.as_ref().map(|resolved| &resolved.display),
     )?;
+    // The audience is a group: every audience screen added in Screen
+    // Configuration goes on with the Output.
+    if role == WindowRole::Output {
+        crate::commands::screens::set_added_open(
+            &app,
+            crate::services::screens::ScreenGroup::Audience,
+            true,
+        );
+    }
     Ok(true)
 }
 
@@ -158,6 +172,18 @@ pub async fn close_window(app: AppHandle, role: WindowRole) -> AppResult<bool> {
         return Err(AppError::Invalid(
             "Mini lyrics windows are closed with close_mini_lyrics_window.".to_owned(),
         ));
+    }
+    if matches!(role, WindowRole::AudienceScreen | WindowRole::StageScreen) {
+        return Err(AppError::Invalid(
+            "An added screen is closed with close_screen.".to_owned(),
+        ));
+    }
+    if role == WindowRole::Output {
+        crate::commands::screens::set_added_open(
+            &app,
+            crate::services::screens::ScreenGroup::Audience,
+            false,
+        );
     }
     window::close(&app, role.label())
 }

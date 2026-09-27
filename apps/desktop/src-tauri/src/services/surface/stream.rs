@@ -14,14 +14,19 @@ use tauri::{AppHandle, Manager};
 use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
 use crate::services::media_protocol;
 use crate::services::output::OutputScene;
+use crate::services::screens::OutputTarget;
 use crate::services::video::{self, VideoDecoder};
-use crate::state::{FileState, OutputState};
+use crate::state::{DisplayState, FileState, OutputState};
 
 use super::SurfaceSource;
 use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed};
 
 pub struct AppSurfaceSource {
     app: AppHandle,
+    /// Which audience screen this is (`services/screens.rs`): its size, fit
+    /// and colour are read each frame, so a change in Screen Configuration
+    /// shows at once.
+    screen: String,
     compositor: SceneCompositor,
     video: VideoFeed,
     /// The videos playing in screen composer regions.
@@ -34,10 +39,11 @@ pub struct AppSurfaceSource {
 }
 
 impl AppSurfaceSource {
-    pub fn new(app: AppHandle) -> Self {
+    pub fn new(app: AppHandle, screen: &str) -> Self {
         let app_for_opening = app.clone();
         Self {
             app,
+            screen: screen.to_owned(),
             compositor: SceneCompositor::new(1920, 1080),
             video: VideoFeed::new(),
             regions: RegionVideos::new(),
@@ -48,9 +54,31 @@ impl AppSurfaceSource {
 }
 
 impl SurfaceSource for AppSurfaceSource {
+    fn canvas(&mut self, window: (u32, u32)) -> ((u32, u32), bool) {
+        let Some(screen) = self
+            .app
+            .try_state::<DisplayState>()
+            .and_then(|displays| displays.screen(&self.screen))
+        else {
+            return (window, false);
+        };
+        let base = screen
+            .color
+            .as_deref()
+            .and_then(crate::services::compositor::color::parse)
+            .unwrap_or(tiny_skia::Color::BLACK);
+        if self.compositor.set_base(base) {
+            // The scene has not changed, but the picture has.
+            self.last = None;
+        }
+        let size = screen.size.map_or(window, |size| (size.width, size.height));
+        (size, screen.target == OutputTarget::Fit)
+    }
+
     fn render(&mut self, size: (u32, u32), out: &mut Vec<u8>) -> Result<bool, String> {
         let Self {
             app,
+            screen: _,
             compositor,
             video,
             regions,

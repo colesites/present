@@ -14,14 +14,21 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   It never restarts on its own, and asks first while the audience screen is
   open. This version has to be installed by hand once; the ones after it
   arrive this way.
-- Screens ▸ Configure Screens… (⌥⌘1) opens Screens & sound, now laid out as
-  a screen configuration: the audience screen and the two stage screens in a
-  list, each turned on and off there, and the connected displays drawn where
-  the computer has them, to scale. Clicking a display sends the chosen screen
-  to it, and a screen that is on moves at once. Identify shows each screen's
-  name on it. The page warns when two screens go to the same display or one
-  goes to the main screen, and Display settings opens the computer's own
-  settings, where a display's resolution is changed.
+- Screen configuration, as ProPresenter has it. Screens ▸ Configure Screens…
+  (⌥⌘1) opens Screens & sound with two groups: Audience, which starts with
+  one screen, and Stage, which starts with the media stage and the worship
+  stage. The + beside each adds a screen on any connected output, such as a
+  second projector with the audience picture or a monitor at the back with a
+  stage layout. Added audience screens go on and off with the audience
+  output. Each screen can be renamed, and has an output, an output target
+  (Full stretches it to the output, Fit keeps its shape), a size to draw at,
+  and a screen color behind everything on it. Drawing a 4K television's
+  picture at 1080p is lighter for the computer. The connected displays are
+  drawn where the computer arranges them; click one to send a screen there.
+  Identify shows each screen's name, or its output's, on the screen itself.
+  Display settings opens the computer's own settings, where a display's
+  resolution is changed. The NDI size is now with the NDI settings, under
+  Connections.
 - The timer's clock can have a background: none, black, dimmed or a color.
   With the banner on, the name's banner goes at the top or the bottom.
 - The Screen Composer lists its regions as layers, the top one first, to
@@ -39,13 +46,23 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   window only after something else was done there. It now applies at once.
   The song settings are for new songs and lyrics made into slides; a song
   already made keeps its own fonts.
-- The Screen Composer was heavy on screen. Every region's video was decoded
-  at the size of the whole screen; each is now decoded at the size of its
-  region, and the composer shows stills of them instead of playing each one.
+- The Screen Composer was heavy on screen. Each region's video frame was
+  converted a pixel at a time and drawn through a slow scaler, and the whole
+  picture was drawn again sixty times a second whether or not a video had a
+  new frame. Frames are now copied into their regions in one pass across the
+  processor's cores, at the region's own size, and the picture is drawn again
+  only when a video moves on. A composed screen with two playing videos went
+  from about 72 ms a frame to about 10 ms. The composer shows stills of its
+  videos rather than playing each one.
+- Media chosen for a region in the Screen Composer did not reach the screen,
+  or only when the operator window was next clicked. Changes now reach it at
+  once.
 - A countdown in the Screen Composer always had a dark shade behind it. A
   region's background is now chosen: none, black, dark or a color.
 - With Settings open, turning a stage screen off from the Screens menu turned
   it straight back on, and the menu's ticks for the stage screens went off.
+- Help no longer offers Download the Latest Version, now that Present updates
+  itself.
 - A desktop could be signed out when the website took more than three
   seconds to check its own signing key: it fell back to the browser session
   that started the sign-in, which may have ended long before. It now keeps

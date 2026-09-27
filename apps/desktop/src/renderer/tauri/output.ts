@@ -77,6 +77,8 @@ export type OutputSurface = {
   enabled: boolean;
   presenting: boolean;
   supported: boolean;
+  /** Which audience window's view this is: each has one. Only on the event. */
+  label?: string;
 };
 
 export const getOutputSurface = (): Promise<OutputSurface> => invoke("get_output_surface");

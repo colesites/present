@@ -35,6 +35,9 @@ type AudioDevice = {
 
 type SectionKey = "screens" | "agent" | "slides" | "timer" | "connections";
 
+/** What NDI can be sent at. */
+const NDI_SIZES = ["3840x2160", "2560x1440", "1920x1080", "1600x900", "1280x720", "1024x768", "800x600"];
+
 const SECTIONS: Array<{
   key: SectionKey;
   label: string;
@@ -319,7 +322,6 @@ export function SettingsScreen({
   settingsTimerTimeUp = DEFAULT_TIME_UP,
   setSettingsTimerTimeUp,
   setSettingsOutputDisplayId,
-  settingsScreenDisplayIds,
   setSettingsScreenDisplayIds,
   settingsScreenResolutions,
   setSettingsScreenResolutions,
@@ -427,12 +429,7 @@ export function SettingsScreen({
       case "screens":
         return (
           <ScreensSettings
-            screenDisplayIds={settingsScreenDisplayIds}
             onScreenDisplayChange={handleScreenDisplayChange}
-            screenResolutions={settingsScreenResolutions}
-            onScreenResolutionChange={(role, resolution) =>
-              setSettingsScreenResolutions((previous) => ({ ...previous, [role]: resolution }))
-            }
             audioOutputDeviceId={settingsAudioOutputDeviceId}
             audioOutputDeviceLabel={settingsAudioOutputDeviceLabel}
             audioOutputs={audio.outputs}
@@ -575,6 +572,17 @@ export function SettingsScreen({
                   onChange={(value) => setSettingsNdiFrameRate(Number(value))}
                   className="w-[120px]"
                   options={NDI_FRAME_RATES.map((rate) => ({ value: String(rate), label: `${rate} fps` }))}
+                />
+              </SettingsRow>
+              <SettingsRow label="Size" description="The picture's size as it goes out over the network.">
+                <SettingsSelect
+                  label="NDI size"
+                  value={settingsScreenResolutions.audience}
+                  onChange={(value) =>
+                    setSettingsScreenResolutions((previous) => ({ ...previous, audience: value }))
+                  }
+                  className="w-[140px]"
+                  options={NDI_SIZES.map((size) => ({ value: size, label: size.replace("x", " × ") }))}
                 />
               </SettingsRow>
               {settingsNdiRuntimeStatus.lastError || !settingsNdiRuntimeStatus.libraryLoaded ? (

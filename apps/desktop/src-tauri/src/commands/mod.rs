@@ -28,6 +28,7 @@ pub mod playback;
 pub mod pptx;
 pub mod presentation;
 pub mod remote;
+pub mod screens;
 pub mod scripture;
 pub mod songs;
 pub mod speech;

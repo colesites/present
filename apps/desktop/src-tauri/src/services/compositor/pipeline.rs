@@ -166,6 +166,9 @@ pub struct SceneCompositor {
     /// by region id: a picture is drawn again when one of them moves on, and
     /// not in between.
     drawn_regions: Vec<(String, f64)>,
+    /// What is under everything: the screen's colour (Screen Configuration),
+    /// black unless one is chosen.
+    base: Color,
 }
 
 /// Which frame of each region's video `regions` holds, in a comparable form.
@@ -263,6 +266,7 @@ impl SceneCompositor {
             marquee: None,
             composer_clock: None,
             drawn_regions: Vec::new(),
+            base: Color::BLACK,
         }
     }
 
@@ -371,6 +375,15 @@ impl SceneCompositor {
         self.frame.take()
     }
 
+    /// Put `color` under everything, where black was. Whether it changed.
+    pub fn set_base(&mut self, color: Color) -> bool {
+        if self.base == color {
+            return false;
+        }
+        self.base = color;
+        true
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if (self.width, self.height) == (width, height) {
             return;
@@ -447,16 +460,16 @@ impl SceneCompositor {
                 // A video with no decoded frame yet is not a still. The image
                 // path would read the whole file — hundreds of megabytes — and
                 // fail to decode it, on every frame.
-                frame.clear(Color::BLACK);
+                frame.clear(self.base);
                 report.background_media_missing = true;
                 None
             }
             (Some(url), None) => {
-                frame.clear(Color::BLACK);
+                frame.clear(self.base);
                 self.draw_still(&mut frame, url, loader, &mut report)
             }
             (None, _) => {
-                frame.clear(Color::BLACK);
+                frame.clear(self.base);
                 None
             }
         };
@@ -564,7 +577,7 @@ impl SceneCompositor {
         // its place for the next.
         let mut out = match self.whole_slide_spare.take() {
             Some(mut out) if out.width() == self.width && out.height() == self.height => {
-                out.clear(Color::BLACK);
+                out.clear(self.base);
                 out
             }
             _ => match Frame::new(self.width, self.height) {
@@ -1151,12 +1164,12 @@ impl SceneCompositor {
                 report.background_media_drawn = true;
                 return Some((0, 0, width, height));
             }
-            frame.clear(Color::BLACK);
+            frame.clear(self.base);
             report.background_media_missing = true;
             return None;
         }
 
-        frame.clear(Color::BLACK);
+        frame.clear(self.base);
         if video.width <= width && video.height <= height {
             let fitted =
                 crate::services::video::contain_size((video.width, video.height), (width, height));

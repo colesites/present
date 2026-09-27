@@ -32,9 +32,11 @@ pub mod stream;
 /// What goes on the native view. Frames are premultiplied BGRA, top row first.
 pub trait Presenter: Send {
     fn present(&mut self, width: u32, height: u32, bgra: Vec<u8>) -> Result<(), String>;
-    /// The size to draw at, in the window's CSS pixels, or `None` if the window
-    /// has gone.
+    /// The window's size in its CSS pixels, or `None` if the window has gone.
     fn size(&self) -> Option<(u32, u32)>;
+    /// How a picture of another shape goes on the view: stretched to it, or
+    /// fitted inside it with the edges left black.
+    fn set_fit(&mut self, _fit: bool) {}
 }
 
 /// Draws one frame into a buffer it is handed, and says whether it differs
@@ -42,6 +44,12 @@ pub trait Presenter: Send {
 /// second.
 pub trait SurfaceSource: Send {
     fn render(&mut self, size: (u32, u32), out: &mut Vec<u8>) -> Result<bool, String>;
+    /// The size to draw at for a window this size, and whether the picture
+    /// is fitted inside the window rather than stretched to it. The window's
+    /// own size, stretched, unless the screen asks otherwise.
+    fn canvas(&mut self, window: (u32, u32)) -> ((u32, u32), bool) {
+        (window, false)
+    }
 }
 
 /// What the audience window is told, so it knows whether to draw everything
@@ -83,11 +91,20 @@ pub fn run(
     let mut first_presented: Option<Instant> = None;
     let mut failures = 0u32;
 
+    let mut fit: Option<bool> = None;
+
     while !stop.load(Ordering::Relaxed) {
         let started = Instant::now();
-        let Some(size) = presenter.size() else {
+        let Some(window) = presenter.size() else {
             break;
         };
+        // A screen drawn at a size of its own, the view scaling it to the
+        // window: a 4K television can be given a 1080p picture.
+        let (size, fitted) = source.canvas(window);
+        if fit != Some(fitted) {
+            presenter.set_fit(fitted);
+            fit = Some(fitted);
+        }
 
         match source.render(size, &mut buffer) {
             Ok(changed) if (changed || first_presented.is_none()) && !buffer.is_empty() => {

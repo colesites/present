@@ -28,7 +28,7 @@ use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed};
 use crate::services::output::OutputScene;
 use crate::services::thumbnails;
 use crate::services::video::{self, VideoDecoder};
-use crate::state::{FileState, OutputState};
+use crate::state::{DisplayState, FileState, OutputState};
 
 /// The largest preview that will be drawn, per side.
 ///
@@ -88,6 +88,19 @@ impl PreviewSource {
         ) else {
             return Err("the app is still starting".to_owned());
         };
+
+        // The audience screen's colour, under everything, as on the screen.
+        let base = self
+            .app
+            .try_state::<DisplayState>()
+            .and_then(|displays| displays.screen(crate::services::screens::AUDIENCE))
+            .and_then(|screen| screen.color)
+            .as_deref()
+            .and_then(crate::services::compositor::color::parse)
+            .unwrap_or(tiny_skia::Color::BLACK);
+        if self.compositor.set_base(base) {
+            self.last = None;
+        }
 
         let scene = output.on_screen();
         let now = Instant::now();

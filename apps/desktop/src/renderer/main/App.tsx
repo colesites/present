@@ -51,6 +51,7 @@ import { ScreenComposerWindow } from "../../features/screen-composer";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
 import { MiniLyricsWindow } from "../../features/editor";
 import { areDisplayListsEqual } from "../shared/lib/display-list";
+import { ScreenCanvas } from "../shared/components/ScreenCanvas";
 import { ScreenIdentify } from "../shared/components/ScreenIdentify";
 
 const ROOT_DISPLAY_REFRESH_INTERVAL_MS = 15_000;
@@ -67,19 +68,25 @@ export default function Home() {
   if (windowType === "mini-lyrics") {
     return <MiniLyricsWindow />;
   }
+  // A stage screen, built in or added in Screen Configuration: its layout,
+  // at the screen's size and in its colour.
   if (windowType === "media-stage") {
     return (
       <>
-        <StageDisplayWindow />
-        <ScreenIdentify name="Media stage" />
+        <ScreenCanvas>
+          <StageDisplayWindow />
+        </ScreenCanvas>
+        <ScreenIdentify />
       </>
     );
   }
   if (windowType === "worship-stage") {
     return (
       <>
-        <WorshipStageDisplayWindow />
-        <ScreenIdentify name="Worship stage" />
+        <ScreenCanvas>
+          <WorshipStageDisplayWindow />
+        </ScreenCanvas>
+        <ScreenIdentify />
       </>
     );
   }

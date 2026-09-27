@@ -12,7 +12,7 @@ root.render(
   <React.StrictMode>
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
       <OutputWindow />
-      <ScreenIdentify name="Audience" />
+      <ScreenIdentify />
       <WindowReadySignal />
     </ThemeProvider>
   </React.StrictMode>

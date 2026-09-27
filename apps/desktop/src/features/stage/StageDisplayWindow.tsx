@@ -121,7 +121,10 @@ export function StageDisplayWindow() {
   );
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-black text-white">
+    <div
+      className="h-full w-full overflow-hidden text-white"
+      style={{ backgroundColor: "var(--present-screen-color, #000)" }}
+    >
       <div className="relative h-full w-full p-10">
         <div className="absolute inset-0 opacity-[0.04]" />
 

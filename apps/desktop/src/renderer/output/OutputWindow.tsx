@@ -9,6 +9,7 @@ import type {
   ScreenComposerRegion,
 } from "../../shared/types/screen-composer";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
+import { useOwnScreen } from "../tauri/screens";
 import { CanvasSlideLayer } from "../shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../shared/components/ScriptureTextLayer";
 import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
@@ -154,13 +155,25 @@ export function OutputWindow() {
   // does this page step back to the props it cannot draw; any other moment,
   // including a native view that failed, this page draws everything as usual.
   const [nativeSurface, setNativeSurface] = useState(false);
+  // What is under the picture when this page draws it: the screen's colour
+  // (Screen Configuration), as the compositor draws it.
+  const ownScreen = useOwnScreen();
+  const screenBackground = useMemo<CSSProperties>(
+    () => ({ backgroundColor: ownScreen?.color || "#000000" }),
+    [ownScreen?.color],
+  );
   useEffect(() => {
     let cancelled = false;
     let detach: (() => void) | null = null;
 
     void (async () => {
       const core = await import("../tauri/output");
+      const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      // Every audience window has a native view of its own, and hears about
+      // all of them.
+      const label = getCurrentWebviewWindow().label;
       const unlisten = await core.onOutputSurfaceChanged((surface) => {
+        if (surface.label && surface.label !== label) return;
         if (!cancelled) setNativeSurface(surface.presenting);
       });
       if (cancelled) {
@@ -483,7 +496,7 @@ export function OutputWindow() {
 
   if (!isComposerEnabled) {
     return (
-      <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-black">
+      <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden" style={screenBackground}>
         {state.showMedia && state.mediaUrl && !state.hideBackground ? (
           state.mediaType === "video" ? (
             <video
@@ -560,7 +573,7 @@ export function OutputWindow() {
   }
 
   return (
-    <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-black">
+    <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden" style={screenBackground}>
       {regions.map((region) => (
         <div
           key={region.id}

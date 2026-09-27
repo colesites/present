@@ -315,11 +315,14 @@ pub fn open(
     // Windows and Linux only; Tauri's own hook covers macOS (known-issues §10).
     crate::services::webview_crash::watch(&window);
 
-    // The operator's opt-in to the natively drawn audience screen. A no-op
-    // when it is off, which it is by default.
-    if spec.role == WindowRole::Output {
-        if let Some(surface) = app.try_state::<Arc<OutputSurfaceState>>() {
-            surface.attach(app);
+    // The compositor draws every audience window, where the platform has a
+    // native view for it: the Output, and each audience screen added.
+    if matches!(spec.role, WindowRole::Output | WindowRole::AudienceScreen) {
+        if let (Some(surface), Some(screen)) = (
+            app.try_state::<Arc<OutputSurfaceState>>(),
+            crate::services::screens::screen_id_for_label(&spec.label),
+        ) {
+            surface.attach(app, &spec.label, screen);
         }
     }
 
@@ -384,9 +387,9 @@ fn register_close_handler(app: &AppHandle, window: &WebviewWindow, spec: &Window
             state.forget(&label);
         }
 
-        if role == WindowRole::Output {
+        if matches!(role, WindowRole::Output | WindowRole::AudienceScreen) {
             if let Some(surface) = app.try_state::<Arc<OutputSurfaceState>>() {
-                surface.detach();
+                surface.detach(&label);
             }
         }
 

@@ -285,7 +285,10 @@ export function WorshipStageDisplayWindow() {
   );
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-black text-white">
+    <div
+      className="relative h-full w-full overflow-hidden text-white"
+      style={{ backgroundColor: "var(--present-screen-color, #000)" }}
+    >
       {state.showMedia && state.mediaUrl && !state.hideBackground ? (
         state.mediaType === "video" ? (
           <video
@@ -319,7 +322,7 @@ export function WorshipStageDisplayWindow() {
       ) : null}
 
       {state.currentLabel || state.currentRepeat ? (
-        <div className="absolute left-10 top-10 z-20 flex max-w-[calc(100vw-5rem)] flex-wrap gap-5 text-6xl font-black uppercase leading-none tracking-[0.08em] text-sky-100 drop-shadow-[0_3px_10px_rgba(0,0,0,0.9)]">
+        <div className="absolute left-10 top-10 z-20 flex max-w-[calc(100%-5rem)] flex-wrap gap-5 text-6xl font-black uppercase leading-none tracking-[0.08em] text-sky-100 drop-shadow-[0_3px_10px_rgba(0,0,0,0.9)]">
           {state.currentLabel ? (
             <span className="rounded-md bg-black/55 px-4 py-3 ring-2 ring-sky-200/30">
               [{state.currentLabel}]
