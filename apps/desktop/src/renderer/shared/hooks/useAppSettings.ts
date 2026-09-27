@@ -63,6 +63,19 @@ const DEFAULT_NDI_RUNTIME_STATUS = {
   usingFallbackFrame: false,
 };
 
+/**
+ * Told to every window when one changes a setting, with the whole settings as
+ * saved.
+ *
+ * Settings is a window of its own, and the others used to find out about a
+ * change only by reading local storage on a timer or when they were next
+ * focused. macOS slows a background window's timers right down, so the
+ * operator window, and the audience screen it drives, kept the old Bible size
+ * until somebody clicked back into it, and the setting looked as if it had
+ * not taken.
+ */
+const SETTINGS_CHANGED_EVENT = "present:settings-changed";
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -462,7 +475,39 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", syncFromStorage);
     const intervalId = window.setInterval(syncFromStorage, 400);
+
+    // Straight from the window that made the change, whether this one is in
+    // front or not.
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<string>(SETTINGS_CHANGED_EVENT, (event) => {
+          const raw = event.payload;
+          if (typeof raw !== "string" || raw === lastSettingsRawRef.current) return;
+          try {
+            applyParsedSettings(JSON.parse(raw) as Partial<Settings>);
+            lastSettingsRawRef.current = raw;
+          } catch {
+            void 0;
+          }
+        }),
+      )
+      .then((unlisten) => {
+        if (cancelled) {
+          unlisten();
+          return;
+        }
+        detach = unlisten;
+      })
+      .catch(() => {
+        // Not in the desktop app (a test, a browser): storage and focus still
+        // carry changes.
+      });
+
     return () => {
+      cancelled = true;
+      detach?.();
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", syncFromStorage);
       window.clearInterval(intervalId);
@@ -519,8 +564,16 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         agent: settingsAgent,
       };
       const serialized = JSON.stringify(next);
+      // Only a change made here is told to the others: one that arrived from
+      // another window serialises to what it arrived as.
+      const changedHere = serialized !== lastSettingsRawRef.current;
       localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
       lastSettingsRawRef.current = serialized;
+      if (changedHere) {
+        void import("@tauri-apps/api/event")
+          .then(({ emit }) => emit(SETTINGS_CHANGED_EVENT, serialized))
+          .catch((): void => undefined);
+      }
     } catch {
       // Ignore errors
     }
