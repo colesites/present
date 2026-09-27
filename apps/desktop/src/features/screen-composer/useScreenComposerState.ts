@@ -677,6 +677,36 @@ export function useScreenComposerState() {
     [],
   );
 
+  /**
+   * Move a region up or down the stack. Later regions are drawn over earlier
+   * ones, on the screen as here, so the list order is the stacking order.
+   */
+  const moveRegion = useCallback(
+    (regionId: string, to: "front" | "back" | "forward" | "backward") => {
+      setStore((previous) =>
+        withUpdatedActiveLayout(previous, (layout) => {
+          const from = layout.regions.findIndex((region) => region.id === regionId);
+          if (from < 0) return layout;
+          const last = layout.regions.length - 1;
+          const target =
+            to === "front"
+              ? last
+              : to === "back"
+                ? 0
+                : to === "forward"
+                  ? Math.min(from + 1, last)
+                  : Math.max(from - 1, 0);
+          if (target === from) return layout;
+          const regions = [...layout.regions];
+          const [moved] = regions.splice(from, 1);
+          regions.splice(target, 0, moved);
+          return { ...layout, regions, updatedAt: Date.now() };
+        }),
+      );
+    },
+    [],
+  );
+
   const setAllowOverlap = useCallback((allowOverlap: boolean) => {
     setStore((previous) =>
       withUpdatedActiveLayout(previous, (layout) => ({
@@ -840,6 +870,7 @@ export function useScreenComposerState() {
     deleteLayout,
     applyActiveLayoutToLive,
     goLiveLayout,
+    moveRegion,
   };
 }
 

@@ -264,7 +264,7 @@ export function OutputWindow() {
 
     if (region.source === "countdown") {
       return (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-black/50 p-4 text-center">
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">
           {state.timerLabel ? (
             <p className="text-xs uppercase tracking-[0.18em] text-zinc-300">
               {state.timerLabel}

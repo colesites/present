@@ -784,23 +784,6 @@ pub fn draw_region_video(
     );
 }
 
-/// A countdown region's shade: the darker panel the clock sits on.
-pub fn draw_countdown_shade(
-    pixmap: &mut PixmapMut<'_>,
-    region: &super::composer::ComposerRegion,
-    frame_width: f32,
-    frame_height: f32,
-) {
-    if let Some(rect) = region.inner_rect(frame_width, frame_height) {
-        fill_rounded(
-            pixmap,
-            rect,
-            region.radius(frame_height),
-            Color::from_rgba8(0, 0, 0, 128),
-        );
-    }
-}
-
 /// A countdown region's clock, and the timer's name above it.
 ///
 /// Sized to the region: the clock as large as fits a third of its height or

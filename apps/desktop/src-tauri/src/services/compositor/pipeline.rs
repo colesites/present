@@ -763,15 +763,10 @@ impl SceneCompositor {
                         None,
                     );
                 }
-                ComposerSource::Countdown => {
-                    super::overlays::draw_countdown_shade(
-                        &mut layers.as_mut(),
-                        region,
-                        frame_width,
-                        frame_height,
-                    );
-                    report.elements_drawn += 1;
-                }
+                // The clock is drawn over the region's own background, and
+                // nothing else: a darker panel was always added under it,
+                // with no way to choose none.
+                ComposerSource::Countdown => report.elements_drawn += 1,
                 ComposerSource::Video => report.elements_drawn += 1,
                 ComposerSource::CameraFeed | ComposerSource::Unknown => {}
             }

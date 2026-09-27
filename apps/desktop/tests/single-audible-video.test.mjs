@@ -57,9 +57,10 @@ test("every video element is accounted for", () => {
     // became images (`VideoThumbnail.tsx`), and 11 when the audience preview
     // stopped playing the file a second time and took the compositor's frames
     // instead (`CompositorPreviewLayer.tsx`), and 10 when the Bible
-    // background in Settings took the media picker's thumbnails. A scanner
+    // background in Settings took the media picker's thumbnails, and 9 when
+    // the Screen Composer showed its regions' videos as stills. A scanner
     // that breaks finds far fewer.
-    elements.length >= 10,
+    elements.length >= 9,
     `found only ${elements.length} video elements; the scanner is probably broken`,
   );
 });
