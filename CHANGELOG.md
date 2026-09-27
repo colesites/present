@@ -6,6 +6,15 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [0.4.3] - 2026-09-27
 
+### Added
+
+- Present updates itself. "Check for Updates…" is under Settings in the
+  Present menu on a Mac and in Help on Windows. A newer version downloads in
+  the background, and the item becomes "Restart to Update to" that version.
+  It never restarts on its own, and asks first while the audience screen is
+  open. This version has to be installed by hand once; the ones after it
+  arrive this way.
+
 ### Fixed
 
 - Nothing could be reordered by dragging: a service's items and groups, a
