@@ -697,7 +697,7 @@ function HardwareTab({
               ? `The whole signal, at ${times(own.width, own.height)}.`
               : stream
                 ? "Sent at 1920 × 1080."
-                : "The whole output, at its own resolution."
+                : "Present's picture fills the whole output."
             : "A rectangle of the output, in its pixels: an LED wall's processor, or a picture framed inside a larger signal. The rest stays black."
         }
       >
@@ -853,7 +853,9 @@ function DisplayResolution({ display }: { display: ScreenOutput }) {
     <>
       <SettingsRow
         label="Resolution"
-        description={notice ?? `${displayName(display)}'s own mode. The screens on it are drawn again at the new size.`}
+        description={
+          notice ?? `The signal this Mac sends to ${displayName(display)}, as Displays in System Settings sets it.`
+        }
       >
         <div className="flex items-center gap-2">
           <SettingsSelect

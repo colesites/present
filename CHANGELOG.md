@@ -56,9 +56,13 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   chosen for it in Screen Configuration.
 - Multiview, for the media desk. Move the mouse on the media stage screen and
   choose Open Multiview, or use Screens ▸ Multiview, to see every screen at
-  once, live: the audience picture and each stage screen's layout, with the
-  clock and the timer above them. Choose screens picks the ones shown and how
-  many go across. Back to stage, or Esc, returns to the stage screen.
+  once, live, as a wall of TVs: the audience picture and each stage screen's
+  layout, each labelled and edged green while on, with the clock and the
+  timer above them. Choose screens picks the ones shown and how many go on a
+  page, from 1 to 16 or all of them; the wall is laid out to make them as
+  large as they can be, and more screens go on further pages, turned with
+  Prev and Next, the page numbers or the arrow keys. Back to stage, or Esc,
+  returns to the stage screen.
 - The timer's clock can have a background: none, black, dimmed or a color.
   With the banner on, the name's banner goes at the top or the bottom.
 - The Screen Composer lists its regions as layers, the top one first, to

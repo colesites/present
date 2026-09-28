@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Settings2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Settings2, X } from "lucide-react";
 import { CompositorPreviewLayer } from "../slides/components/CompositorPreviewLayer";
 import { cn } from "../../renderer/shared/lib/utils";
 import { useScreens, type ScreenInfo } from "../../renderer/tauri/screens";
@@ -9,34 +9,38 @@ import { MEDIA_LAYOUT, WORSHIP_LAYOUT, useStageLayouts } from "./layouts";
 import { formatClock } from "./StageLayoutView";
 import { Fitted } from "./StageLayoutWindow";
 import { useStageFeed } from "./useStageFeed";
+import { TV_ASPECT, WALL_GAP, wallGrid } from "./wall";
 
 /**
- * Multiview: every screen at once, live, for the media desk to watch — the
- * audience picture as the compositor draws it and each stage screen as its
- * layout shows it. Opened from the media stage screen (or the Screens menu)
- * onto the media stage's display, and closed to go back to it.
+ * Multiview: every screen at once, live, as a wall of TVs for the media desk
+ * to watch — the audience picture as the compositor draws it and each stage
+ * screen as its layout shows it. Opened from the media stage screen (or the
+ * Screens menu) onto the media stage's display, and closed to go back to it.
  *
- * Which screens it shows, and how many across, are chosen here and kept.
+ * The wall is a grid of same-sized TVs, as many to a page as chosen, laid out
+ * across and down to make each as large as the window allows. More screens
+ * than fit go on further pages.
  */
 
 type MultiviewConfig = {
   /** Screen ids left out. New screens show until they are left out. */
   hidden: string[];
-  /** Tiles across; 0 for as many as fit. */
-  columns: number;
+  /** Screens to a page; 0 for all of them on one. */
+  perPage: number;
 };
 
 const CONFIG_KEY = "present-multiview-v1";
+const PER_PAGE = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 16];
 
 function readConfig(): MultiviewConfig {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(CONFIG_KEY) ?? "null") as Partial<MultiviewConfig> | null;
     return {
       hidden: Array.isArray(parsed?.hidden) ? parsed.hidden.filter((id): id is string => typeof id === "string") : [],
-      columns: typeof parsed?.columns === "number" ? Math.min(Math.max(Math.round(parsed.columns), 0), 6) : 0,
+      perPage: typeof parsed?.perPage === "number" && PER_PAGE.includes(parsed.perPage) ? parsed.perPage : 0,
     };
   } catch {
-    return { hidden: [], columns: 0 };
+    return { hidden: [], perPage: 0 };
   }
 }
 
@@ -53,14 +57,29 @@ export function MultiviewWindow() {
   const feed = useStageFeed();
   const [config, setConfig] = useState<MultiviewConfig>(readConfig);
   const [configuring, setConfiguring] = useState(false);
+  const [page, setPage] = useState(0);
   const [now, setNow] = useState(() => new Date());
+  const [area, setArea] = useState({ width: 0, height: 0 });
+  const wall = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(intervalId);
   }, []);
 
+  useEffect(() => {
+    const node = wall.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setArea({ width: Math.floor(entry.contentRect.width), height: Math.floor(entry.contentRect.height) }),
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   const change = (next: MultiviewConfig) => {
     setConfig(next);
+    setPage(0);
     try {
       window.localStorage.setItem(CONFIG_KEY, JSON.stringify(next));
     } catch {
@@ -70,20 +89,40 @@ export function MultiviewWindow() {
 
   const all = useMemo(() => screens ?? [], [screens]);
   const shown = all.filter((screen) => !config.hidden.includes(screen.id));
-  const columns = config.columns > 0 ? config.columns : Math.max(1, Math.ceil(Math.sqrt(shown.length)));
+  const perPage = config.perPage > 0 ? config.perPage : Math.max(1, shown.length);
+  const pages = Math.max(1, Math.ceil(shown.length / perPage));
+  const current = Math.min(page, pages - 1);
+  const onPage = shown.slice(current * perPage, current * perPage + perPage);
+  // The wall chosen, on every page: 16 is four by four, the TVs with no
+  // screen dark. All screens makes the wall fit them.
+  const slots = config.perPage > 0 ? config.perPage : Math.max(1, shown.length);
+  const grid = wallGrid(slots, area.width, area.height);
+  const tvs = grid.columns * grid.rows;
   const timeUp = feed.timer.timeUp;
+
+  const turn = (by: number) => setPage((at) => Math.min(Math.max(Math.min(at, pages - 1) + by, 0), pages - 1));
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
+      if (event.key === "ArrowRight" || event.key === "PageDown") {
+        setPage((at) => Math.min(at + 1, pages - 1));
+      }
+      if (event.key === "ArrowLeft" || event.key === "PageUp") {
+        setPage((at) => Math.max(Math.min(at, pages - 1) - 1, 0));
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [pages]);
+
+  const layoutFor = (screen: ScreenInfo) =>
+    layouts.find((layout) => layout.id === (screen.layout ?? (screen.id === "media" ? MEDIA_LAYOUT : WORSHIP_LAYOUT))) ??
+    layouts[0];
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0c12] text-white">
-      <header className="flex flex-none items-center gap-6 border-b border-white/10 px-6 py-3">
+      <header className="flex flex-none flex-wrap items-center gap-x-6 gap-y-2 border-b border-white/10 px-6 py-3">
         <h1 className="text-[20px] font-semibold tracking-tight">Multiview</h1>
         <div className="flex items-baseline gap-2 tabular-nums">
           <span className="text-[13px] uppercase tracking-[0.12em] text-white/50">Clock</span>
@@ -143,16 +182,15 @@ export function MultiviewWindow() {
             </label>
           ))}
           <label className="ml-auto flex items-center gap-2">
-            <span className="text-white/60">Across</span>
+            <span className="text-white/60">On a page</span>
             <select
-              value={config.columns}
-              onChange={(event) => change({ ...config, columns: Number(event.target.value) })}
+              value={config.perPage}
+              onChange={(event) => change({ ...config, perPage: Number(event.target.value) })}
               className="rounded-md bg-white/10 px-2 py-1 text-[14px] outline-none"
             >
-              <option value={0}>As many as fit</option>
-              {[1, 2, 3, 4, 5, 6].map((count) => (
+              {PER_PAGE.map((count) => (
                 <option key={count} value={count}>
-                  {count}
+                  {count === 0 ? "All screens" : count === 1 ? "1 screen" : `${count} screens`}
                 </option>
               ))}
             </select>
@@ -160,60 +198,136 @@ export function MultiviewWindow() {
         </div>
       ) : null}
 
-      <div
-        className="grid min-h-0 flex-1 gap-4 p-5"
-        style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)" }}
-      >
-        {shown.map((screen) => (
-          <Tile key={screen.id} screen={screen}>
-            {screen.group === "audience" ? (
-              <CompositorPreviewLayer className="absolute inset-0" />
-            ) : (
-              <Fitted
-                layout={
-                  layouts.find((layout) => layout.id === (screen.layout ?? (screen.id === "media" ? MEDIA_LAYOUT : WORSHIP_LAYOUT))) ??
-                  layouts[0]
-                }
-                feed={feed}
-              />
-            )}
-          </Tile>
-        ))}
+      <div ref={wall} className="relative min-h-0 flex-1 overflow-hidden p-5">
         {shown.length === 0 ? (
-          <div className="col-span-full flex items-center justify-center text-[16px] text-white/50">
+          <div className="flex h-full items-center justify-center text-[16px] text-white/50">
             No screens chosen. Use Choose screens to add some.
+          </div>
+        ) : grid.tileWidth > 0 ? (
+          <div
+            className="grid h-full content-center justify-center"
+            style={{
+              gap: WALL_GAP,
+              gridTemplateColumns: `repeat(${grid.columns}, ${grid.tileWidth}px)`,
+              gridAutoRows: `${grid.tileHeight}px`,
+            }}
+          >
+            {Array.from({ length: tvs }, (_, index) => {
+              const screen = onPage[index];
+              if (!screen) {
+                return <div key={`empty-${index}`} className="rounded-lg bg-black/40 ring-1 ring-white/[0.06]" />;
+              }
+              return (
+                <Tv key={screen.id} screen={screen} width={grid.tileWidth} height={grid.tileHeight}>
+                  {screen.group === "audience" ? (
+                    <CompositorPreviewLayer className="absolute inset-0" />
+                  ) : (
+                    <Fitted layout={layoutFor(screen)} feed={feed} />
+                  )}
+                </Tv>
+              );
+            })}
           </div>
         ) : null}
       </div>
+
+      {pages > 1 ? (
+        <footer className="flex flex-none items-center justify-center gap-2 border-t border-white/10 px-6 py-2.5 text-[14px]">
+          <button
+            type="button"
+            onClick={() => turn(-1)}
+            disabled={current === 0}
+            className="flex items-center gap-1 rounded-md px-3 py-1.5 font-medium ring-1 ring-white/15 transition hover:bg-white/10 disabled:pointer-events-none disabled:opacity-35"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+            Prev
+          </button>
+          {Array.from({ length: pages }, (_, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => setPage(index)}
+              aria-current={index === current ? "page" : undefined}
+              className={cn(
+                "h-8 min-w-8 rounded-md px-2 font-medium tabular-nums transition",
+                index === current ? "bg-white text-black" : "text-white/70 ring-1 ring-white/15 hover:bg-white/10",
+              )}
+            >
+              {index + 1}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => turn(1)}
+            disabled={current === pages - 1}
+            className="flex items-center gap-1 rounded-md px-3 py-1.5 font-medium ring-1 ring-white/15 transition hover:bg-white/10 disabled:pointer-events-none disabled:opacity-35"
+          >
+            Next
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </button>
+          <span className="ml-3 text-[13px] tabular-nums text-white/45">
+            {current * perPage + 1}–{current * perPage + onPage.length} of {shown.length}
+          </span>
+        </footer>
+      ) : null}
     </div>
   );
 }
 
-/** One screen's tile: its picture in its own shape, and its name and state. */
-function Tile({ screen, children }: { screen: ScreenInfo; children: React.ReactNode }) {
-  const [width, height] = screen.canvas;
+/**
+ * One TV of the wall: the screen's picture in its own shape, centred above its
+ * name, as a multiviewer labels it, with a green edge while it is on. The
+ * name has its own strip, so it never covers the picture.
+ */
+function Tv({
+  screen,
+  width,
+  height,
+  children,
+}: {
+  screen: ScreenInfo;
+  width: number;
+  height: number;
+  children: React.ReactNode;
+}) {
+  const [canvasWidth, canvasHeight] = screen.canvas;
+  const aspect = canvasWidth > 0 && canvasHeight > 0 ? canvasWidth / canvasHeight : TV_ASPECT;
+  const compact = width < 320;
+  const label = compact ? 22 : 30;
+  const pictureWidth = Math.min(width, (height - label) * aspect);
+  const pictureHeight = pictureWidth / aspect;
   return (
-    <div className="flex min-h-0 min-w-0 flex-col gap-2">
-      <div className="flex flex-none items-center gap-2 text-[15px]">
+    <div
+      className={cn(
+        "flex flex-col overflow-hidden rounded-lg bg-black",
+        screen.open ? "ring-2 ring-emerald-400/80" : "ring-1 ring-white/15",
+      )}
+    >
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <div className="relative overflow-hidden" style={{ width: pictureWidth, height: pictureHeight }}>
+          {children}
+        </div>
+      </div>
+      <div
+        className={cn(
+          "flex flex-none items-center gap-2 border-t border-white/10 bg-white/[0.04]",
+          compact ? "px-2 text-[11px]" : "px-3 text-[13px]",
+        )}
+        style={{ height: label }}
+      >
         <span
           className={cn(
-            "h-2.5 w-2.5 rounded-full",
+            "h-2 w-2 flex-none rounded-full",
             screen.open ? "bg-emerald-400 shadow-[0_0_8px] shadow-emerald-400/70" : "bg-white/25",
           )}
         />
-        <span className="truncate font-medium">{screen.name}</span>
-        <span className="text-[12px] tabular-nums text-white/40">
-          {width} × {height}
-        </span>
-        {!screen.open ? <span className="text-[12px] uppercase tracking-[0.12em] text-white/40">Off</span> : null}
-      </div>
-      <div className="relative flex min-h-0 flex-1 items-center justify-center">
-        <div
-          className="relative max-h-full max-w-full overflow-hidden rounded-lg bg-black ring-1 ring-white/15"
-          style={{ aspectRatio: `${width} / ${height}`, height: "100%" }}
-        >
-          {children}
-        </div>
+        <span className="min-w-0 truncate font-medium">{screen.name}</span>
+        {!compact ? (
+          <span className="ml-auto flex-none tabular-nums text-white/45">
+            {canvasWidth} × {canvasHeight}
+            {screen.open ? "" : " · Off"}
+          </span>
+        ) : null}
       </div>
     </div>
   );
