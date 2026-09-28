@@ -30,6 +30,10 @@ pub enum WindowRole {
     Settings,
     Looks,
     ScreenComposer,
+    /// Where stage layouts are made and changed.
+    StageEditor,
+    /// Every screen at once, on the media stage's display.
+    Multiview,
     /// Quick lyric editor. One window per song being edited.
     MiniLyrics,
     /// An audience screen added in Screen Configuration, beside the Output.
@@ -41,7 +45,7 @@ pub enum WindowRole {
 
 impl WindowRole {
     /// Every single-instance role, i.e. everything `open_window` accepts.
-    pub const SINGLETONS: [WindowRole; 7] = [
+    pub const SINGLETONS: [WindowRole; 9] = [
         WindowRole::Main,
         WindowRole::Output,
         WindowRole::MediaStage,
@@ -49,6 +53,8 @@ impl WindowRole {
         WindowRole::Settings,
         WindowRole::Looks,
         WindowRole::ScreenComposer,
+        WindowRole::StageEditor,
+        WindowRole::Multiview,
     ];
 
     /// The Tauri window label. Stable, because capabilities are matched on it.
@@ -61,6 +67,8 @@ impl WindowRole {
             WindowRole::Settings => "settings",
             WindowRole::Looks => "looks",
             WindowRole::ScreenComposer => "screen-composer",
+            WindowRole::StageEditor => "stage-editor",
+            WindowRole::Multiview => "multiview",
             WindowRole::MiniLyrics => "mini-lyrics",
             // Prefixes: each screen's window adds its id.
             WindowRole::AudienceScreen => "audience",
@@ -227,7 +235,8 @@ pub fn spec_for(role: WindowRole) -> WindowSpec {
             role,
             label: role.label().to_owned(),
             title: "Media Stage".to_owned(),
-            url: "index.html?window=media-stage".to_owned(),
+            // Every stage screen is the one page, drawing its screen's layout.
+            url: "index.html?window=stage&screen=media".to_owned(),
             placement: Placement::FillRoleDisplay {
                 role: ScreenRole::Media,
             },
@@ -242,7 +251,7 @@ pub fn spec_for(role: WindowRole) -> WindowSpec {
             role,
             label: role.label().to_owned(),
             title: "Worship Stage".to_owned(),
-            url: "index.html?window=worship-stage".to_owned(),
+            url: "index.html?window=stage&screen=worship".to_owned(),
             placement: Placement::FillRoleDisplay {
                 role: ScreenRole::Worship,
             },
@@ -306,6 +315,39 @@ pub fn spec_for(role: WindowRole) -> WindowSpec {
             show_watchdog_ms: SHOW_WATCHDOG_MS,
         },
 
+        WindowRole::StageEditor => WindowSpec {
+            role,
+            label: role.label().to_owned(),
+            title: "Stage Layouts".to_owned(),
+            url: "index.html?window=stage-editor".to_owned(),
+            placement: Placement::Windowed {
+                width: 1480.0,
+                height: 920.0,
+                min: Some((1100.0, 700.0)),
+                max: None,
+            },
+            background: Rgb::APP_CHROME,
+            crash_policy: CrashPolicy::Ignore,
+            focus_on_show: true,
+            show_watchdog_ms: SHOW_WATCHDOG_MS,
+        },
+
+        // Over the media stage, on its display, for the desk there to watch
+        // every screen at once and close again.
+        WindowRole::Multiview => WindowSpec {
+            role,
+            label: role.label().to_owned(),
+            title: "Multiview".to_owned(),
+            url: "index.html?window=multiview".to_owned(),
+            placement: Placement::FillRoleDisplay {
+                role: ScreenRole::Media,
+            },
+            background: Rgb::BLACK,
+            crash_policy: CrashPolicy::Ignore,
+            focus_on_show: true,
+            show_watchdog_ms: SHOW_WATCHDOG_MS,
+        },
+
         WindowRole::MiniLyrics => {
             unreachable!("mini-lyrics windows are per-library; use mini_lyrics_spec")
         }
@@ -320,7 +362,7 @@ pub fn spec_for(role: WindowRole) -> WindowSpec {
 /// one of its own for every other. `None` for a screen or output that could
 /// not be a window's, and for an output that is not a display.
 pub fn output_spec(screen: &super::screens::ScreenSetup, output: &str) -> Option<WindowSpec> {
-    use super::screens::{OutputKind, ScreenGroup, MAIN_OUTPUT, MEDIA};
+    use super::screens::{OutputKind, ScreenGroup, MAIN_OUTPUT};
 
     if screen.output(output)?.kind != OutputKind::Display {
         return None;
@@ -354,23 +396,17 @@ pub fn output_spec(screen: &super::screens::ScreenSetup, output: &str) -> Option
             show_watchdog_ms: SHOW_WATCHDOG_MS,
         },
         ScreenGroup::Stage => {
-            let media = screen.stage_layout() == MEDIA;
             WindowSpec {
                 role: WindowRole::StageScreen,
                 label,
                 title: screen.name.clone(),
-                url: format!(
-                    "index.html?window={}&screen={id}&output={output}",
-                    if media {
-                        "media-stage"
-                    } else {
-                        "worship-stage"
-                    }
-                ),
+                // The one stage page, drawing whichever layout the screen
+                // names, so a new layout needs no new window.
+                url: format!("index.html?window=stage&screen={id}&output={output}"),
                 placement: Placement::FillRoleDisplay {
                     role: ScreenRole::Worship,
                 },
-                background: if media { Rgb::APP_CHROME } else { Rgb::BLACK },
+                background: Rgb::BLACK,
                 crash_policy: CrashPolicy::Ignore,
                 // Opened from Settings with the operator mid-task: it goes on
                 // its screen without taking the keyboard.
@@ -645,11 +681,13 @@ mod tests {
         // Only two HTML entries exist; six windows load the main one and
         // App.tsx:57-72 branches on `?window=`.
         for (role, expected) in [
-            (WindowRole::MediaStage, "media-stage"),
-            (WindowRole::WorshipStage, "worship-stage"),
+            (WindowRole::MediaStage, "stage&screen=media"),
+            (WindowRole::WorshipStage, "stage&screen=worship"),
             (WindowRole::Settings, "settings"),
             (WindowRole::Looks, "looks"),
             (WindowRole::ScreenComposer, "screen-composer"),
+            (WindowRole::StageEditor, "stage-editor"),
+            (WindowRole::Multiview, "multiview"),
         ] {
             let spec = spec_for(role);
             assert_eq!(spec.url, format!("index.html?window={expected}"));
@@ -905,10 +943,7 @@ mod tests {
         back.layout = Some("media".into());
         let spec = output_spec(&back, MAIN_OUTPUT).expect("a window");
         assert_eq!(spec.label, "stage-back");
-        assert_eq!(
-            spec.url,
-            "index.html?window=media-stage&screen=back&output=main"
-        );
+        assert_eq!(spec.url, "index.html?window=stage&screen=back&output=main");
         assert_eq!(
             crash_policy_for_label(&spec.label),
             Some(CrashPolicy::Ignore)

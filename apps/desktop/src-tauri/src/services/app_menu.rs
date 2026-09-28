@@ -295,6 +295,9 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
             "Worship Stage",
         )?)
         .separator()
+        .item(&item("screens.stage-layouts", "Edit Stage Layouts…")?)
+        .item(&item("screens.multiview", "Multiview")?)
+        .separator()
         .item(&item("screens.looks", "Looks…")?)
         .item(&item("screens.composer", "Screen Composer…")?)
         .build()?;

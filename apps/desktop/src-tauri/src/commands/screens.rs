@@ -330,7 +330,7 @@ fn is_on(app: &AppHandle, screen: &ScreenSetup) -> bool {
 }
 
 /// After a change to a screen that is on: the outputs its type now uses on,
-/// the rest off, and a stage screen's windows opened again on a new layout.
+/// the rest off. A stage screen's page follows a new layout by itself.
 fn resync(app: &AppHandle, before: &ScreenSetup, after: &ScreenSetup) -> AppResult<()> {
     if !is_on(app, before) {
         return Ok(());
@@ -338,27 +338,6 @@ fn resync(app: &AppHandle, before: &ScreenSetup, after: &ScreenSetup) -> AppResu
     let Some(state) = app.try_state::<DisplayState>() else {
         return Ok(());
     };
-    if after.group == ScreenGroup::Stage && before.stage_layout() != after.stage_layout() {
-        // A stage screen shows its layout from its page, so a new layout is a
-        // new page. Closing is not immediate; the new windows wait for it.
-        for output in &after.outputs {
-            if output.kind == OutputKind::Display {
-                window::close(app, &after.window_label(&output.id))?;
-            }
-        }
-        let reopen = app.clone();
-        let id = after.id.clone();
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(450)).await;
-            if let Some(state) = reopen.try_state::<DisplayState>() {
-                if let Some(screen) = state.screen(&id) {
-                    set_outputs(&reopen, &state, &screen, true, false);
-                }
-            }
-            announce(&reopen);
-        });
-        return Ok(());
-    }
     set_outputs(app, &state, after, true, false);
     Ok(())
 }

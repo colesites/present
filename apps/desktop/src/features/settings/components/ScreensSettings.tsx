@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "../../../renderer/shared/components/ui/dropdown-menu";
 import { areDisplayListsEqual } from "../../../renderer/shared/lib/display-list";
+import { askEditorFor, useStageLayouts } from "../../stage/layouts";
 import { cn } from "../../../renderer/shared/lib/utils";
 import {
   addOutput,
@@ -113,6 +114,14 @@ const outputName = (output: OutputInfo, index: number) =>
       : index === 0
         ? "No display yet"
         : `Output ${index + 1}`;
+
+/** The Stage Layouts window, open on `layout`. */
+const openStageEditor = (layout: string) => {
+  askEditorFor(layout);
+  void import("@tauri-apps/api/core")
+    .then(({ invoke }) => invoke("open_window", { role: "stage-editor", options: null }))
+    .catch((error: unknown) => console.error("[Screens] could not open the stage layouts", error));
+};
 
 const emitToOperator = (command: string) =>
   import("@tauri-apps/api/event").then(({ emitTo }) => emitTo("main", "menu:command", command));
@@ -813,6 +822,7 @@ function ScreenDetail({
     if (next && next !== screen.name) onScreen({ name: next });
     else setName(screen.name);
   };
+  const { layouts: stageLayouts } = useStageLayouts();
   const [selectedOutputId, setSelectedOutputId] = useState("main");
   const selected = screen.outputs.find((output) => output.id === selectedOutputId) ?? screen.outputs[0] ?? null;
   const selectedIndex = selected ? screen.outputs.indexOf(selected) : 0;
@@ -969,16 +979,20 @@ function ScreenDetail({
               <div className="text-[13px] font-medium text-foreground">Layout</div>
               <div className="text-[12px] text-muted-foreground">What the stage screen shows.</div>
             </div>
-            <SettingsSelect
-              label="Stage layout"
-              value={screen.layout ?? "worship"}
-              onChange={(layout) => onScreen({ layout })}
-              className="w-[230px]"
-              options={[
-                { value: "media", label: "Media stage" },
-                { value: "worship", label: "Worship stage" },
-              ]}
-            />
+            <div className="flex items-center gap-2">
+              <SettingsSelect
+                label="Stage layout"
+                value={screen.layout ?? (screen.id === "media" ? "media" : "worship")}
+                onChange={(layout) => onScreen({ layout })}
+                className="w-[230px]"
+                options={stageLayouts.map((layout) => ({ value: layout.id, label: layout.name }))}
+              />
+              <SettingsButton
+                onClick={() => openStageEditor(screen.layout ?? (screen.id === "media" ? "media" : "worship"))}
+              >
+                Edit layouts…
+              </SettingsButton>
+            </div>
           </div>
         ) : null}
 

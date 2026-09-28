@@ -34,6 +34,21 @@ All notable desktop changes are documented here. Present follows Semantic Versio
     one to send an output there. Display settings opens the computer's own,
     where a display's resolution is changed.
   - The NDI size is now with the NDI settings, under Connections.
+- Stage layouts, made as you like. Screens ▸ Edit Stage Layouts… opens the
+  stage editor. A layout is built from objects placed anywhere on it: text,
+  shapes, the current and next slide's words, the current slide itself, the
+  section and the next section, the clock, the timer and the timer's name.
+  Each is moved and sized by dragging, and given its own font, colour, fill,
+  border and caption. Start from a blank layout or from one of the templates,
+  and duplicate, rename or delete layouts. The media stage and the worship
+  stage start with layouts that look as they did, and can be changed or put
+  back as they started. Any stage screen, the new ones too, shows the layout
+  chosen for it in Screen Configuration.
+- Multiview, for the media desk. Move the mouse on the media stage screen and
+  choose Open Multiview, or use Screens ▸ Multiview, to see every screen at
+  once, live: the audience picture and each stage screen's layout, with the
+  clock and the timer above them. Choose screens picks the ones shown and how
+  many go across. Back to stage, or Esc, returns to the stage screen.
 - The timer's clock can have a background: none, black, dimmed or a color.
   With the banner on, the name's banner goes at the top or the bottom.
 - The Screen Composer lists its regions as layers, the top one first, to

@@ -44,8 +44,9 @@ import { useMediaLibraryStore } from "../shared/store/mediaLibrary";
 import { useUpdateNotice } from "../tauri/updates";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
-import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
-import { WorshipStageDisplayWindow } from "../../features/stage/WorshipStageDisplayWindow";
+import { StageLayoutWindow } from "../../features/stage/StageLayoutWindow";
+import { StageLayoutEditor } from "../../features/stage/StageLayoutEditor";
+import { MultiviewWindow } from "../../features/stage/MultiviewWindow";
 import { LooksWindow } from "../../features/looks/LooksWindow";
 import { ScreenComposerWindow } from "../../features/screen-composer";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
@@ -68,27 +69,24 @@ export default function Home() {
   if (windowType === "mini-lyrics") {
     return <MiniLyricsWindow />;
   }
-  // A stage screen, built in or added in Screen Configuration: its layout,
-  // at the screen's size and in its colour.
-  if (windowType === "media-stage") {
+  // A stage screen, built in or added in Screen Configuration: the layout
+  // its screen names, at the screen's size and in its colour. The two older
+  // page names still lead here.
+  if (windowType === "stage" || windowType === "media-stage" || windowType === "worship-stage") {
     return (
       <>
         <ScreenCanvas>
-          <StageDisplayWindow />
+          <StageLayoutWindow />
         </ScreenCanvas>
         <ScreenIdentify />
       </>
     );
   }
-  if (windowType === "worship-stage") {
-    return (
-      <>
-        <ScreenCanvas>
-          <WorshipStageDisplayWindow />
-        </ScreenCanvas>
-        <ScreenIdentify />
-      </>
-    );
+  if (windowType === "stage-editor") {
+    return <StageLayoutEditor />;
+  }
+  if (windowType === "multiview") {
+    return <MultiviewWindow />;
   }
   if (windowType === "looks") {
     return <LooksWindow />;
@@ -209,6 +207,9 @@ function AuthenticatedHome({ windowType }: { windowType: string | null }) {
       "worship-stage": "Worship Stage",
       "mini-lyrics": "Mini Lyrics Editor",
       "screen-composer": "Screen Composer",
+      stage: "Stage",
+      "stage-editor": "Stage Layouts",
+      multiview: "Multiview",
       settings: "Settings",
     };
     const title = titleMap[windowType];
@@ -908,6 +909,21 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   });
   useMenuCommand("screens.looks", () => void openLooksWindow());
   useMenuCommand("screens.composer", () => void openScreenComposerWindow());
+  useMenuCommand("screens.stage-layouts", () => {
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke("open_window", { role: "stage-editor", options: null }))
+      .catch((error: unknown) => console.error("[Menu] could not open the stage layouts", error));
+  });
+  // Multiview goes over the media stage's display, and the same item takes it
+  // away again.
+  useMenuCommand("screens.multiview", () => {
+    void import("@tauri-apps/api/core")
+      .then(async ({ invoke }) => {
+        const closed = await invoke<boolean>("close_window", { role: "multiview" });
+        if (!closed) await invoke("open_window", { role: "multiview", options: null });
+      })
+      .catch((error: unknown) => console.error("[Menu] could not open Multiview", error));
+  });
   useMenuCommand("help.website", () => {
     void window.electronAPI?.openExternalBrowser?.(desktopWebBaseUrl());
   });
