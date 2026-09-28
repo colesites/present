@@ -26,8 +26,13 @@ import {
   closeScreen,
   DEFAULT_COLOR,
   DEFAULT_CORNERS,
+  DISPLAY_MODE_EVENT,
+  getDisplayModes,
   identifyScreens,
+  keepDisplayMode,
   openScreen,
+  revertDisplayMode,
+  setDisplayMode,
   removeOutput,
   removeScreen,
   setOutputDisplay,
@@ -37,6 +42,8 @@ import {
   type BlendCurve,
   type ColorAdjust,
   type CornerPin,
+  type DisplayMode,
+  type DisplayModeChange,
   type OutputInfo,
   type OutputKind,
   type OutputPatch,
@@ -581,6 +588,7 @@ function HardwareTab({
           ]}
         />
       </SettingsRow>
+      {display && output.kind === "display" ? <DisplayResolution display={display} /> : null}
       {output.kind === "ndi" ? (
         <SettingsRow label="Source name" description={`Receivers see it as “${output.ndiSource ?? "Present"}”.`}>
           <input
@@ -648,7 +656,7 @@ function HardwareTab({
         <div className="grid grid-cols-2 gap-3 px-4 py-3 text-[12px] sm:grid-cols-4">
           {[
             ["Name", displayName(display)],
-            ["Resolution", times(display.bounds.width, display.bounds.height)],
+            ["Pixels", times(display.bounds.width, display.bounds.height)],
             ["Scale", display.scaleFactor && display.scaleFactor !== 1 ? `${display.scaleFactor}x` : "1x"],
             ["Aspect ratio", aspectText(display.bounds.width, display.bounds.height)],
           ].map(([label, value]) => (
@@ -668,6 +676,152 @@ function HardwareTab({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** A mode's size, as a picker lists it. */
+const modeSize = (mode: DisplayMode) =>
+  `${times(mode.width, mode.height)}${mode.pixelWidth > mode.width ? " (HiDPI)" : ""}`;
+const sizeKey = (mode: DisplayMode) => `${mode.width}x${mode.height}:${mode.pixelWidth}x${mode.pixelHeight}`;
+const hertz = (rate: number) => `${Number.isInteger(rate) ? rate : rate.toFixed(2)} Hz`;
+
+/**
+ * The connected display's own resolution and refresh rate, changed from here
+ * as ProPresenter does. A change goes back by itself unless it is kept, so a
+ * mode a projector can't show never strands it.
+ */
+function DisplayResolution({ display }: { display: ScreenOutput }) {
+  const [modes, setModes] = useState<DisplayMode[] | null>(null);
+  const [until, setUntil] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const read = useCallback(() => {
+    getDisplayModes(display.id)
+      .then(setModes)
+      .catch((error: unknown) => {
+        console.error("[Screens] could not read the display's modes", error);
+        setModes([]);
+      });
+  }, [display.id]);
+
+  // Read again when the display's size changes under us, too.
+  useEffect(read, [read, display.bounds.width, display.bounds.height]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<DisplayModeChange>(DISPLAY_MODE_EVENT, ({ payload }) => {
+          if (payload.displayId !== display.id) return;
+          if (!payload.waiting) setUntil(null);
+          if (payload.reverted) setNotice("The resolution went back, as it wasn't kept.");
+          read();
+        }),
+      )
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else detach = unlisten;
+      })
+      .catch((): void => undefined);
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, [display.id, read]);
+
+  useEffect(() => {
+    if (until === null) return;
+    const intervalId = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(intervalId);
+  }, [until]);
+
+  if (!modes || modes.length === 0) return null;
+  const current = modes.find((mode) => mode.current) ?? null;
+  const sizes = modes.filter((mode, index) => modes.findIndex((each) => sizeKey(each) === sizeKey(mode)) === index);
+  const rates = current ? modes.filter((mode) => sizeKey(mode) === sizeKey(current) && mode.refreshRate > 0) : [];
+
+  const change = (mode: DisplayMode) => {
+    if (mode.current || busy) return;
+    setBusy(true);
+    setNotice(null);
+    setDisplayMode(display.id, mode.id)
+      .then((seconds) => {
+        if (seconds > 0) {
+          setNow(Date.now());
+          setUntil(Date.now() + seconds * 1000);
+        }
+        read();
+      })
+      .catch((error: unknown) => {
+        console.error("[Screens] could not change the display's mode", error);
+        setNotice("The display wouldn't take that resolution.");
+      })
+      .finally(() => setBusy(false));
+  };
+
+  const left = until === null ? 0 : Math.max(0, Math.ceil((until - now) / 1000));
+
+  return (
+    <>
+      <SettingsRow
+        label="Resolution"
+        description={notice ?? `${displayName(display)}'s own mode. The screens on it are drawn again at the new size.`}
+      >
+        <div className="flex items-center gap-2">
+          <SettingsSelect
+            label={`${displayName(display)} resolution`}
+            value={current ? sizeKey(current) : ""}
+            disabled={busy}
+            onChange={(key) => {
+              const same = modes.filter((mode) => sizeKey(mode) === key);
+              const next = same.find((mode) => mode.refreshRate === current?.refreshRate) ?? same[0];
+              if (next) change(next);
+            }}
+            className="w-[200px]"
+            options={sizes.map((mode) => ({ value: sizeKey(mode), label: modeSize(mode) }))}
+          />
+          {rates.length > 1 ? (
+            <SettingsSelect
+              label={`${displayName(display)} refresh rate`}
+              value={current?.id ?? ""}
+              disabled={busy}
+              onChange={(id) => {
+                const next = rates.find((mode) => mode.id === id);
+                if (next) change(next);
+              }}
+              className="w-[110px]"
+              options={rates.map((mode) => ({ value: mode.id, label: hertz(mode.refreshRate) }))}
+            />
+          ) : current && current.refreshRate > 0 ? (
+            <span className="text-[12px] tabular-nums text-muted-foreground">{hertz(current.refreshRate)}</span>
+          ) : null}
+        </div>
+      </SettingsRow>
+      {until !== null ? (
+        <div className="flex flex-wrap items-center gap-3 bg-amber-500/10 px-4 py-2.5 text-[12.5px]">
+          <TriangleAlert className="h-4 w-4 flex-none text-amber-400" aria-hidden />
+          <span className="min-w-0 flex-1">
+            Keep this resolution? {displayName(display)} goes back to the one before in{" "}
+            <span className="font-medium tabular-nums">{left} s</span>.
+          </span>
+          <SettingsButton variant="ghost" onClick={() => void revertDisplayMode(display.id)}>
+            Go back
+          </SettingsButton>
+          <SettingsButton
+            variant="primary"
+            onClick={() => {
+              setUntil(null);
+              void keepDisplayMode(display.id);
+            }}
+          >
+            Keep
+          </SettingsButton>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -1340,8 +1494,8 @@ export function ScreensSettings({
           </div>
         </SettingsGroup>
         <SettingsNote>
-          A display&apos;s own resolution and where it sits are the computer&apos;s, in Display settings. A
-          splitter or a mirroring hub shows as one display, so every TV on it shows the same thing. For
+          A display&apos;s resolution is chosen under its output, in Hardware; where it sits is the
+          computer&apos;s, in Display settings. A splitter or a mirroring hub shows as one display, so every TV on it shows the same thing. For
           different pictures on each, give each its own port, a multi-display adapter, or a DisplayLink dock.
         </SettingsNote>
       </div>

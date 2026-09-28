@@ -32,7 +32,11 @@ All notable desktop changes are documented here. Present follows Semantic Versio
     screen's name, or its display's, on the screen itself.
   - The connected displays are drawn where the computer arranges them; click
     one to send an output there. Display settings opens the computer's own,
-    where a display's resolution is changed.
+    for where they sit.
+  - A connected display's own resolution and refresh rate are chosen under
+    its output, in Hardware (on a Mac). The new one goes back by itself after
+    15 seconds unless it is kept, so a mode a projector can't show never
+    leaves it black.
   - The NDI size is now with the NDI settings, under Connections.
 - Stage layouts, made as you like. Screens ▸ Edit Stage Layouts… opens the
   stage editor. A layout is built from objects placed anywhere on it: text,

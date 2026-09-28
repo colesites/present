@@ -256,6 +256,8 @@ pub fn run() {
         .manage(state::StageRelayState::new())
         // Open lyric editors and the saves they are waiting on.
         .manage(services::mini_lyrics::MiniLyricsState::new())
+        // A display's new mode, until it is kept or taken back.
+        .manage(services::display_modes::DisplayModeState::default())
         .on_menu_event(services::app_menu::handle)
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_info,
@@ -273,6 +275,10 @@ pub fn run() {
             commands::display::get_preferred_resolution,
             commands::display::reconcile_displays,
             commands::display::open_display_settings,
+            commands::display::get_display_modes,
+            commands::display::set_display_mode,
+            commands::display::keep_display_mode,
+            commands::display::revert_display_mode,
             commands::screens::get_screens,
             commands::screens::add_screen,
             commands::screens::update_screen,

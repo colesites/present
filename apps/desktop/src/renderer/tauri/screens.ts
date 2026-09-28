@@ -114,6 +114,22 @@ export const DEFAULT_CORNERS: CornerPin = {
 
 export const SCREENS_CHANGED_EVENT = "screens:changed";
 export const IDENTIFY_EVENT = "screens:identify";
+/** A display's mode changed, was kept, or was taken back. */
+export const DISPLAY_MODE_EVENT = "display-mode:changed";
+
+/** One mode a connected display can be put in. `src-tauri/src/services/display_modes.rs`. */
+export type DisplayMode = {
+  id: string;
+  /** The desktop's size, in points. */
+  width: number;
+  height: number;
+  pixelWidth: number;
+  pixelHeight: number;
+  /** Hertz; 0 when the display does not say. */
+  refreshRate: number;
+  current: boolean;
+};
+export type DisplayModeChange = { displayId: number; waiting: boolean; reverted: boolean };
 
 const inShell = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -137,6 +153,12 @@ export const setOutputDisplay = (id: string, output: string, displayId: number |
 export const openScreen = (id: string) => call<boolean>("open_screen", { id });
 export const closeScreen = (id: string) => call<void>("close_screen", { id });
 export const identifyScreens = (mode: "screens" | "outputs") => call<number>("identify_screens", { mode });
+export const getDisplayModes = (displayId: number) => call<DisplayMode[]>("get_display_modes", { displayId });
+/** Resolves to the seconds before the display goes back unless kept; 0 when nothing changed. */
+export const setDisplayMode = (displayId: number, modeId: string) =>
+  call<number>("set_display_mode", { displayId, modeId });
+export const keepDisplayMode = (displayId: number) => call<void>("keep_display_mode", { displayId });
+export const revertDisplayMode = (displayId: number) => call<void>("revert_display_mode", { displayId });
 
 /** The logical size of an output: what a screen at its own size is drawn at. */
 export const ownSize = (output: ScreenOutput): ScreenSize => {

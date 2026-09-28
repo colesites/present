@@ -13,6 +13,7 @@ pub mod deep_link;
 pub mod dialog;
 pub mod display;
 pub mod display_identity;
+pub mod display_modes;
 pub mod display_names;
 pub mod display_watch;
 pub mod error_log;
