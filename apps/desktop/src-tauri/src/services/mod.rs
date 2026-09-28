@@ -39,6 +39,7 @@ pub mod screen_picture;
 pub mod screens;
 pub mod scripture;
 pub mod scripture_agent;
+pub mod sdi;
 pub mod shortcuts;
 pub mod slide;
 pub mod speech;
@@ -46,6 +47,7 @@ pub mod splash;
 pub mod stage_relay;
 pub mod store;
 pub mod surface;
+pub mod syphon;
 pub mod system_fonts;
 pub mod thumbnails;
 #[cfg(desktop)]

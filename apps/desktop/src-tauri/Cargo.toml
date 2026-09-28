@@ -16,6 +16,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# The SDI shim over Blackmagic's DeckLink API (`sdi/decklink_shim.cpp`). The
+# version already in the tree.
+cc = "1.2"
 
 [dependencies]
 tauri = { version = "2", features = [] }

@@ -29,6 +29,7 @@ import {
   DISPLAY_MODE_EVENT,
   getDisplayModes,
   identifyScreens,
+  isStream,
   keepDisplayMode,
   openScreen,
   revertDisplayMode,
@@ -39,6 +40,7 @@ import {
   updateOutput,
   updateScreen,
   useScreens,
+  useStreamOutputs,
   type BlendCurve,
   type ColorAdjust,
   type CornerPin,
@@ -113,10 +115,24 @@ const aspectText = (width: number, height: number) => {
   return match ? `${ratio.toFixed(2)} (${match[0]})` : ratio.toFixed(2);
 };
 
+const isMac = () => typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
+
+/** What an audience screen can be sent as besides a display. Syphon and SDI are on a Mac. */
+const STREAM_KINDS: Array<{ kind: OutputKind; label: string; note: string; choice: string }> = [
+  { kind: "ndi", label: "NDI", note: "On the network", choice: "NDI, on the network" },
+  { kind: "syphon", label: "Syphon", note: "To apps on this Mac", choice: "Syphon, to apps on this Mac" },
+  { kind: "sdi", label: "SDI", note: "Blackmagic DeckLink", choice: "SDI, out of a DeckLink" },
+];
+const streamKinds = () => STREAM_KINDS.filter((each) => each.kind === "ndi" || isMac());
+
 const outputName = (output: OutputInfo, index: number) =>
   output.kind === "ndi"
-    ? `NDI · ${output.ndiSource ?? "Present"}`
-    : output.display
+    ? `NDI · ${output.source ?? "Present"}`
+    : output.kind === "syphon"
+      ? `Syphon · ${output.source ?? "Present"}`
+      : output.kind === "sdi"
+        ? "SDI"
+        : output.display
       ? displayName(output.display)
       : index === 0
         ? "No display yet"
@@ -399,7 +415,7 @@ function ScreenGroupList({
   selectedId: string | null;
   onSelect: (id: string) => void;
   onToggle: (on: boolean) => void;
-  onAdd: (displayId: number | null, ndi: boolean) => void;
+  onAdd: (displayId: number | null, kind: OutputKind) => void;
   onRemove: (screen: ScreenInfo) => void;
 }) {
   const anyOn = screens.some((screen) => screen.open);
@@ -432,21 +448,23 @@ function ScreenGroupList({
           <DropdownMenuContent align="end" className="min-w-[240px]">
             <DropdownMenuLabel className="text-[11px] font-medium text-muted-foreground">Add a screen on</DropdownMenuLabel>
             {displays.map((display) => (
-              <DropdownMenuItem key={display.id} onSelect={() => onAdd(display.id, false)}>
+              <DropdownMenuItem key={display.id} onSelect={() => onAdd(display.id, "display")}>
                 <span className="min-w-0 flex-1 truncate">{displayName(display)}</span>
                 <span className="text-[11px] tabular-nums text-muted-foreground">
                   {times(display.bounds.width, display.bounds.height)}
                 </span>
               </DropdownMenuItem>
             ))}
-            {group === "audience" ? (
-              <DropdownMenuItem onSelect={() => onAdd(null, true)}>
-                <span className="flex-1">NDI</span>
-                <span className="text-[11px] text-muted-foreground">On the network</span>
-              </DropdownMenuItem>
-            ) : null}
+            {group === "audience"
+              ? streamKinds().map((each) => (
+                  <DropdownMenuItem key={each.kind} onSelect={() => onAdd(null, each.kind)}>
+                    <span className="flex-1">{each.label}</span>
+                    <span className="text-[11px] text-muted-foreground">{each.note}</span>
+                  </DropdownMenuItem>
+                ))
+              : null}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onAdd(null, false)}>
+            <DropdownMenuItem onSelect={() => onAdd(null, "display")}>
               <span className="flex-1">Placeholder</span>
               <span className="text-[11px] text-muted-foreground">No output yet</span>
             </DropdownMenuItem>
@@ -542,15 +560,23 @@ function HardwareTab({
   onRemove: () => void;
 }) {
   const firstOfBuiltIn = screen.builtIn && output.id === "main";
-  const [name, setName] = useState(output.ndiName ?? "");
-  const [named, setNamed] = useState(output.ndiName ?? "");
-  if (named !== (output.ndiName ?? "")) {
-    setNamed(output.ndiName ?? "");
-    setName(output.ndiName ?? "");
+  const streams = useStreamOutputs();
+  const stream = isStream(output.kind);
+  const [name, setName] = useState(output.sourceName ?? "");
+  const [named, setNamed] = useState(output.sourceName ?? "");
+  if (named !== (output.sourceName ?? "")) {
+    setNamed(output.sourceName ?? "");
+    setName(output.sourceName ?? "");
   }
   const target = output.target;
   const display = output.display;
-  const own = display ? { width: display.bounds.width, height: display.bounds.height } : { width: 1920, height: 1080 };
+  const sdiMode = streams.sdiModes.find((mode) => mode.code === (output.videoMode ?? "Hp29"));
+  const own =
+    output.kind === "sdi" && sdiMode
+      ? { width: sdiMode.width, height: sdiMode.height }
+      : display && output.kind === "display"
+        ? { width: display.bounds.width, height: display.bounds.height }
+        : { width: 1920, height: 1080 };
 
   return (
     <div className="divide-y divide-border/60">
@@ -559,7 +585,13 @@ function HardwareTab({
         description={
           output.kind === "ndi"
             ? "Sent as an NDI source on the network, for a streaming computer or a switcher."
-            : output.displayId === null && firstOfBuiltIn
+            : output.kind === "syphon"
+              ? "Shared as a Syphon server, for OBS, Resolume or another app on this Mac."
+              : output.kind === "sdi"
+                ? streams.sdi || output.error
+                  ? "Played out of a Blackmagic DeckLink or UltraStudio device, to a switcher or down a long cable."
+                  : "Needs Blackmagic Desktop Video, the driver for DeckLink and UltraStudio devices, installed on this Mac."
+                : output.displayId === null && firstOfBuiltIn
               ? display
                 ? `Automatic is using ${displayName(display)}, the largest display that isn't the main one.`
                 : "Automatic uses the largest display that isn't the main one."
@@ -568,13 +600,14 @@ function HardwareTab({
       >
         <SettingsSelect
           label={`${screen.name} output ${index + 1}`}
-          value={output.kind === "ndi" ? "ndi" : output.displayId === null ? (firstOfBuiltIn ? "auto" : "none") : String(output.displayId)}
+          value={stream ? output.kind : output.displayId === null ? (firstOfBuiltIn ? "auto" : "none") : String(output.displayId)}
           onChange={(value) => {
-            if (value === "ndi") {
-              onChange({ kind: "ndi" });
+            const kind = STREAM_KINDS.find((each) => each.kind === value)?.kind;
+            if (kind) {
+              onChange({ kind });
               return;
             }
-            if (output.kind === "ndi") onChange({ kind: "display" });
+            if (stream) onChange({ kind: "display" });
             onOutput(value === "auto" || value === "none" ? null : Number(value));
           }}
           className="w-[270px]"
@@ -584,22 +617,72 @@ function HardwareTab({
               value: String(each.id),
               label: `${displayName(each)} · ${times(each.bounds.width, each.bounds.height)}`,
             })),
-            ...(screen.group === "audience" && !firstOfBuiltIn ? [{ value: "ndi", label: "NDI, on the network" }] : []),
+            ...(screen.group === "audience" && !firstOfBuiltIn
+              ? streamKinds().map((each) => ({ value: each.kind, label: each.choice }))
+              : []),
           ]}
         />
       </SettingsRow>
+      {output.error && stream ? (
+        <div className="flex items-start gap-2 bg-red-500/10 px-4 py-2.5 text-[12.5px] text-red-300">
+          <TriangleAlert className="mt-px h-4 w-4 flex-none" aria-hidden />
+          <span>{output.error}</span>
+        </div>
+      ) : null}
       {display && output.kind === "display" ? <DisplayResolution display={display} /> : null}
-      {output.kind === "ndi" ? (
-        <SettingsRow label="Source name" description={`Receivers see it as “${output.ndiSource ?? "Present"}”.`}>
+      {output.kind === "sdi" ? (
+        <>
+          <SettingsRow
+            label="Device"
+            description={
+              streams.sdi && streams.sdiDevices.length === 0 ? "No DeckLink or UltraStudio device is connected." : undefined
+            }
+          >
+            <SettingsSelect
+              label="SDI device"
+              value={output.device ?? "first"}
+              onChange={(value) => onChange({ device: value === "first" ? null : value })}
+              className="w-[270px]"
+              options={[
+                { value: "first", label: "The first one connected" },
+                ...streams.sdiDevices.map((device) => ({ value: device.id, label: device.name })),
+                ...(output.device && !streams.sdiDevices.some((device) => device.id === output.device)
+                  ? [{ value: output.device, label: "A device not connected" }]
+                  : []),
+              ]}
+            />
+          </SettingsRow>
+          {streams.sdiModes.length > 0 ? (
+            <SettingsRow label="Video mode" description="What the switcher or projector at the other end expects.">
+              <SettingsSelect
+                label="SDI video mode"
+                value={output.videoMode ?? "Hp29"}
+                onChange={(videoMode) => onChange({ videoMode })}
+                className="w-[200px]"
+                options={streams.sdiModes.map((mode) => ({ value: mode.code, label: mode.label }))}
+              />
+            </SettingsRow>
+          ) : null}
+        </>
+      ) : null}
+      {output.kind === "ndi" || output.kind === "syphon" ? (
+        <SettingsRow
+          label="Source name"
+          description={
+            output.kind === "ndi"
+              ? `Receivers see it as “${output.source ?? "Present"}”.`
+              : `Other apps list it under Present as “${output.source ?? screen.name}”.`
+          }
+        >
           <input
-            aria-label="NDI source name"
+            aria-label={output.kind === "ndi" ? "NDI source name" : "Syphon server name"}
             value={name}
             maxLength={64}
-            placeholder={`Present ${screen.name}`}
+            placeholder={output.kind === "ndi" ? `Present ${screen.name}` : screen.name}
             onChange={(event) => setName(event.target.value)}
             onBlur={() => {
               const next = name.trim();
-              if (next !== (output.ndiName ?? "")) onChange({ ndiName: next || null });
+              if (next !== (output.sourceName ?? "")) onChange({ sourceName: next || null });
             }}
             onKeyDown={(event) => event.key === "Enter" && (event.target as HTMLInputElement).blur()}
             className={cn(SETTINGS_FIELD, "w-[240px]")}
@@ -610,9 +693,11 @@ function HardwareTab({
         label="Output target"
         description={
           target.kind === "full"
-            ? output.kind === "ndi"
-              ? "Sent at 1920 × 1080."
-              : "The whole output, at its own resolution."
+            ? output.kind === "sdi"
+              ? `The whole signal, at ${times(own.width, own.height)}.`
+              : stream
+                ? "Sent at 1920 × 1080."
+                : "The whole output, at its own resolution."
             : "A rectangle of the output, in its pixels: an LED wall's processor, or a picture framed inside a larger signal. The rest stays black."
         }
       >
@@ -990,7 +1075,7 @@ function ScreenDetail({
   const warnings: string[] = [];
   for (const [index, output] of inUse.entries()) {
     const label = inUse.length > 1 ? `Output ${index + 1}` : screen.name;
-    if (output.kind === "ndi") continue;
+    if (output.kind !== "display") continue;
     if (!output.display) {
       warnings.push(
         output.outputMissing
@@ -1189,12 +1274,14 @@ function ScreenDetail({
                   </span>
                 </DropdownMenuItem>
               ))}
-              {screen.group === "audience" ? (
-                <DropdownMenuItem onSelect={() => onAddOutput("ndi", null)}>
-                  <span className="flex-1">NDI</span>
-                  <span className="text-[11px] text-muted-foreground">On the network</span>
-                </DropdownMenuItem>
-              ) : null}
+              {screen.group === "audience"
+                ? streamKinds().map((each) => (
+                    <DropdownMenuItem key={each.kind} onSelect={() => onAddOutput(each.kind, null)}>
+                      <span className="flex-1">{each.label}</span>
+                      <span className="text-[11px] text-muted-foreground">{each.note}</span>
+                    </DropdownMenuItem>
+                  ))
+                : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1379,8 +1466,8 @@ export function ScreensSettings({
   );
 
   const add = useCallback(
-    (group: ScreenGroup, displayId: number | null, ndi: boolean) => {
-      void addScreen(group, displayId, ndi)
+    (group: ScreenGroup, displayId: number | null, kind: OutputKind) => {
+      void addScreen(group, displayId, kind)
         .then((id) => {
           setSelectedId(id);
           return refresh();
@@ -1432,7 +1519,7 @@ export function ScreensSettings({
                   selectedId={selected?.id ?? null}
                   onSelect={setSelectedId}
                   onToggle={(on) => turnGroup("audience", on)}
-                  onAdd={(displayId, ndi) => add("audience", displayId, ndi)}
+                  onAdd={(displayId, kind) => add("audience", displayId, kind)}
                   onRemove={remove}
                 />
                 <div className="mx-3 border-t border-border/60" />
@@ -1444,7 +1531,7 @@ export function ScreensSettings({
                   selectedId={selected?.id ?? null}
                   onSelect={setSelectedId}
                   onToggle={(on) => turnGroup("stage", on)}
-                  onAdd={(displayId) => add("stage", displayId, false)}
+                  onAdd={(displayId) => add("stage", displayId, "display")}
                   onRemove={remove}
                 />
                 <div className="mt-auto flex items-center gap-2 border-t border-border/60 px-3 py-2.5">

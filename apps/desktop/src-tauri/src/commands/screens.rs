@@ -20,9 +20,11 @@ use crate::services::screens::{
     OutputKind, OutputPatch, OutputSetup, ScreenGroup, ScreenPatch, ScreenSetup, ScreenType,
     MAIN_OUTPUT,
 };
+use crate::services::sdi::{self, SdiDevice};
+use crate::services::syphon;
 use crate::services::window;
 use crate::services::window_spec::output_spec;
-use crate::state::{DisplayState, ScreenNdiState};
+use crate::state::{DisplayState, ScreenStreamState};
 
 /// Sent to every window with the screens, whenever one changes.
 pub const SCREENS_CHANGED_EVENT: &str = "screens:changed";
@@ -52,8 +54,31 @@ pub struct OutputInfo {
     pub window: Option<String>,
     /// What part of the picture it shows, and where, while in use.
     pub geometry: Option<OutputGeometry>,
-    /// The source's name on the network, for an NDI output.
-    pub ndi_source: Option<String>,
+    /// What receivers see it as, for an NDI source or a Syphon server.
+    pub source: Option<String>,
+    /// Why a sent output could not start, the last time it was turned on.
+    pub error: Option<String>,
+}
+
+/// What Present can send a screen to on this computer, for Settings' menus.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamOutputs {
+    /// Syphon is in this build.
+    pub syphon: bool,
+    /// Blackmagic Desktop Video is installed.
+    pub sdi: bool,
+    pub sdi_devices: Vec<SdiDevice>,
+    pub sdi_modes: Vec<SdiModeInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SdiModeInfo {
+    pub code: &'static str,
+    pub label: &'static str,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// A screen as Settings shows it.
@@ -81,9 +106,9 @@ fn output_open(app: &AppHandle, screen: &ScreenSetup, output: &OutputSetup) -> b
         OutputKind::Display => app
             .get_webview_window(&screen.window_label(&output.id))
             .is_some(),
-        OutputKind::Ndi => app
-            .try_state::<ScreenNdiState>()
-            .is_some_and(|ndi| ndi.is_sending(&screen.id, &output.id)),
+        OutputKind::Ndi | OutputKind::Syphon | OutputKind::Sdi => app
+            .try_state::<ScreenStreamState>()
+            .is_some_and(|streams| streams.is_sending(&screen.id, &output.id)),
     }
 }
 
@@ -104,10 +129,14 @@ fn describe(app: &AppHandle, state: &DisplayState) -> AppResult<Vec<ScreenInfo>>
                 OutputKind::Display => {
                     monitors::resolve_output_among(&identified, &preferences, &screen, &output.id)
                 }
-                OutputKind::Ndi => None,
+                OutputKind::Ndi | OutputKind::Syphon | OutputKind::Sdi => None,
             };
-            let laid = layout(&screen, |output| {
-                destination(output).map(|display| (display.bounds.width, display.bounds.height))
+            let laid = layout(&screen, |output| match output.kind {
+                OutputKind::Display => {
+                    destination(output).map(|display| (display.bounds.width, display.bounds.height))
+                }
+                OutputKind::Sdi => Some(output.stream_size()),
+                OutputKind::Ndi | OutputKind::Syphon => None,
             });
             let in_use: Vec<&str> = screen
                 .active_outputs()
@@ -135,8 +164,14 @@ fn describe(app: &AppHandle, state: &DisplayState) -> AppResult<Vec<ScreenInfo>>
                             .iter()
                             .find(|(id, _)| *id == output.id)
                             .map(|(_, geometry)| *geometry),
-                        ndi_source: (output.kind == OutputKind::Ndi)
-                            .then(|| ScreenNdiState::source_name(&screen, output)),
+                        source: matches!(output.kind, OutputKind::Ndi | OutputKind::Syphon)
+                            .then(|| ScreenStreamState::source_name(&screen, output)),
+                        error: output
+                            .kind
+                            .is_stream()
+                            .then(|| app.try_state::<ScreenStreamState>())
+                            .flatten()
+                            .and_then(|streams| streams.failure(&screen.id, &output.id)),
                         output: output.clone(),
                     }
                 })
@@ -214,11 +249,13 @@ pub fn open_output(
         return Ok(false);
     };
     match setup.kind {
-        OutputKind::Ndi => {
-            let Some(ndi) = app.try_state::<ScreenNdiState>() else {
+        OutputKind::Ndi | OutputKind::Syphon | OutputKind::Sdi => {
+            let Some(streams) = app.try_state::<ScreenStreamState>() else {
                 return Ok(false);
             };
-            ndi.start(app, screen, setup).map_err(AppError::Invalid)?;
+            streams
+                .start(app, screen, setup)
+                .map_err(AppError::Invalid)?;
             Ok(true)
         }
         OutputKind::Display => {
@@ -239,18 +276,18 @@ fn close_output(app: &AppHandle, screen: &ScreenSetup, output: &OutputSetup) -> 
         OutputKind::Display => {
             window::close(app, &screen.window_label(&output.id))?;
         }
-        OutputKind::Ndi => {
-            if let Some(ndi) = app.try_state::<ScreenNdiState>() {
-                ndi.stop(&screen.id, &output.id);
+        OutputKind::Ndi | OutputKind::Syphon | OutputKind::Sdi => {
+            if let Some(streams) = app.try_state::<ScreenStreamState>() {
+                streams.stop(&screen.id, &output.id);
             }
         }
     }
-    // A window left from when this output was a display, or a sender from
-    // when it was NDI.
-    if output.kind == OutputKind::Ndi {
+    // A window left from when this output was a display, or a stream from
+    // when it was sent.
+    if output.kind.is_stream() {
         window::close(app, &screen.window_label(&output.id))?;
-    } else if let Some(ndi) = app.try_state::<ScreenNdiState>() {
-        ndi.stop(&screen.id, &output.id);
+    } else if let Some(streams) = app.try_state::<ScreenStreamState>() {
+        streams.stop(&screen.id, &output.id);
     }
     Ok(())
 }
@@ -287,15 +324,15 @@ pub fn set_outputs(
             tracing::warn!(%error, screen = %screen.id, output = %output.id, open, "could not turn an output on or off");
         }
     }
-    // Senders for outputs that are no longer the screen's.
-    if let Some(ndi) = app.try_state::<ScreenNdiState>() {
+    // Streams for outputs that are no longer the screen's.
+    if let Some(streams) = app.try_state::<ScreenStreamState>() {
         let keep: Vec<String> = screen
             .outputs
             .iter()
-            .filter(|output| open && output.kind == OutputKind::Ndi && in_use.contains(&output.id))
+            .filter(|output| open && output.kind.is_stream() && in_use.contains(&output.id))
             .map(|output| screens::display_key(&screen.id, &output.id))
             .collect();
-        ndi.stop_others(&screen.id, &keep);
+        streams.stop_others(&screen.id, &keep);
     }
 }
 
@@ -350,22 +387,34 @@ pub async fn get_screens(
     describe(&app, &state)
 }
 
-/// Add a screen to a group, with its first output on `display_id`, or as an
-/// NDI source when `ndi` is set.
+/// Add a screen to a group, with its first output on `display_id`, or sent
+/// as `kind`: an NDI source, a Syphon server or an SDI output. `ndi` is the
+/// older way to ask for an NDI one.
 #[tauri::command]
 pub async fn add_screen(
     app: AppHandle,
     state: State<'_, DisplayState>,
     group: ScreenGroup,
     display_id: Option<i64>,
+    kind: Option<OutputKind>,
     ndi: Option<bool>,
 ) -> AppResult<String> {
     let key = display_id.map(|id| display_key(&app, id)).transpose()?;
     let id = new_id(5);
     let name = screens::next_name(&state.snapshot().screens(), group);
     let mut screen = screens::new_screen(id.clone(), group, name);
-    if ndi == Some(true) {
-        screen.outputs[0].kind = OutputKind::Ndi;
+    let kind = kind.unwrap_or(if ndi == Some(true) {
+        OutputKind::Ndi
+    } else {
+        OutputKind::Display
+    });
+    if kind.is_stream() {
+        if group == ScreenGroup::Stage {
+            return Err(AppError::Invalid(
+                "A stage screen is shown on a display.".to_owned(),
+            ));
+        }
+        screen.outputs[0].kind = kind;
     }
     state.update(|preferences| {
         preferences.put_screen(screen);
@@ -461,8 +510,28 @@ pub async fn remove_output(
     Ok(())
 }
 
-/// Change one output: display or NDI, its NDI name, its target, colour and
-/// corner pin.
+/// What Present can send a screen to here: Syphon, and SDI with its devices
+/// and video modes.
+#[tauri::command]
+pub async fn get_stream_outputs() -> AppResult<StreamOutputs> {
+    Ok(StreamOutputs {
+        syphon: syphon::available(),
+        sdi: sdi::available(),
+        sdi_devices: sdi::devices(),
+        sdi_modes: sdi::VIDEO_MODES
+            .iter()
+            .map(|mode| SdiModeInfo {
+                code: mode.code,
+                label: mode.label,
+                width: mode.width,
+                height: mode.height,
+            })
+            .collect(),
+    })
+}
+
+/// Change one output: display, NDI, Syphon or SDI, its source name, its SDI
+/// card and mode, its target, colour and corner pin.
 #[tauri::command]
 pub async fn update_output(
     app: AppHandle,
@@ -475,13 +544,15 @@ pub async fn update_output(
     let changing_kind = patch
         .kind
         .is_some_and(|kind| before.output(&output).is_some_and(|each| each.kind != kind));
-    let renaming = patch.ndi_name.is_some();
+    // A stream under another name, or on another card or in another mode.
+    let renaming =
+        patch.source_name.is_some() || patch.device.is_some() || patch.video_mode.is_some();
     let after = patch
         .apply(&before, &output)
         .ok_or_else(|| AppError::NotFound(format!("output {output}")))?;
     state.update(|preferences| preferences.put_screen(after.clone()))?;
     if changing_kind || renaming {
-        // A different kind of output, or a sender under another name: turned
+        // A different kind of output, or a stream made differently: turned
         // off as it was, and on again as it is.
         if let Some(old) = before.output(&output) {
             if is_on(&app, &before) {

@@ -92,6 +92,8 @@ pub fn plan(screen: &ScreenSetup, sizes: &[(String, (u32, u32), f64)]) -> Plan {
             .iter()
             .find(|(id, _, _)| *id == output.id)
             .map(|(_, size, _)| *size)
+            // A sent output not drawn here: its own size, an SDI mode's.
+            .or_else(|| output.kind.is_stream().then(|| output.stream_size()))
     });
     let (width, height) = laid.canvas;
     let area = f64::from(width) * f64::from(height);

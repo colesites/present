@@ -7,7 +7,9 @@ import { useCallback, useEffect, useState } from "react";
 
 export type ScreenGroup = "audience" | "stage";
 export type ScreenType = "single" | "mirror" | "grouped" | "edge-blend";
-export type OutputKind = "display" | "ndi";
+export type OutputKind = "display" | "ndi" | "syphon" | "sdi";
+/** Drawn by Present and sent, rather than a window on a display. */
+export const isStream = (kind: OutputKind) => kind !== "display";
 /** Where the picture goes on its output: the whole of it, or a rectangle in its pixels. */
 export type OutputTarget =
   | { kind: "full" }
@@ -53,7 +55,12 @@ export type OutputGeometry = {
 export type OutputInfo = {
   id: string;
   kind: OutputKind;
-  ndiName?: string;
+  /** An NDI source's or a Syphon server's name, as the operator set it. */
+  sourceName?: string;
+  /** An SDI output's DeckLink device, by its persistent id. */
+  device?: string;
+  /** An SDI output's video mode, by its code. */
+  videoMode?: string;
   target: OutputTarget;
   color: ColorAdjust;
   corners: CornerPin;
@@ -67,7 +74,10 @@ export type OutputInfo = {
   inUse: boolean;
   window: string | null;
   geometry: OutputGeometry | null;
-  ndiSource: string | null;
+  /** What receivers see it as, for an NDI source or a Syphon server. */
+  source: string | null;
+  /** Why it could not start, the last time it was turned on. */
+  error: string | null;
 };
 
 export type ScreenInfo = {
@@ -98,7 +108,9 @@ export type ScreenPatch = {
 
 export type OutputPatch = {
   kind?: OutputKind;
-  ndiName?: string | null;
+  sourceName?: string | null;
+  device?: string | null;
+  videoMode?: string | null;
   target?: OutputTarget;
   color?: ColorAdjust;
   corners?: CornerPin;
@@ -139,8 +151,9 @@ const call = async <T>(command: string, args?: Record<string, unknown>): Promise
 };
 
 export const getScreens = () => call<ScreenInfo[]>("get_screens");
-export const addScreen = (group: ScreenGroup, displayId: number | null, ndi = false) =>
-  call<string>("add_screen", { group, displayId, ndi });
+/** A screen with its first output on a display, or sent as `kind`. */
+export const addScreen = (group: ScreenGroup, displayId: number | null, kind: OutputKind = "display") =>
+  call<string>("add_screen", { group, displayId, kind });
 export const updateScreen = (id: string, patch: ScreenPatch) => call<void>("update_screen", { id, patch });
 export const removeScreen = (id: string) => call<boolean>("remove_screen", { id });
 export const addOutput = (id: string, kind: OutputKind, displayId: number | null) =>
@@ -159,6 +172,40 @@ export const setDisplayMode = (displayId: number, modeId: string) =>
   call<number>("set_display_mode", { displayId, modeId });
 export const keepDisplayMode = (displayId: number) => call<void>("keep_display_mode", { displayId });
 export const revertDisplayMode = (displayId: number) => call<void>("revert_display_mode", { displayId });
+
+/** What Present can send a screen to here. `src-tauri/src/commands/screens.rs`. */
+export type StreamOutputs = {
+  syphon: boolean;
+  /** Blackmagic Desktop Video is installed. */
+  sdi: boolean;
+  sdiDevices: Array<{ id: string; name: string }>;
+  sdiModes: Array<{ code: string; label: string; width: number; height: number }>;
+};
+
+const NO_STREAMS: StreamOutputs = { syphon: false, sdi: false, sdiDevices: [], sdiModes: [] };
+
+/** Syphon, and SDI with its devices and modes: asked once, and again every few seconds for a card plugged in. */
+export function useStreamOutputs(pollMs = 5_000): StreamOutputs {
+  const [outputs, setOutputs] = useState<StreamOutputs>(NO_STREAMS);
+  useEffect(() => {
+    if (!inShell()) return;
+    let cancelled = false;
+    const read = () => {
+      call<StreamOutputs>("get_stream_outputs")
+        .then((next) => {
+          if (!cancelled) setOutputs((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next));
+        })
+        .catch((error: unknown) => console.error("[Screens] could not read the stream outputs", error));
+    };
+    read();
+    const intervalId = window.setInterval(read, pollMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [pollMs]);
+  return outputs;
+}
 
 /** The logical size of an output: what a screen at its own size is drawn at. */
 export const ownSize = (output: ScreenOutput): ScreenSize => {

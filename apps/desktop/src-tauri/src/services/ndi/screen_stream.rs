@@ -1,5 +1,5 @@
-//! A screen's NDI output: an audience screen's picture, sent as a source on
-//! the network, for a streaming computer or a switcher.
+//! A screen's sent output: an audience screen's picture, for an NDI source
+//! on the network, a Syphon server on this Mac or an SDI card's output.
 //!
 //! Beside the NDI output in Connections, which sends what the NDI look says.
 //! This one sends a screen as Screen Configuration has it: its picture, its
@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
 use crate::services::screen_picture::{arrange, plan};
-use crate::services::screens::{OutputTarget, FALLBACK_SIZE};
+use crate::services::screens::{OutputKind, OutputTarget, FALLBACK_SIZE};
 use crate::state::{DisplayState, FileState, OutputState};
 
 use super::output::FrameSource;
@@ -62,10 +62,13 @@ impl FrameSource for ScreenFrameSource {
             .output(&self.output)
             .ok_or_else(|| format!("output {} is no longer set up", self.output))?;
 
-        // An NDI output's own size: a custom target's, or 1080p.
+        // An SDI card's signal is its video mode's size, a custom target
+        // inside it as on a display. NDI and Syphon send what they are
+        // given: a custom target's size, or 1080p.
+        let exact = output.kind == OutputKind::Sdi;
         let size = match output.target {
-            OutputTarget::Custom { width, height, .. } => (width, height),
-            OutputTarget::Full => FALLBACK_SIZE,
+            OutputTarget::Custom { width, height, .. } if !exact => (width, height),
+            _ => output.stream_size(),
         };
         let laid = plan(&screen, &[(self.output.clone(), size, 1.0)]);
         let base = screen
@@ -93,7 +96,7 @@ impl FrameSource for ScreenFrameSource {
             .iter()
             .find(|(id, _)| *id == self.output)
             .map(|(_, arrangement)| *arrangement)
-            .filter(|arrangement| !arrangement.is_identity());
+            .filter(|arrangement| !arrangement.is_identity() || (exact && laid.canvas != size));
         match arrangement {
             Some(arrangement) => {
                 rendered.write_bgra(&mut self.canvas);

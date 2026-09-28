@@ -280,6 +280,7 @@ pub fn run() {
             commands::display::keep_display_mode,
             commands::display::revert_display_mode,
             commands::screens::get_screens,
+            commands::screens::get_stream_outputs,
             commands::screens::add_screen,
             commands::screens::update_screen,
             commands::screens::remove_screen,
@@ -521,7 +522,7 @@ pub fn run() {
             // The view the audience window is drawn on. Not a setting: the
             // compositor draws the audience output wherever it can.
             app.manage(std::sync::Arc::new(state::OutputSurfaceState::new()));
-            app.manage(state::ScreenNdiState::default());
+            app.manage(state::ScreenStreamState::default());
 
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),

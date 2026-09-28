@@ -38,6 +38,12 @@ All notable desktop changes are documented here. Present follows Semantic Versio
     15 seconds unless it is kept, so a mode a projector can't show never
     leaves it black.
   - The NDI size is now with the NDI settings, under Connections.
+  - On a Mac, an audience screen can also be sent to Syphon, for OBS,
+    Resolume or another app on the same Mac, or out of SDI through a
+    Blackmagic DeckLink or UltraStudio device, with its device and video mode
+    (1080p, 1080i, 720p or 2160p, at the usual rates) chosen under the
+    output. SDI needs Blackmagic Desktop Video installed, and says so if it
+    isn't. A sent output that can't start says why under its output.
 - Stage layouts, made as you like. Screens ▸ Edit Stage Layouts… opens the
   stage editor. A layout is built from objects placed anywhere on it: text,
   shapes, the current and next slide's words, the current slide itself, the

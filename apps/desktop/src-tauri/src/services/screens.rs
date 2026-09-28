@@ -89,6 +89,19 @@ pub enum OutputKind {
     Display,
     /// An NDI source on the network, for a streaming computer or a switcher.
     Ndi,
+    /// A Syphon server on this Mac, for another app on it: a streaming or
+    /// projection-mapping app.
+    Syphon,
+    /// SDI out of a Blackmagic DeckLink or UltraStudio device, to a switcher
+    /// or a projector at the end of a long cable.
+    Sdi,
+}
+
+impl OutputKind {
+    /// Drawn by Present and sent, rather than a window on a display.
+    pub fn is_stream(self) -> bool {
+        self != Self::Display
+    }
 }
 
 /// Where the picture goes on its output.
@@ -269,9 +282,16 @@ pub struct OutputSetup {
     pub id: String,
     #[serde(default)]
     pub kind: OutputKind,
-    /// The source's name on the network, for an NDI output.
+    /// The source's name: an NDI source's on the network, or a Syphon
+    /// server's on this Mac.
+    #[serde(default, alias = "ndiName", skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
+    /// An SDI output's device, by its DeckLink persistent id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ndi_name: Option<String>,
+    pub device: Option<String>,
+    /// An SDI output's video mode, by its code in `services/sdi.rs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_mode: Option<String>,
     #[serde(default)]
     pub target: OutputTarget,
     #[serde(default)]
@@ -285,7 +305,9 @@ impl OutputSetup {
         Self {
             id: id.to_owned(),
             kind,
-            ndi_name: None,
+            source_name: None,
+            device: None,
+            video_mode: None,
             target: OutputTarget::Full,
             color: ColorAdjust::default(),
             corners: CornerPin::default(),
@@ -309,11 +331,29 @@ impl OutputSetup {
         };
         self.color = self.color.sanitized();
         self.corners = self.corners.sanitized();
-        self.ndi_name = self
-            .ndi_name
+        self.source_name = self
+            .source_name
             .map(|name| name.trim().chars().take(64).collect::<String>())
             .filter(|name| !name.is_empty());
+        self.device = self
+            .device
+            .map(|device| device.trim().chars().take(32).collect::<String>())
+            .filter(|device| !device.is_empty());
+        self.video_mode = self
+            .video_mode
+            .filter(|code| crate::services::sdi::video_mode(code).is_some());
         self
+    }
+
+    /// The size a sent output is drawn at when its target is Full: an SDI
+    /// output's video mode's, and 1080p for the others.
+    pub fn stream_size(&self) -> (u32, u32) {
+        match self.kind {
+            OutputKind::Sdi => {
+                crate::services::sdi::video_mode_or_default(self.video_mode.as_deref()).size()
+            }
+            _ => FALLBACK_SIZE,
+        }
     }
 }
 
@@ -637,8 +677,12 @@ pub struct ScreenPatch {
 pub struct OutputPatch {
     #[serde(default)]
     pub kind: Option<OutputKind>,
+    #[serde(default, alias = "ndiName", deserialize_with = "present")]
+    pub source_name: Option<Option<String>>,
     #[serde(default, deserialize_with = "present")]
-    pub ndi_name: Option<Option<String>>,
+    pub device: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub video_mode: Option<Option<String>>,
     #[serde(default)]
     pub target: Option<OutputTarget>,
     #[serde(default)]
@@ -689,8 +733,14 @@ impl OutputPatch {
         if let Some(kind) = self.kind {
             changing.kind = kind;
         }
-        if let Some(name) = self.ndi_name {
-            changing.ndi_name = name;
+        if let Some(name) = self.source_name {
+            changing.source_name = name;
+        }
+        if let Some(device) = self.device {
+            changing.device = device;
+        }
+        if let Some(mode) = self.video_mode {
+            changing.video_mode = mode;
         }
         if let Some(target) = self.target {
             changing.target = target;
@@ -1147,5 +1197,28 @@ mod tests {
         let blank: ScreenPatch =
             serde_json::from_value(serde_json::json!({ "name": "   " })).unwrap();
         assert_eq!(blank.apply(&screen).name, "Screen", "never nameless");
+    }
+
+    #[test]
+    fn an_ndi_name_saved_before_is_the_source_name() {
+        let output: OutputSetup =
+            serde_json::from_str(r#"{"id":"main","kind":"ndi","ndiName":"Lobby"}"#).unwrap();
+        assert_eq!(output.source_name.as_deref(), Some("Lobby"));
+        let saved = serde_json::to_string(&output).unwrap();
+        assert!(saved.contains(r#""sourceName":"Lobby""#), "{saved}");
+    }
+
+    #[test]
+    fn an_sdi_output_is_drawn_at_its_video_mode() {
+        let mut output = OutputSetup::new("o1", OutputKind::Sdi);
+        assert_eq!(output.stream_size(), (1920, 1080));
+        output.video_mode = Some("hp59".to_owned());
+        assert_eq!(output.clone().sanitized().stream_size(), (1280, 720));
+        output.video_mode = Some("nonsense".to_owned());
+        assert_eq!(output.sanitized().video_mode, None);
+        assert_eq!(
+            OutputSetup::new("o2", OutputKind::Ndi).stream_size(),
+            FALLBACK_SIZE
+        );
     }
 }

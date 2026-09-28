@@ -1,12 +1,16 @@
 {
   "bundle": {
+    "resources": {
+      "syphon/LICENSE.txt": "syphon/LICENSE.txt"
+    },
     "macOS": {
       "frameworks": [
         "ffmpeg/runtime/libavcodec.63.dylib",
         "ffmpeg/runtime/libavfilter.12.dylib",
         "ffmpeg/runtime/libavformat.63.dylib",
         "ffmpeg/runtime/libavutil.61.dylib",
-        "ffmpeg/runtime/libswscale.10.dylib"
+        "ffmpeg/runtime/libswscale.10.dylib",
+        "syphon/Syphon.framework"
       ]
     }
   }
