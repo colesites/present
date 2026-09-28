@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Manager};
 
 use crate::services::ndi::output::{FrameSink, NdiStatus, OutputWorker};
-use crate::services::ndi::rules;
+use crate::services::ndi::rules::{self, StreamRate};
 use crate::services::ndi::screen_stream::ScreenFrameSource;
 use crate::services::ndi::sender::Sender;
 use crate::services::screens::{display_key, OutputKind, OutputSetup, ScreenSetup};
@@ -98,7 +98,9 @@ fn start_stream(
     output: &OutputSetup,
 ) -> Result<OutputWorker, String> {
     Ok(match output.kind {
-        OutputKind::Display => return Err("A display output is a window, not a stream.".to_owned()),
+        OutputKind::Display | OutputKind::Placeholder => {
+            return Err("Only an NDI, Syphon or SDI output is sent.".to_owned())
+        }
         OutputKind::Ndi => {
             let ndi = app
                 .try_state::<NdiState>()
@@ -107,14 +109,29 @@ fn start_stream(
             let lib = ndi
                 .runtime(resources.as_deref())
                 .map_err(|error| format!("NDI isn't installed on this computer. {error}"))?;
-            let rate = rules::frame_rate(None);
-            let sender = Sender::new(
+            // Its mode's rate, as 30000/1001 and interlaced where it says, or
+            // 30 for a custom size.
+            let (rate, pace) = match output.ndi_rate() {
+                Some(mode) => (
+                    StreamRate {
+                        numerator: mode.rate.0,
+                        denominator: mode.rate.1,
+                        interlaced: mode.interlaced,
+                    },
+                    mode.frames_per_second(),
+                ),
+                None => (
+                    StreamRate::whole(rules::DEFAULT_FRAME_RATE),
+                    rules::DEFAULT_FRAME_RATE,
+                ),
+            };
+            let sender = Sender::new_at(
                 lib,
                 &ScreenStreamState::source_name(screen, output),
                 "",
                 rate,
             )?;
-            spawn(app, screen, output, sender, rate)?
+            spawn(app, screen, output, sender, pace)?
         }
         OutputKind::Syphon => {
             let server = SyphonSink::open(&ScreenStreamState::source_name(screen, output))?;

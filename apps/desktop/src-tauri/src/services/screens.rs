@@ -37,6 +37,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::display::ScreenRole;
+use super::video_modes::{self, VideoMode};
 
 /// The audience output's id: `ScreenRole::Audience`'s stored name.
 pub const AUDIENCE: &str = "audience";
@@ -95,14 +96,20 @@ pub enum OutputKind {
     /// SDI out of a Blackmagic DeckLink or UltraStudio device, to a switcher
     /// or a projector at the end of a long cable.
     Sdi,
+    /// Nowhere yet, at a size of its own: a screen set up before its display
+    /// or its stream is.
+    Placeholder,
 }
 
 impl OutputKind {
     /// Drawn by Present and sent, rather than a window on a display.
     pub fn is_stream(self) -> bool {
-        self != Self::Display
+        matches!(self, Self::Ndi | Self::Syphon | Self::Sdi)
     }
 }
+
+/// The most parts an output is split into, across or down.
+pub const MAX_SPLIT: u32 = 8;
 
 /// Where the picture goes on its output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -118,6 +125,46 @@ pub enum OutputTarget {
         width: u32,
         height: u32,
     },
+    /// One part of it cut into `columns` × `rows` equal parts, counted across
+    /// then down from the top left: two screens side by side on one
+    /// projector, or four on a quad-split TV.
+    Split { columns: u32, rows: u32, cell: u32 },
+}
+
+impl OutputTarget {
+    /// Where on an output of `size` this puts the picture, in its pixels:
+    /// `None` for all of it.
+    pub fn rect(&self, (width, height): (u32, u32)) -> Option<[f64; 4]> {
+        match *self {
+            Self::Full => None,
+            Self::Custom {
+                x,
+                y,
+                width,
+                height,
+            } => Some([
+                f64::from(x),
+                f64::from(y),
+                f64::from(width),
+                f64::from(height),
+            ]),
+            Self::Split {
+                columns,
+                rows,
+                cell,
+            } => {
+                let (columns, rows) = (columns.max(1), rows.max(1));
+                let part_width = f64::from(width) / f64::from(columns);
+                let part_height = f64::from(height) / f64::from(rows);
+                Some([
+                    f64::from(cell % columns) * part_width,
+                    f64::from((cell / columns).min(rows - 1)) * part_height,
+                    part_width,
+                    part_height,
+                ])
+            }
+        }
+    }
 }
 
 /// An output's colour, for projectors that do not match or a room that is
@@ -289,9 +336,14 @@ pub struct OutputSetup {
     /// An SDI output's device, by its DeckLink persistent id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<String>,
-    /// An SDI output's video mode, by its code in `services/sdi.rs`.
+    /// An NDI or SDI output's video mode, by its code in
+    /// `services/video_modes.rs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_mode: Option<String>,
+    /// A size of its own: an NDI output's custom size, a Syphon server's or
+    /// a placeholder's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<(u32, u32)>,
     #[serde(default)]
     pub target: OutputTarget,
     #[serde(default)]
@@ -308,6 +360,7 @@ impl OutputSetup {
             source_name: None,
             device: None,
             video_mode: None,
+            size: None,
             target: OutputTarget::Full,
             color: ColorAdjust::default(),
             corners: CornerPin::default(),
@@ -328,7 +381,23 @@ impl OutputSetup {
                 width: width.clamp(16, MAX_SIDE),
                 height: height.clamp(16, MAX_SIDE),
             },
+            OutputTarget::Split {
+                columns,
+                rows,
+                cell,
+            } => {
+                let columns = columns.clamp(1, MAX_SPLIT);
+                let rows = rows.clamp(1, MAX_SPLIT);
+                OutputTarget::Split {
+                    columns,
+                    rows,
+                    cell: cell.min(columns * rows - 1),
+                }
+            }
         };
+        self.size = self
+            .size
+            .map(|(width, height)| (width.clamp(16, MAX_SIDE), height.clamp(16, MAX_SIDE)));
         self.color = self.color.sanitized();
         self.corners = self.corners.sanitized();
         self.source_name = self
@@ -341,19 +410,28 @@ impl OutputSetup {
             .filter(|device| !device.is_empty());
         self.video_mode = self
             .video_mode
-            .filter(|code| crate::services::sdi::video_mode(code).is_some());
+            .filter(|code| video_modes::video_mode(code).is_some());
         self
     }
 
-    /// The size a sent output is drawn at when its target is Full: an SDI
-    /// output's video mode's, and 1080p for the others.
+    /// The size of an output that is not a display: its video mode's, or
+    /// the size it was given, or 1080p.
     pub fn stream_size(&self) -> (u32, u32) {
+        let mode = |default| video_modes::video_mode_or(self.video_mode.as_deref(), default).size();
         match self.kind {
-            OutputKind::Sdi => {
-                crate::services::sdi::video_mode_or_default(self.video_mode.as_deref()).size()
+            OutputKind::Sdi => mode(video_modes::SDI_DEFAULT),
+            OutputKind::Ndi => self.size.unwrap_or_else(|| mode(video_modes::NDI_DEFAULT)),
+            OutputKind::Syphon | OutputKind::Placeholder | OutputKind::Display => {
+                self.size.unwrap_or(FALLBACK_SIZE)
             }
-            _ => FALLBACK_SIZE,
         }
+    }
+
+    /// The rate an NDI output is sent at: its mode's, or 30 for a custom size.
+    pub fn ndi_rate(&self) -> Option<VideoMode> {
+        (self.kind == OutputKind::Ndi && self.size.is_none()).then(|| {
+            video_modes::video_mode_or(self.video_mode.as_deref(), video_modes::NDI_DEFAULT)
+        })
     }
 }
 
@@ -683,6 +761,8 @@ pub struct OutputPatch {
     pub device: Option<Option<String>>,
     #[serde(default, deserialize_with = "present")]
     pub video_mode: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub size: Option<Option<(u32, u32)>>,
     #[serde(default)]
     pub target: Option<OutputTarget>,
     #[serde(default)]
@@ -741,6 +821,9 @@ impl OutputPatch {
         }
         if let Some(mode) = self.video_mode {
             changing.video_mode = mode;
+        }
+        if let Some(size) = self.size {
+            changing.size = size;
         }
         if let Some(target) = self.target {
             changing.target = target;
@@ -816,24 +899,33 @@ pub fn layout(
     size_of: impl Fn(&OutputSetup) -> Option<(u32, u32)>,
 ) -> ScreenLayout {
     let outputs = screen.active_outputs();
+    // A sent output or a placeholder has a size of its own, a display the
+    // one it is connected at.
+    let own = |output: &OutputSetup| {
+        size_of(output).unwrap_or_else(|| {
+            if output.kind == OutputKind::Display {
+                FALLBACK_SIZE
+            } else {
+                output.stream_size()
+            }
+        })
+    };
     let target_size = |output: &OutputSetup| match output.target {
         OutputTarget::Custom { width, height, .. } => (width, height),
-        OutputTarget::Full => size_of(output).unwrap_or(FALLBACK_SIZE),
+        OutputTarget::Full => own(output),
+        OutputTarget::Split { .. } => {
+            output
+                .target
+                .rect(own(output))
+                .map_or(own(output), |[_, _, width, height]| {
+                    (
+                        (width.round() as u32).max(1),
+                        (height.round() as u32).max(1),
+                    )
+                })
+        }
     };
-    let target_rect = |output: &OutputSetup| match output.target {
-        OutputTarget::Custom {
-            x,
-            y,
-            width,
-            height,
-        } => Some([
-            f64::from(x),
-            f64::from(y),
-            f64::from(width),
-            f64::from(height),
-        ]),
-        OutputTarget::Full => None,
-    };
+    let target_rect = |output: &OutputSetup| output.target.rect(own(output));
     let (cell_width, cell_height) = outputs.first().map_or(FALLBACK_SIZE, target_size);
     let whole = |output: &OutputSetup| OutputGeometry {
         source: [0.0, 0.0, 1.0, 1.0],
@@ -1220,5 +1312,68 @@ mod tests {
             OutputSetup::new("o2", OutputKind::Ndi).stream_size(),
             FALLBACK_SIZE
         );
+    }
+
+    #[test]
+    fn a_split_target_is_one_part_of_its_output() {
+        let mut screen = new_screen("s1".to_owned(), ScreenGroup::Audience, "Split".to_owned());
+        screen.outputs[0].target = OutputTarget::Split {
+            columns: 2,
+            rows: 1,
+            cell: 1,
+        };
+        let laid = layout(&screen, |_| Some((1920, 1080)));
+        assert_eq!(laid.canvas, (960, 1080), "the picture is the part's size");
+        assert_eq!(
+            laid.outputs[0].1.target,
+            Some([960.0, 0.0, 960.0, 1080.0]),
+            "the right half"
+        );
+
+        screen.outputs[0].target = OutputTarget::Split {
+            columns: 2,
+            rows: 2,
+            cell: 9,
+        };
+        let sanitized = screen.sanitized();
+        assert_eq!(
+            sanitized.outputs[0].target,
+            OutputTarget::Split {
+                columns: 2,
+                rows: 2,
+                cell: 3
+            },
+            "a part past the last is the last"
+        );
+        let laid = layout(&sanitized, |_| Some((1920, 1080)));
+        assert_eq!(
+            laid.outputs[0].1.target,
+            Some([960.0, 540.0, 960.0, 540.0]),
+            "bottom right"
+        );
+    }
+
+    #[test]
+    fn an_ndi_output_is_its_modes_size_and_rate_or_a_size_of_its_own() {
+        let mut output = OutputSetup::new("o1", OutputKind::Ndi);
+        assert_eq!(output.stream_size(), (1920, 1080));
+        assert_eq!(output.ndi_rate().map(|mode| mode.label), Some("1080p30"));
+        output.video_mode = Some("4k30".to_owned());
+        assert_eq!(output.stream_size(), (3840, 2160));
+        output.size = Some((1280, 720));
+        assert_eq!(output.stream_size(), (1280, 720), "a custom size wins");
+        assert_eq!(output.ndi_rate(), None, "sent at 30");
+
+        let mut placeholder = OutputSetup::new("o2", OutputKind::Placeholder);
+        assert_eq!(placeholder.stream_size(), FALLBACK_SIZE);
+        placeholder.size = Some((1280, 720));
+        let mut screen = new_screen("s2".to_owned(), ScreenGroup::Stage, "Waiting".to_owned());
+        screen.outputs[0] = placeholder;
+        assert_eq!(
+            layout(&screen, |_| None).canvas,
+            (1280, 720),
+            "a placeholder keeps its size"
+        );
+        assert!(!OutputKind::Placeholder.is_stream());
     }
 }

@@ -7,13 +7,15 @@ import { useCallback, useEffect, useState } from "react";
 
 export type ScreenGroup = "audience" | "stage";
 export type ScreenType = "single" | "mirror" | "grouped" | "edge-blend";
-export type OutputKind = "display" | "ndi" | "syphon" | "sdi";
+export type OutputKind = "display" | "ndi" | "syphon" | "sdi" | "placeholder";
 /** Drawn by Present and sent, rather than a window on a display. */
-export const isStream = (kind: OutputKind) => kind !== "display";
+export const isStream = (kind: OutputKind) => kind === "ndi" || kind === "syphon" || kind === "sdi";
 /** Where the picture goes on its output: the whole of it, or a rectangle in its pixels. */
 export type OutputTarget =
   | { kind: "full" }
-  | { kind: "custom"; x: number; y: number; width: number; height: number };
+  | { kind: "custom"; x: number; y: number; width: number; height: number }
+  /** One part of the output cut into equal parts, counted across then down. */
+  | { kind: "split"; columns: number; rows: number; cell: number };
 export type ColorAdjust = {
   brightness: number;
   contrast: number;
@@ -59,8 +61,10 @@ export type OutputInfo = {
   sourceName?: string;
   /** An SDI output's DeckLink device, by its persistent id. */
   device?: string;
-  /** An SDI output's video mode, by its code. */
+  /** An NDI or SDI output's video mode, by its code. */
   videoMode?: string;
+  /** An NDI output's custom size, a Syphon server's or a placeholder's. */
+  size?: [number, number];
   target: OutputTarget;
   color: ColorAdjust;
   corners: CornerPin;
@@ -111,6 +115,7 @@ export type OutputPatch = {
   sourceName?: string | null;
   device?: string | null;
   videoMode?: string | null;
+  size?: [number, number] | null;
   target?: OutputTarget;
   color?: ColorAdjust;
   corners?: CornerPin;
@@ -126,22 +131,6 @@ export const DEFAULT_CORNERS: CornerPin = {
 
 export const SCREENS_CHANGED_EVENT = "screens:changed";
 export const IDENTIFY_EVENT = "screens:identify";
-/** A display's mode changed, was kept, or was taken back. */
-export const DISPLAY_MODE_EVENT = "display-mode:changed";
-
-/** One mode a connected display can be put in. `src-tauri/src/services/display_modes.rs`. */
-export type DisplayMode = {
-  id: string;
-  /** The desktop's size, in points. */
-  width: number;
-  height: number;
-  pixelWidth: number;
-  pixelHeight: number;
-  /** Hertz; 0 when the display does not say. */
-  refreshRate: number;
-  current: boolean;
-};
-export type DisplayModeChange = { displayId: number; waiting: boolean; reverted: boolean };
 
 const inShell = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -166,12 +155,6 @@ export const setOutputDisplay = (id: string, output: string, displayId: number |
 export const openScreen = (id: string) => call<boolean>("open_screen", { id });
 export const closeScreen = (id: string) => call<void>("close_screen", { id });
 export const identifyScreens = (mode: "screens" | "outputs") => call<number>("identify_screens", { mode });
-export const getDisplayModes = (displayId: number) => call<DisplayMode[]>("get_display_modes", { displayId });
-/** Resolves to the seconds before the display goes back unless kept; 0 when nothing changed. */
-export const setDisplayMode = (displayId: number, modeId: string) =>
-  call<number>("set_display_mode", { displayId, modeId });
-export const keepDisplayMode = (displayId: number) => call<void>("keep_display_mode", { displayId });
-export const revertDisplayMode = (displayId: number) => call<void>("revert_display_mode", { displayId });
 
 /** What Present can send a screen to here. `src-tauri/src/commands/screens.rs`. */
 export type StreamOutputs = {
@@ -179,10 +162,26 @@ export type StreamOutputs = {
   /** Blackmagic Desktop Video is installed. */
   sdi: boolean;
   sdiDevices: Array<{ id: string; name: string }>;
-  sdiModes: Array<{ code: string; label: string; width: number; height: number }>;
+  sdiModes: VideoMode[];
+  /** The modes an NDI output is offered. */
+  ndiModes: VideoMode[];
 };
 
-const NO_STREAMS: StreamOutputs = { syphon: false, sdi: false, sdiDevices: [], sdiModes: [] };
+export type VideoMode = { code: string; label: string; width: number; height: number };
+
+const NO_STREAMS: StreamOutputs = { syphon: false, sdi: false, sdiDevices: [], sdiModes: [], ndiModes: [] };
+
+/** What a sent output or a placeholder is made at, as `stream_size` in `services/screens.rs` has it. */
+export const outputSize = (output: OutputInfo, streams: StreamOutputs): [number, number] => {
+  const mode = (modes: VideoMode[], fallback: string) => {
+    const found = modes.find((each) => each.code === (output.videoMode ?? fallback)) ?? modes.find((each) => each.code === fallback);
+    return found ? ([found.width, found.height] as [number, number]) : null;
+  };
+  if (output.kind === "display" && output.display) return [output.display.bounds.width, output.display.bounds.height];
+  if (output.kind === "sdi") return mode(streams.sdiModes, "Hp29") ?? [1920, 1080];
+  if (output.kind === "ndi") return output.size ?? mode(streams.ndiModes, "Hp30") ?? [1920, 1080];
+  return output.size ?? [1920, 1080];
+};
 
 /** Syphon, and SDI with its devices and modes: asked once, and again every few seconds for a card plugged in. */
 export function useStreamOutputs(pollMs = 5_000): StreamOutputs {

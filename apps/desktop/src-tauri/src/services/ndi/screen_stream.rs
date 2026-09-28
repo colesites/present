@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
 use crate::services::screen_picture::{arrange, plan};
-use crate::services::screens::{OutputKind, OutputTarget, FALLBACK_SIZE};
+use crate::services::screens::FALLBACK_SIZE;
 use crate::state::{DisplayState, FileState, OutputState};
 
 use super::output::FrameSource;
@@ -62,14 +62,9 @@ impl FrameSource for ScreenFrameSource {
             .output(&self.output)
             .ok_or_else(|| format!("output {} is no longer set up", self.output))?;
 
-        // An SDI card's signal is its video mode's size, a custom target
-        // inside it as on a display. NDI and Syphon send what they are
-        // given: a custom target's size, or 1080p.
-        let exact = output.kind == OutputKind::Sdi;
-        let size = match output.target {
-            OutputTarget::Custom { width, height, .. } if !exact => (width, height),
-            _ => output.stream_size(),
-        };
+        // Its own size: a video mode's, or the size it was given. A custom
+        // or split target sits inside it, as on a display.
+        let size = output.stream_size();
         let laid = plan(&screen, &[(self.output.clone(), size, 1.0)]);
         let base = screen
             .color
@@ -96,7 +91,7 @@ impl FrameSource for ScreenFrameSource {
             .iter()
             .find(|(id, _)| *id == self.output)
             .map(|(_, arrangement)| *arrangement)
-            .filter(|arrangement| !arrangement.is_identity() || (exact && laid.canvas != size));
+            .filter(|arrangement| !arrangement.is_identity() || laid.canvas != size);
         match arrangement {
             Some(arrangement) => {
                 rendered.write_bgra(&mut self.canvas);

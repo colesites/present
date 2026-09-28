@@ -25,6 +25,29 @@ pub const FRAME_RATE_D: i32 = 1_000;
 pub const FOURCC_BGRA: u32 = u32::from_le_bytes(*b"BGRA");
 /// `NDIlib_frame_format_type_progressive`.
 pub const FRAME_FORMAT_PROGRESSIVE: i32 = 1;
+/// `NDIlib_frame_format_type_interleaved`: both fields of an interlaced frame.
+pub const FRAME_FORMAT_INTERLEAVED: i32 = 0;
+
+/// The rate a stream declares, and the SDK paces it to: frames a second as a
+/// fraction, and whether its frames are interlaced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamRate {
+    pub numerator: u32,
+    pub denominator: u32,
+    pub interlaced: bool,
+}
+
+impl StreamRate {
+    /// A whole number of frames a second, as thousandths, the way the SDK's
+    /// own examples declare one.
+    pub fn whole(fps: u32) -> Self {
+        Self {
+            numerator: fps.saturating_mul(1_000),
+            denominator: FRAME_RATE_D as u32,
+            interlaced: false,
+        }
+    }
+}
 
 pub const DISCOVERY_WAIT: Duration = Duration::from_millis(1200);
 
@@ -108,19 +131,28 @@ pub fn frame_rate(asked: Option<u32>) -> u32 {
 }
 
 pub fn frame_header(width: u32, height: u32, rate: u32) -> Option<FrameHeader> {
-    if width == 0 || height == 0 {
+    frame_header_at(width, height, StreamRate::whole(rate))
+}
+
+/// A header for a frame at `rate`, which may be fractional, as 30000/1001, or
+/// interlaced.
+pub fn frame_header_at(width: u32, height: u32, rate: StreamRate) -> Option<FrameHeader> {
+    if width == 0 || height == 0 || rate.numerator == 0 {
         return None;
     }
     let stride = width.checked_mul(4)?;
     Some(FrameHeader {
         width: i32::try_from(width).ok()?,
         height: i32::try_from(height).ok()?,
-        // As thousandths, the way the SDK's own examples declare a rate.
-        frame_rate_n: i32::try_from(rate.checked_mul(1_000)?).ok()?,
-        frame_rate_d: FRAME_RATE_D,
+        frame_rate_n: i32::try_from(rate.numerator).ok()?,
+        frame_rate_d: i32::try_from(rate.denominator.max(1)).ok()?,
         picture_aspect_ratio: (f64::from(width) / f64::from(height)) as f32,
         line_stride_bytes: i32::try_from(stride).ok()?,
-        frame_format: FRAME_FORMAT_PROGRESSIVE,
+        frame_format: if rate.interlaced {
+            FRAME_FORMAT_INTERLEAVED
+        } else {
+            FRAME_FORMAT_PROGRESSIVE
+        },
         fourcc: FOURCC_BGRA,
     })
 }
@@ -479,6 +511,22 @@ mod tests {
         assert_eq!((header.frame_rate_n, header.frame_rate_d), (60_000, 1_000));
         let header = frame_header(1920, 1080, 25).expect("a header");
         assert_eq!((header.frame_rate_n, header.frame_rate_d), (25_000, 1_000));
+    }
+
+    #[test]
+    fn a_broadcast_rate_is_declared_as_its_fraction_and_interlaced_as_such() {
+        let rate = StreamRate {
+            numerator: 30_000,
+            denominator: 1001,
+            interlaced: true,
+        };
+        let header = frame_header_at(1920, 1080, rate).expect("a header");
+        assert_eq!((header.frame_rate_n, header.frame_rate_d), (30_000, 1001));
+        assert_eq!(header.frame_format, FRAME_FORMAT_INTERLEAVED);
+        assert_eq!(
+            frame_header(1920, 1080, 30),
+            frame_header_at(1920, 1080, StreamRate::whole(30))
+        );
     }
 
     #[test]

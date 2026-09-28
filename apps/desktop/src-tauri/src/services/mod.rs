@@ -13,7 +13,6 @@ pub mod deep_link;
 pub mod dialog;
 pub mod display;
 pub mod display_identity;
-pub mod display_modes;
 pub mod display_names;
 pub mod display_watch;
 pub mod error_log;
@@ -53,6 +52,7 @@ pub mod thumbnails;
 #[cfg(desktop)]
 pub mod updates;
 pub mod video;
+pub mod video_modes;
 pub mod web_storage;
 pub mod webview_crash;
 pub mod window;

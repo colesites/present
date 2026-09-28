@@ -24,26 +24,27 @@ All notable desktop changes are documented here. Present follows Semantic Versio
     Grouped (one picture cut across a grid of outputs, like a wall of TVs) or
     Edge blend (one wide picture across projectors side by side, the overlap
     faded with a linear, cubic or quadratic curve).
-  - Each output has an Output Target, Full (the whole output at its own
-    resolution) or Custom (a rectangle of it, in its pixels, for an LED
-    processor or a framed picture), and its own Color (brightness, contrast,
+  - Each output's Output menu is grouped as ProPresenter's is: the connected
+    displays, then New NDI (720p59.94 to 4Kp60), New Syphon and New
+    Placeholder (1280 × 720, 1920 × 1080 or 3840 × 2160), each with a Custom
+    Size, and on a Mac the SDI devices and their video modes.
+  - Its Output Target is Full, one part of the output split 2 × 1, 1 × 2,
+    2 × 2, 3 × 1 or 3 × 3, a picture of a common size at its top left, or
+    Custom (any rectangle, in its pixels, for an LED processor or a framed
+    picture). Each output has its own Color (brightness, contrast,
     saturation, hue, black level) and Corner Pin tabs.
   - Each screen can be renamed and given a screen color. Identify shows each
     screen's name, or its display's, on the screen itself.
   - The connected displays are drawn where the computer arranges them; click
-    one to send an output there. Display settings opens the computer's own,
-    for where they sit.
-  - A connected display's own resolution and refresh rate are chosen under
-    its output, in Hardware (on a Mac). The new one goes back by itself after
-    15 seconds unless it is kept, so a mode a projector can't show never
-    leaves it black.
+    one to send an output there. Display settings opens the computer's own.
   - The NDI size is now with the NDI settings, under Connections.
   - On a Mac, an audience screen can also be sent to Syphon, for OBS,
     Resolume or another app on the same Mac, or out of SDI through a
-    Blackmagic DeckLink or UltraStudio device, with its device and video mode
-    (1080p, 1080i, 720p or 2160p, at the usual rates) chosen under the
-    output. SDI needs Blackmagic Desktop Video installed, and says so if it
-    isn't. A sent output that can't start says why under its output.
+    Blackmagic DeckLink or UltraStudio device (1080p, 1080i, 720p or 2160p,
+    at the usual rates). SDI needs Blackmagic Desktop Video installed, and
+    says so if it isn't. An NDI output is sent at its mode's rate, 29.97 and
+    interlaced ones included. A sent output that can't start says why under
+    its output.
 - Stage layouts, made as you like. Screens ▸ Edit Stage Layouts… opens the
   stage editor. A layout is built from objects placed anywhere on it: text,
   shapes, the current and next slide's words, the current slide itself, the
@@ -59,7 +60,7 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   once, live, as a wall of TVs: the audience picture and each stage screen's
   layout, each labelled and edged green while on, with the clock and the
   timer above them. Choose screens picks the ones shown and how many go on a
-  page, from 1 to 16 or all of them; the wall is laid out to make them as
+  page, any number or all of them; the wall is laid out to make them as
   large as they can be, and more screens go on further pages, turned with
   Prev and Next, the page numbers or the arrow keys. Back to stage, or Esc,
   returns to the stage screen.

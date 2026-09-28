@@ -208,18 +208,10 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "CGImage",
     "CGDataProvider",
     "CGColorSpace",
-    # A connected display's modes, and changing to one.
-    "CGDirectDisplay",
-    "CGDisplayConfiguration",
-    "CGError",
 ] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = [
     "std",
     "CFCGTypes",
-    "CFArray",
-    "CFDictionary",
-    "CFNumber",
-    "CFString",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std",

@@ -14,84 +14,12 @@ use serde::Serialize;
 use crate::services::ndi::output::FrameSink;
 use crate::services::ndi::sender::SendError;
 
-/// A video mode a DeckLink device plays out in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VideoMode {
-    /// Blackmagic's four-character code, which is also how it is stored.
-    pub code: &'static str,
-    pub label: &'static str,
-    pub width: u32,
-    pub height: u32,
-    /// Frames a second, as a fraction.
-    pub rate: (u32, u32),
-}
+pub use crate::services::video_modes::VideoMode;
+use crate::services::video_modes::{self, SDI_DEFAULT};
 
-impl VideoMode {
-    pub fn size(&self) -> (u32, u32) {
-        (self.width, self.height)
-    }
-
-    /// The code as the `BMDDisplayMode` it spells.
-    pub fn fourcc(&self) -> u32 {
-        self.code
-            .bytes()
-            .fold(0u32, |value, byte| (value << 8) | u32::from(byte))
-    }
-
-    /// Whole frames a second, rounded up, for the send loop's pace.
-    pub fn frames_per_second(&self) -> u32 {
-        self.rate.0.div_ceil(self.rate.1.max(1))
-    }
-}
-
-const fn mode(
-    code: &'static str,
-    label: &'static str,
-    width: u32,
-    height: u32,
-    rate: (u32, u32),
-) -> VideoMode {
-    VideoMode {
-        code,
-        label,
-        width,
-        height,
-        rate,
-    }
-}
-
-/// The modes offered, as `DeckLinkAPIModes.h` names them. Interlaced modes
-/// count frames, not fields: 1080i59.94 is 29.97 frames a second.
-pub const VIDEO_MODES: &[VideoMode] = &[
-    mode("Hp29", "1080p 29.97", 1920, 1080, (30_000, 1001)),
-    mode("Hp30", "1080p 30", 1920, 1080, (30, 1)),
-    mode("Hp25", "1080p 25", 1920, 1080, (25, 1)),
-    mode("24ps", "1080p 24", 1920, 1080, (24, 1)),
-    mode("23ps", "1080p 23.98", 1920, 1080, (24_000, 1001)),
-    mode("Hp59", "1080p 59.94", 1920, 1080, (60_000, 1001)),
-    mode("Hp60", "1080p 60", 1920, 1080, (60, 1)),
-    mode("Hp50", "1080p 50", 1920, 1080, (50, 1)),
-    mode("Hi59", "1080i 59.94", 1920, 1080, (30_000, 1001)),
-    mode("Hi60", "1080i 60", 1920, 1080, (30, 1)),
-    mode("Hi50", "1080i 50", 1920, 1080, (25, 1)),
-    mode("hp59", "720p 59.94", 1280, 720, (60_000, 1001)),
-    mode("hp60", "720p 60", 1280, 720, (60, 1)),
-    mode("hp50", "720p 50", 1280, 720, (50, 1)),
-    mode("4k29", "2160p 29.97", 3840, 2160, (30_000, 1001)),
-    mode("4k30", "2160p 30", 3840, 2160, (30, 1)),
-    mode("4k25", "2160p 25", 3840, 2160, (25, 1)),
-    mode("4k59", "2160p 59.94", 3840, 2160, (60_000, 1001)),
-    mode("4k60", "2160p 60", 3840, 2160, (60, 1)),
-    mode("4k50", "2160p 50", 3840, 2160, (50, 1)),
-];
-
-pub fn video_mode(code: &str) -> Option<VideoMode> {
-    VIDEO_MODES.iter().copied().find(|mode| mode.code == code)
-}
-
-/// An output's mode, or 1080p 29.97 when none is chosen.
+/// An output's mode, or 1080p29.97 when none is chosen.
 pub fn video_mode_or_default(code: Option<&str>) -> VideoMode {
-    code.and_then(video_mode).unwrap_or(VIDEO_MODES[0])
+    video_modes::video_mode_or(code, SDI_DEFAULT)
 }
 
 /// A device that can play out.
@@ -315,46 +243,6 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_mode_code_spells_its_decklink_value() {
-        // 'Hp29' and '4k60' as DeckLinkAPIModes.h has them.
-        assert_eq!(
-            video_mode("Hp29").map(|mode| mode.fourcc()),
-            Some(0x4870_3239)
-        );
-        assert_eq!(
-            video_mode("4k60").map(|mode| mode.fourcc()),
-            Some(0x346B_3630)
-        );
-        assert_eq!(
-            video_mode("23ps").map(|mode| mode.fourcc()),
-            Some(0x3233_7073)
-        );
-    }
-
-    #[test]
-    fn every_mode_is_offered_once() {
-        for (index, mode) in VIDEO_MODES.iter().enumerate() {
-            assert_eq!(mode.code.len(), 4, "{} is a four-character code", mode.code);
-            assert!(
-                VIDEO_MODES[index + 1..]
-                    .iter()
-                    .all(|other| other.code != mode.code),
-                "{} is listed twice",
-                mode.code
-            );
-        }
-    }
-
-    #[test]
-    fn an_output_without_a_mode_plays_1080p_29_97() {
-        let mode = video_mode_or_default(None);
-        assert_eq!((mode.code, mode.size()), ("Hp29", (1920, 1080)));
-        assert_eq!(video_mode_or_default(Some("nope")).code, "Hp29");
-        assert_eq!(mode.frames_per_second(), 30);
-        assert_eq!(video_mode_or_default(Some("Hi50")).frames_per_second(), 25);
-    }
 
     #[test]
     fn without_desktop_video_an_sdi_output_says_so() {

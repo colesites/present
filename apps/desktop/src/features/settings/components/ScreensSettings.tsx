@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, Plus, RotateCcw, Trash2, TriangleAlert } from "lucide-react";
+import { Check, ChevronsUpDown, ExternalLink, Plus, RotateCcw, Trash2, TriangleAlert } from "lucide-react";
 import { ColorInput, Segmented } from "../../../renderer/shared/components/style-controls";
 import {
   ContextMenu,
@@ -15,8 +15,31 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../../../renderer/shared/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../../renderer/shared/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "../../../renderer/shared/components/ui/select";
 import { areDisplayListsEqual } from "../../../renderer/shared/lib/display-list";
 import { askEditorFor, useStageLayouts } from "../../stage/layouts";
 import { cn } from "../../../renderer/shared/lib/utils";
@@ -26,14 +49,10 @@ import {
   closeScreen,
   DEFAULT_COLOR,
   DEFAULT_CORNERS,
-  DISPLAY_MODE_EVENT,
-  getDisplayModes,
   identifyScreens,
   isStream,
-  keepDisplayMode,
   openScreen,
-  revertDisplayMode,
-  setDisplayMode,
+  outputSize,
   removeOutput,
   removeScreen,
   setOutputDisplay,
@@ -44,11 +63,12 @@ import {
   type BlendCurve,
   type ColorAdjust,
   type CornerPin,
-  type DisplayMode,
-  type DisplayModeChange,
   type OutputInfo,
   type OutputKind,
   type OutputPatch,
+  type OutputTarget,
+  type StreamOutputs,
+  type VideoMode,
   type ScreenGroup,
   type ScreenInfo,
   type ScreenOutput,
@@ -132,7 +152,9 @@ const outputName = (output: OutputInfo, index: number) =>
       ? `Syphon · ${output.source ?? "Present"}`
       : output.kind === "sdi"
         ? "SDI"
-        : output.display
+        : output.kind === "placeholder"
+          ? `Placeholder · ${times(...(output.size ?? [1920, 1080]))}`
+          : output.display
       ? displayName(output.display)
       : index === 0
         ? "No display yet"
@@ -464,7 +486,7 @@ function ScreenGroupList({
                 ))
               : null}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onAdd(null, "display")}>
+            <DropdownMenuItem onSelect={() => onAdd(null, "placeholder")}>
               <span className="flex-1">Placeholder</span>
               <span className="text-[11px] text-muted-foreground">No output yet</span>
             </DropdownMenuItem>
@@ -542,6 +564,396 @@ function NumberField({
   );
 }
 
+/** Sizes a Syphon server or a placeholder is made at, as ProPresenter offers them. */
+const STREAM_SIZES: Array<[number, number]> = [
+  [1280, 720],
+  [1920, 1080],
+  [3840, 2160],
+];
+
+/** Parts an output can be cut into, across × down. */
+const SPLITS: Array<[number, number]> = [
+  [2, 1],
+  [1, 2],
+  [2, 2],
+  [3, 1],
+  [3, 3],
+];
+
+/** Picture sizes an output target can be, at the top left of the output. */
+const TARGET_SIZES: Array<[number, number]> = [
+  [3840, 2160],
+  [2560, 1440],
+  [1920, 1200],
+  [1920, 1080],
+  [1680, 1050],
+  [1600, 900],
+  [1440, 900],
+  [1366, 768],
+  [1280, 1024],
+  [1280, 800],
+  [1280, 720],
+  [1024, 768],
+  [800, 600],
+  [640, 480],
+];
+
+const sizeLabel = ([width, height]: [number, number]) => times(width, height);
+
+/** What an output is, in the Output menu's button. */
+function outputChoice(output: OutputInfo, streams: StreamOutputs, firstOfBuiltIn: boolean) {
+  const size = sizeLabel(outputSize(output, streams));
+  const mode = (modes: VideoMode[], fallback: string) =>
+    modes.find((each) => each.code === (output.videoMode ?? fallback))?.label ?? size;
+  switch (output.kind) {
+    case "ndi":
+      return `NDI · ${output.source ?? "Present"} · ${output.size ? size : mode(streams.ndiModes, "Hp30")}`;
+    case "syphon":
+      return `Syphon · ${output.source ?? "Present"} · ${size}`;
+    case "sdi": {
+      const device = streams.sdiDevices.find((each) => each.id === output.device)?.name ?? "DeckLink";
+      return `SDI · ${device} · ${mode(streams.sdiModes, "Hp29")}`;
+    }
+    case "placeholder":
+      return `Placeholder · ${size}`;
+    default:
+      return output.display
+        ? `${output.displayId === null && firstOfBuiltIn ? "Automatic: " : ""}${displayName(output.display)} (${times(output.display.bounds.width, output.display.bounds.height)})`
+        : firstOfBuiltIn
+          ? "Automatic"
+          : "None";
+  }
+}
+
+/** A small picture of what an output is, in the screen's colour, as ProPresenter shows it. */
+function OutputSwatch({ color, kind }: { color: string | null; kind: OutputKind }) {
+  return (
+    <span
+      className={cn(
+        "flex h-4 w-6 flex-none items-center justify-center rounded-[3px] text-[8px] font-bold uppercase text-white/80 ring-1 ring-white/15",
+        kind === "display" ? "" : "bg-zinc-700",
+      )}
+      style={kind === "display" ? { backgroundColor: color ?? "#e35f5f" } : undefined}
+    >
+      {kind === "ndi" ? "N" : kind === "syphon" ? "S" : kind === "sdi" ? "SDI" : kind === "placeholder" ? "P" : ""}
+    </span>
+  );
+}
+
+/**
+ * Where the output goes, grouped as ProPresenter groups it: the displays
+ * connected, then an NDI source, a Syphon server, an SDI card or a
+ * placeholder, each at a size or mode picked from its list, or a size of
+ * your own.
+ */
+function OutputMenu({
+  screen,
+  output,
+  index,
+  displays,
+  streams,
+  onDisplay,
+  onChange,
+}: {
+  screen: ScreenInfo;
+  output: OutputInfo;
+  index: number;
+  displays: ScreenOutput[];
+  streams: StreamOutputs;
+  onDisplay: (displayId: number | null) => void;
+  onChange: (patch: OutputPatch) => void;
+}) {
+  const firstOfBuiltIn = screen.builtIn && output.id === "main";
+  const sends = screen.group === "audience" && !firstOfBuiltIn;
+  const [asking, setAsking] = useState<OutputKind | null>(null);
+  const [width, setWidth] = useState(1920);
+  const [height, setHeight] = useState(1080);
+  const [ownWidth, ownHeight] = outputSize(output, streams);
+
+  const toDisplay = (displayId: number | null) => {
+    if (output.kind !== "display") onChange({ kind: "display" });
+    onDisplay(displayId);
+  };
+  const ask = (kind: OutputKind) => {
+    setWidth(output.kind === kind ? ownWidth : 1920);
+    setHeight(output.kind === kind ? ownHeight : 1080);
+    setAsking(kind);
+  };
+  const isCurrent = (patch: OutputPatch) =>
+    output.kind === patch.kind &&
+    (patch.videoMode === undefined || (output.videoMode ?? null) === patch.videoMode) &&
+    (patch.size === undefined ||
+      JSON.stringify(output.size ?? null) === JSON.stringify(patch.size ?? null)) &&
+    (patch.device === undefined || (output.device ?? null) === patch.device);
+  const item = (key: string, label: string, patch: OutputPatch, note?: string) => (
+    <DropdownMenuItem key={key} onSelect={() => onChange(patch)}>
+      <Check className={cn("h-3.5 w-3.5 flex-none", isCurrent(patch) ? "opacity-100" : "opacity-0")} aria-hidden />
+      <span className="flex-1">{label}</span>
+      {note ? <span className="text-[11px] tabular-nums text-muted-foreground">{note}</span> : null}
+    </DropdownMenuItem>
+  );
+  const custom = (kind: OutputKind) => (
+    <>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={() => ask(kind)}>
+        <Check
+          className={cn("h-3.5 w-3.5 flex-none", output.kind === kind && output.size ? "opacity-100" : "opacity-0")}
+          aria-hidden
+        />
+        Custom Size…
+      </DropdownMenuItem>
+    </>
+  );
+  const sizes = (kind: OutputKind) => (
+    <>
+      {STREAM_SIZES.map((size) => item(`${kind}-${size.join("x")}`, sizeLabel(size), { kind, size, videoMode: null }))}
+      {custom(kind)}
+    </>
+  );
+  const heading = (label: string) => (
+    <DropdownMenuLabel className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+      {label}
+    </DropdownMenuLabel>
+  );
+
+  return (
+    <>
+      {/* Not modal, so Custom Size's dialog can take the focus from it. */}
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger
+          aria-label={`${screen.name} output ${index + 1}`}
+          className={cn(SETTINGS_FIELD, "flex w-[320px] max-w-full items-center gap-2 text-left")}
+        >
+          <OutputSwatch color={screen.color} kind={output.kind} />
+          <span className="min-w-0 flex-1 truncate">{outputChoice(output, streams, firstOfBuiltIn)}</span>
+          <ChevronsUpDown className="h-3.5 w-3.5 flex-none text-muted-foreground" aria-hidden />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[300px] overflow-y-auto"
+        >
+          {heading("Displays")}
+          <DropdownMenuItem onSelect={() => toDisplay(null)}>
+            <Check
+              className={cn(
+                "h-3.5 w-3.5 flex-none",
+                output.kind === "display" && output.displayId === null ? "opacity-100" : "opacity-0",
+              )}
+              aria-hidden
+            />
+            <span className="flex-1">{firstOfBuiltIn ? "Automatic" : "None"}</span>
+          </DropdownMenuItem>
+          {displays.map((each) => (
+            <DropdownMenuItem key={each.id} onSelect={() => toDisplay(each.id)}>
+              <Check
+                className={cn(
+                  "h-3.5 w-3.5 flex-none",
+                  output.kind === "display" && output.displayId === each.id ? "opacity-100" : "opacity-0",
+                )}
+                aria-hidden
+              />
+              <OutputSwatch color={screen.color} kind="display" />
+              <span className="min-w-0 flex-1 truncate">{displayName(each)}</span>
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                {times(each.bounds.width, each.bounds.height)}
+              </span>
+            </DropdownMenuItem>
+          ))}
+          {sends ? (
+            <>
+              <DropdownMenuSeparator />
+              {heading("NDI")}
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <Check className={cn("h-3.5 w-3.5", output.kind === "ndi" ? "opacity-100" : "opacity-0")} aria-hidden />
+                  {output.kind === "ndi" ? "NDI" : "New NDI"}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="min-w-[180px]">
+                  {streams.ndiModes.map((mode) =>
+                    item(`ndi-${mode.code}`, mode.label, { kind: "ndi", videoMode: mode.code, size: null }),
+                  )}
+                  {custom("ndi")}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              {isMac() ? (
+                <>
+                  <DropdownMenuSeparator />
+                  {heading("Syphon")}
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <Check className={cn("h-3.5 w-3.5", output.kind === "syphon" ? "opacity-100" : "opacity-0")} aria-hidden />
+                      {output.kind === "syphon" ? "Syphon" : "New Syphon"}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="min-w-[180px]">{sizes("syphon")}</DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSeparator />
+                  {heading("SDI")}
+                  {!streams.sdi ? (
+                    <DropdownMenuItem disabled>
+                      <span className="w-3.5" />
+                      Needs Blackmagic Desktop Video
+                    </DropdownMenuItem>
+                  ) : null}
+                  {(streams.sdiDevices.length > 0
+                    ? streams.sdiDevices
+                    : [{ id: "", name: streams.sdi ? "No DeckLink connected" : "DeckLink" }]
+                  ).map((device) => (
+                    <DropdownMenuSub key={device.id || "first"}>
+                      <DropdownMenuSubTrigger>
+                        <Check
+                          className={cn(
+                            "h-3.5 w-3.5",
+                            output.kind === "sdi" && (output.device ?? "") === device.id ? "opacity-100" : "opacity-0",
+                          )}
+                          aria-hidden
+                        />
+                        {device.name}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[180px] overflow-y-auto">
+                        {streams.sdiModes.map((mode) =>
+                          item(`sdi-${device.id}-${mode.code}`, mode.label, {
+                            kind: "sdi",
+                            device: device.id || null,
+                            videoMode: mode.code,
+                          }),
+                        )}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  ))}
+                </>
+              ) : null}
+            </>
+          ) : null}
+          {!firstOfBuiltIn ? (
+            <>
+              <DropdownMenuSeparator />
+              {heading("Placeholder")}
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <Check
+                    className={cn("h-3.5 w-3.5", output.kind === "placeholder" ? "opacity-100" : "opacity-0")}
+                    aria-hidden
+                  />
+                  {output.kind === "placeholder" ? "Placeholder" : "New Placeholder"}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="min-w-[180px]">{sizes("placeholder")}</DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <AlertDialog open={asking !== null} onOpenChange={(open) => !open && setAsking(null)}>
+        <AlertDialogContent className="max-w-[360px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Custom size
+              {asking === "ndi" ? " for NDI" : asking === "syphon" ? " for Syphon" : asking === "placeholder" ? " for the placeholder" : ""}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {asking === "ndi" ? "Sent at 30 frames a second." : "In pixels."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <NumberField label="Width" value={width} min={16} max={16384} onChange={setWidth} />
+            <NumberField label="Height" value={height} min={16} max={16384} onChange={setHeight} />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (asking) onChange({ kind: asking, size: [width, height], videoMode: null });
+                setAsking(null);
+              }}
+            >
+              Use this size
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+/** The Output Target list's value for a target. */
+function targetValue(target: OutputTarget, sizes: Array<[number, number]>) {
+  if (target.kind === "full") return "full";
+  if (target.kind === "split") return `split:${target.columns}x${target.rows}`;
+  if (target.x === 0 && target.y === 0 && sizes.some(([width, height]) => width === target.width && height === target.height)) {
+    return `size:${target.width}x${target.height}`;
+  }
+  return "custom";
+}
+
+/**
+ * Where on its output the screen's picture goes: all of it, one part of it
+ * cut into equal parts, a picture of a common size at its top left, or any
+ * rectangle at all.
+ */
+function TargetMenu({
+  target,
+  own,
+  onChange,
+}: {
+  target: OutputTarget;
+  own: [number, number];
+  onChange: (target: OutputTarget) => void;
+}) {
+  const [ownWidth, ownHeight] = own;
+  const sizes = TARGET_SIZES.filter(
+    ([width, height]) => width <= ownWidth && height <= ownHeight && !(width === ownWidth && height === ownHeight),
+  );
+  const choose = (value: string) => {
+    if (value === "full") return onChange({ kind: "full" });
+    if (value === "custom") {
+      return onChange(
+        target.kind === "custom" ? target : { kind: "custom", x: 0, y: 0, width: ownWidth, height: ownHeight },
+      );
+    }
+    const [kind, dims] = value.split(":");
+    const [a, b] = dims.split("x").map(Number);
+    if (kind === "split") {
+      const cell = target.kind === "split" && target.columns === a && target.rows === b ? target.cell : 0;
+      return onChange({ kind: "split", columns: a, rows: b, cell });
+    }
+    onChange({ kind: "custom", x: 0, y: 0, width: a, height: b });
+  };
+  return (
+    <Select value={targetValue(target, sizes)} onValueChange={choose}>
+      <SelectTrigger aria-label="Output target" className={cn(SETTINGS_FIELD, "w-[200px] justify-between")}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent className="max-h-[min(26rem,var(--radix-select-content-available-height))]">
+        <SelectItem value="full">Full</SelectItem>
+        <SelectSeparator />
+        <SelectGroup>
+          <SelectLabel>Split</SelectLabel>
+          {SPLITS.map(([columns, rows]) => (
+            <SelectItem key={`${columns}x${rows}`} value={`split:${columns}x${rows}`}>
+              {columns} × {rows}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+        {sizes.length > 0 ? (
+          <>
+            <SelectSeparator />
+            <SelectGroup>
+              <SelectLabel>Size</SelectLabel>
+              {sizes.map(([width, height]) => (
+                <SelectItem key={`${width}x${height}`} value={`size:${width}x${height}`}>
+                  {times(width, height)}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </>
+        ) : null}
+        <SelectSeparator />
+        <SelectItem value="custom">Custom…</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
 function HardwareTab({
   screen,
   output,
@@ -570,13 +982,30 @@ function HardwareTab({
   }
   const target = output.target;
   const display = output.display;
-  const sdiMode = streams.sdiModes.find((mode) => mode.code === (output.videoMode ?? "Hp29"));
-  const own =
-    output.kind === "sdi" && sdiMode
-      ? { width: sdiMode.width, height: sdiMode.height }
-      : display && output.kind === "display"
-        ? { width: display.bounds.width, height: display.bounds.height }
-        : { width: 1920, height: 1080 };
+  const own = outputSize(output, streams);
+  const [ownWidth, ownHeight] = own;
+  const mode =
+    output.kind === "sdi"
+      ? streams.sdiModes.find((each) => each.code === (output.videoMode ?? "Hp29"))
+      : output.kind === "ndi" && !output.size
+        ? streams.ndiModes.find((each) => each.code === (output.videoMode ?? "Hp30"))
+        : undefined;
+  const facts: Array<[string, string]> =
+    output.kind === "display"
+      ? display
+        ? [
+            ["Name", displayName(display)],
+            ["Size", times(display.bounds.width, display.bounds.height)],
+            ["Scale", display.scaleFactor && display.scaleFactor !== 1 ? `${display.scaleFactor}x` : "1x"],
+            ["Aspect ratio", aspectText(display.bounds.width, display.bounds.height)],
+          ]
+        : []
+      : [
+          ["Name", output.source ?? (output.kind === "placeholder" ? `Placeholder ${index + 1}` : screen.name)],
+          ["Size", times(ownWidth, ownHeight)],
+          ...(mode ? ([["Mode", mode.label]] as Array<[string, string]>) : []),
+          ["Aspect ratio", aspectText(ownWidth, ownHeight)],
+        ];
 
   return (
     <div className="divide-y divide-border/60">
@@ -591,36 +1020,23 @@ function HardwareTab({
                 ? streams.sdi || output.error
                   ? "Played out of a Blackmagic DeckLink or UltraStudio device, to a switcher or down a long cable."
                   : "Needs Blackmagic Desktop Video, the driver for DeckLink and UltraStudio devices, installed on this Mac."
-                : output.displayId === null && firstOfBuiltIn
-              ? display
-                ? `Automatic is using ${displayName(display)}, the largest display that isn't the main one.`
-                : "Automatic uses the largest display that isn't the main one."
-              : undefined
+                : output.kind === "placeholder"
+                  ? "Nowhere yet. The screen is laid out at this size until it has a display or a stream."
+                  : output.displayId === null && firstOfBuiltIn
+                    ? display
+                      ? `Automatic is using ${displayName(display)}, the largest display that isn't the main one.`
+                      : "Automatic uses the largest display that isn't the main one."
+                    : undefined
         }
       >
-        <SettingsSelect
-          label={`${screen.name} output ${index + 1}`}
-          value={stream ? output.kind : output.displayId === null ? (firstOfBuiltIn ? "auto" : "none") : String(output.displayId)}
-          onChange={(value) => {
-            const kind = STREAM_KINDS.find((each) => each.kind === value)?.kind;
-            if (kind) {
-              onChange({ kind });
-              return;
-            }
-            if (stream) onChange({ kind: "display" });
-            onOutput(value === "auto" || value === "none" ? null : Number(value));
-          }}
-          className="w-[270px]"
-          options={[
-            firstOfBuiltIn ? { value: "auto", label: "Automatic" } : { value: "none", label: "None" },
-            ...displays.map((each) => ({
-              value: String(each.id),
-              label: `${displayName(each)} · ${times(each.bounds.width, each.bounds.height)}`,
-            })),
-            ...(screen.group === "audience" && !firstOfBuiltIn
-              ? streamKinds().map((each) => ({ value: each.kind, label: each.choice }))
-              : []),
-          ]}
+        <OutputMenu
+          screen={screen}
+          output={output}
+          index={index}
+          displays={displays}
+          streams={streams}
+          onDisplay={onOutput}
+          onChange={onChange}
         />
       </SettingsRow>
       {output.error && stream ? (
@@ -628,42 +1044,6 @@ function HardwareTab({
           <TriangleAlert className="mt-px h-4 w-4 flex-none" aria-hidden />
           <span>{output.error}</span>
         </div>
-      ) : null}
-      {display && output.kind === "display" ? <DisplayResolution display={display} /> : null}
-      {output.kind === "sdi" ? (
-        <>
-          <SettingsRow
-            label="Device"
-            description={
-              streams.sdi && streams.sdiDevices.length === 0 ? "No DeckLink or UltraStudio device is connected." : undefined
-            }
-          >
-            <SettingsSelect
-              label="SDI device"
-              value={output.device ?? "first"}
-              onChange={(value) => onChange({ device: value === "first" ? null : value })}
-              className="w-[270px]"
-              options={[
-                { value: "first", label: "The first one connected" },
-                ...streams.sdiDevices.map((device) => ({ value: device.id, label: device.name })),
-                ...(output.device && !streams.sdiDevices.some((device) => device.id === output.device)
-                  ? [{ value: output.device, label: "A device not connected" }]
-                  : []),
-              ]}
-            />
-          </SettingsRow>
-          {streams.sdiModes.length > 0 ? (
-            <SettingsRow label="Video mode" description="What the switcher or projector at the other end expects.">
-              <SettingsSelect
-                label="SDI video mode"
-                value={output.videoMode ?? "Hp29"}
-                onChange={(videoMode) => onChange({ videoMode })}
-                className="w-[200px]"
-                options={streams.sdiModes.map((mode) => ({ value: mode.code, label: mode.label }))}
-              />
-            </SettingsRow>
-          ) : null}
-        </>
       ) : null}
       {output.kind === "ndi" || output.kind === "syphon" ? (
         <SettingsRow
@@ -693,32 +1073,44 @@ function HardwareTab({
         label="Output target"
         description={
           target.kind === "full"
-            ? output.kind === "sdi"
-              ? `The whole signal, at ${times(own.width, own.height)}.`
-              : stream
-                ? "Sent at 1920 × 1080."
-                : "Present's picture fills the whole output."
-            : "A rectangle of the output, in its pixels: an LED wall's processor, or a picture framed inside a larger signal. The rest stays black."
+            ? `Present's picture fills the whole output, at ${times(ownWidth, ownHeight)}.`
+            : target.kind === "split"
+              ? `One of ${target.columns * target.rows} equal parts of the output, ${times(ownWidth / target.columns, ownHeight / target.rows)} each.`
+              : targetValue(target, TARGET_SIZES) !== "custom"
+                ? `A ${times(target.width, target.height)} picture at the top left of the output. The rest stays black.`
+                : "A rectangle of the output, in its pixels: an LED wall's processor, or a picture framed inside a larger signal. The rest stays black."
         }
       >
-        <Segmented
-          label="Output target"
-          className="w-[170px]"
-          value={target.kind}
-          onChange={(value) =>
-            onChange({
-              target:
-                value === "custom"
-                  ? { kind: "custom", x: 0, y: 0, width: own.width, height: own.height }
-                  : { kind: "full" },
-            })
-          }
-          options={[
-            { value: "full", label: "Full" },
-            { value: "custom", label: "Custom" },
-          ]}
-        />
+        <TargetMenu target={target} own={own} onChange={(next) => onChange({ target: next })} />
       </SettingsRow>
+      {target.kind === "split" ? (
+        <SettingsRow label="Part" description="Which part this screen goes to, across then down.">
+          <div
+            className="grid gap-1"
+            style={{ gridTemplateColumns: `repeat(${target.columns}, 34px)` }}
+            role="radiogroup"
+            aria-label="Part of the output"
+          >
+            {Array.from({ length: target.columns * target.rows }, (_, cell) => (
+              <button
+                key={cell}
+                type="button"
+                role="radio"
+                aria-checked={target.cell === cell}
+                onClick={() => onChange({ target: { ...target, cell } })}
+                className={cn(
+                  "h-[22px] rounded-[4px] text-[11px] font-medium tabular-nums ring-1 transition",
+                  target.cell === cell
+                    ? "bg-primary text-primary-foreground ring-primary"
+                    : "bg-background/60 text-muted-foreground ring-border/80 hover:text-foreground",
+                )}
+              >
+                {cell + 1}
+              </button>
+            ))}
+          </div>
+        </SettingsRow>
+      ) : null}
       {target.kind === "custom" ? (
         <div className="grid grid-cols-2 gap-3 px-4 py-3 sm:grid-cols-4">
           <NumberField label="X" value={target.x} onChange={(x) => onChange({ target: { ...target, x } })} />
@@ -737,14 +1129,9 @@ function HardwareTab({
           />
         </div>
       ) : null}
-      {display && output.kind === "display" ? (
+      {facts.length > 0 ? (
         <div className="grid grid-cols-2 gap-3 px-4 py-3 text-[12px] sm:grid-cols-4">
-          {[
-            ["Name", displayName(display)],
-            ["Pixels", times(display.bounds.width, display.bounds.height)],
-            ["Scale", display.scaleFactor && display.scaleFactor !== 1 ? `${display.scaleFactor}x` : "1x"],
-            ["Aspect ratio", aspectText(display.bounds.width, display.bounds.height)],
-          ].map(([label, value]) => (
+          {facts.map(([label, value]) => (
             <div key={label} className="min-w-0">
               <div className="text-[11px] text-muted-foreground">{label}</div>
               <div className="truncate font-medium tabular-nums text-foreground">{value}</div>
@@ -761,154 +1148,6 @@ function HardwareTab({
         </div>
       ) : null}
     </div>
-  );
-}
-
-/** A mode's size, as a picker lists it. */
-const modeSize = (mode: DisplayMode) =>
-  `${times(mode.width, mode.height)}${mode.pixelWidth > mode.width ? " (HiDPI)" : ""}`;
-const sizeKey = (mode: DisplayMode) => `${mode.width}x${mode.height}:${mode.pixelWidth}x${mode.pixelHeight}`;
-const hertz = (rate: number) => `${Number.isInteger(rate) ? rate : rate.toFixed(2)} Hz`;
-
-/**
- * The connected display's own resolution and refresh rate, changed from here
- * as ProPresenter does. A change goes back by itself unless it is kept, so a
- * mode a projector can't show never strands it.
- */
-function DisplayResolution({ display }: { display: ScreenOutput }) {
-  const [modes, setModes] = useState<DisplayMode[] | null>(null);
-  const [until, setUntil] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const read = useCallback(() => {
-    getDisplayModes(display.id)
-      .then(setModes)
-      .catch((error: unknown) => {
-        console.error("[Screens] could not read the display's modes", error);
-        setModes([]);
-      });
-  }, [display.id]);
-
-  // Read again when the display's size changes under us, too.
-  useEffect(read, [read, display.bounds.width, display.bounds.height]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let detach: (() => void) | null = null;
-    void import("@tauri-apps/api/event")
-      .then(({ listen }) =>
-        listen<DisplayModeChange>(DISPLAY_MODE_EVENT, ({ payload }) => {
-          if (payload.displayId !== display.id) return;
-          if (!payload.waiting) setUntil(null);
-          if (payload.reverted) setNotice("The resolution went back, as it wasn't kept.");
-          read();
-        }),
-      )
-      .then((unlisten) => {
-        if (cancelled) unlisten();
-        else detach = unlisten;
-      })
-      .catch((): void => undefined);
-    return () => {
-      cancelled = true;
-      detach?.();
-    };
-  }, [display.id, read]);
-
-  useEffect(() => {
-    if (until === null) return;
-    const intervalId = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(intervalId);
-  }, [until]);
-
-  if (!modes || modes.length === 0) return null;
-  const current = modes.find((mode) => mode.current) ?? null;
-  const sizes = modes.filter((mode, index) => modes.findIndex((each) => sizeKey(each) === sizeKey(mode)) === index);
-  const rates = current ? modes.filter((mode) => sizeKey(mode) === sizeKey(current) && mode.refreshRate > 0) : [];
-
-  const change = (mode: DisplayMode) => {
-    if (mode.current || busy) return;
-    setBusy(true);
-    setNotice(null);
-    setDisplayMode(display.id, mode.id)
-      .then((seconds) => {
-        if (seconds > 0) {
-          setNow(Date.now());
-          setUntil(Date.now() + seconds * 1000);
-        }
-        read();
-      })
-      .catch((error: unknown) => {
-        console.error("[Screens] could not change the display's mode", error);
-        setNotice("The display wouldn't take that resolution.");
-      })
-      .finally(() => setBusy(false));
-  };
-
-  const left = until === null ? 0 : Math.max(0, Math.ceil((until - now) / 1000));
-
-  return (
-    <>
-      <SettingsRow
-        label="Resolution"
-        description={
-          notice ?? `The signal this Mac sends to ${displayName(display)}, as Displays in System Settings sets it.`
-        }
-      >
-        <div className="flex items-center gap-2">
-          <SettingsSelect
-            label={`${displayName(display)} resolution`}
-            value={current ? sizeKey(current) : ""}
-            disabled={busy}
-            onChange={(key) => {
-              const same = modes.filter((mode) => sizeKey(mode) === key);
-              const next = same.find((mode) => mode.refreshRate === current?.refreshRate) ?? same[0];
-              if (next) change(next);
-            }}
-            className="w-[200px]"
-            options={sizes.map((mode) => ({ value: sizeKey(mode), label: modeSize(mode) }))}
-          />
-          {rates.length > 1 ? (
-            <SettingsSelect
-              label={`${displayName(display)} refresh rate`}
-              value={current?.id ?? ""}
-              disabled={busy}
-              onChange={(id) => {
-                const next = rates.find((mode) => mode.id === id);
-                if (next) change(next);
-              }}
-              className="w-[110px]"
-              options={rates.map((mode) => ({ value: mode.id, label: hertz(mode.refreshRate) }))}
-            />
-          ) : current && current.refreshRate > 0 ? (
-            <span className="text-[12px] tabular-nums text-muted-foreground">{hertz(current.refreshRate)}</span>
-          ) : null}
-        </div>
-      </SettingsRow>
-      {until !== null ? (
-        <div className="flex flex-wrap items-center gap-3 bg-amber-500/10 px-4 py-2.5 text-[12.5px]">
-          <TriangleAlert className="h-4 w-4 flex-none text-amber-400" aria-hidden />
-          <span className="min-w-0 flex-1">
-            Keep this resolution? {displayName(display)} goes back to the one before in{" "}
-            <span className="font-medium tabular-nums">{left} s</span>.
-          </span>
-          <SettingsButton variant="ghost" onClick={() => void revertDisplayMode(display.id)}>
-            Go back
-          </SettingsButton>
-          <SettingsButton
-            variant="primary"
-            onClick={() => {
-              setUntil(null);
-              void keepDisplayMode(display.id);
-            }}
-          >
-            Keep
-          </SettingsButton>
-        </div>
-      ) : null}
-    </>
   );
 }
 
@@ -1284,6 +1523,11 @@ function ScreenDetail({
                     </DropdownMenuItem>
                   ))
                 : null}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => onAddOutput("placeholder", null)}>
+                <span className="flex-1">Placeholder</span>
+                <span className="text-[11px] text-muted-foreground">No output yet</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1533,7 +1777,7 @@ export function ScreensSettings({
                   selectedId={selected?.id ?? null}
                   onSelect={setSelectedId}
                   onToggle={(on) => turnGroup("stage", on)}
-                  onAdd={(displayId) => add("stage", displayId, "display")}
+                  onAdd={(displayId, kind) => add("stage", displayId, kind)}
                   onRemove={remove}
                 />
                 <div className="mt-auto flex items-center gap-2 border-t border-border/60 px-3 py-2.5">
@@ -1583,8 +1827,8 @@ export function ScreensSettings({
           </div>
         </SettingsGroup>
         <SettingsNote>
-          A display&apos;s resolution is chosen under its output, in Hardware; where it sits is the
-          computer&apos;s, in Display settings. A splitter or a mirroring hub shows as one display, so every TV on it shows the same thing. For
+          A display&apos;s own resolution and where it sits are the computer&apos;s, in Display settings. A
+          splitter or a mirroring hub shows as one display, so every TV on it shows the same thing. For
           different pictures on each, give each its own port, a multi-display adapter, or a DisplayLink dock.
         </SettingsNote>
       </div>

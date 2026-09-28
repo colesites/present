@@ -30,14 +30,18 @@ type MultiviewConfig = {
 };
 
 const CONFIG_KEY = "present-multiview-v1";
-const PER_PAGE = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 16];
+/** The most screens a page takes. More than this are too small to watch. */
+const MOST_PER_PAGE = 100;
 
 function readConfig(): MultiviewConfig {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(CONFIG_KEY) ?? "null") as Partial<MultiviewConfig> | null;
     return {
       hidden: Array.isArray(parsed?.hidden) ? parsed.hidden.filter((id): id is string => typeof id === "string") : [],
-      perPage: typeof parsed?.perPage === "number" && PER_PAGE.includes(parsed.perPage) ? parsed.perPage : 0,
+      perPage:
+        typeof parsed?.perPage === "number" && Number.isFinite(parsed.perPage)
+          ? Math.min(Math.max(Math.round(parsed.perPage), 0), MOST_PER_PAGE)
+          : 0,
     };
   } catch {
     return { hidden: [], perPage: 0 };
@@ -181,20 +185,53 @@ export function MultiviewWindow() {
               <span className="text-[12px] text-white/40">{screen.group === "audience" ? "Audience" : "Stage"}</span>
             </label>
           ))}
-          <label className="ml-auto flex items-center gap-2">
-            <span className="text-white/60">On a page</span>
-            <select
-              value={config.perPage}
-              onChange={(event) => change({ ...config, perPage: Number(event.target.value) })}
-              className="rounded-md bg-white/10 px-2 py-1 text-[14px] outline-none"
+          <div className="ml-auto flex items-center gap-1.5">
+            <span className="mr-1 text-white/60">On a page</span>
+            <button
+              type="button"
+              aria-label="One fewer on a page"
+              onClick={() => change({ ...config, perPage: Math.max(1, (config.perPage || shown.length) - 1) })}
+              className="h-7 w-7 rounded-md ring-1 ring-white/15 transition hover:bg-white/10"
             >
-              {PER_PAGE.map((count) => (
-                <option key={count} value={count}>
-                  {count === 0 ? "All screens" : count === 1 ? "1 screen" : `${count} screens`}
-                </option>
-              ))}
-            </select>
-          </label>
+              −
+            </button>
+            <input
+              type="number"
+              aria-label="Screens on a page"
+              min={1}
+              max={MOST_PER_PAGE}
+              value={config.perPage || ""}
+              placeholder="All"
+              onChange={(event) => {
+                const count = Math.round(Number(event.target.value));
+                change({
+                  ...config,
+                  perPage: Number.isFinite(count) && count > 0 ? Math.min(count, MOST_PER_PAGE) : 0,
+                });
+              }}
+              className="h-7 w-16 rounded-md bg-white/10 px-2 text-center text-[14px] tabular-nums outline-none placeholder:text-white/50"
+            />
+            <button
+              type="button"
+              aria-label="One more on a page"
+              onClick={() =>
+                change({ ...config, perPage: Math.min(MOST_PER_PAGE, (config.perPage || shown.length) + 1) })
+              }
+              className="h-7 w-7 rounded-md ring-1 ring-white/15 transition hover:bg-white/10"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={() => change({ ...config, perPage: 0 })}
+              className={cn(
+                "ml-1 h-7 rounded-md px-2.5 text-[13px] font-medium ring-1 ring-white/15 transition",
+                config.perPage === 0 ? "bg-white text-black" : "hover:bg-white/10",
+              )}
+            >
+              All
+            </button>
+          </div>
         </div>
       ) : null}
 

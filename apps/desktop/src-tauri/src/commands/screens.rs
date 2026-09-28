@@ -22,6 +22,7 @@ use crate::services::screens::{
 };
 use crate::services::sdi::{self, SdiDevice};
 use crate::services::syphon;
+use crate::services::video_modes::{self, VideoMode};
 use crate::services::window;
 use crate::services::window_spec::output_spec;
 use crate::state::{DisplayState, ScreenStreamState};
@@ -69,16 +70,29 @@ pub struct StreamOutputs {
     /// Blackmagic Desktop Video is installed.
     pub sdi: bool,
     pub sdi_devices: Vec<SdiDevice>,
-    pub sdi_modes: Vec<SdiModeInfo>,
+    pub sdi_modes: Vec<VideoModeInfo>,
+    /// The modes an NDI output is offered.
+    pub ndi_modes: Vec<VideoModeInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SdiModeInfo {
+pub struct VideoModeInfo {
     pub code: &'static str,
     pub label: &'static str,
     pub width: u32,
     pub height: u32,
+}
+
+impl From<&VideoMode> for VideoModeInfo {
+    fn from(mode: &VideoMode) -> Self {
+        Self {
+            code: mode.code,
+            label: mode.label,
+            width: mode.width,
+            height: mode.height,
+        }
+    }
 }
 
 /// A screen as Settings shows it.
@@ -109,6 +123,7 @@ fn output_open(app: &AppHandle, screen: &ScreenSetup, output: &OutputSetup) -> b
         OutputKind::Ndi | OutputKind::Syphon | OutputKind::Sdi => app
             .try_state::<ScreenStreamState>()
             .is_some_and(|streams| streams.is_sending(&screen.id, &output.id)),
+        OutputKind::Placeholder => false,
     }
 }
 
@@ -129,14 +144,14 @@ fn describe(app: &AppHandle, state: &DisplayState) -> AppResult<Vec<ScreenInfo>>
                 OutputKind::Display => {
                     monitors::resolve_output_among(&identified, &preferences, &screen, &output.id)
                 }
-                OutputKind::Ndi | OutputKind::Syphon | OutputKind::Sdi => None,
+                OutputKind::Ndi
+                | OutputKind::Syphon
+                | OutputKind::Sdi
+                | OutputKind::Placeholder => None,
             };
-            let laid = layout(&screen, |output| match output.kind {
-                OutputKind::Display => {
-                    destination(output).map(|display| (display.bounds.width, display.bounds.height))
-                }
-                OutputKind::Sdi => Some(output.stream_size()),
-                OutputKind::Ndi | OutputKind::Syphon => None,
+            // The others are the size they were made at.
+            let laid = layout(&screen, |output| {
+                destination(output).map(|display| (display.bounds.width, display.bounds.height))
             });
             let in_use: Vec<&str> = screen
                 .active_outputs()
@@ -258,6 +273,7 @@ pub fn open_output(
                 .map_err(AppError::Invalid)?;
             Ok(true)
         }
+        OutputKind::Placeholder => Ok(false),
         OutputKind::Display => {
             let Some(spec) = output_spec(screen, output) else {
                 return Ok(false);
@@ -276,7 +292,7 @@ fn close_output(app: &AppHandle, screen: &ScreenSetup, output: &OutputSetup) -> 
         OutputKind::Display => {
             window::close(app, &screen.window_label(&output.id))?;
         }
-        OutputKind::Ndi | OutputKind::Syphon | OutputKind::Sdi => {
+        OutputKind::Ndi | OutputKind::Syphon | OutputKind::Sdi | OutputKind::Placeholder => {
             if let Some(streams) = app.try_state::<ScreenStreamState>() {
                 streams.stop(&screen.id, &output.id);
             }
@@ -284,10 +300,12 @@ fn close_output(app: &AppHandle, screen: &ScreenSetup, output: &OutputSetup) -> 
     }
     // A window left from when this output was a display, or a stream from
     // when it was sent.
-    if output.kind.is_stream() {
+    if output.kind == OutputKind::Display {
+        if let Some(streams) = app.try_state::<ScreenStreamState>() {
+            streams.stop(&screen.id, &output.id);
+        }
+    } else {
         window::close(app, &screen.window_label(&output.id))?;
-    } else if let Some(streams) = app.try_state::<ScreenStreamState>() {
-        streams.stop(&screen.id, &output.id);
     }
     Ok(())
 }
@@ -408,14 +426,12 @@ pub async fn add_screen(
     } else {
         OutputKind::Display
     });
-    if kind.is_stream() {
-        if group == ScreenGroup::Stage {
-            return Err(AppError::Invalid(
-                "A stage screen is shown on a display.".to_owned(),
-            ));
-        }
-        screen.outputs[0].kind = kind;
+    if kind.is_stream() && group == ScreenGroup::Stage {
+        return Err(AppError::Invalid(
+            "A stage screen is shown on a display.".to_owned(),
+        ));
     }
+    screen.outputs[0].kind = kind;
     state.update(|preferences| {
         preferences.put_screen(screen);
         preferences.set_output_display(&id, MAIN_OUTPUT, key);
@@ -518,14 +534,14 @@ pub async fn get_stream_outputs() -> AppResult<StreamOutputs> {
         syphon: syphon::available(),
         sdi: sdi::available(),
         sdi_devices: sdi::devices(),
-        sdi_modes: sdi::VIDEO_MODES
+        sdi_modes: video_modes::VIDEO_MODES
             .iter()
-            .map(|mode| SdiModeInfo {
-                code: mode.code,
-                label: mode.label,
-                width: mode.width,
-                height: mode.height,
-            })
+            .map(VideoModeInfo::from)
+            .collect(),
+        ndi_modes: video_modes::NDI_MODES
+            .iter()
+            .filter_map(|code| video_modes::video_mode(code))
+            .map(|mode| VideoModeInfo::from(&mode))
             .collect(),
     })
 }
@@ -545,8 +561,10 @@ pub async fn update_output(
         .kind
         .is_some_and(|kind| before.output(&output).is_some_and(|each| each.kind != kind));
     // A stream under another name, or on another card or in another mode.
-    let renaming =
-        patch.source_name.is_some() || patch.device.is_some() || patch.video_mode.is_some();
+    let renaming = patch.source_name.is_some()
+        || patch.device.is_some()
+        || patch.video_mode.is_some()
+        || patch.size.is_some();
     let after = patch
         .apply(&before, &output)
         .ok_or_else(|| AppError::NotFound(format!("output {output}")))?;
