@@ -469,12 +469,51 @@ pub fn draw_props(
     counts
 }
 
+/// How long a blinking "time up" is lit in each second.
+const TIME_UP_LIT_MS: u128 = 600;
+
+/// Whether the timer shows a "time up" that blinks.
+pub fn timer_blinks(scene: &OutputScene) -> bool {
+    scene.timer_visible
+        && scene
+            .timer_time_up
+            .as_ref()
+            .is_some_and(|style| style.blink)
+}
+
+/// Whether the timer's words are lit at `now_ms`, milliseconds since the Unix
+/// epoch: always, unless a "time up" blinks, which is lit for most of each
+/// second. By the wall clock, so the screen and the preview blink together.
+pub fn timer_lit(scene: &OutputScene, now_ms: u128) -> bool {
+    !timer_blinks(scene) || now_ms % 1000 < TIME_UP_LIT_MS
+}
+
+/// The clock's colour: the "time up" one once the timer has run out.
+fn clock_ink(scene: &OutputScene, fallback: Color) -> Color {
+    scene
+        .timer_time_up
+        .as_ref()
+        .and_then(|style| color::parse(&style.color))
+        .unwrap_or(fallback)
+}
+
 /// Draw the timer, if it is showing.
 ///
 /// The clock sits at a percentage of the frame, which is how the operator
 /// positions it by dragging. The name banner, when enabled, spans the top
 /// independently of where the clock is.
 pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Option<&TimerLayout>) {
+    draw_timer_at(pixmap, scene, layout, true);
+}
+
+/// [`draw_timer`], with the clock's words left out while a blinking "time
+/// up" is dark (`lit` false). The name and the box behind stay.
+pub fn draw_timer_at(
+    pixmap: &mut PixmapMut<'_>,
+    scene: &OutputScene,
+    layout: Option<&TimerLayout>,
+    lit: bool,
+) {
     if !scene.timer_visible {
         return;
     }
@@ -501,11 +540,96 @@ pub fn draw_timer(pixmap: &mut PixmapMut<'_>, scene: &OutputScene, layout: Optio
     let of_reference = frame_height / REFERENCE_HEIGHT;
     let clock_font = layout.map_or(96.0, |l| clamp(l.clock_font_px, 12.0, 400.0)) * of_reference;
 
-    let clock_color = layout
-        .and_then(|l| color::parse(&l.clock_color))
-        .unwrap_or(Color::WHITE);
+    let clock_color = clock_ink(
+        scene,
+        layout
+            .and_then(|l| color::parse(&l.clock_color))
+            .unwrap_or(Color::WHITE),
+    );
 
-    if let Some(clock) = scene.timer_text.as_deref().filter(|t| !t.trim().is_empty()) {
+    // The box behind the clock, when one is chosen: around the clock, and the
+    // name too when it sits with the clock rather than in its banner.
+    if let (Some(fill), Some(clock)) = (
+        layout
+            .and_then(|l| l.box_color.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(color::parse),
+        scene.timer_text.as_deref().filter(|t| !t.trim().is_empty()),
+    ) {
+        let name = scene
+            .timer_label
+            .as_deref()
+            .filter(|l| !l.trim().is_empty())
+            .filter(|_| !layout.is_some_and(|l| l.name_banner_enabled));
+        let name_font = layout.map_or(24.0, |l| clamp(l.name_font_px, 8.0, 200.0)) * of_reference;
+        let above = layout.is_some_and(|l| l.title_position == "top");
+        let width_of = |words: &str, size: f32, weight: cosmic_text::Weight| {
+            text::measure(
+                words,
+                frame_width,
+                &text::TextStyle {
+                    font_size: size,
+                    line_height: 0.0,
+                    family: None,
+                    weight,
+                    italic: false,
+                    letter_spacing_em: 0.0,
+                    align: cosmic_text::Align::Left,
+                    wrap: false,
+                },
+            )
+            .1
+        };
+        let centre_x = frame_width * x_percent / 100.0;
+        let centre_y = frame_height * y_percent / 100.0;
+        let mut width = width_of(clock, clock_font, cosmic_text::Weight::BOLD);
+        let (mut top, mut bottom) = (centre_y - clock_font * 0.6, centre_y + clock_font * 0.6);
+        if let Some(name) = name {
+            width = width.max(width_of(name, name_font, cosmic_text::Weight::NORMAL));
+            // Where the name is drawn below: a box 1.6 of its size tall, a
+            // little way above or below the clock's.
+            let (clock_box, name_box, gap) = (clock_font * 1.6, name_font * 1.6, name_font * 0.3);
+            let name_top = if above {
+                centre_y - clock_box / 2.0 - gap - name_box
+            } else {
+                centre_y + clock_box / 2.0 + gap
+            };
+            let name_middle = name_top + name_box / 2.0;
+            top = top.min(name_middle - name_font * 0.6);
+            bottom = bottom.max(name_middle + name_font * 0.6);
+        }
+        let (pad_x, pad_y) = (clock_font * 0.25, clock_font * 0.12);
+        let rect = (
+            centre_x - width / 2.0 - pad_x,
+            top - pad_y,
+            width + pad_x * 2.0,
+            bottom - top + pad_y * 2.0,
+        );
+        if let Some(path) =
+            shapes::rounded_rect_path(rect.0, rect.1, rect.2, rect.3, clock_font * 0.12)
+        {
+            let mut paint = tiny_skia::Paint {
+                anti_alias: true,
+                ..tiny_skia::Paint::default()
+            };
+            paint.set_color(fill);
+            pixmap.fill_path(
+                &path,
+                &paint,
+                tiny_skia::FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+    }
+
+    if let Some(clock) = scene
+        .timer_text
+        .as_deref()
+        .filter(|t| !t.trim().is_empty())
+        .filter(|_| lit)
+    {
         // The clock is centred on its point, so the box is built around it
         // rather than starting at it.
         let box_width = frame_width;
@@ -685,45 +809,6 @@ pub fn draw_region_image(
     true
 }
 
-/// A frame of a composer region's video, fitted inside its plate.
-pub fn draw_region_video(
-    pixmap: &mut PixmapMut<'_>,
-    region: &super::composer::ComposerRegion,
-    picture: &tiny_skia::Pixmap,
-    frame_width: f32,
-    frame_height: f32,
-) {
-    let Some((x, y, width, height)) = region.inner_rect(frame_width, frame_height) else {
-        return;
-    };
-    images::draw(
-        pixmap,
-        picture,
-        Transform::from_translate(x, y),
-        width,
-        height,
-        region.fit_mode.to_object_fit(),
-        None,
-    );
-}
-
-/// A countdown region's shade: the darker panel the clock sits on.
-pub fn draw_countdown_shade(
-    pixmap: &mut PixmapMut<'_>,
-    region: &super::composer::ComposerRegion,
-    frame_width: f32,
-    frame_height: f32,
-) {
-    if let Some(rect) = region.inner_rect(frame_width, frame_height) {
-        fill_rounded(
-            pixmap,
-            rect,
-            region.radius(frame_height),
-            Color::from_rgba8(0, 0, 0, 128),
-        );
-    }
-}
-
 /// A countdown region's clock, and the timer's name above it.
 ///
 /// Sized to the region: the clock as large as fits a third of its height or
@@ -731,11 +816,13 @@ pub fn draw_countdown_shade(
 pub fn draw_region_clock(
     pixmap: &mut PixmapMut<'_>,
     region: &super::composer::ComposerRegion,
-    label: Option<&str>,
+    scene: &OutputScene,
     clock: &str,
+    lit: bool,
     frame_width: f32,
     frame_height: f32,
 ) {
+    let label = scene.timer_label.as_deref();
     let Some((x, y, width, height)) = region.inner_rect(frame_width, frame_height) else {
         return;
     };
@@ -753,10 +840,13 @@ pub fn draw_region_clock(
             .with_color(Color::from_rgba8(212, 212, 216, 255));
         text::draw_box(pixmap, &label.to_uppercase(), &spec);
     }
+    if !lit {
+        return;
+    }
     let clock_top = top + label.map_or(0.0, |_| label_size * 1.2 + gap);
     let spec = text::TextBox::new(x, clock_top, width, clock_size * 1.3, clock_size)
         .centred()
-        .with_color(Color::WHITE)
+        .with_color(clock_ink(scene, Color::WHITE))
         .with_weight(cosmic_text::Weight::SEMIBOLD);
     text::draw_box(pixmap, clock, &spec);
 }
@@ -1146,7 +1236,88 @@ mod tests {
             name_banner_enabled: false,
             name_banner_color: "#000000".to_owned(),
             title_position: "bottom".to_owned(),
+            box_color: None,
         }
+    }
+
+    #[test]
+    fn the_clock_has_a_box_behind_it_only_when_one_is_chosen() {
+        let scene = OutputScene {
+            timer_visible: true,
+            timer_text: Some("05:00".to_owned()),
+            ..OutputScene::default()
+        };
+        // Sampled beside the digits, inside where a box would be.
+        let beside_the_clock = |layout: &TimerLayout| {
+            let mut frame = Frame::new(640, 360).expect("frame");
+            draw_timer(&mut frame.pixmap_mut(), &scene, Some(layout));
+            frame.pixel_at(320, 160)
+        };
+        assert_eq!(
+            beside_the_clock(&layout()),
+            Some((0, 0, 0, 255)),
+            "no box by default, as the screens drew it"
+        );
+        let boxed = TimerLayout {
+            box_color: Some("#ff0000".to_owned()),
+            ..layout()
+        };
+        let mut frame = Frame::new(640, 360).expect("frame");
+        draw_timer(&mut frame.pixmap_mut(), &scene, Some(&boxed));
+        let reds = frame
+            .pixmap()
+            .pixels()
+            .iter()
+            .filter(|pixel| pixel.red() > 200 && pixel.green() < 60)
+            .count();
+        assert!(reds > 800, "a red box around the clock: {reds} red pixels");
+        let corner = frame.pixel_at(2, 2);
+        assert_eq!(corner, Some((0, 0, 0, 255)), "only around the clock");
+    }
+
+    #[test]
+    fn a_time_up_is_drawn_in_its_colour_and_blinks_by_the_clock() {
+        let scene = OutputScene {
+            timer_visible: true,
+            timer_text: Some("TIME UP".to_owned()),
+            timer_time_up: Some(crate::services::output::TimeUpStyle {
+                color: "#ff0000".to_owned(),
+                blink: true,
+            }),
+            ..OutputScene::default()
+        };
+        let reds = |lit: bool| {
+            let mut frame = Frame::new(640, 360).expect("frame");
+            draw_timer_at(&mut frame.pixmap_mut(), &scene, Some(&layout()), lit);
+            frame
+                .pixmap()
+                .pixels()
+                .iter()
+                .filter(|pixel| pixel.red() > 200 && pixel.green() < 60)
+                .count()
+        };
+        assert!(
+            reds(true) > 300,
+            "the words in red, not the clock's white: {}",
+            reds(true)
+        );
+        assert_eq!(reds(false), 0, "and gone while it is dark");
+
+        assert!(timer_lit(&scene, 1_000_100), "lit early in each second");
+        assert!(!timer_lit(&scene, 1_000_700), "dark at the end of it");
+        let steady = OutputScene {
+            timer_time_up: Some(crate::services::output::TimeUpStyle {
+                color: "#ff0000".to_owned(),
+                blink: false,
+            }),
+            ..scene.clone()
+        };
+        assert!(!timer_blinks(&steady));
+        assert!(
+            timer_lit(&steady, 1_000_700),
+            "one that does not blink stays lit"
+        );
+        assert!(timer_lit(&OutputScene::default(), 1_000_700));
     }
 
     #[test]

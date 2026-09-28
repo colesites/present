@@ -28,7 +28,7 @@ use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed};
 use crate::services::output::OutputScene;
 use crate::services::thumbnails;
 use crate::services::video::{self, VideoDecoder};
-use crate::state::{FileState, OutputState};
+use crate::state::{DisplayState, FileState, OutputState};
 
 /// The largest preview that will be drawn, per side.
 ///
@@ -89,6 +89,19 @@ impl PreviewSource {
             return Err("the app is still starting".to_owned());
         };
 
+        // The audience screen's colour, under everything, as on the screen.
+        let base = self
+            .app
+            .try_state::<DisplayState>()
+            .and_then(|displays| displays.screen(crate::services::screens::AUDIENCE))
+            .and_then(|screen| screen.color)
+            .as_deref()
+            .and_then(crate::services::compositor::color::parse)
+            .unwrap_or(tiny_skia::Color::BLACK);
+        if self.compositor.set_base(base) {
+            self.last = None;
+        }
+
         let scene = output.on_screen();
         let now = Instant::now();
         let frame = self.video.frame_for(&scene, now, size, &self.open);
@@ -96,9 +109,10 @@ impl PreviewSource {
         let region_frames = self.regions.frames_for(&scene, now, size, &self.open);
         // The same question the audience window asks, so a transition is drawn
         // to its end here too, rather than its first frame kept.
-        let unchanged = !self
-            .compositor
-            .needs_drawing(self.last.as_ref(), &scene, shown, size);
+        let unchanged =
+            !self
+                .compositor
+                .needs_drawing(self.last.as_ref(), &scene, shown, &region_frames, size);
         if unchanged && !self.picture.is_empty() {
             return Ok(&self.picture);
         }

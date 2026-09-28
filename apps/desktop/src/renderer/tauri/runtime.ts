@@ -7,6 +7,7 @@
  * can grow the Rust-backed API without touching the running Electron build.
  */
 
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 export type AppInfo = {
@@ -150,6 +151,32 @@ export type OpenWindowInfo = {
  */
 export const listOpenWindows = (): Promise<OpenWindowInfo[]> =>
   invoke<OpenWindowInfo[]>("list_open_windows");
+
+/**
+ * Whether the window labelled `label` is open, asked of the core now and
+ * then: a window closed from the OS tells no one.
+ */
+export function useWindowOpen(label: string, everyMs = 1_500): boolean {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    const look = () => {
+      void listOpenWindows()
+        .then((windows) => {
+          if (!cancelled) setOpen(windows.some((each) => each.label === label));
+        })
+        .catch((): void => undefined);
+    };
+    look();
+    const intervalId = window.setInterval(look, everyMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [everyMs, label]);
+  return open;
+}
 
 /**
  * Put every open full-screen window back on the display its role resolves to.

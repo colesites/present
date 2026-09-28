@@ -384,6 +384,41 @@ impl VideoFeed {
     }
 }
 
+/// How large a region's video is decoded: enough to cover the region, and no
+/// more.
+///
+/// A widescreen video fitted inside this box fills the region edge to edge,
+/// which is what a region set to cover needs; one set to contain is drawn
+/// smaller still. Each was decoded at the size of the whole output, so four
+/// regions on a 1080p screen decoded four 1080p videos, converted and scaled
+/// every frame, and did it again for the preview and for NDI: the composer
+/// was heavy on screen because of it.
+pub fn region_decode_size(
+    region: &crate::services::compositor::composer::ComposerRegion,
+    frame: (u32, u32),
+) -> (u32, u32) {
+    let Some((_, _, width, height)) = region.inner_rect(frame.0 as f32, frame.1 as f32) else {
+        return (16, 16);
+    };
+    // A widescreen video fitted inside this box comes back the size the
+    // region shows it at, which the compositor copies rather than scales
+    // (`compositor::video_blit`): covering the region, or inside it for a
+    // region set to contain.
+    let fitted = match region.fit_mode.to_object_fit() {
+        crate::services::compositor::images::ObjectFit::Contain => (
+            width.min(height * 16.0 / 9.0),
+            height.min(width * 9.0 / 16.0),
+        ),
+        _ => (
+            width.max(height * 16.0 / 9.0),
+            height.max(width * 9.0 / 16.0),
+        ),
+    };
+    let even =
+        |value: f32, most: u32| ((value.ceil() as u32).div_ceil(2) * 2).clamp(16, most.max(16));
+    (even(fitted.0, frame.0), even(fitted.1, frame.1))
+}
+
 /// The videos playing in screen composer regions, one feed each, by region.
 ///
 /// A region's video is not the operator's: nothing plays or pauses it, it
@@ -410,24 +445,27 @@ impl RegionVideos {
         size: (u32, u32),
         open: &Opener,
     ) -> Vec<(String, &VideoFrame)> {
-        let wanted: std::collections::HashMap<String, String> = if scene.screen_composer_enabled {
-            scene
-                .screen_composer_layout()
-                .map(|layout| {
-                    layout
-                        .regions
-                        .iter()
-                        .filter_map(|region| {
-                            region
-                                .video_url()
-                                .map(|url| (region.id.clone(), url.to_owned()))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            std::collections::HashMap::new()
-        };
+        let wanted: std::collections::HashMap<String, (String, (u32, u32))> =
+            if scene.screen_composer_enabled {
+                scene
+                    .screen_composer_layout()
+                    .map(|layout| {
+                        layout
+                            .regions
+                            .iter()
+                            .filter_map(|region| {
+                                let url = region.video_url()?;
+                                Some((
+                                    region.id.clone(),
+                                    (url.to_owned(), region_decode_size(region, size)),
+                                ))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                std::collections::HashMap::new()
+            };
         self.feeds.retain(|id, _| wanted.contains_key(id));
         for id in wanted.keys() {
             self.feeds.entry(id.clone()).or_default();
@@ -435,7 +473,7 @@ impl RegionVideos {
 
         let mut frames = Vec::with_capacity(self.feeds.len());
         for (id, feed) in &mut self.feeds {
-            let Some(url) = wanted.get(id) else {
+            let Some((url, decode_size)) = wanted.get(id) else {
                 continue;
             };
             let region_scene = OutputScene {
@@ -450,7 +488,7 @@ impl RegionVideos {
                 },
                 ..OutputScene::default()
             };
-            if let Some(frame) = feed.frame_for(&region_scene, now, size, open) {
+            if let Some(frame) = feed.frame_for(&region_scene, now, *decode_size, open) {
                 frames.push((id.clone(), frame));
             }
         }
@@ -585,6 +623,36 @@ mod tests {
             playing,
             at,
         }
+    }
+
+    #[test]
+    fn a_region_video_is_decoded_for_its_region_not_the_whole_screen() {
+        let region =
+            |width: f64, height: f64| crate::services::compositor::composer::ComposerRegion {
+                width: Some(width),
+                height: Some(height),
+                ..Default::default()
+            };
+        // A quarter of a 1080p screen: a quarter-size video covers it.
+        assert_eq!(
+            region_decode_size(&region(50.0, 50.0), (1920, 1080)),
+            (960, 540)
+        );
+        // A tall strip still gets a picture wide enough to cover it.
+        let (width, height) = region_decode_size(&region(25.0, 100.0), (1920, 1080));
+        assert!(width as f32 / height as f32 >= 16.0 / 9.0 - 0.01 && height >= 1080 - 2);
+        // Never more than the screen itself.
+        assert_eq!(
+            region_decode_size(&region(100.0, 100.0), (1920, 1080)),
+            (1920, 1080)
+        );
+        // One set to contain shows the whole picture inside it, so it is
+        // decoded at that size: the strip's width, and a widescreen height.
+        let contained = crate::services::compositor::composer::ComposerRegion {
+            fit_mode: crate::services::compositor::composer::ComposerFit::Contain,
+            ..region(25.0, 100.0)
+        };
+        assert_eq!(region_decode_size(&contained, (1920, 1080)), (480, 270));
     }
 
     #[test]

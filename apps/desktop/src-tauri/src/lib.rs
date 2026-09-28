@@ -124,7 +124,9 @@ pub fn run() {
 
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+        builder = builder
+            .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+            .plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     builder
@@ -257,6 +259,8 @@ pub fn run() {
         .on_menu_event(services::app_menu::handle)
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_info,
+            #[cfg(desktop)]
+            services::updates::restart_to_update_command,
             commands::diagnostics::report_webview_capabilities,
             commands::diagnostics::report_diagnostic,
             commands::diagnostics::report_renderer_error,
@@ -268,6 +272,19 @@ pub fn run() {
             commands::display::set_preferred_resolution,
             commands::display::get_preferred_resolution,
             commands::display::reconcile_displays,
+            commands::display::open_display_settings,
+            commands::screens::get_screens,
+            commands::screens::get_stream_outputs,
+            commands::screens::add_screen,
+            commands::screens::update_screen,
+            commands::screens::remove_screen,
+            commands::screens::add_output,
+            commands::screens::remove_output,
+            commands::screens::update_output,
+            commands::screens::set_output_display,
+            commands::screens::open_screen,
+            commands::screens::close_screen,
+            commands::screens::identify_screens,
             commands::window::open_window,
             commands::window::close_window,
             commands::window::open_mini_lyrics_window,
@@ -499,6 +516,7 @@ pub fn run() {
             // The view the audience window is drawn on. Not a setting: the
             // compositor draws the audience output wherever it can.
             app.manage(std::sync::Arc::new(state::OutputSurfaceState::new()));
+            app.manage(state::ScreenStreamState::default());
 
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),
@@ -521,6 +539,10 @@ pub fn run() {
             // for why polling rather than three platform observers.
             services::display_watch::spawn(app.handle().clone());
 
+            // Before the menu, which hands it the item it relabels.
+            #[cfg(desktop)]
+            services::updates::install(app.handle());
+
             if let Err(error) = services::app_menu::install(app.handle()) {
                 // A missing menu costs the operator `Cmd+,` and the import
                 // items, not the service. Log it and keep going.
@@ -529,6 +551,11 @@ pub fn run() {
 
             #[cfg(desktop)]
             services::shortcuts::register(app.handle());
+
+            // A little after launch, and every few hours: a newer version is
+            // downloaded quietly and waits for the operator to restart.
+            #[cfg(desktop)]
+            services::updates::start(app.handle().clone());
 
             // The scheme is declared in tauri.conf.json for the installer to
             // register with the OS; this is the runtime half. On macOS the link

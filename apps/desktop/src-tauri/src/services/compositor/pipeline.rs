@@ -162,6 +162,23 @@ pub struct SceneCompositor {
     /// change once a second, and the regions, which can hold a whole slide
     /// each, do not.
     composer_clock: Option<(Pixmap, ComposerClockKey)>,
+    /// Which frame of each composer region's video the last picture showed,
+    /// by region id: a picture is drawn again when one of them moves on, and
+    /// not in between.
+    drawn_regions: Vec<(String, f64)>,
+    /// What is under everything: the screen's colour (Screen Configuration),
+    /// black unless one is chosen.
+    base: Color,
+}
+
+/// Which frame of each region's video `regions` holds, in a comparable form.
+fn region_marks(regions: &[RegionFrame<'_>]) -> Vec<(String, f64)> {
+    let mut marks: Vec<(String, f64)> = regions
+        .iter()
+        .map(|(id, frame)| (id.clone(), frame.presentation_seconds))
+        .collect();
+    marks.sort_by(|left, right| left.0.cmp(&right.0));
+    marks
 }
 
 /// Everything the composer's clocks are drawn from.
@@ -170,6 +187,8 @@ struct ComposerClockKey {
     layout: Option<serde_json::Value>,
     text: Option<String>,
     label: Option<String>,
+    time_up: Option<crate::services::output::TimeUpStyle>,
+    lit: bool,
 }
 
 /// A video playing in a screen composer region, by the region's id: this
@@ -199,16 +218,29 @@ struct TimerKey {
     text: Option<String>,
     label: Option<String>,
     layout: Option<crate::services::output::TimerLayout>,
+    time_up: Option<crate::services::output::TimeUpStyle>,
+    /// A blinking "time up" is drawn twice a second, lit and dark.
+    lit: bool,
 }
 
 impl TimerKey {
-    fn of(scene: &OutputScene) -> Self {
+    fn of(scene: &OutputScene, lit: bool) -> Self {
         Self {
             text: scene.timer_text.clone(),
             label: scene.timer_label.clone(),
             layout: scene.timer_layout.clone(),
+            time_up: scene.timer_time_up.clone(),
+            lit,
         }
     }
+}
+
+/// Now, in milliseconds since the Unix epoch: what a blinking "time up"
+/// keeps time by.
+fn wall_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis())
 }
 
 impl SceneCompositor {
@@ -233,6 +265,8 @@ impl SceneCompositor {
             overlay_for: None,
             marquee: None,
             composer_clock: None,
+            drawn_regions: Vec::new(),
+            base: Color::BLACK,
         }
     }
 
@@ -269,22 +303,40 @@ impl SceneCompositor {
         last: Option<&(OutputScene, Option<f64>, (u32, u32))>,
         scene: &OutputScene,
         video: Option<f64>,
+        regions: &[RegionFrame<'_>],
         size: (u32, u32),
     ) -> bool {
         let moving_message = scene
             .message_overlay
             .as_ref()
             .is_some_and(super::overlays::is_moving);
-        // A video playing in a composer region moves while the scene stands
-        // still, as the background video would if it were the scene's own.
-        let region_video = scene.screen_composer_enabled
-            && scene.screen_composer_layout().is_some_and(|layout| {
-                layout
-                    .regions
-                    .iter()
-                    .any(|region| region.video_url().is_some())
-            });
-        if moving_message || region_video || self.is_animating() {
+        // A composer region's video moves while the scene stands still, as
+        // the background video does: drawn again when a region has a new
+        // frame. It used to be drawn again on every tick while any region
+        // had a video, sixty whole frames a second for a 25-frame clip, which
+        // is what made a composed screen heavy.
+        let region_video = region_marks(regions) != self.drawn_regions;
+        // A blinking "time up" goes dark and lit again while the scene stands
+        // still: drawn each time it turns, and not in between.
+        let blink_turned = super::overlays::timer_blinks(scene) && {
+            let lit = super::overlays::timer_lit(scene, wall_ms());
+            // A composer countdown region shows the timer instead, when there
+            // is one; `render` draws one or the other.
+            let in_region = scene.screen_composer_enabled
+                && scene.screen_composer_layout().is_some_and(|layout| {
+                    layout
+                        .regions
+                        .iter()
+                        .any(|region| region.source == super::composer::ComposerSource::Countdown)
+                });
+            let drawn = if in_region {
+                self.composer_clock.as_ref().map(|(_, key)| key.lit)
+            } else {
+                self.timer_for.as_ref().map(|key| key.lit)
+            };
+            drawn != Some(lit)
+        };
+        if moving_message || region_video || blink_turned || self.is_animating() {
             return true;
         }
         !last.is_some_and(|(previous_scene, previous_video, previous_size)| {
@@ -321,6 +373,15 @@ impl SceneCompositor {
     /// buffer.
     pub fn take_frame(&mut self) -> Option<Frame> {
         self.frame.take()
+    }
+
+    /// Put `color` under everything, where black was. Whether it changed.
+    pub fn set_base(&mut self, color: Color) -> bool {
+        if self.base == color {
+            return false;
+        }
+        self.base = color;
+        true
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -361,6 +422,7 @@ impl SceneCompositor {
         loader: &dyn MediaLoader,
     ) -> Option<(&Frame, Rendered)> {
         let mut report = Rendered::default();
+        self.drawn_regions = region_marks(regions);
         // One reading of the clock for the whole frame: a transition drawn
         // from two different instants within one frame would tear.
         let now = Instant::now();
@@ -398,16 +460,16 @@ impl SceneCompositor {
                 // A video with no decoded frame yet is not a still. The image
                 // path would read the whole file — hundreds of megabytes — and
                 // fail to decode it, on every frame.
-                frame.clear(Color::BLACK);
+                frame.clear(self.base);
                 report.background_media_missing = true;
                 None
             }
             (Some(url), None) => {
-                frame.clear(Color::BLACK);
+                frame.clear(self.base);
                 self.draw_still(&mut frame, url, loader, &mut report)
             }
             (None, _) => {
-                frame.clear(Color::BLACK);
+                frame.clear(self.base);
                 None
             }
         };
@@ -515,7 +577,7 @@ impl SceneCompositor {
         // its place for the next.
         let mut out = match self.whole_slide_spare.take() {
             Some(mut out) if out.width() == self.width && out.height() == self.height => {
-                out.clear(Color::BLACK);
+                out.clear(self.base);
                 out
             }
             _ => match Frame::new(self.width, self.height) {
@@ -530,10 +592,16 @@ impl SceneCompositor {
 
     /// The cached timer layer, redrawn if what it shows changed.
     fn timer_for(&mut self, scene: &OutputScene) -> Option<&Pixmap> {
-        let key = TimerKey::of(scene);
+        let lit = super::overlays::timer_lit(scene, wall_ms());
+        let key = TimerKey::of(scene, lit);
         if self.timer_for.as_ref() != Some(&key) || self.timer_layer.is_none() {
             let mut layer = Pixmap::new(self.width, self.height)?;
-            super::overlays::draw_timer(&mut layer.as_mut(), scene, scene.timer_layout.as_ref());
+            super::overlays::draw_timer_at(
+                &mut layer.as_mut(),
+                scene,
+                scene.timer_layout.as_ref(),
+                lit,
+            );
             self.timer_layer = Some(layer);
             self.timer_for = Some(key);
         }
@@ -763,15 +831,10 @@ impl SceneCompositor {
                         None,
                     );
                 }
-                ComposerSource::Countdown => {
-                    super::overlays::draw_countdown_shade(
-                        &mut layers.as_mut(),
-                        region,
-                        frame_width,
-                        frame_height,
-                    );
-                    report.elements_drawn += 1;
-                }
+                // The clock is drawn over the region's own background, and
+                // nothing else: a darker panel was always added under it,
+                // with no way to choose none.
+                ComposerSource::Countdown => report.elements_drawn += 1,
                 ComposerSource::Video => report.elements_drawn += 1,
                 ComposerSource::CameraFeed | ComposerSource::Unknown => {}
             }
@@ -801,13 +864,13 @@ impl SceneCompositor {
             let Some((_, video)) = regions.iter().find(|(id, _)| *id == region.id) else {
                 continue;
             };
-            if let Some(picture) = video_to_pixmap(video) {
-                super::overlays::draw_region_video(
-                    &mut frame.pixmap_mut(),
-                    region,
-                    &picture,
-                    frame_width,
-                    frame_height,
+            if let Some(rect) = region.inner_rect(frame_width, frame_height) {
+                super::video_blit::blit_video(
+                    frame,
+                    video,
+                    rect,
+                    region.fit_mode.to_object_fit(),
+                    region.radius(frame_height),
                 );
             }
         }
@@ -821,10 +884,13 @@ impl SceneCompositor {
         layout: Option<&super::composer::ComposerLayout>,
     ) -> Option<&Pixmap> {
         let layout = layout?;
+        let lit = super::overlays::timer_lit(scene, wall_ms());
         let key = ComposerClockKey {
             layout: scene.screen_composer_layout.clone(),
             text: scene.timer_text.clone(),
             label: scene.timer_label.clone(),
+            time_up: scene.timer_time_up.clone(),
+            lit,
         };
         let current = self
             .composer_clock
@@ -847,8 +913,9 @@ impl SceneCompositor {
                 super::overlays::draw_region_clock(
                     &mut layer.as_mut(),
                     region,
-                    scene.timer_label.as_deref(),
+                    scene,
                     clock,
+                    lit,
                     frame_width,
                     frame_height,
                 );
@@ -1097,12 +1164,12 @@ impl SceneCompositor {
                 report.background_media_drawn = true;
                 return Some((0, 0, width, height));
             }
-            frame.clear(Color::BLACK);
+            frame.clear(self.base);
             report.background_media_missing = true;
             return None;
         }
 
-        frame.clear(Color::BLACK);
+        frame.clear(self.base);
         if video.width <= width && video.height <= height {
             let fitted =
                 crate::services::video::contain_size((video.width, video.height), (width, height));
@@ -1425,6 +1492,7 @@ fn layers_differ(cached: &OutputScene, scene: &OutputScene) -> bool {
         timer_text: None,
         timer_running: false,
         timer_visible: false,
+        timer_time_up: None,
         timer_layout: None,
         message_overlay: None,
         props_overlay: Vec::new(),
@@ -1662,7 +1730,7 @@ mod tests {
 
     impl Skipping {
         fn tick(&mut self, compositor: &mut SceneCompositor, scene: &OutputScene) {
-            if !compositor.needs_drawing(self.last.as_ref(), scene, None, (100, 100)) {
+            if !compositor.needs_drawing(self.last.as_ref(), scene, None, &[], (100, 100)) {
                 return;
             }
             let (frame, _) = compositor.render(scene, None, &NoMedia).expect("a frame");
@@ -2504,17 +2572,7 @@ mod tests {
             })),
             ..scene()
         };
-        assert!(
-            compositor.needs_drawing(None, &scene, None, (200, 100))
-                && compositor.needs_drawing(
-                    Some(&(scene.clone(), None, (200, 100))),
-                    &scene,
-                    None,
-                    (200, 100)
-                ),
-            "a region's video moves while the scene stands still"
-        );
-
+        assert!(compositor.needs_drawing(None, &scene, None, &[], (200, 100)));
         let (frame, _) = compositor.render(&scene, None, &NoMedia).expect("frame");
         assert_eq!(
             frame.pixel_at(50, 50),
@@ -2524,6 +2582,11 @@ mod tests {
 
         let video = frame_of(64, 36, [0, 255, 0, 255]);
         let frames = [("left".to_owned(), &video)];
+        let drawn = Some((scene.clone(), None, (200, 100)));
+        assert!(
+            compositor.needs_drawing(drawn.as_ref(), &scene, None, &frames, (200, 100)),
+            "a region's first frame moves the picture while the scene stands still"
+        );
         let (frame, _) = compositor
             .render_with_regions(&scene, None, &frames, &NoMedia)
             .expect("frame");
@@ -2536,6 +2599,20 @@ mod tests {
             frame.pixel_at(150, 50),
             Some((0, 0, 0, 255)),
             "and only there"
+        );
+
+        assert!(
+            !compositor.needs_drawing(drawn.as_ref(), &scene, None, &frames, (200, 100)),
+            "the same frame is not drawn twice"
+        );
+        let next = VideoFrame {
+            presentation_seconds: 0.04,
+            ..frame_of(64, 36, [0, 255, 0, 255])
+        };
+        let moved_on = [("left".to_owned(), &next)];
+        assert!(
+            compositor.needs_drawing(drawn.as_ref(), &scene, None, &moved_on, (200, 100)),
+            "the next one is"
         );
     }
 

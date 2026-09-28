@@ -2,9 +2,14 @@
 
 import { memo, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
+  BringToFront,
   Camera,
   Clock3,
   Copy,
+  Info,
+  SendToBack,
   LayoutGrid,
   Play,
   Plus,
@@ -23,9 +28,8 @@ import {
   SelectValue,
 } from "../../renderer/shared/components/ui/select";
 import { cn } from "../../renderer/shared/lib/utils";
-import { MediaPicker } from "../../renderer/shared/components/MediaPicker";
+import { VideoThumbnail } from "../media/components/VideoThumbnail";
 import { useMediaLibraryStore } from "../../renderer/shared/store/mediaLibrary";
-import type { MediaItem } from "../media/hooks/useMediaFolders";
 import type { ScreenComposerController } from "./useScreenComposerState";
 import type {
   ScreenComposerPreset,
@@ -48,6 +52,25 @@ const SOURCE_OPTIONS: Array<{
   { value: "camera-feed", label: "Camera feed", description: "Live camera", icon: Camera },
   { value: "countdown", label: "Countdown", description: "Timer layer", icon: Clock3 },
 ];
+
+/**
+ * What can be behind a region. "None" leaves what is under it showing: the
+ * screen's black, or a region beneath.
+ */
+const BACKGROUND_CHOICES: Array<{ value: string; label: string; color: string }> = [
+  { value: "none", label: "None", color: "transparent" },
+  { value: "black", label: "Black", color: "#000000" },
+  { value: "dark", label: "Dark", color: "rgba(10, 13, 28, 0.7)" },
+  { value: "color", label: "Color", color: "" },
+];
+
+const backgroundChoiceOf = (color: string) => {
+  const value = color.trim().toLowerCase().replace(/\s+/g, "");
+  const found = BACKGROUND_CHOICES.find(
+    (choice) => choice.value !== "color" && choice.color.toLowerCase().replace(/\s+/g, "") === value,
+  );
+  return found?.value ?? "color";
+};
 
 const PRESET_OPTIONS: Array<{ value: ScreenComposerPreset; label: string }> = [
   { value: "single", label: "Single" },
@@ -269,6 +292,44 @@ const SourceCard = memo(function SourceCard({
   );
 });
 
+/**
+ * A region's media as a still. The screens play the video; here a picture of
+ * it is enough to design with. Every region's video used to play twice in
+ * this window, on the canvas and in the program preview, on top of the
+ * screens playing it: a good part of why presenting with the composer was
+ * heavy.
+ */
+function RegionMedia({
+  url,
+  type,
+  fitMode,
+  className,
+}: {
+  url: string;
+  type: "image" | "video";
+  fitMode: ScreenComposerRegion["fitMode"];
+  className?: string;
+}) {
+  const item = useMediaLibraryStore((state) => state.items.find((each) => each.url === url));
+  if (type === "video") {
+    return item ? (
+      <div className={cn("overflow-hidden", className)}>
+        <VideoThumbnail
+          path={item.path}
+          lastModified={item.lastModified}
+          name={item.name}
+          fit={fitMode === "contain" || fitMode === "scale-down" ? "contain" : "cover"}
+        />
+      </div>
+    ) : (
+      <div className={cn("flex items-center justify-center bg-black/40 text-[11px] text-muted-foreground", className)}>
+        <Video className="h-4 w-4" />
+      </div>
+    );
+  }
+  return <img src={url} alt="" draggable={false} className={cn(className, fitModeClass(fitMode))} />;
+}
+
 const RegionPreviewContent = memo(function RegionPreviewContent({
   region,
   compact = false,
@@ -283,22 +344,12 @@ const RegionPreviewContent = memo(function RegionPreviewContent({
   return (
     <div className="relative h-full w-full">
       {region.backgroundMediaUrl ? (
-        region.backgroundMediaType === "video" ? (
-          <video
-            src={region.backgroundMediaUrl}
-            muted
-            playsInline
-            autoPlay
-            loop
-            className={cn("h-full w-full", fitModeClass(region.fitMode))}
-          />
-        ) : (
-          <img
-            src={region.backgroundMediaUrl}
-            alt=""
-            className={cn("h-full w-full", fitModeClass(region.fitMode))}
-          />
-        )
+        <RegionMedia
+          url={region.backgroundMediaUrl}
+          type={region.backgroundMediaType ?? "image"}
+          fitMode={region.fitMode}
+          className="h-full w-full"
+        />
       ) : null}
       {region.source === "camera-feed" ? (
         <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-black/45 text-center">
@@ -312,7 +363,7 @@ const RegionPreviewContent = memo(function RegionPreviewContent({
       ) : null}
 
       {region.source === "countdown" ? (
-        <div className="absolute inset-0 flex h-full w-full flex-col items-center justify-center gap-1 bg-black/35 px-2 text-center">
+        <div className="absolute inset-0 flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center">
           <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
             Countdown
           </p>
@@ -336,22 +387,12 @@ const RegionPreviewContent = memo(function RegionPreviewContent({
 
       {region.source === "video" ? (
         region.mediaUrl ? (
-          region.mediaType === "video" ? (
-            <video
-              src={region.mediaUrl}
-              muted
-              playsInline
-              autoPlay
-              loop
-              className={cn("absolute inset-0 h-full w-full", fitModeClass(region.fitMode))}
-            />
-          ) : (
-            <img
-              src={region.mediaUrl}
-              alt=""
-              className={cn("absolute inset-0 h-full w-full", fitModeClass(region.fitMode))}
-            />
-          )
+          <RegionMedia
+            url={region.mediaUrl}
+            type={region.mediaType ?? "image"}
+            fitMode={region.fitMode}
+            className="absolute inset-0 h-full w-full"
+          />
         ) : (
           <div className="absolute inset-0 flex h-full w-full items-center justify-center bg-black/25 p-3 text-center">
             <p className="text-[11px] text-muted-foreground">No media chosen</p>
@@ -366,35 +407,44 @@ const RegionPreviewContent = memo(function RegionPreviewContent({
  * What a region shows from the media library, chosen here. The choice goes to
  * the screen at once if the region is on it.
  */
-function RegionMediaField({
+/**
+ * What a region shows, and where it comes from. Nothing is picked here: the
+ * operator window's own panels fill the selected region, as they fill the
+ * screen, so there is one media library and one list of slides to learn.
+ */
+function RegionContentField({
   label,
-  url,
-  name,
-  onChoose,
+  shown,
+  instruction,
+  onClear,
 }: {
   label: string;
-  url: string | null;
-  name: string | null;
-  onChoose: (item: MediaItem | null) => void;
+  /** What it shows now, or `null` for nothing yet. */
+  shown: string | null;
+  instruction: string;
+  onClear?: () => void;
 }) {
-  const items = useMediaLibraryStore((state) => state.items);
-  const chosen = url ? items.find((item) => item.url === url) ?? null : null;
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
         <label className="block text-[11px] text-muted-foreground">{label}</label>
-        {url ? (
+        {shown && onClear ? (
           <button
             type="button"
-            onClick={() => onChoose(null)}
+            onClick={onClear}
             className="text-[11px] text-muted-foreground transition hover:text-foreground"
           >
             Clear
           </button>
         ) : null}
       </div>
-      <p className="truncate text-[12px] text-foreground">{chosen?.name ?? name ?? "Nothing chosen"}</p>
-      <MediaPicker value={chosen?.id ?? null} onChoose={(item) => onChoose(item)} />
+      <p className={cn("truncate text-[12.5px]", shown ? "text-foreground" : "text-muted-foreground")}>
+        {shown ?? "Nothing yet"}
+      </p>
+      <p className="flex gap-2 rounded-md border border-primary/25 bg-primary/[0.07] px-2.5 py-2 text-[11.5px] leading-[17px] text-foreground/85">
+        <Info className="mt-[2px] h-3.5 w-3.5 flex-none text-primary" aria-hidden />
+        <span>{instruction}</span>
+      </p>
     </div>
   );
 }
@@ -683,10 +733,65 @@ export function ScreenComposerWorkspace({
               Sources
             </p>
           </div>
-          <div className="space-y-2 overflow-auto p-3">
+          <div className="space-y-2 p-3">
             {SOURCE_OPTIONS.map((source) => (
               <SourceCard key={source.value} source={source} />
             ))}
+          </div>
+          {/* Every region, top of the stack first, so one covered by another
+              can still be chosen, and moved above it. */}
+          <div className="border-y border-border px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Layers
+            </p>
+          </div>
+          <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
+            {[...composer.activeLayout.regions].reverse().map((region, index, stack) => {
+              const source =
+                SOURCE_OPTIONS.find((item) => item.value === region.source) ?? SOURCE_OPTIONS[0];
+              const Icon = source.icon;
+              const isSelected = region.id === selectedRegionId;
+              return (
+                <div
+                  key={region.id}
+                  className={cn(
+                    "group flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] transition",
+                    isSelected
+                      ? "bg-primary/15 text-foreground ring-1 ring-primary/40"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRegionId(region.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  >
+                    <Icon className="h-3.5 w-3.5 flex-none" />
+                    <span className="truncate">{region.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${region.name} up`}
+                    title="Up the stack"
+                    disabled={index === 0}
+                    onClick={() => composer.moveRegion(region.id, "forward")}
+                    className="rounded p-0.5 opacity-0 transition hover:bg-background/70 group-hover:opacity-100 disabled:invisible"
+                  >
+                    <ArrowUp className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${region.name} down`}
+                    title="Down the stack"
+                    disabled={index === stack.length - 1}
+                    onClick={() => composer.moveRegion(region.id, "backward")}
+                    className="rounded p-0.5 opacity-0 transition hover:bg-background/70 group-hover:opacity-100 disabled:invisible"
+                  >
+                    <ArrowDown className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </aside>
 
@@ -882,18 +987,14 @@ export function ScreenComposerWorkspace({
               </div>
 
               {selectedRegion.source === "video" ? (
-                <RegionMediaField
+                <RegionContentField
                   label="Media"
-                  url={selectedRegion.mediaUrl}
-                  name={selectedRegion.mediaLabel}
-                  onChoose={(item) =>
+                  shown={selectedRegion.mediaUrl ? selectedRegion.mediaLabel ?? "Media" : null}
+                  instruction="With this region selected, choose an image or a video in the Media panel of the operator window. It shows here instead of on the whole screen."
+                  onClear={() =>
                     composer.updateRegion(
                       selectedRegion.id,
-                      {
-                        mediaUrl: item?.url ?? null,
-                        mediaType: item?.type ?? null,
-                        mediaLabel: item?.name ?? null,
-                      },
+                      { mediaUrl: null, mediaType: null, mediaLabel: null },
                       { live: true },
                     )
                   }
@@ -901,21 +1002,34 @@ export function ScreenComposerWorkspace({
               ) : null}
 
               {selectedRegion.source === "slides" ? (
-                <RegionMediaField
-                  label="Background behind the slide"
-                  url={selectedRegion.backgroundMediaUrl ?? null}
-                  name={selectedRegion.backgroundMediaLabel ?? null}
-                  onChoose={(item) =>
-                    composer.updateRegion(
-                      selectedRegion.id,
-                      {
-                        backgroundMediaUrl: item?.url ?? null,
-                        backgroundMediaType: item?.type ?? null,
-                        backgroundMediaLabel: item?.name ?? null,
-                      },
-                      { live: true },
-                    )
-                  }
+                <>
+                  <RegionContentField
+                    label="Slide"
+                    shown={selectedRegion.slideText?.trim() ? selectedRegion.slideText.trim().split("\n")[0] : null}
+                    instruction="With this region selected, click a slide in the operator window. The region follows the slides you show."
+                  />
+                  <RegionContentField
+                    label="Behind the slide"
+                    shown={
+                      selectedRegion.backgroundMediaUrl ? selectedRegion.backgroundMediaLabel ?? "Media" : null
+                    }
+                    instruction="Choose media in the Media panel while this region is selected to put it behind the slide."
+                    onClear={() =>
+                      composer.updateRegion(
+                        selectedRegion.id,
+                        { backgroundMediaUrl: null, backgroundMediaType: null, backgroundMediaLabel: null },
+                        { live: true },
+                      )
+                    }
+                  />
+                </>
+              ) : null}
+
+              {selectedRegion.source === "countdown" ? (
+                <RegionContentField
+                  label="Timer"
+                  shown={null}
+                  instruction="Shows the timer running in the Timers panel of the operator window, with its name above it."
                 />
               ) : null}
 
@@ -963,8 +1077,37 @@ export function ScreenComposerWorkspace({
               </div>
 
               <div>
-                <label className="mb-1 block text-[11px] text-muted-foreground">Background color</label>
-                <div className="flex items-center gap-2">
+                <label className="mb-1 block text-[11px] text-muted-foreground">Background</label>
+                <div className="mb-2 flex rounded-md border border-border bg-background/40 p-0.5">
+                  {BACKGROUND_CHOICES.map((choice) => {
+                    const active = backgroundChoiceOf(selectedRegion.backgroundColor) === choice.value;
+                    return (
+                      <button
+                        key={choice.value}
+                        type="button"
+                        onClick={() => {
+                          if (choice.value !== "color") {
+                            composer.updateRegion(selectedRegion.id, { backgroundColor: choice.color });
+                          } else if (backgroundChoiceOf(selectedRegion.backgroundColor) !== "color") {
+                            composer.updateRegion(selectedRegion.id, { backgroundColor: "#1e293b" });
+                          }
+                        }}
+                        className={cn(
+                          "flex-1 rounded-[5px] px-2 py-1 text-[11px] font-medium transition",
+                          active ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {choice.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div
+                  className={cn(
+                    "flex items-center gap-2",
+                    backgroundChoiceOf(selectedRegion.backgroundColor) !== "color" && "hidden",
+                  )}
+                >
                   <input
                     type="color"
                     className="h-8 w-12 cursor-pointer rounded border border-border bg-background"
@@ -1001,6 +1144,27 @@ export function ScreenComposerWorkspace({
                 max={80}
                 onValue={(value) => composer.updateRegion(selectedRegion.id, { borderRadius: value })}
               />
+
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 flex-1 gap-1.5 text-[11px]"
+                  onClick={() => composer.moveRegion(selectedRegion.id, "front")}
+                >
+                  <BringToFront className="h-3.5 w-3.5" />
+                  Bring to front
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 flex-1 gap-1.5 text-[11px]"
+                  onClick={() => composer.moveRegion(selectedRegion.id, "back")}
+                >
+                  <SendToBack className="h-3.5 w-3.5" />
+                  Send to back
+                </Button>
+              </div>
 
               <div className="flex items-center gap-2">
                 <Button

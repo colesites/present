@@ -11,7 +11,7 @@ const source = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url)
  * media again, left it on a still frame.
  */
 for (const [name, path] of [
-  ["worship stage", "features/stage/WorshipStageDisplayWindow.tsx"],
+  ["stage slide", "features/stage/StageSlideView.tsx"],
   ["audience window", "renderer/output/OutputWindow.tsx"],
 ]) {
   test(`the ${name} plays a video it has just loaded`, () => {

@@ -227,6 +227,39 @@ pub fn reconcile_all(app: &AppHandle) {
             }
         }
     }
+
+    // Every other output window of Screen Configuration's screens, each on
+    // the display chosen for it. One whose display has gone stays where it
+    // is, as the built-in ones do when there is nothing to move to.
+    for screen in state.snapshot().screens() {
+        for output in screen.active_outputs() {
+            let first_of_built_in =
+                screen.is_built_in() && output.id == crate::services::screens::MAIN_OUTPUT;
+            if first_of_built_in {
+                continue;
+            }
+            let Some(spec) = crate::services::window_spec::output_spec(&screen, &output.id) else {
+                continue;
+            };
+            if app.get_webview_window(&spec.label).is_none() {
+                continue;
+            }
+            match monitors::resolve_output(app, &state, &screen, &output.id) {
+                Ok(Some(display)) => {
+                    if let Err(error) = window::reconcile(app, &spec, Some(&display)) {
+                        tracing::error!(label = %spec.label, %error, "reconcile failed");
+                    }
+                }
+                Ok(None) => tracing::warn!(
+                    label = %spec.label,
+                    "an output's display is not connected; leaving it where it is"
+                ),
+                Err(error) => {
+                    tracing::error!(label = %spec.label, %error, "could not resolve a display")
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

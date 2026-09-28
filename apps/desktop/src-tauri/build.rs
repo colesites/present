@@ -1,6 +1,28 @@
 fn main() {
     ffmpeg_search_path();
+    decklink_shim();
     tauri_build::build();
+}
+
+/// SDI out on a Mac (`src/services/sdi.rs`): a small C++ layer over
+/// Blackmagic's DeckLink API, built with the SDK's headers and its loader,
+/// which finds Desktop Video in `/Library/Frameworks` at run time. Nothing is
+/// linked against Desktop Video, so a Mac without it runs Present as before.
+fn decklink_shim() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return;
+    }
+    println!("cargo:rerun-if-changed=sdi");
+    cc::Build::new()
+        .cpp(true)
+        .std("c++17")
+        .include("sdi/decklink-sdk")
+        .file("sdi/decklink_shim.cpp")
+        .file("sdi/decklink-sdk/DeckLinkAPIDispatch.cpp")
+        // The SDK's own sources are Blackmagic's, not held to this crate's warnings.
+        .warnings(false)
+        .compile("present_decklink");
+    println!("cargo:rustc-link-lib=framework=CoreFoundation");
 }
 
 /// Where the app finds the FFmpeg libraries it ships (ADR-003).

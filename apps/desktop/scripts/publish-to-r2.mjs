@@ -12,7 +12,15 @@
 //
 //     desktop/0.4.0/mac/Present_0.4.0_aarch64.dmg
 //     desktop/0.4.0/windows/Present_0.4.0_x64_en-US.msi
+//     desktop/0.4.0/updates/darwin-aarch64/Present.app.tar.gz
 //     desktop/releases.json
+//
+// A signed build (TAURI_SIGNING_PRIVATE_KEY set, so `tauri build` made update
+// packages and their `.sig` files) also publishes what the app updates itself
+// from: the package, and its signature in the manifest under the platform's
+// updater target, `darwin-aarch64`, `darwin-x86_64` or `windows-x86_64`. The
+// website answers the app's "is there a newer version?" from those
+// (`apps/web/src/app/api/desktop/update`).
 //
 // Usage:
 //   node publish-to-r2.mjs --version 0.4.0 --artifacts <dir> [--dry-run]
@@ -61,7 +69,11 @@ const publicBase = (process.env.R2_PUBLIC_BASE_URL ?? "").replace(/\/+$/, "");
  */
 const classify = (name) => {
   const lower = name.toLowerCase();
-  if (lower.endsWith(".dmg") || lower.endsWith(".app.tar.gz")) {
+  // What the app updates itself from, and signatures: published with the
+  // update, not offered on the download page. A `.app.tar.gz` used to be
+  // classed as a Mac download, and could have taken the `.dmg`'s place.
+  if (lower.endsWith(".app.tar.gz") || lower.endsWith(".sig")) return null;
+  if (lower.endsWith(".dmg")) {
     const arm = /aarch64|arm64|silicon/.test(lower);
     return { slug: arm ? "mac-apple-silicon" : "mac-intel", platform: "mac" };
   }
@@ -113,14 +125,71 @@ for (const full of walk(artifactsDir)) {
   });
 }
 
+/**
+ * The platform an update package is for, as the updater names it. Each Mac
+ * architecture is built on a runner of its own, so the runner's is the
+ * bundle's.
+ */
+const macTarget = () => (process.arch === "arm64" ? "darwin-aarch64" : "darwin-x86_64");
+
+const updates = [];
+for (const full of walk(artifactsDir)) {
+  const name = path.basename(full);
+  const lower = name.toLowerCase();
+  // The Windows update is the NSIS installer, run quietly; the MSI stays a
+  // download only.
+  const target = lower.endsWith(".app.tar.gz")
+    ? macTarget()
+    : lower.endsWith("-setup.exe")
+      ? "windows-x86_64"
+      : null;
+  if (!target) continue;
+  const signature = `${full}.sig`;
+  if (!existsSync(signature)) {
+    console.log(`[publish] ${name} has no signature; this build cannot update anyone`);
+    continue;
+  }
+  const key = `desktop/${version}/updates/${target}/${name}`;
+  updates.push({
+    target,
+    name,
+    key,
+    url: `${publicBase}/${key}`,
+    signature: readFileSync(signature, "utf8").trim(),
+    localPath: full,
+  });
+}
+
 if (files.length === 0) {
   console.error("[publish] nothing recognisable to publish");
   process.exit(1);
 }
 
+/** This version's section of CHANGELOG.md, for the update's notes. */
+const notesFor = (wanted) => {
+  try {
+    const changelog = readFileSync(
+      path.join(path.dirname(new URL(import.meta.url).pathname), "..", "..", "..", "CHANGELOG.md"),
+      "utf8",
+    );
+    const heading = new RegExp(`^## \\[${wanted.replaceAll(".", "\\.")}\\][^\\n]*\\n`, "m");
+    const start = changelog.search(heading);
+    if (start === -1) return null;
+    const body = changelog.slice(start).replace(heading, "");
+    const end = body.search(/^## \[/m);
+    return (end === -1 ? body : body.slice(0, end)).trim() || null;
+  } catch {
+    return null;
+  }
+};
+
 console.log(`[publish] ${files.length} files for ${version}:`);
 for (const file of files) {
   console.log(`  ${file.slug.padEnd(20)} ${file.name} (${(file.size / 1e6).toFixed(1)} MB)`);
+}
+
+for (const update of updates) {
+  console.log(`  ${`update ${update.target}`.padEnd(20)} ${update.name}`);
 }
 
 if (dryRun) {
@@ -128,7 +197,7 @@ if (dryRun) {
   process.exit(0);
 }
 
-for (const file of files) {
+for (const file of [...files, ...updates]) {
   console.log(`[publish] → ${file.key}`);
   aws(["s3", "cp", file.localPath, `s3://${bucket}/${file.key}`]);
 }
@@ -162,10 +231,19 @@ const kept = (existing?.files ?? []).filter(
   (file) => !published.some((each) => each.slug === file.slug),
 );
 
+// Updates are kept per platform in the same way.
+const updatesByTarget = { ...(existing?.updates ?? {}) };
+for (const { target, url, signature } of updates) {
+  updatesByTarget[target] = { url, signature };
+}
+
+const notes = notesFor(version) ?? existing?.notes ?? null;
 const entry = {
   version,
   publishedAt: existing?.publishedAt ?? new Date().toISOString(),
+  ...(notes ? { notes } : {}),
   files: [...kept, ...published].sort((a, b) => a.slug.localeCompare(b.slug)),
+  ...(Object.keys(updatesByTarget).length > 0 ? { updates: updatesByTarget } : {}),
 };
 
 const versions = [

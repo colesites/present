@@ -31,6 +31,15 @@ export type Settings = {
   timerNameBannerEnabled: boolean;
   timerNameBannerColor: string;
   timerTitlePosition: "top" | "bottom";
+  /** Behind the clock: a colour, or "" for nothing. */
+  timerBoxColor?: string;
+  /** What shows once the live timer runs out (`TimeUpSettings`). */
+  timerTimeUp?: {
+    enabled?: boolean;
+    text?: string;
+    color?: string;
+    blink?: boolean;
+  };
   outputDisplayId?: number | null;
   screenDisplayIds?: {
     audience?: number | null;

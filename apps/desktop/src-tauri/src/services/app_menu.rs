@@ -137,11 +137,30 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
     let mut bar = MenuBuilder::new(app);
 
     // --- Present -----------------------------------------------------------
+    // "Check for Updates…", or "Restart to Update to 0.4.4" once one is
+    // waiting (`services/updates.rs`): under Settings on a Mac, in Help
+    // elsewhere.
+    #[cfg(desktop)]
+    let updates = {
+        let made = MenuItemBuilder::with_id(
+            crate::services::updates::MENU_ITEM,
+            crate::services::updates::CHECK_LABEL,
+        )
+        .build(app)?;
+        crate::services::updates::remember_menu_item(app, made.clone());
+        made
+    };
+
     if mac {
+        // As other Mac apps lay it out: About, then Settings and the update
+        // item together.
         let present = SubmenuBuilder::new(app, "Present")
             .about(Some(AboutMetadata::default()))
             .separator()
-            .item(&keyed(SETTINGS_ITEM, "Settings…", "CmdOrCtrl+,")?)
+            .item(&keyed(SETTINGS_ITEM, "Settings…", "CmdOrCtrl+,")?);
+        #[cfg(desktop)]
+        let present = present.item(&updates);
+        let present = present
             .separator()
             .services()
             .separator()
@@ -262,6 +281,12 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
 
     // --- Screens -----------------------------------------------------------
     let screens = SubmenuBuilder::new(app, "Screens")
+        .item(&keyed(
+            "screens.configure",
+            "Configure Screens…",
+            "CmdOrCtrl+Alt+1",
+        )?)
+        .separator()
         .item(&check("output", "screens.output", "Audience Output")?)
         .item(&check("mediaStage", "screens.media-stage", "Media Stage")?)
         .item(&check(
@@ -269,6 +294,9 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
             "screens.worship-stage",
             "Worship Stage",
         )?)
+        .separator()
+        .item(&item("screens.stage-layouts", "Edit Stage Layouts…")?)
+        .item(&item("screens.multiview", "Multiview")?)
         .separator()
         .item(&item("screens.looks", "Looks…")?)
         .item(&item("screens.composer", "Screen Composer…")?)
@@ -285,10 +313,16 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
         .build()?;
 
     // --- Help --------------------------------------------------------------
-    let help = SubmenuBuilder::new(app, "Help")
-        .item(&item("help.website", "Present Website")?)
-        .item(&item("help.download", "Download the Latest Version")?)
-        .build()?;
+    // No "Download the Latest Version": Present updates itself (Check for
+    // Updates…), and a download beside it only invited reinstalling by hand.
+    let help = SubmenuBuilder::new(app, "Help").item(&item("help.website", "Present Website")?);
+    #[cfg(desktop)]
+    let help = if mac {
+        help
+    } else {
+        help.separator().item(&updates)
+    };
+    let help = help.build()?;
     mark_as_help(&help);
 
     Ok(bar
@@ -320,6 +354,8 @@ pub fn handle(app: &AppHandle, event: MenuEvent) {
         IMPORT_PRESENTATION_ITEM => send_import(app, "presentation"),
         IMPORT_IMAGES_ITEM => send_import(app, "images"),
         MINIMIZE_ITEM => minimize_focused(app),
+        #[cfg(desktop)]
+        crate::services::updates::MENU_ITEM => crate::services::updates::menu_chosen(app),
         _ => {
             if let Some(action) = control_for(id) {
                 control::dispatch(app, &action, "menu");

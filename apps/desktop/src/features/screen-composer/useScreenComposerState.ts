@@ -379,10 +379,68 @@ function nextRegionName(regions: ScreenComposerRegion[]) {
   return `Region ${regions.length + 1}`;
 }
 
+/**
+ * Sent to every window with the whole store when one of them changes it.
+ *
+ * The composer is edited in its own window, and the operator window is the
+ * one that puts the layout on screen. Between them there was only
+ * localStorage, read again on a timer and on focus, and a window in the
+ * background is not given its timers on time: media chosen for a region
+ * reached the screen when somebody next clicked into the operator window, or
+ * did not seem to reach it at all. The same fix as Settings'
+ * (`useAppSettings`).
+ */
+const COMPOSER_CHANGED_EVENT = "present:composer-changed";
+
+/**
+ * A drag changes the store on every pointer move. The first change goes at
+ * once, so media chosen for a region is on screen straight away; the rest of
+ * a burst goes as its latest, this often, rather than sixty whole stores a
+ * second for the operator window to take in.
+ */
+const SEND_EVERY_MS = 100;
+
 export function useScreenComposerState() {
   const initialStore = useMemo(() => loadStoredState(), []);
   const [store, setStore] = useState<ScreenComposerStore>(initialStore);
   const lastSerializedRef = useRef<string>(JSON.stringify(initialStore));
+  const sending = useRef<{ timer: number | null; latest: string | null; sentAt: number }>({
+    timer: null,
+    latest: null,
+    sentAt: 0,
+  });
+
+  const send = useCallback((serialized: string) => {
+    const state = sending.current;
+    const emitNow = (payload: string) => {
+      state.sentAt = Date.now();
+      void import("@tauri-apps/api/event")
+        .then(({ emit }) => emit(COMPOSER_CHANGED_EVENT, payload))
+        .catch((): void => undefined);
+    };
+    state.latest = serialized;
+    if (state.timer !== null) return;
+    const wait = SEND_EVERY_MS - (Date.now() - state.sentAt);
+    if (wait <= 0) {
+      state.latest = null;
+      emitNow(serialized);
+      return;
+    }
+    state.timer = window.setTimeout(() => {
+      state.timer = null;
+      const latest = state.latest;
+      state.latest = null;
+      if (latest !== null) emitNow(latest);
+    }, wait);
+  }, []);
+
+  useEffect(
+    () => () => {
+      const state = sending.current;
+      if (state.timer !== null) window.clearTimeout(state.timer);
+    },
+    [],
+  );
 
   useEffect(() => {
     const serialized = JSON.stringify(store);
@@ -391,11 +449,40 @@ export function useScreenComposerState() {
     }
     try {
       window.localStorage.setItem(STORAGE_KEY, serialized);
-      lastSerializedRef.current = serialized;
     } catch {
-      // Ignore persistence failures.
+      // Ignore persistence failures; the other windows are still told.
     }
-  }, [store]);
+    lastSerializedRef.current = serialized;
+    send(serialized);
+  }, [send, store]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<string>(COMPOSER_CHANGED_EVENT, ({ payload }) => {
+          if (typeof payload !== "string" || payload === lastSerializedRef.current) return;
+          try {
+            const next = ensureStoreShape(JSON.parse(payload));
+            // What this window will hold, so it is not written and sent back.
+            lastSerializedRef.current = JSON.stringify(next);
+            setStore(next);
+          } catch {
+            // A store this window cannot read stays out of it.
+          }
+        }),
+      )
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else detach = unlisten;
+      })
+      .catch((): void => undefined);
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, []);
 
   const syncFromStorage = useCallback(() => {
     try {
@@ -677,6 +764,36 @@ export function useScreenComposerState() {
     [],
   );
 
+  /**
+   * Move a region up or down the stack. Later regions are drawn over earlier
+   * ones, on the screen as here, so the list order is the stacking order.
+   */
+  const moveRegion = useCallback(
+    (regionId: string, to: "front" | "back" | "forward" | "backward") => {
+      setStore((previous) =>
+        withUpdatedActiveLayout(previous, (layout) => {
+          const from = layout.regions.findIndex((region) => region.id === regionId);
+          if (from < 0) return layout;
+          const last = layout.regions.length - 1;
+          const target =
+            to === "front"
+              ? last
+              : to === "back"
+                ? 0
+                : to === "forward"
+                  ? Math.min(from + 1, last)
+                  : Math.max(from - 1, 0);
+          if (target === from) return layout;
+          const regions = [...layout.regions];
+          const [moved] = regions.splice(from, 1);
+          regions.splice(target, 0, moved);
+          return { ...layout, regions, updatedAt: Date.now() };
+        }),
+      );
+    },
+    [],
+  );
+
   const setAllowOverlap = useCallback((allowOverlap: boolean) => {
     setStore((previous) =>
       withUpdatedActiveLayout(previous, (layout) => ({
@@ -840,6 +957,7 @@ export function useScreenComposerState() {
     deleteLayout,
     applyActiveLayoutToLive,
     goLiveLayout,
+    moveRegion,
   };
 }
 

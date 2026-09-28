@@ -104,8 +104,11 @@ for (const entry of fs.readdirSync(path.join(PREFIX, "share", "licenses"))) {
 const readConfig = (name) => JSON.parse(fs.readFileSync(path.join(TAURI_DIR, name), "utf8"));
 const isRuntimeDir = (source) => source.replace(/\/$/, "") === "ffmpeg/runtime";
 if (process.platform === "darwin") {
-  // Frameworks are named one by one, with their major version.
-  const named = [...readConfig("tauri.macos.conf.json").bundle.macOS.frameworks].sort();
+  // Frameworks are named one by one, with their major version. Syphon's is
+  // bundled beside them (`src-tauri/syphon`), and is not this script's.
+  const named = readConfig("tauri.macos.conf.json")
+    .bundle.macOS.frameworks.filter((framework) => framework.startsWith("ffmpeg/"))
+    .sort();
   const expected = staged.map((name) => `ffmpeg/runtime/${name}`).sort();
   if (JSON.stringify(named) !== JSON.stringify(expected)) {
     fail(

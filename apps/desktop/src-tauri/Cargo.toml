@@ -1,6 +1,6 @@
 [package]
 name = "present"
-version = "0.4.3"
+version = "0.4.4"
 description = "Presentation software for churches, conferences and live events"
 authors = ["Cole"]
 license = "MIT"
@@ -16,6 +16,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# The SDI shim over Blackmagic's DeckLink API (`sdi/decklink_shim.cpp`). The
+# version already in the tree.
+cc = "1.2"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -123,6 +126,10 @@ tauri-plugin-global-shortcut = "2.3.2"
 # Windows and Linux arrive as a second launch, so the single-instance hook is
 # how they reach the running app at all.
 tauri-plugin-single-instance = { version = "2.4.4", features = ["deep-link"] }
+# The app updating itself in place: a signed package checked, downloaded
+# and installed, then a restart (`services/updates.rs`). Held at 2.11: 2.12
+# takes Tauri to 2.12 with it, and a second wry, ahead of the JavaScript side.
+tauri-plugin-updater = "=2.11.0"
 
 # macOS reports monitor names as "Monitor #<model number>" (tao's
 # platform_impl/macos/monitor.rs:208). Reading the name a human would recognise

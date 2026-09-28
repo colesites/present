@@ -31,6 +31,7 @@ pub mod look;
 pub mod output;
 pub mod receiver;
 pub mod rules;
+pub mod screen_stream;
 pub mod sender;
 pub mod stream;
 mod sys;

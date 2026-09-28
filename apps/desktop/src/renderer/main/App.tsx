@@ -41,15 +41,19 @@ import { useDesktopConvexAuthReady } from "../shared/providers/ConvexClientProvi
 import { ThemesPanel } from "../../features/themes";
 import { useThemesModalStore } from "../shared/store/themesModal";
 import { useMediaLibraryStore } from "../shared/store/mediaLibrary";
+import { useUpdateNotice } from "../tauri/updates";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
 import { useOfflineSyncEngine } from "../shared/hooks/useOfflineSyncEngine";
-import { StageDisplayWindow } from "../../features/stage/StageDisplayWindow";
-import { WorshipStageDisplayWindow } from "../../features/stage/WorshipStageDisplayWindow";
+import { StageLayoutWindow } from "../../features/stage/StageLayoutWindow";
+import { StageLayoutEditor } from "../../features/stage/StageLayoutEditor";
+import { MultiviewWindow } from "../../features/stage/MultiviewWindow";
 import { LooksWindow } from "../../features/looks/LooksWindow";
 import { ScreenComposerWindow } from "../../features/screen-composer";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
 import { MiniLyricsWindow } from "../../features/editor";
 import { areDisplayListsEqual } from "../shared/lib/display-list";
+import { ScreenCanvas } from "../shared/components/ScreenCanvas";
+import { ScreenIdentify } from "../shared/components/ScreenIdentify";
 
 const ROOT_DISPLAY_REFRESH_INTERVAL_MS = 15_000;
 
@@ -65,11 +69,24 @@ export default function Home() {
   if (windowType === "mini-lyrics") {
     return <MiniLyricsWindow />;
   }
-  if (windowType === "media-stage") {
-    return <StageDisplayWindow />;
+  // A stage screen, built in or added in Screen Configuration: the layout
+  // its screen names, at the screen's size and in its colour. The two older
+  // page names still lead here.
+  if (windowType === "stage" || windowType === "media-stage" || windowType === "worship-stage") {
+    return (
+      <>
+        <ScreenCanvas>
+          <StageLayoutWindow />
+        </ScreenCanvas>
+        <ScreenIdentify />
+      </>
+    );
   }
-  if (windowType === "worship-stage") {
-    return <WorshipStageDisplayWindow />;
+  if (windowType === "stage-editor") {
+    return <StageLayoutEditor />;
+  }
+  if (windowType === "multiview") {
+    return <MultiviewWindow />;
   }
   if (windowType === "looks") {
     return <LooksWindow />;
@@ -190,6 +207,9 @@ function AuthenticatedHome({ windowType }: { windowType: string | null }) {
       "worship-stage": "Worship Stage",
       "mini-lyrics": "Mini Lyrics Editor",
       "screen-composer": "Screen Composer",
+      stage: "Stage",
+      "stage-editor": "Stage Layouts",
+      multiview: "Multiview",
       settings: "Settings",
     };
     const title = titleMap[windowType];
@@ -295,8 +315,10 @@ function AuthenticatedHome({ windowType }: { windowType: string | null }) {
 
     if (sessionExpiresAtMs && sessionExpiresAtMs <= Date.now()) {
       if (isOnline) {
-        clearSession();
-        setError("Session expired. Please sign in again.");
+        // This computer's clock is not the judge (`expiredSessionAction`):
+        // the server renews the session, or answers 401 and signs it out.
+        setAuthStatus(user ? "authenticated" : "loading");
+        void ensureFreshDesktopAccessToken();
       } else if (user) {
         setAuthStatus("authenticated");
         setError("Session expired. Reconnect to verify your account.");
@@ -537,6 +559,8 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   useEffect(() => {
     useMediaLibraryStore.getState().setItems(allMediaItems);
   }, [allMediaItems]);
+  // "Present 0.4.4 is ready", with a Restart button, once one is downloaded.
+  useUpdateNotice();
   const settings = useAppSettings({ folders, allMediaItems });
   const {
     settingsOutputDisplayId,
@@ -828,7 +852,21 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // The application menu (`services/app_menu.rs`). Each item does what the
   // header's own button does; the ones that belong to a panel bring the panel
   // on screen and hand over to it.
-  useMenuCommandListener();
+  useMenuCommandListener(!isSettingsWindow);
+  // Screens ▸ Configure Screens…: Settings, open at Screens & sound.
+  useMenuCommand("screens.configure", () => {
+    try {
+      window.localStorage.setItem("present-settings-section", "screens");
+    } catch {
+      // Settings opens where it was left instead.
+    }
+    void import("@tauri-apps/api/event")
+      .then(({ emitTo }) => emitTo("settings", "settings:section", "screens"))
+      .catch((): void => undefined);
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke("open_window", { role: "settings", options: null }))
+      .catch((error: unknown) => console.error("[Menu] could not open the screen settings", error));
+  });
   useMenuCommand("view.show", () => {
     setBottomTab("media");
     setViewMode("show");
@@ -871,13 +909,27 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   });
   useMenuCommand("screens.looks", () => void openLooksWindow());
   useMenuCommand("screens.composer", () => void openScreenComposerWindow());
+  useMenuCommand("screens.stage-layouts", () => {
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke("open_window", { role: "stage-editor", options: null }))
+      .catch((error: unknown) => console.error("[Menu] could not open the stage layouts", error));
+  });
+  // Multiview goes over the media stage's display, and the same item takes it
+  // away again.
+  useMenuCommand("screens.multiview", () => {
+    void import("@tauri-apps/api/core")
+      .then(async ({ invoke }) => {
+        const closed = await invoke<boolean>("close_window", { role: "multiview" });
+        if (!closed) await invoke("open_window", { role: "multiview", options: null });
+      })
+      .catch((error: unknown) => console.error("[Menu] could not open Multiview", error));
+  });
   useMenuCommand("help.website", () => {
     void window.electronAPI?.openExternalBrowser?.(desktopWebBaseUrl());
   });
-  useMenuCommand("help.download", () => {
-    void window.electronAPI?.openExternalBrowser?.(`${desktopWebBaseUrl()}/download`);
-  });
-  useMenuChecks({ mediaStage: isMediaStageLive, worshipStage: isWorshipStageLive });
+  // The Settings window is this component too, with no stage screens of its
+  // own: reporting from there would clear the ticks while they are open.
+  useMenuChecks({ mediaStage: isMediaStageLive, worshipStage: isWorshipStageLive }, !isSettingsWindow);
 
   useGlobalShortcuts({
     enabled: !isSettingsWindow && effectiveViewMode !== "browser",

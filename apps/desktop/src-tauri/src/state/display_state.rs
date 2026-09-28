@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::AppResult;
 use crate::services::display::ScreenRole;
 use crate::services::display_identity::DisplayKey;
+use crate::services::screens::{self, ScreenSetup};
 
 use super::persist;
 
@@ -76,8 +77,16 @@ pub struct DisplayPreferences {
     pub version: u32,
     #[serde(default)]
     pub displays: BTreeMap<String, DisplayKey>,
+    /// The NDI stream's size, under `audience`. It was each role's output
+    /// resolution, which only ever sized the stream; a screen's own size is
+    /// in `screens`.
     #[serde(default)]
     pub resolutions: BTreeMap<String, Resolution>,
+    /// Screen Configuration's screens (`services/screens.rs`): what the
+    /// operator changed on the three built in, and the ones they added. Their
+    /// outputs are in `displays`, by screen id.
+    #[serde(default)]
+    pub screens: Vec<ScreenSetup>,
 }
 
 impl Default for DisplayPreferences {
@@ -86,6 +95,7 @@ impl Default for DisplayPreferences {
             version: CURRENT_VERSION,
             displays: BTreeMap::new(),
             resolutions: BTreeMap::new(),
+            screens: Vec::new(),
         }
     }
 }
@@ -127,6 +137,56 @@ impl DisplayPreferences {
         self.resolutions
             .insert(role_key(role).to_owned(), resolution.sanitized());
     }
+
+    /// Every screen, in Screen Configuration's order.
+    pub fn screens(&self) -> Vec<ScreenSetup> {
+        screens::arranged(&self.screens)
+    }
+
+    pub fn screen(&self, id: &str) -> Option<ScreenSetup> {
+        self.screens().into_iter().find(|screen| screen.id == id)
+    }
+
+    /// Keep `screen` as it now is, adding it if it is new.
+    pub fn put_screen(&mut self, screen: ScreenSetup) {
+        match self.screens.iter_mut().find(|kept| kept.id == screen.id) {
+            Some(kept) => *kept = screen,
+            None => self.screens.push(screen),
+        }
+    }
+
+    /// Take an added screen away, and its outputs' displays with it. The
+    /// three built in stay.
+    pub fn remove_screen(&mut self, id: &str) -> bool {
+        if screens::is_built_in(id) {
+            return false;
+        }
+        let before = self.screens.len();
+        self.screens.retain(|screen| screen.id != id);
+        let nested = format!("{id}/");
+        self.displays
+            .retain(|key, _| key != id && !key.starts_with(&nested));
+        self.screens.len() != before
+    }
+
+    /// The display chosen for one output of a screen. For the first output of
+    /// the three built in this is the role's display: their ids are the names
+    /// roles are stored under.
+    pub fn display_for_output(&self, screen: &str, output: &str) -> Option<&DisplayKey> {
+        self.displays.get(&screens::display_key(screen, output))
+    }
+
+    pub fn set_output_display(&mut self, screen: &str, output: &str, key: Option<DisplayKey>) {
+        let stored = screens::display_key(screen, output);
+        match key {
+            Some(key) => {
+                self.displays.insert(stored, key);
+            }
+            None => {
+                self.displays.remove(&stored);
+            }
+        }
+    }
 }
 
 /// In-memory preferences plus the file they came from.
@@ -153,6 +213,12 @@ impl DisplayState {
 
     pub fn snapshot(&self) -> DisplayPreferences {
         self.read().clone()
+    }
+
+    /// One screen, without copying everything else: the audience surface
+    /// asks every frame.
+    pub fn screen(&self, id: &str) -> Option<ScreenSetup> {
+        self.read().screen(id)
     }
 
     fn read(&self) -> std::sync::RwLockReadGuard<'_, DisplayPreferences> {

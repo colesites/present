@@ -215,7 +215,7 @@ test("no source file outside the inventory plays media programmatically", () => 
     ["src/features/present/PresentCenterArea.tsx", "element: the audible Show View player"],
     ["src/features/sidebar-rail/panels/AudioTabPanel.tsx", "element: the backing-track player"],
     ["src/features/slides/OutputPreview.tsx", "element: a muted mirror"],
-    ["src/features/stage/WorshipStageDisplayWindow.tsx", "element: a muted mirror"],
+    ["src/features/stage/StageSlideView.tsx", "element: a muted mirror, the stage's Current Slide"],
     ["src/renderer/output/OutputWindow.tsx", "element: muted mirrors on the audience screen"],
     ["src/renderer/shared/hooks/useShowVideoSync.ts", "element: drives the Show View player"],
     // Not an element. `playback.play()` is a Rust command on the media

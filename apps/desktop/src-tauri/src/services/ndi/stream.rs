@@ -98,7 +98,7 @@ impl FrameSource for AppFrameSource {
 ///
 /// It holds an `AppHandle` and looks the state up again inside, because a
 /// `State<'_, T>` cannot cross to the opening thread.
-fn scoped_opener(app: AppHandle) -> Opener {
+pub(super) fn scoped_opener(app: AppHandle) -> Opener {
     Arc::new(move |url: &str, size: (u32, u32)| {
         let files = app
             .try_state::<FileState>()

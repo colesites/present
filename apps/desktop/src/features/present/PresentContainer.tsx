@@ -33,9 +33,11 @@ import {
   useStageBroadcast,
   useShowVideoSync,
   useTimers,
-  getTimerDisplay,
+  getLiveTimerText,
+  isTimeUpShowing,
 } from "../../renderer/shared/hooks";
 import type { useAppSettings } from "../../renderer/shared/hooks/useAppSettings";
+import { useWindowOpen } from "../../renderer/tauri/runtime";
 import {
   filtersToCSS,
   MediaState,
@@ -359,6 +361,8 @@ export function PresentContainer({
     settingsTimerNameBannerEnabled,
     settingsTimerNameBannerColor,
     settingsTimerTitlePosition,
+    settingsTimerBoxColor,
+    settingsTimerTimeUp,
     settingsLibraryFontFamily,
     settingsLibraryFontSize,
     settingsLibraryFontWeight,
@@ -566,6 +570,9 @@ export function PresentContainer({
       progress: null,
     });
   const screenComposer = useScreenComposerState();
+  // While the Screen Composer is open, the Media panel and the slides fill
+  // the region selected in it.
+  const composerWindowOpen = useWindowOpen("screen-composer");
   const setScriptureLayoutTemplate = useScriptureLayoutTemplateStore(
     (state) => state.setTemplate,
   );
@@ -1464,6 +1471,24 @@ export function PresentContainer({
 
   const selectMediaForOutputWithComposer = useCallback(
     (item: MediaItem | null) => {
+      const region = screenComposer.selectedRegion;
+      const regionTakesMedia = region?.source === "video" || region?.source === "slides";
+      // The Media panel fills the region selected in the Screen Composer
+      // while it is being composed, and the screen is left as it is: the
+      // operator is building a layout, not changing what the room sees.
+      if (composerWindowOpen && !screenComposer.enabled && region && regionTakesMedia) {
+        screenComposer.updateRegion(
+          region.id,
+          region.source === "video"
+            ? { mediaUrl: item?.url ?? null, mediaType: item?.type ?? null, mediaLabel: item?.name ?? null }
+            : {
+                backgroundMediaUrl: item?.url ?? null,
+                backgroundMediaType: item?.type ?? null,
+                backgroundMediaLabel: item?.name ?? null,
+              },
+        );
+        return;
+      }
       if (screenComposer.enabled && screenComposer.selectedRegion) {
         // Straight onto the screen as well as the draft: the operator is
         // choosing what the region shows, with the composer on air.
@@ -1495,7 +1520,7 @@ export function PresentContainer({
       setOperatorMediaForSlide(liveSlideKey);
       selectMediaForOutput(item);
     },
-    [liveSlideKey, screenComposer, selectMediaForOutput],
+    [composerWindowOpen, liveSlideKey, screenComposer, selectMediaForOutput],
   );
 
   const {
@@ -1546,7 +1571,7 @@ export function PresentContainer({
 
   useEffect(() => {
     if (
-      !screenComposer.enabled ||
+      !(screenComposer.enabled || composerWindowOpen) ||
       !screenComposer.selectedRegion ||
       screenComposer.selectedRegion.source !== "slides"
     ) {
@@ -1604,6 +1629,7 @@ export function PresentContainer({
       { live: true },
     );
   }, [
+    composerWindowOpen,
     screenComposer,
     outputActiveSlideId,
     outputSlideContent,
@@ -1830,9 +1856,13 @@ export function PresentContainer({
     const payload = {
       type: "timer-update",
       timerLabel: activeTimer?.name ?? "Timer Name",
-      timerText: activeTimer ? getTimerDisplay(activeTimer) : "00:00:00",
+      timerText: getLiveTimerText(activeTimer, settingsTimerTimeUp),
       timerRunning: activeTimer?.isRunning ?? false,
       timerVisible: isTimerLayerEnabled,
+      // Once it has run out: the message's colour, and whether it blinks.
+      timerTimeUp: isTimeUpShowing(activeTimer, settingsTimerTimeUp)
+        ? { color: settingsTimerTimeUp.color, blink: settingsTimerTimeUp.blink }
+        : null,
     };
     window.electronAPI.sendToOutput(payload);
     if (window.electronAPI.sendToStage) {
@@ -1841,10 +1871,12 @@ export function PresentContainer({
     window.electronAPI.sendToWorshipStage?.(payload);
   }, [
     isTimerLayerEnabled,
+    settingsTimerTimeUp,
     timers.activeTimer,
     timers.activeTimer?.isRunning,
     timers.activeTimer?.secondsValue,
     timers.activeTimer?.name,
+    timers.activeTimer?.finished,
   ]);
 
   // Resolve the active prop IDs into the full overlay payload that
@@ -1999,6 +2031,7 @@ export function PresentContainer({
       nameBannerEnabled: settingsTimerNameBannerEnabled,
       nameBannerColor: settingsTimerNameBannerColor,
       titlePosition: settingsTimerTitlePosition,
+      boxColor: settingsTimerBoxColor,
     },
     screenComposerEnabled: screenComposer.enabled,
     screenComposerLayout: screenComposer.liveLayout,
@@ -2424,6 +2457,7 @@ export function PresentContainer({
             nameBannerEnabled: settingsTimerNameBannerEnabled,
             nameBannerColor: settingsTimerNameBannerColor,
             titlePosition: settingsTimerTitlePosition,
+            timeUp: settingsTimerTimeUp,
           },
           updateFontStyle,
         }}

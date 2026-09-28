@@ -21,13 +21,16 @@ export function SettingsPage({
   title,
   description,
   children,
+  wide,
 }: {
   title: string;
   description: string;
   children: ReactNode;
+  /** For a page laid out in panes, like Screen Configuration. */
+  wide?: boolean;
 }) {
   return (
-    <div className="mx-auto w-full max-w-[760px] px-8 pb-16 pt-7">
+    <div className={cn("mx-auto w-full px-8 pb-16 pt-7", wide ? "max-w-[1040px]" : "max-w-[760px]")}>
       <header className="mb-7">
         <h1 className="text-[18px] font-semibold tracking-[-0.01em] text-foreground">{title}</h1>
         <p className="mt-1 text-[12.5px] leading-5 text-muted-foreground">{description}</p>

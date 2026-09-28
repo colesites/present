@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Present",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "identifier": "space.multivrs.present",
   "build": {
     "beforeDevCommand": "bun run tauri:vite:dev",
@@ -16,6 +16,15 @@
     }
   },
   "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk3QjY2Q0U1OUMxNUQ3NjIKUldSaTF4V2M1V3kybDRNVEZ2eWdqd2tGeVpjcTZEMGN4S2NXQi91Y0Zwamc3eWRLNGJ4c3lPZ3IK",
+      "endpoints": [
+        "https://present.multivrs.space/api/desktop/update/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    },
     "deep-link": {
       "desktop": {
         "schemes": [

@@ -17,6 +17,7 @@ import { PhoneRemoteSettings } from "./PhoneRemoteSettings";
 import { ScreensSettings, type ScreenRole } from "./ScreensSettings";
 import { SlidesSettings } from "./SlidesSettings";
 import { TimerSettings } from "./TimerSettings";
+import { DEFAULT_TIME_UP, type TimeUpSettings } from "../../../renderer/shared/hooks/useTimers";
 import {
   SETTINGS_FIELD,
   SettingsGroup,
@@ -33,6 +34,9 @@ type AudioDevice = {
 };
 
 type SectionKey = "screens" | "agent" | "slides" | "timer" | "connections";
+
+/** What NDI can be sent at. */
+const NDI_SIZES = ["3840x2160", "2560x1440", "1920x1080", "1600x900", "1280x720", "1024x768", "800x600"];
 
 const SECTIONS: Array<{
   key: SectionKey;
@@ -223,6 +227,10 @@ interface SettingsScreenProps {
   setSettingsTimerNameBannerColor: (value: string) => void;
   settingsTimerTitlePosition: "top" | "bottom";
   setSettingsTimerTitlePosition: (value: "top" | "bottom") => void;
+  settingsTimerBoxColor?: string;
+  setSettingsTimerBoxColor: (value: string) => void;
+  settingsTimerTimeUp?: TimeUpSettings;
+  setSettingsTimerTimeUp: (value: TimeUpSettings) => void;
   settingsOutputDisplayId: number | null;
   setSettingsOutputDisplayId: (value: number | null) => void;
   settingsScreenDisplayIds: Record<ScreenRole, number | null>;
@@ -309,8 +317,11 @@ export function SettingsScreen({
   setSettingsTimerNameBannerColor,
   settingsTimerTitlePosition,
   setSettingsTimerTitlePosition,
+  settingsTimerBoxColor = "",
+  setSettingsTimerBoxColor,
+  settingsTimerTimeUp = DEFAULT_TIME_UP,
+  setSettingsTimerTimeUp,
   setSettingsOutputDisplayId,
-  settingsScreenDisplayIds,
   setSettingsScreenDisplayIds,
   settingsScreenResolutions,
   setSettingsScreenResolutions,
@@ -329,6 +340,26 @@ export function SettingsScreen({
   selectMediaForOutput,
 }: SettingsScreenProps) {
   const [section, setSection] = useState<SectionKey>(readSection);
+  // Screens ▸ Configure Screens… in the menu, with Settings already open.
+  useEffect(() => {
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<string>("settings:section", ({ payload }) => {
+          if (SECTIONS.some((each) => each.key === payload)) setSection(payload as SectionKey);
+        }),
+      )
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else detach = unlisten;
+      })
+      .catch((): void => undefined);
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, []);
   const choose = (next: SectionKey) => {
     setSection(next);
     try {
@@ -381,7 +412,13 @@ export function SettingsScreen({
       setSettingsOutputDisplayId(displayId);
     }
     if (window.electronAPI?.setPreferredDisplay) {
-      void window.electronAPI.setPreferredDisplay(role, displayId);
+      // A screen that is on moves to its new place now, not the next time it
+      // is turned on.
+      void window.electronAPI
+        .setPreferredDisplay(role, displayId)
+        .then(() => import("@tauri-apps/api/core"))
+        .then(({ invoke }) => invoke("reconcile_displays"))
+        .catch((error: unknown) => console.error("[Settings] could not move the screen", error));
     } else if (role === "audience" && window.electronAPI?.setPreferredOutputDisplay) {
       void window.electronAPI.setPreferredOutputDisplay(displayId);
     }
@@ -392,12 +429,7 @@ export function SettingsScreen({
       case "screens":
         return (
           <ScreensSettings
-            screenDisplayIds={settingsScreenDisplayIds}
             onScreenDisplayChange={handleScreenDisplayChange}
-            screenResolutions={settingsScreenResolutions}
-            onScreenResolutionChange={(role, resolution) =>
-              setSettingsScreenResolutions((previous) => ({ ...previous, [role]: resolution }))
-            }
             audioOutputDeviceId={settingsAudioOutputDeviceId}
             audioOutputDeviceLabel={settingsAudioOutputDeviceLabel}
             audioOutputs={audio.outputs}
@@ -458,6 +490,8 @@ export function SettingsScreen({
               nameBannerEnabled: settingsTimerNameBannerEnabled,
               nameBannerColor: settingsTimerNameBannerColor,
               titlePosition: settingsTimerTitlePosition,
+              boxColor: settingsTimerBoxColor,
+              timeUp: settingsTimerTimeUp,
             }}
             onApply={(layout) => {
               setSettingsTimerXPercent(layout.xPercent);
@@ -470,6 +504,8 @@ export function SettingsScreen({
               setSettingsTimerNameBannerEnabled(layout.nameBannerEnabled);
               setSettingsTimerNameBannerColor(layout.nameBannerColor);
               setSettingsTimerTitlePosition(layout.titlePosition);
+              setSettingsTimerBoxColor(layout.boxColor);
+              setSettingsTimerTimeUp(layout.timeUp);
             }}
           />
         );
@@ -536,6 +572,17 @@ export function SettingsScreen({
                   onChange={(value) => setSettingsNdiFrameRate(Number(value))}
                   className="w-[120px]"
                   options={NDI_FRAME_RATES.map((rate) => ({ value: String(rate), label: `${rate} fps` }))}
+                />
+              </SettingsRow>
+              <SettingsRow label="Size" description="The picture's size as it goes out over the network.">
+                <SettingsSelect
+                  label="NDI size"
+                  value={settingsScreenResolutions.audience}
+                  onChange={(value) =>
+                    setSettingsScreenResolutions((previous) => ({ ...previous, audience: value }))
+                  }
+                  className="w-[140px]"
+                  options={NDI_SIZES.map((size) => ({ value: size, label: size.replace("x", " × ") }))}
                 />
               </SettingsRow>
               {settingsNdiRuntimeStatus.lastError || !settingsNdiRuntimeStatus.libraryLoaded ? (

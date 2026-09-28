@@ -19,10 +19,21 @@ export type ReleaseFile = {
   url: string;
 };
 
+/** What the app updates itself from on one platform (`publish-to-r2.mjs`). */
+export type ReleaseUpdate = {
+  url: string;
+  /** The package's signature, checked against the key built into the app. */
+  signature: string;
+};
+
 export type Release = {
   version: string;
   publishedAt: string;
+  /** This version's section of the changelog. */
+  notes?: string;
   files: ReleaseFile[];
+  /** By updater target: `darwin-aarch64`, `darwin-x86_64`, `windows-x86_64`. */
+  updates?: Record<string, ReleaseUpdate>;
 };
 
 export type ReleaseManifest = {
@@ -128,6 +139,48 @@ export const releaseDownloads = (release: Release): ReleaseDownload[] =>
       },
     ];
   });
+
+/**
+ * Whether `candidate` is a later version than `current`, both `x.y.z`. A
+ * version that does not read as one is never later, so a malformed request
+ * or manifest offers nothing rather than something wrong.
+ */
+export const isLaterVersion = (candidate: string, current: string): boolean => {
+  const parts = (value: string) => {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(value.trim());
+    return match ? match.slice(1).map(Number) : null;
+  };
+  const [a, b] = [parts(candidate), parts(current)];
+  if (!a || !b) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] > b[index];
+  }
+  return false;
+};
+
+/**
+ * What an app on `target` (`darwin-aarch64`, …) at `current` should update to,
+ * in the shape the Tauri updater reads, or `null` when there is nothing newer
+ * for it: the newest release is not later, or was not built for that
+ * platform, or was built without signing.
+ */
+export const updateFor = (
+  manifest: ReleaseManifest,
+  target: string,
+  current: string,
+): { version: string; notes: string; pub_date: string; url: string; signature: string } | null => {
+  const latest = latestRelease(manifest);
+  if (!latest || !isLaterVersion(latest.version, current)) return null;
+  const update = latest.updates?.[target];
+  if (!update?.url || !update.signature) return null;
+  return {
+    version: latest.version,
+    notes: latest.notes ?? "",
+    pub_date: latest.publishedAt,
+    url: update.url,
+    signature: update.signature,
+  };
+};
 
 /** A version as the release job writes one. */
 export const isReleaseVersion = (value: string): boolean => /^\d+\.\d+\.\d+$/.test(value);

@@ -4,6 +4,108 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-27
+
+### Added
+
+- Present updates itself. "Check for Updates…" is under Settings in the
+  Present menu on a Mac and in Help on Windows. A newer version downloads in
+  the background, and the item becomes "Restart to Update to" that version.
+  It never restarts on its own, and asks first while the audience screen is
+  open. This version has to be installed by hand once; the ones after it
+  arrive this way.
+- Screen configuration, as ProPresenter has it. Screens ▸ Configure Screens…
+  (⌥⌘1) opens Screens & sound with two groups: Audience, which starts with
+  one screen, and Stage, which starts with the media stage and the worship
+  stage. The + beside each adds a screen on a connected display, as an NDI
+  source, or as a placeholder with no output yet. Added audience screens go on
+  and off with the audience output.
+  - A screen is Single, Mirror (the same picture on several outputs),
+    Grouped (one picture cut across a grid of outputs, like a wall of TVs) or
+    Edge blend (one wide picture across projectors side by side, the overlap
+    faded with a linear, cubic or quadratic curve).
+  - Each output's Output menu is grouped as ProPresenter's is: the connected
+    displays, then New NDI (720p59.94 to 4Kp60), New Syphon and New
+    Placeholder (1280 × 720, 1920 × 1080 or 3840 × 2160), each with a Custom
+    Size, and on a Mac the SDI devices and their video modes.
+  - Its Output Target is Full, one part of the output split 2 × 1, 1 × 2,
+    2 × 2, 3 × 1 or 3 × 3, a picture of a common size at its top left, or
+    Custom (any rectangle, in its pixels, for an LED processor or a framed
+    picture). Each output has its own Color (brightness, contrast,
+    saturation, hue, black level) and Corner Pin tabs.
+  - Each screen can be renamed and given a screen color. Identify shows each
+    screen's name, or its display's, on the screen itself.
+  - The connected displays are drawn where the computer arranges them; click
+    one to send an output there. Display settings opens the computer's own.
+  - The NDI size is now with the NDI settings, under Connections.
+  - On a Mac, an audience screen can also be sent to Syphon, for OBS,
+    Resolume or another app on the same Mac, or out of SDI through a
+    Blackmagic DeckLink or UltraStudio device (1080p, 1080i, 720p or 2160p,
+    at the usual rates). SDI needs Blackmagic Desktop Video installed, and
+    says so if it isn't. An NDI output is sent at its mode's rate, 29.97 and
+    interlaced ones included. A sent output that can't start says why under
+    its output.
+- Stage layouts, made as you like. Screens ▸ Edit Stage Layouts… opens the
+  stage editor. A layout is built from objects placed anywhere on it: text,
+  shapes, the current and next slide's words, the current slide itself, the
+  section and the next section, the clock, the timer and the timer's name.
+  Each is moved and sized by dragging, and given its own font, colour, fill,
+  border and caption. Start from a blank layout or from one of the templates,
+  and duplicate, rename or delete layouts. The media stage and the worship
+  stage start with layouts that look as they did, and can be changed or put
+  back as they started. Any stage screen, the new ones too, shows the layout
+  chosen for it in Screen Configuration.
+- Multiview, for the media desk. Move the mouse on the media stage screen and
+  choose Open Multiview, or use Screens ▸ Multiview, to see every screen at
+  once, live, as a wall of TVs: the audience picture and each stage screen's
+  layout, each labelled and edged green while on, with the clock and the
+  timer above them. Choose screens picks the ones shown and how many go on a
+  page, any number or all of them; the wall is laid out to make them as
+  large as they can be, and more screens go on further pages, turned with
+  Prev and Next, the page numbers or the arrow keys. Back to stage, or Esc,
+  returns to the stage screen.
+- The timer's clock can have a background: none, black, dimmed or a color.
+  With the banner on, the name's banner goes at the top or the bottom.
+- The Screen Composer lists its regions as layers, the top one first, to
+  choose any of them and put it above or below another.
+- When the live timer runs out and no other timer follows it, the screens
+  show a blinking red TIME UP instead of 00:00:00: the audience screen, the
+  stage screen, the preview and a composer countdown region. The message, its
+  colour and the blinking are chosen in Settings, Timer, under When time is
+  up, and it can be turned off there. Playing the timer again, resetting it or
+  changing its time takes the message away.
+
+### Fixed
+
+- A change in Settings, such as the Bible font size, reached the operator
+  window only after something else was done there. It now applies at once.
+  The song settings are for new songs and lyrics made into slides; a song
+  already made keeps its own fonts.
+- The Screen Composer was heavy on screen. Each region's video frame was
+  converted a pixel at a time and drawn through a slow scaler, and the whole
+  picture was drawn again sixty times a second whether or not a video had a
+  new frame. Frames are now copied into their regions in one pass across the
+  processor's cores, at the region's own size, and the picture is drawn again
+  only when a video moves on. A composed screen with two playing videos went
+  from about 72 ms a frame to about 10 ms. The composer shows stills of its
+  videos rather than playing each one.
+- Media chosen for a region in the Screen Composer did not reach the screen,
+  or only when the operator window was next clicked. Changes now reach it at
+  once. The composer's regions are filled from the operator window's own
+  panels while a region is selected, rather than from a second media library
+  in its settings.
+- A countdown in the Screen Composer always had a dark shade behind it. A
+  region's background is now chosen: none, black, dark or a color.
+- With Settings open, turning a stage screen off from the Screens menu turned
+  it straight back on, and the menu's ticks for the stage screens went off.
+- Help no longer offers Download the Latest Version, now that Present updates
+  itself.
+- A desktop could be signed out when the website took more than three
+  seconds to check its own signing key: it fell back to the browser session
+  that started the sign-in, which may have ended long before. It now keeps
+  the session and tries again, and it never signs out on the computer's own
+  clock.
+
 ## [0.4.3] - 2026-09-27
 
 ### Fixed

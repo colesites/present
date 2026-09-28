@@ -19,11 +19,14 @@
 //! Platform code is in `macos.rs`. Windows and Linux have no native view, so the
 //! setting has no effect there and the webview draws, as it always has.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+
+use crate::services::screen_picture::{arrange, Arrangement};
 
 #[cfg(target_os = "macos")]
 pub mod macos;
@@ -31,17 +34,38 @@ pub mod stream;
 
 /// What goes on the native view. Frames are premultiplied BGRA, top row first.
 pub trait Presenter: Send {
-    fn present(&mut self, width: u32, height: u32, bgra: Vec<u8>) -> Result<(), String>;
-    /// The size to draw at, in the window's CSS pixels, or `None` if the window
-    /// has gone.
+    /// Show a frame. The same frame may be shown by every output of a
+    /// mirrored screen at once.
+    fn present(&mut self, width: u32, height: u32, bgra: Arc<Vec<u8>>) -> Result<(), String>;
+    /// The window's size in its CSS pixels, or `None` if the window has gone.
     fn size(&self) -> Option<(u32, u32)>;
+    /// Its pixels to a CSS pixel.
+    fn scale(&self) -> f64 {
+        1.0
+    }
 }
 
-/// Draws one frame into a buffer it is handed, and says whether it differs
-/// from the last one — a static slide is not handed to the view sixty times a
-/// second.
+/// One output window a screen is drawn for, as its source is told of it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputView {
+    pub label: String,
+    /// In the window's CSS pixels.
+    pub size: (u32, u32),
+    pub scale: f64,
+}
+
+/// Draws a screen's picture into a buffer it is handed, and says whether it
+/// differs from the last one — a static slide is not handed to the views sixty
+/// times a second.
 pub trait SurfaceSource: Send {
-    fn render(&mut self, size: (u32, u32), out: &mut Vec<u8>) -> Result<bool, String>;
+    fn render(&mut self, views: &[OutputView], out: &mut Vec<u8>) -> Result<bool, String>;
+    /// The size of the picture the last render drew.
+    fn canvas_size(&self) -> (u32, u32);
+    /// How the output window `label` shows the picture, as of the last
+    /// render. `None`: all of it, stretched to the window.
+    fn arrangement(&self, _label: &str) -> Option<Arrangement> {
+        None
+    }
 }
 
 /// What the audience window is told, so it knows whether to draw everything
@@ -69,58 +93,141 @@ pub const HANDOVER_DELAY: Duration = Duration::from_millis(100);
 /// again, so it has repainted before the view under it goes.
 pub const HANDBACK_DELAY: Duration = Duration::from_millis(300);
 
-/// Run until `stop` is set or the window goes. `on_presenting` is told when the
-/// first frame lands and when frames stop, so the webview can hand over and
-/// take back.
+/// A screen's output windows, by label, each with its view. Added to and
+/// taken from while the screen is drawn.
+pub type Presenters = Arc<Mutex<Vec<(String, Box<dyn Presenter>)>>>;
+
+/// Told, for each window, when its view starts and stops showing frames.
+pub type OnPresenting = Arc<dyn Fn(&str, bool) + Send + Sync>;
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// How one window's view is getting on.
+#[derive(Default)]
+struct ViewState {
+    first_presented: Option<Instant>,
+    presenting: bool,
+    refused: u32,
+    /// Its own frame, for an output that shows part of the picture.
+    arranged: Vec<u8>,
+}
+
+/// Run until `stop` is set or every window has gone. `on_presenting` is told,
+/// for each window, when its first frame lands and when frames stop, so its
+/// webview can hand over and take back.
+///
+/// The picture is drawn once a tick for all of the screen's windows, and
+/// each window shows it whole or its own part of it.
 pub fn run(
     mut source: impl SurfaceSource,
-    mut presenter: impl Presenter,
+    presenters: Presenters,
     stop: &AtomicBool,
-    on_presenting: &(dyn Fn(bool) + Send + Sync),
+    on_presenting: &(dyn Fn(&str, bool) + Send + Sync),
 ) {
     let mut buffer = Vec::new();
-    let mut presenting = false;
-    let mut first_presented: Option<Instant> = None;
+    let mut states: HashMap<String, ViewState> = HashMap::new();
     let mut failures = 0u32;
 
     while !stop.load(Ordering::Relaxed) {
         let started = Instant::now();
-        let Some(size) = presenter.size() else {
-            break;
-        };
+        let mut views = lock(&presenters);
 
-        match source.render(size, &mut buffer) {
-            Ok(changed) if (changed || first_presented.is_none()) && !buffer.is_empty() => {
-                // A copy: the view keeps the image it is given for as long as
-                // it is on screen, and this buffer is drawn into again.
-                match presenter.present(size.0, size.1, buffer.clone()) {
-                    Ok(()) => {
-                        failures = 0;
-                        first_presented.get_or_insert(started);
+        // A window that has gone takes its view with it.
+        views.retain(|(label, presenter)| {
+            let alive = presenter.size().is_some();
+            if !alive && states.remove(label).is_some_and(|state| state.presenting) {
+                on_presenting(label, false);
+            }
+            alive
+        });
+        if views.is_empty() {
+            break;
+        }
+        let sizes: Vec<OutputView> = views
+            .iter()
+            .filter_map(|(label, presenter)| {
+                presenter.size().map(|size| OutputView {
+                    label: label.clone(),
+                    size,
+                    scale: presenter.scale(),
+                })
+            })
+            .collect();
+
+        match source.render(&sizes, &mut buffer) {
+            Ok(changed) if !buffer.is_empty() => {
+                failures = 0;
+                let canvas = source.canvas_size();
+                let mut whole: Option<Arc<Vec<u8>>> = None;
+                let mut refused = Vec::new();
+                for (label, presenter) in views.iter_mut() {
+                    let state = states.entry(label.clone()).or_default();
+                    if !changed && state.first_presented.is_some() {
+                        continue;
                     }
-                    Err(error) => {
-                        failures += 1;
-                        tracing::error!(%error, "the native audience view refused a frame");
+                    let arrangement = source.arrangement(label).filter(|each| !each.is_identity());
+                    let (size, frame) = match (arrangement, presenter.size()) {
+                        (Some(arrangement), Some(size)) => {
+                            arrange(&buffer, canvas, &mut state.arranged, size, &arrangement);
+                            (size, Arc::new(state.arranged.clone()))
+                        }
+                        _ => (
+                            canvas,
+                            whole
+                                .get_or_insert_with(|| Arc::new(buffer.clone()))
+                                .clone(),
+                        ),
+                    };
+                    match presenter.present(size.0, size.1, frame) {
+                        Ok(()) => {
+                            state.refused = 0;
+                            state.first_presented.get_or_insert(started);
+                        }
+                        Err(error) => {
+                            state.refused += 1;
+                            tracing::error!(%error, label, "a native audience view refused a frame");
+                            if state.refused >= 3 {
+                                refused.push(label.clone());
+                            }
+                        }
                     }
                 }
+                // A view that keeps refusing hands its window back to the
+                // webview. Better a webview output than a frozen native one.
+                views.retain(|(label, _)| {
+                    if !refused.contains(label) {
+                        return true;
+                    }
+                    if states.remove(label).is_some_and(|state| state.presenting) {
+                        on_presenting(label, false);
+                    }
+                    false
+                });
             }
             Ok(_) => failures = 0,
             Err(error) => {
                 failures += 1;
-                tracing::error!(%error, "the audience frame could not be drawn natively");
+                tracing::error!(%error, "a screen's frame could not be drawn natively");
+            }
+        }
+        drop(views);
+
+        for (label, state) in &mut states {
+            if !state.presenting
+                && state
+                    .first_presented
+                    .is_some_and(|at| started.saturating_duration_since(at) >= HANDOVER_DELAY)
+            {
+                state.presenting = true;
+                on_presenting(label, true);
             }
         }
 
-        if !presenting
-            && first_presented
-                .is_some_and(|at| started.saturating_duration_since(at) >= HANDOVER_DELAY)
-        {
-            presenting = true;
-            on_presenting(true);
-        }
-
-        // A few failures in a row and the webview takes the picture back.
-        // Better a webview output than a frozen native one.
+        // A few failures in a row and the webviews take the picture back.
         if failures >= 3 {
             break;
         }
@@ -130,37 +237,75 @@ pub fn run(
         }
     }
 
-    if presenting {
-        on_presenting(false);
-        // The presenter is dropped as this returns, which takes the view away.
+    let handing_back: Vec<&String> = states
+        .iter()
+        .filter(|(_, state)| state.presenting)
+        .map(|(label, _)| label)
+        .collect();
+    for label in &handing_back {
+        on_presenting(label, false);
+    }
+    if !handing_back.is_empty() {
+        // The presenters are dropped after this returns, which takes the
+        // views away.
         std::thread::sleep(HANDBACK_DELAY);
     }
 }
 
-/// A running surface on its own thread.
+/// A running surface on its own thread: one screen, drawn for each of its
+/// output windows.
 pub struct SurfaceWorker {
     stop: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
+    presenters: Presenters,
 }
 
 impl SurfaceWorker {
     pub fn spawn(
         source: impl SurfaceSource + 'static,
-        presenter: impl Presenter + 'static,
-        on_presenting: Arc<dyn Fn(bool) + Send + Sync>,
+        presenters: Vec<(String, Box<dyn Presenter>)>,
+        on_presenting: OnPresenting,
     ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
+        let presenters: Presenters = Arc::new(Mutex::new(presenters));
+        let shared = presenters.clone();
         let handle = std::thread::Builder::new()
             .name("audience-surface".to_owned())
-            .spawn(move || run(source, presenter, &flag, on_presenting.as_ref()))?;
+            .spawn(move || run(source, shared, &flag, on_presenting.as_ref()))?;
         Ok(Self {
             stop,
             handle: Some(handle),
+            presenters,
         })
     }
 
-    /// The loop has returned, and with it the view is on its way out.
+    /// Draw for another window too. `false` if the loop has already
+    /// finished, and a new worker is needed.
+    pub fn add(&self, label: &str, presenter: Box<dyn Presenter>) -> bool {
+        if self.is_finished() || self.is_stopping() {
+            return false;
+        }
+        let mut views = lock(&self.presenters);
+        views.retain(|(existing, _)| existing != label);
+        views.push((label.to_owned(), presenter));
+        true
+    }
+
+    /// Stop drawing for a window. Its view goes when the presenter is dropped.
+    pub fn remove(&self, label: &str) {
+        lock(&self.presenters).retain(|(existing, _)| existing != label);
+    }
+
+    /// Which windows it draws for.
+    pub fn labels(&self) -> Vec<String> {
+        lock(&self.presenters)
+            .iter()
+            .map(|(label, _)| label.clone())
+            .collect()
+    }
+
+    /// The loop has returned, and with it the views are on their way out.
     pub fn is_finished(&self) -> bool {
         self.handle
             .as_ref()
@@ -174,9 +319,10 @@ impl SurfaceWorker {
 
     /// Ask the loop to stop, without waiting for it.
     ///
-    /// Never joined: this is called from the main thread when the window
-    /// closes, and the loop's last acts — asking the window its size, removing
-    /// the view — need the main thread. Waiting for it there would deadlock.
+    /// Never joined: this is called from the main thread when a window
+    /// closes, and the loop's last acts — asking the windows their size,
+    /// removing the views — need the main thread. Waiting for it there would
+    /// deadlock.
     pub fn signal_stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }
@@ -192,7 +338,6 @@ impl Drop for SurfaceWorker {
 mod tests {
     use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
-    use std::sync::Mutex;
 
     use super::*;
 
@@ -202,7 +347,8 @@ mod tests {
     }
 
     impl SurfaceSource for Scripted {
-        fn render(&mut self, size: (u32, u32), out: &mut Vec<u8>) -> Result<bool, String> {
+        fn render(&mut self, views: &[OutputView], out: &mut Vec<u8>) -> Result<bool, String> {
+            let size = views.first().map_or((4, 4), |view| view.size);
             out.clear();
             out.resize((size.0 * size.1 * 4) as usize, 0);
             let next = self.results.pop_front().unwrap_or(Ok(false));
@@ -210,6 +356,10 @@ mod tests {
                 self.stop.store(true, Ordering::Relaxed);
             }
             next
+        }
+
+        fn canvas_size(&self) -> (u32, u32) {
+            (4, 4)
         }
     }
 
@@ -220,7 +370,7 @@ mod tests {
     }
 
     impl Presenter for Counting {
-        fn present(&mut self, width: u32, height: u32, bgra: Vec<u8>) -> Result<(), String> {
+        fn present(&mut self, width: u32, height: u32, bgra: Arc<Vec<u8>>) -> Result<(), String> {
             assert_eq!(bgra.len(), (width * height * 4) as usize);
             if self.refuse {
                 return Err("no layer".to_owned());
@@ -240,10 +390,20 @@ mod tests {
         (0..ticks).map(|_| Ok(false))
     }
 
-    fn events() -> (Arc<Mutex<Vec<bool>>>, impl Fn(bool) + Send + Sync) {
+    type Seen = Arc<Mutex<Vec<bool>>>;
+
+    fn events() -> (Seen, impl Fn(&str, bool) + Send + Sync) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let log = seen.clone();
-        (seen, move |presenting| log.lock().unwrap().push(presenting))
+        (seen, move |_: &str, presenting| {
+            log.lock().unwrap().push(presenting)
+        })
+    }
+
+    /// One window, as the Output is.
+    fn one(counting: Counting) -> Presenters {
+        let presenter: Box<dyn Presenter> = Box::new(counting);
+        Arc::new(Mutex::new(vec![("output".to_owned(), presenter)]))
     }
 
     #[test]
@@ -261,11 +421,11 @@ mod tests {
         let (seen, on_presenting) = events();
         run(
             source,
-            Counting {
+            one(Counting {
                 presented: presented.clone(),
                 refuse: false,
                 gone: false,
-            },
+            }),
             &stop,
             &on_presenting,
         );
@@ -292,11 +452,11 @@ mod tests {
         let (seen, on_presenting) = events();
         run(
             source,
-            Counting {
+            one(Counting {
                 presented: Arc::default(),
                 refuse: false,
                 gone: false,
-            },
+            }),
             &stop,
             &on_presenting,
         );
@@ -317,11 +477,11 @@ mod tests {
         let (seen, on_presenting) = events();
         run(
             source,
-            Counting {
+            one(Counting {
                 presented: Arc::default(),
                 refuse: false,
                 gone: false,
-            },
+            }),
             &stop,
             &on_presenting,
         );
@@ -349,11 +509,11 @@ mod tests {
         let (_, on_presenting) = events();
         run(
             source,
-            Counting {
+            one(Counting {
                 presented: Arc::default(),
                 refuse: false,
                 gone: false,
-            },
+            }),
             &stop,
             &on_presenting,
         );
@@ -370,11 +530,11 @@ mod tests {
         let (seen, on_presenting) = events();
         run(
             source,
-            Counting {
+            one(Counting {
                 presented: Arc::default(),
                 refuse: true,
                 gone: false,
-            },
+            }),
             &stop,
             &on_presenting,
         );
@@ -394,11 +554,11 @@ mod tests {
         let (seen, on_presenting) = events();
         run(
             source,
-            Counting {
+            one(Counting {
                 presented: Arc::default(),
                 refuse: false,
                 gone: true,
-            },
+            }),
             &stop,
             &on_presenting,
         );

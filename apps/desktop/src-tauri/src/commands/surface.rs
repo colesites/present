@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::errors::AppResult;
 use crate::services::surface::SurfaceStatus;
@@ -15,7 +15,9 @@ use crate::state::OutputSurfaceState;
 
 #[tauri::command]
 pub async fn get_output_surface(
+    window: WebviewWindow,
     state: State<'_, Arc<OutputSurfaceState>>,
 ) -> AppResult<SurfaceStatus> {
-    Ok(state.status())
+    // The asking window's own view: each audience screen has one.
+    Ok(state.status(window.label()))
 }

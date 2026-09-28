@@ -19,8 +19,12 @@ export {
   getInitialTimerValue,
   getElapsedTargetSeconds,
   getCountdownToTimeSeconds,
+  getLiveTimerText,
+  isTimeUpShowing,
+  DEFAULT_TIME_UP,
 } from "./useTimers";
 export type {
+  TimeUpSettings,
   TimerConfig,
   TimerItem,
   TimerType,
