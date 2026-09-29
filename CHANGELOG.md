@@ -4,6 +4,8 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-09-29
+
 ### Changed
 
 - Choosing media for a background, such as the Bible background in Settings,
