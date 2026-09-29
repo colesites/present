@@ -93,9 +93,26 @@ pub const HANDOVER_DELAY: Duration = Duration::from_millis(100);
 /// again, so it has repainted before the view under it goes.
 pub const HANDBACK_DELAY: Duration = Duration::from_millis(300);
 
-/// A screen's output windows, by label, each with its view. Added to and
-/// taken from while the screen is drawn.
-pub type Presenters = Arc<Mutex<Vec<(String, Box<dyn Presenter>)>>>;
+/// A screen's output windows, by label, each with its view.
+pub type Presenters = Vec<(String, Box<dyn Presenter>)>;
+
+/// Windows joining and leaving a screen while it is drawn, for its loop to
+/// take up at its next tick.
+///
+/// The loop owns its windows' views, and nothing else touches them. A window
+/// closes on the main thread, and a frame asks each window its size, which
+/// waits on the main thread. When the views were behind a lock the loop held
+/// through a frame, the main thread taking it to let a closed window go could
+/// wait on a loop that was waiting on it, and the app froze. This is only ever
+/// held to put a change in or take them all out.
+#[derive(Default)]
+pub struct Changes {
+    joining: Presenters,
+    leaving: Vec<String>,
+    /// The loop has finished, or is finishing: a window put in now would never
+    /// be drawn.
+    closed: bool,
+}
 
 /// Told, for each window, when its view starts and stops showing frames.
 pub type OnPresenting = Arc<dyn Fn(&str, bool) + Send + Sync>;
@@ -124,7 +141,8 @@ struct ViewState {
 /// each window shows it whole or its own part of it.
 pub fn run(
     mut source: impl SurfaceSource,
-    presenters: Presenters,
+    mut views: Presenters,
+    changes: &Mutex<Changes>,
     stop: &AtomicBool,
     on_presenting: &(dyn Fn(&str, bool) + Send + Sync),
 ) {
@@ -134,18 +152,38 @@ pub fn run(
 
     while !stop.load(Ordering::Relaxed) {
         let started = Instant::now();
-        let mut views = lock(&presenters);
 
-        // A window that has gone takes its view with it.
+        let (joining, leaving) = {
+            let mut changes = lock(changes);
+            (
+                std::mem::take(&mut changes.joining),
+                std::mem::take(&mut changes.leaving),
+            )
+        };
+        for (label, presenter) in joining {
+            // A window opened again under a label is a new window, with a
+            // handover of its own.
+            states.remove(&label);
+            views.retain(|(existing, _)| *existing != label);
+            views.push((label, presenter));
+        }
+
+        // A window that has gone, or been taken off, takes its view with it.
         views.retain(|(label, presenter)| {
-            let alive = presenter.size().is_some();
-            if !alive && states.remove(label).is_some_and(|state| state.presenting) {
+            let staying = !leaving.contains(label) && presenter.size().is_some();
+            if !staying && states.remove(label).is_some_and(|state| state.presenting) {
                 on_presenting(label, false);
             }
-            alive
+            staying
         });
         if views.is_empty() {
-            break;
+            let mut changes = lock(changes);
+            if changes.joining.is_empty() {
+                changes.closed = true;
+                break;
+            }
+            // A window arrived as the last one went.
+            continue;
         }
         let sizes: Vec<OutputView> = views
             .iter()
@@ -214,7 +252,6 @@ pub fn run(
                 tracing::error!(%error, "a screen's frame could not be drawn natively");
             }
         }
-        drop(views);
 
         for (label, state) in &mut states {
             if !state.presenting
@@ -237,6 +274,15 @@ pub fn run(
         }
     }
 
+    // Stopped or given up: nothing put in from now on is drawn, and what was
+    // is let go with the rest.
+    let stranded = {
+        let mut changes = lock(changes);
+        changes.closed = true;
+        std::mem::take(&mut changes.joining)
+    };
+    drop(stranded);
+
     let handing_back: Vec<&String> = states
         .iter()
         .filter(|(_, state)| state.presenting)
@@ -246,85 +292,74 @@ pub fn run(
         on_presenting(label, false);
     }
     if !handing_back.is_empty() {
-        // The presenters are dropped after this returns, which takes the
-        // views away.
+        // The views go when `views` is dropped, as this returns.
         std::thread::sleep(HANDBACK_DELAY);
     }
 }
 
 /// A running surface on its own thread: one screen, drawn for each of its
-/// output windows.
+/// output windows. It stops by itself when its last window has gone.
+///
+/// Never joined, and nothing here waits on the loop: a window closes on the
+/// main thread, and the loop's own acts — asking the windows their size,
+/// removing the views — need the main thread. Waiting for it there would
+/// deadlock.
 pub struct SurfaceWorker {
     stop: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
-    presenters: Presenters,
+    changes: Arc<Mutex<Changes>>,
 }
 
 impl SurfaceWorker {
     pub fn spawn(
         source: impl SurfaceSource + 'static,
-        presenters: Vec<(String, Box<dyn Presenter>)>,
+        presenters: Presenters,
         on_presenting: OnPresenting,
     ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
-        let presenters: Presenters = Arc::new(Mutex::new(presenters));
-        let shared = presenters.clone();
+        let changes = Arc::new(Mutex::new(Changes::default()));
+        let shared = changes.clone();
         let handle = std::thread::Builder::new()
             .name("audience-surface".to_owned())
-            .spawn(move || run(source, shared, &flag, on_presenting.as_ref()))?;
+            .spawn(move || run(source, presenters, &shared, &flag, on_presenting.as_ref()))?;
         Ok(Self {
             stop,
             handle: Some(handle),
-            presenters,
+            changes,
         })
     }
 
-    /// Draw for another window too. `false` if the loop has already
-    /// finished, and a new worker is needed.
+    /// Draw for another window too. `false` if the loop has finished or is
+    /// finishing, and a new worker is needed.
     pub fn add(&self, label: &str, presenter: Box<dyn Presenter>) -> bool {
-        if self.is_finished() || self.is_stopping() {
+        let mut changes = lock(&self.changes);
+        // Asked under the lock the loop closes under, so a window is never
+        // handed to a loop that has taken its last changes.
+        if changes.closed || self.stop.load(Ordering::Relaxed) || self.is_finished() {
             return false;
         }
-        let mut views = lock(&self.presenters);
-        views.retain(|(existing, _)| existing != label);
-        views.push((label.to_owned(), presenter));
+        // A window closing under this label was the one this replaces.
+        changes.leaving.retain(|existing| existing != label);
+        changes.joining.retain(|(existing, _)| existing != label);
+        changes.joining.push((label.to_owned(), presenter));
         true
     }
 
-    /// Stop drawing for a window. Its view goes when the presenter is dropped.
+    /// Stop drawing for a window. Its view goes at the loop's next tick, or
+    /// here, if the loop had not taken the window up yet. Never waits on the
+    /// loop.
     pub fn remove(&self, label: &str) {
-        lock(&self.presenters).retain(|(existing, _)| existing != label);
-    }
-
-    /// Which windows it draws for.
-    pub fn labels(&self) -> Vec<String> {
-        lock(&self.presenters)
-            .iter()
-            .map(|(label, _)| label.clone())
-            .collect()
+        let mut changes = lock(&self.changes);
+        changes.joining.retain(|(existing, _)| existing != label);
+        changes.leaving.push(label.to_owned());
     }
 
     /// The loop has returned, and with it the views are on their way out.
-    pub fn is_finished(&self) -> bool {
+    fn is_finished(&self) -> bool {
         self.handle
             .as_ref()
             .is_none_or(|handle| handle.is_finished())
-    }
-
-    /// Told to stop, whether or not it has yet.
-    pub fn is_stopping(&self) -> bool {
-        self.stop.load(Ordering::Relaxed)
-    }
-
-    /// Ask the loop to stop, without waiting for it.
-    ///
-    /// Never joined: this is called from the main thread when a window
-    /// closes, and the loop's last acts — asking the windows their size,
-    /// removing the views — need the main thread. Waiting for it there would
-    /// deadlock.
-    pub fn signal_stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
     }
 }
 
@@ -338,6 +373,7 @@ impl Drop for SurfaceWorker {
 mod tests {
     use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
+    use std::sync::mpsc;
 
     use super::*;
 
@@ -403,7 +439,7 @@ mod tests {
     /// One window, as the Output is.
     fn one(counting: Counting) -> Presenters {
         let presenter: Box<dyn Presenter> = Box::new(counting);
-        Arc::new(Mutex::new(vec![("output".to_owned(), presenter)]))
+        vec![("output".to_owned(), presenter)]
     }
 
     #[test]
@@ -426,6 +462,7 @@ mod tests {
                 refuse: false,
                 gone: false,
             }),
+            &Mutex::default(),
             &stop,
             &on_presenting,
         );
@@ -457,6 +494,7 @@ mod tests {
                 refuse: false,
                 gone: false,
             }),
+            &Mutex::default(),
             &stop,
             &on_presenting,
         );
@@ -482,6 +520,7 @@ mod tests {
                 refuse: false,
                 gone: false,
             }),
+            &Mutex::default(),
             &stop,
             &on_presenting,
         );
@@ -514,6 +553,7 @@ mod tests {
                 refuse: false,
                 gone: false,
             }),
+            &Mutex::default(),
             &stop,
             &on_presenting,
         );
@@ -535,6 +575,7 @@ mod tests {
                 refuse: true,
                 gone: false,
             }),
+            &Mutex::default(),
             &stop,
             &on_presenting,
         );
@@ -559,9 +600,161 @@ mod tests {
                 refuse: false,
                 gone: true,
             }),
+            &Mutex::default(),
             &stop,
             &on_presenting,
         );
         assert!(seen.lock().unwrap().is_empty());
+    }
+
+    /// A changed frame every tick, for as long as it runs.
+    struct Moving;
+
+    impl SurfaceSource for Moving {
+        fn render(&mut self, _: &[OutputView], out: &mut Vec<u8>) -> Result<bool, String> {
+            out.clear();
+            out.resize(4 * 4 * 4, 0);
+            Ok(true)
+        }
+
+        fn canvas_size(&self) -> (u32, u32) {
+            (4, 4)
+        }
+    }
+
+    /// A window that answers its size only through `gate`, as a real one
+    /// answers through the main thread, and says when it has been let go.
+    struct Gated {
+        gate: Arc<Mutex<()>>,
+        asked: mpsc::Sender<()>,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Presenter for Gated {
+        fn present(&mut self, _: u32, _: u32, _: Arc<Vec<u8>>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn size(&self) -> Option<(u32, u32)> {
+            let _ = self.asked.send(());
+            drop(lock(&self.gate));
+            Some((4, 4))
+        }
+    }
+
+    impl Drop for Gated {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn counting(presented: &Arc<AtomicUsize>) -> Box<dyn Presenter> {
+        Box::new(Counting {
+            presented: presented.clone(),
+            refuse: false,
+            gone: false,
+        })
+    }
+
+    fn ignored() -> OnPresenting {
+        Arc::new(|_: &str, _: bool| {})
+    }
+
+    fn eventually(what: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if what() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    #[test]
+    fn closing_a_window_never_waits_on_a_loop_that_is_waiting_on_the_main_thread() {
+        let gate = Arc::new(Mutex::new(()));
+        let (asked, asking) = mpsc::channel();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let presenter: Box<dyn Presenter> = Box::new(Gated {
+            gate: gate.clone(),
+            asked,
+            dropped: dropped.clone(),
+        });
+        let worker = Arc::new(
+            SurfaceWorker::spawn(Moving, vec![("output".to_owned(), presenter)], ignored())
+                .unwrap(),
+        );
+
+        // The main thread is closing the window, and the loop is waiting on
+        // it for the window's size.
+        let busy = lock(&gate);
+        asking
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the loop asked the window its size");
+        let (done, removed) = mpsc::channel();
+        let closing = worker.clone();
+        std::thread::spawn(move || {
+            closing.remove("output");
+            let _ = done.send(());
+        });
+        assert!(
+            removed.recv_timeout(Duration::from_secs(1)).is_ok(),
+            "closing the window waited on the loop, which was waiting on it"
+        );
+
+        drop(busy);
+        assert!(
+            eventually(|| dropped.load(Ordering::SeqCst)),
+            "its view went"
+        );
+        assert!(
+            eventually(|| worker.is_finished()),
+            "the loop stopped with its last window"
+        );
+    }
+
+    #[test]
+    fn a_window_closed_and_opened_again_under_its_label_is_the_one_drawn() {
+        let first = Arc::new(AtomicUsize::new(0));
+        let second = Arc::new(AtomicUsize::new(0));
+        let worker = SurfaceWorker::spawn(
+            Moving,
+            vec![("output".to_owned(), counting(&first))],
+            ignored(),
+        )
+        .unwrap();
+        assert!(eventually(|| first.load(Ordering::Relaxed) > 0));
+
+        worker.remove("output");
+        assert!(worker.add("output", counting(&second)));
+        assert!(
+            eventually(|| second.load(Ordering::Relaxed) > 0),
+            "the new window is drawn"
+        );
+        let closed = first.load(Ordering::Relaxed);
+        std::thread::sleep(TICK * 4);
+        assert_eq!(
+            first.load(Ordering::Relaxed),
+            closed,
+            "the closed one is not"
+        );
+    }
+
+    #[test]
+    fn a_screen_whose_last_window_closes_stops_and_takes_no_more() {
+        let presented = Arc::new(AtomicUsize::new(0));
+        let worker = SurfaceWorker::spawn(
+            Moving,
+            vec![("output".to_owned(), counting(&presented))],
+            ignored(),
+        )
+        .unwrap();
+        worker.remove("output");
+        assert!(eventually(|| worker.is_finished()));
+        assert!(
+            !worker.add("output", counting(&presented)),
+            "a window opened now needs a worker of its own"
+        );
     }
 }

@@ -159,8 +159,8 @@ impl OutputSurfaceState {
     fn attach_now(self: &Arc<Self>, _app: &AppHandle, _label: &str, _screen: &str) {}
 
     /// Hand the window labelled `label` back to its webview and take its view
-    /// away; the screen's other windows go on. Never waits: see
-    /// [`SurfaceWorker::signal_stop`].
+    /// away; the screen's other windows go on, and its worker stops when the
+    /// last has gone. Never waits on the worker: see [`SurfaceWorker`].
     pub fn detach(&self, label: &str) {
         let Some(screen) = screen_id_for_label(label) else {
             return;
@@ -172,9 +172,6 @@ impl OutputSurfaceState {
         slot.presenting.remove(label);
         if let Some(worker) = &slot.worker {
             worker.remove(label);
-            if worker.labels().is_empty() {
-                worker.signal_stop();
-            }
         }
     }
 }

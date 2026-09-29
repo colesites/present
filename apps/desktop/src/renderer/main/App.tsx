@@ -559,6 +559,9 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   useEffect(() => {
     useMediaLibraryStore.getState().setItems(allMediaItems);
   }, [allMediaItems]);
+  useEffect(() => {
+    useMediaLibraryStore.getState().setFolders(folders);
+  }, [folders]);
   // "Present 0.4.4 is ready", with a Restart button, once one is downloaded.
   useUpdateNotice();
   const settings = useAppSettings({ folders, allMediaItems });

@@ -15,7 +15,8 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::errors::AppResult;
 use crate::services::output::{OutputScene, OutputUpdate};
-use crate::state::OutputState;
+use crate::services::screens::screen_id_for_label;
+use crate::state::{LooksState, OutputState};
 
 /// Emitted to every window when the audience scene changes.
 ///
@@ -43,9 +44,22 @@ fn broadcast(app: &AppHandle, scene: Option<OutputScene>) {
 /// up: an audience window reopened during a freeze shows the held screen. The
 /// Electron one shows nothing at all until the freeze ends, because the
 /// re-send it waits for is itself held back by the freeze.
+///
+/// An audience window names itself by `label`, and is handed the scene as its
+/// screen shows it: through its own column of the live look, for a screen
+/// added beside the Screen. The event below carries the Screen's scene, so
+/// such a window asks again when it hears one.
 #[tauri::command]
-pub async fn get_output_scene(state: State<'_, OutputState>) -> AppResult<OutputScene> {
-    Ok(state.on_screen())
+pub async fn get_output_scene(
+    state: State<'_, OutputState>,
+    looks: State<'_, LooksState>,
+    label: Option<String>,
+) -> AppResult<OutputScene> {
+    let scene = state.on_screen();
+    Ok(match label.as_deref().and_then(screen_id_for_label) {
+        Some(screen) => looks.scene_for_screen(scene, screen),
+        None => scene,
+    })
 }
 
 /// Apply an update from the operator window.

@@ -27,7 +27,6 @@
 pub mod finder;
 pub mod input;
 pub mod library;
-pub mod look;
 pub mod output;
 pub mod receiver;
 pub mod rules;

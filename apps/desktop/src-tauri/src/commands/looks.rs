@@ -4,9 +4,10 @@
 //! this state lives in React and reaches the other windows through
 //! `localStorage` and a 400 ms poll; here there is one owner and one event.
 //!
-//! Every mutation returns the whole config. The payload is small — three
-//! targets of eight booleans and a text box — and returning it means a caller
-//! never has to guess what the state became.
+//! Every mutation returns the whole config. The payload is small — a column
+//! of eight booleans and a text box for each audience screen, the NDI output
+//! and the unused stage — and returning it means a caller never has to guess
+//! what the state became.
 
 use tauri::{AppHandle, Emitter, State};
 
@@ -55,7 +56,7 @@ pub async fn set_looks_target(
         if config.selected_target == target {
             return false;
         }
-        looks::set_selected_target(config, target, now_ms());
+        looks::set_selected_target(config, target.clone(), now_ms());
         true
     })?;
     broadcast(&app, &state, changed)
@@ -128,11 +129,11 @@ pub async fn set_look_layer(
             .looks
             .iter()
             .find(|look| look.id == look_id)
-            .map(|look| look.targets.get(target).layers.get(layer));
+            .map(|look| look.targets.get(&target).layers.get(layer));
         if current == Some(enabled) {
             return false;
         }
-        looks::set_layer_enabled(config, &look_id, target, layer, enabled, now_ms());
+        looks::set_layer_enabled(config, &look_id, &target, layer, enabled, now_ms());
         true
     })?;
     broadcast(&app, &state, changed)
@@ -162,11 +163,11 @@ pub async fn set_look_layers(
                 .looks
                 .iter()
                 .find(|look| look.id == look_id)
-                .map(|look| look.targets.get(target).layers.get(*layer));
+                .map(|look| look.targets.get(&target).layers.get(*layer));
             if current == Some(enabled) {
                 continue;
             }
-            looks::set_layer_enabled(config, &look_id, target, *layer, enabled, now_ms());
+            looks::set_layer_enabled(config, &look_id, &target, *layer, enabled, now_ms());
             moved = true;
         }
         moved
@@ -183,7 +184,7 @@ pub async fn set_look_text_position(
     patch: LookTextPositionPatch,
 ) -> AppResult<LooksConfig> {
     let changed = state.update(|config| {
-        looks::set_text_position(config, &look_id, target, patch, now_ms());
+        looks::set_text_position(config, &look_id, &target, patch, now_ms());
         true
     })?;
     broadcast(&app, &state, changed)

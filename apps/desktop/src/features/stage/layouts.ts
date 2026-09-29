@@ -73,6 +73,23 @@ export const MEDIA_LAYOUT = "media";
 export const WORSHIP_LAYOUT = "worship";
 export const BUILT_IN_LAYOUTS = [MEDIA_LAYOUT, WORSHIP_LAYOUT];
 
+/**
+ * The layout a stage screen shows: the one Screen Configuration names for it,
+ * else the media stage's for the media stage and the worship stage's for any
+ * other, else the first there is.
+ */
+export const layoutForScreen = (
+  layouts: StageLayout[],
+  screen: { id: string; layout: string | null } | null,
+): StageLayout | undefined => {
+  const fallback = screen?.id === "media" ? MEDIA_LAYOUT : WORSHIP_LAYOUT;
+  return (
+    layouts.find((each) => each.id === (screen?.layout ?? fallback)) ??
+    layouts.find((each) => each.id === fallback) ??
+    layouts[0]
+  );
+};
+
 export const OBJECT_KINDS: Array<{ kind: StageObjectKind; label: string; description: string }> = [
   { kind: "current-text", label: "Current Slide Text", description: "The words on screen now." },
   { kind: "next-text", label: "Next Slide Text", description: "The words coming next." },

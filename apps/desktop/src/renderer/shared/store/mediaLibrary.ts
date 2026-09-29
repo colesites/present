@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { MediaItem } from "../../../features/media/hooks/useMediaFolders";
+import type { MediaFolder, MediaItem } from "../../../features/media/hooks/useMediaFolders";
 
 /**
  * The media library this computer has, for what draws a slide's image or
@@ -11,8 +11,13 @@ import type { MediaItem } from "../../../features/media/hooks/useMediaFolders";
  */
 export const useMediaLibraryStore = create<{
   items: MediaItem[];
+  /** In the order they were added, as the Media panel lists them. */
+  folders: MediaFolder[];
   setItems: (items: MediaItem[]) => void;
+  setFolders: (folders: MediaFolder[]) => void;
 }>()((set) => ({
   items: [],
+  folders: [],
   setItems: (items) => set({ items }),
+  setFolders: (folders) => set({ folders }),
 }));

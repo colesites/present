@@ -45,6 +45,22 @@ use super::Presenter;
 #[derive(Clone, Copy)]
 struct ViewAddress(usize);
 
+/// The view while it is there. `Drop`'s job takes it out and releases it, on
+/// the main thread; a frame's job that runs after that finds nothing to draw
+/// on.
+///
+/// An address alone is not enough. `run_on_main_thread` called *on* the main
+/// thread runs the job there and then, ahead of every job already queued —
+/// and a window closing drops its presenter on the main thread. The view was
+/// released while a frame queued a moment before was still waiting to be put
+/// on it, and that frame crashed the app. A playing video, in a composer
+/// region or behind a passage, keeps a frame always on its way.
+type SharedView = Arc<std::sync::Mutex<Option<ViewAddress>>>;
+
+fn lock_view(view: &SharedView) -> std::sync::MutexGuard<'_, Option<ViewAddress>> {
+    view.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// A finished image on its way to the main thread. A `CGImage` is immutable and
 /// thread-safe; the wrapper only says so to the compiler.
 struct SendImage(CFRetained<CGImage>);
@@ -56,7 +72,7 @@ unsafe impl Send for SendImage {}
 pub struct MacPresenter {
     app: AppHandle,
     label: String,
-    view: ViewAddress,
+    view: SharedView,
     /// The webview whose background was turned off, to turn back on. Retained,
     /// like the view: the window can close, and another open under the same
     /// label, before this is dropped, and an address alone would then point at
@@ -136,7 +152,7 @@ impl MacPresenter {
         Ok(Self {
             app: app.clone(),
             label: label.to_owned(),
-            view: ViewAddress(view),
+            view: Arc::new(std::sync::Mutex::new(Some(ViewAddress(view)))),
             webview: ViewAddress(webview),
             in_flight: Arc::new(AtomicBool::new(false)),
             mailbox: Arc::new(std::sync::Mutex::new(None)),
@@ -215,7 +231,7 @@ impl Presenter for MacPresenter {
         if self.in_flight.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        let view = self.view;
+        let view = self.view.clone();
         let in_flight = self.in_flight.clone();
         let mailbox = self.mailbox.clone();
 
@@ -231,8 +247,13 @@ impl Presenter for MacPresenter {
                 else {
                     return;
                 };
-                // SAFETY: the view was retained in `attach` and is released
-                // only by `Drop`, also on the main thread, after this.
+                let Some(view) = *lock_view(&view) else {
+                    // The window has closed.
+                    return;
+                };
+                // SAFETY: the view was retained in `attach`, and is released
+                // only once `Drop`'s job has taken it out of the slot — on
+                // this thread, so not while this runs.
                 let view = unsafe { &*(view.0 as *const NSView) };
                 if let Some(layer) = view.layer() {
                     CATransaction::begin();
@@ -287,10 +308,14 @@ impl MacPresenter {
 
 impl Drop for MacPresenter {
     fn drop(&mut self) {
-        let (view, webview) = (self.view, self.webview);
+        let (view, webview) = (self.view.clone(), self.webview);
         let _ = self.app.run_on_main_thread(move || {
-            // SAFETY: retained in `attach`; this is the one release.
-            if let Some(view) = unsafe { Retained::from_raw(view.0 as *mut NSView) } {
+            let taken = lock_view(&view).take();
+            // SAFETY: retained in `attach`; taken out of the slot, this is the
+            // one release.
+            if let Some(view) =
+                taken.and_then(|view| unsafe { Retained::from_raw(view.0 as *mut NSView) })
+            {
                 view.removeFromSuperview();
             }
             // SAFETY: retained in `attach`; this is the one release.

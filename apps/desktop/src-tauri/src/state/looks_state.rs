@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use crate::errors::AppResult;
-use crate::services::looks::{self, LooksConfig};
+use crate::services::look_scene::scene_for_look;
+use crate::services::looks::{self, LookTarget, LooksConfig};
+use crate::services::output::OutputScene;
 
 use super::persist;
 
@@ -50,6 +52,20 @@ impl LooksState {
 
     pub fn snapshot(&self) -> LooksConfig {
         self.read().clone()
+    }
+
+    /// The scene on screen as the audience screen `screen` shows it: through
+    /// its own column of the live look, for one added in Screen
+    /// Configuration. The Screen every setup has shows it as it is — the
+    /// operator window folds its column into the scene itself.
+    pub fn scene_for_screen(&self, on_screen: OutputScene, screen: &str) -> OutputScene {
+        match LookTarget::for_screen(screen) {
+            Some(target @ LookTarget::Screen(_)) => {
+                let column = self.read().live_look().targets.get(&target);
+                scene_for_look(&on_screen, &column)
+            }
+            _ => on_screen,
+        }
     }
 
     /// Apply a change and write it out.
@@ -109,7 +125,7 @@ pub fn generate_look_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::looks::{LookLayer, LookTarget};
+    use crate::services::looks::LookLayer;
 
     fn temp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -141,7 +157,7 @@ mod tests {
                 looks::set_layer_enabled(
                     config,
                     "default",
-                    LookTarget::Program,
+                    &LookTarget::Program,
                     LookLayer::Media,
                     false,
                     now_ms(),
@@ -216,5 +232,40 @@ mod tests {
 
         assert_ne!(first, second);
         assert!(first.starts_with("look-"));
+    }
+
+    #[test]
+    fn each_audience_screen_shows_the_scene_through_its_own_column() {
+        let dir = temp_dir("screens");
+        let state = LooksState::load(&dir);
+        state
+            .update(|config| {
+                let lobby = LookTarget::Screen("a1b2c3d4e5".to_owned());
+                for layer in [LookLayer::Media, LookLayer::VideoInput] {
+                    looks::set_layer_enabled(config, "default", &lobby, layer, false, now_ms());
+                }
+                true
+            })
+            .expect("saved");
+        let showing = OutputScene {
+            show_text: true,
+            show_media: true,
+            ..OutputScene::default()
+        };
+
+        let lobby = state.scene_for_screen(showing.clone(), "a1b2c3d4e5");
+        assert!(!lobby.show_media, "its column has no media");
+        assert!(lobby.show_text);
+        assert!(
+            state
+                .scene_for_screen(showing.clone(), "0f0f0f0f0f")
+                .show_media,
+            "a screen with no column of its own shows what the Screen shows"
+        );
+        assert_eq!(
+            state.scene_for_screen(showing.clone(), "audience"),
+            showing,
+            "the Screen's is the scene as the operator sent it"
+        );
     }
 }

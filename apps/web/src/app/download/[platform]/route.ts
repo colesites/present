@@ -1,4 +1,4 @@
-import { fetchReleaseManifest, fileForSlug, latestRelease } from "@/lib/releases";
+import { fetchReleaseManifest, fileForSlug, newestReleaseWith } from "@/lib/releases";
 import {
   getDesktopDownloadUrl,
   isDesktopDownloadSlug,
@@ -17,20 +17,23 @@ export async function GET(
     });
   }
 
-  // A published release is the whole truth about what exists. A slug it does
-  // not carry is missing, not served from an environment variable pointing at
-  // some earlier upload. That is how the Intel link ended up fetching a file
-  // that had been deleted and reporting it as "temporarily unavailable" when
-  // in fact it had never been built.
+  // The newest release that has this download: platforms are published one
+  // at a time, so a version out for the Mac alone still leaves Windows the
+  // release before it. Once anything is published the manifest is the whole
+  // truth about what exists: a slug no release carries is missing, not served
+  // from an environment variable pointing at some earlier upload. That is how
+  // the Intel link ended up fetching a file that had been deleted and
+  // reporting it as "temporarily unavailable" when it had never been built.
   const manifest = await fetchReleaseManifest();
-  const release = latestRelease(manifest);
-  const desktopDownloadUrl = release
+  const published = manifest.versions.length > 0;
+  const release = newestReleaseWith(manifest, platform);
+  const desktopDownloadUrl = published
     ? fileForSlug(release, platform)?.url ?? ""
     : getDesktopDownloadUrl(platform);
   if (!desktopDownloadUrl) {
     return new Response(
-      release
-        ? `${platform} is not part of the ${release.version} release.`
+      published
+        ? `${platform} is not part of any release yet.`
         : `${platform} download is not configured.`,
       { status: 404 },
     );

@@ -1,15 +1,21 @@
 "use client";
 
-import { Check, Monitor, Plus, RadioTower, Trash2, Tv2 } from "lucide-react";
+import { useMemo } from "react";
+import { Check, Monitor, Plus, RadioTower, Trash2 } from "lucide-react";
 import { cn } from "../../renderer/shared/lib/utils";
 import { useLooksConfig } from "../../renderer/shared/hooks";
 import { Input } from "../../renderer/shared/components/ui/input";
+import { useScreens } from "../../renderer/tauri/screens";
 import {
   LOOK_LAYER_ORDER,
-  LOOK_TARGET_ORDER,
+  lookColumn,
+  lookTargetForScreen,
   type LookLayerKey,
   type LookTargetKey,
 } from "../../shared/types/looks";
+
+/** A column of the layer grid: an audience screen, or the NDI output. */
+type LookColumn = { key: LookTargetKey; label: string; ndi: boolean };
 
 type LookLayerRow = {
   key: LookLayerKey | "text";
@@ -27,17 +33,38 @@ export function LooksWindow() {
   const {
     looksConfig,
     selectedLook,
-    activeTargetConfig,
     setSelectedLook,
     setSelectedTarget,
     addLook,
     removeLook,
     setLookName,
     setLayerEnabledForLook,
+    setLayersEnabledForLook,
     setTextPositionForLook,
   } = useLooksConfig();
+  const { screens } = useScreens();
 
-  const currentTarget = looksConfig.selectedTarget;
+  // The audience screens as Screen Configuration names them, then the NDI
+  // output in Connections. A stage screen shows its stage layout, not a look.
+  const columns = useMemo<LookColumn[]>(() => {
+    const audience = (screens ?? [])
+      .filter((screen) => screen.group === "audience")
+      .flatMap((screen) => {
+        const key = lookTargetForScreen(screen.id);
+        return key ? [{ key, label: screen.name, ndi: false }] : [];
+      });
+    return [
+      ...(audience.length > 0 ? audience : [{ key: "program", label: "Screen", ndi: false }]),
+      { key: "ndi", label: "NDI output", ndi: true },
+    ];
+  }, [screens]);
+
+  // A screen since removed is no column to edit: back to the first.
+  const currentColumn =
+    columns.find((column) => column.key === looksConfig.selectedTarget) ?? columns[0];
+  const currentTarget = currentColumn.key;
+  const activeTargetConfig = lookColumn(selectedLook, currentTarget);
+  const gridColumns = { gridTemplateColumns: `200px repeat(${columns.length}, minmax(96px, 1fr))` };
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground">
@@ -46,7 +73,8 @@ export function LooksWindow() {
         <div>
           <h1 className="text-lg font-semibold text-foreground">Looks</h1>
           <p className="text-[11px] text-muted-foreground">
-            Layer mapping and text placement per destination
+            The layers each audience screen shows, and where its words sit. Stage screens show the
+            stage layout chosen for them in Screen Configuration.
           </p>
         </div>
       </div>
@@ -130,29 +158,27 @@ export function LooksWindow() {
 
           <div className="mt-auto space-y-1.5">
             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Active Target
+              Text position for
             </p>
             <div className="space-y-1">
-              {LOOK_TARGET_ORDER.map((target) => (
+              {columns.map((column) => (
                 <button
-                  key={target.key}
+                  key={column.key}
                   type="button"
-                  onClick={() => setSelectedTarget(target.key)}
+                  onClick={() => setSelectedTarget(column.key)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-[12px] transition-colors",
-                    currentTarget === target.key
+                    "flex w-full min-w-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-[12px] transition-colors",
+                    currentTarget === column.key
                       ? "border-primary/40 bg-primary/10 text-primary"
                       : "border-border bg-transparent text-muted-foreground hover:text-foreground"
                   )}
                 >
-                  {target.key === "program" ? (
-                    <Monitor className="h-3.5 w-3.5" />
-                  ) : target.key === "stage" ? (
-                    <Tv2 className="h-3.5 w-3.5" />
+                  {column.ndi ? (
+                    <RadioTower className="h-3.5 w-3.5 flex-none" />
                   ) : (
-                    <RadioTower className="h-3.5 w-3.5" />
+                    <Monitor className="h-3.5 w-3.5 flex-none" />
                   )}
-                  {target.label}
+                  <span className="truncate">{column.label}</span>
                 </button>
               ))}
             </div>
@@ -166,13 +192,16 @@ export function LooksWindow() {
             <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               Layers
             </p>
-            <div className="overflow-hidden rounded-xl border border-border">
+            <div className="overflow-x-auto rounded-xl border border-border">
               {/* Header row */}
-              <div className="grid grid-cols-[200px_repeat(3,minmax(0,1fr))] border-b border-border bg-muted/30 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              <div
+                className="grid min-w-max border-b border-border bg-muted/30 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
+                style={gridColumns}
+              >
                 <span>Layer</span>
-                {LOOK_TARGET_ORDER.map((target) => (
-                  <span key={target.key} className="text-center">
-                    {target.label}
+                {columns.map((column) => (
+                  <span key={column.key} className="truncate px-1 text-center" title={column.label}>
+                    {column.label}
                   </span>
                 ))}
               </div>
@@ -180,20 +209,19 @@ export function LooksWindow() {
               {LOOK_LAYER_ROWS.map((layer) => (
                 <div
                   key={layer.key}
-                  className="grid grid-cols-[200px_repeat(3,minmax(0,1fr))] items-center border-b border-border/60 px-4 py-2.5 text-[13px] text-foreground last:border-b-0"
+                  className="grid min-w-max items-center border-b border-border/60 px-4 py-2.5 text-[13px] text-foreground last:border-b-0"
+                  style={gridColumns}
                 >
                   <span>{layer.label}</span>
-                  {LOOK_TARGET_ORDER.map((target) => {
+                  {columns.map((column) => {
+                    const { layers } = lookColumn(selectedLook, column.key);
                     const checked =
                       layer.key === "text"
-                        ? Boolean(
-                            selectedLook.targets[target.key].layers.slide ||
-                              selectedLook.targets[target.key].layers.presentation
-                          )
-                        : Boolean(selectedLook.targets[target.key].layers[layer.key]);
+                        ? Boolean(layers.slide || layers.presentation)
+                        : Boolean(layers[layer.key]);
                     return (
                       <label
-                        key={`${layer.key}-${target.key}`}
+                        key={`${layer.key}-${column.key}`}
                         className="flex items-center justify-center"
                       >
                         <input
@@ -202,29 +230,23 @@ export function LooksWindow() {
                           onChange={(event) => {
                             const enabled = event.target.checked;
                             if (layer.key === "text") {
-                              setLayerEnabledForLook(
+                              setLayersEnabledForLook(
                                 selectedLook.id,
-                                target.key,
-                                "slide",
-                                enabled
-                              );
-                              setLayerEnabledForLook(
-                                selectedLook.id,
-                                target.key,
-                                "presentation",
+                                column.key,
+                                ["slide", "presentation"],
                                 enabled
                               );
                               return;
                             }
                             setLayerEnabledForLook(
                               selectedLook.id,
-                              target.key,
+                              column.key,
                               layer.key,
                               enabled
                             );
                           }}
                           className="peer sr-only"
-                          aria-label={`${layer.label} on ${target.label}`}
+                          aria-label={`${layer.label} on ${column.label}`}
                         />
                         <span
                           className={cn(
@@ -248,10 +270,10 @@ export function LooksWindow() {
           {/* Text position */}
           <section className="mt-6">
             <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Text Position — {labelForTarget(currentTarget)}
+              Text Position — {currentColumn.label}
             </p>
             <p className="mb-4 text-[11px] text-muted-foreground">
-              Adjust text region for this destination without affecting others.
+              Where the words sit on {currentColumn.label}, without moving them anywhere else.
             </p>
 
             <div className="grid gap-4 md:grid-cols-2">
@@ -328,12 +350,6 @@ export function LooksWindow() {
       </div>
     </div>
   );
-}
-
-function labelForTarget(target: LookTargetKey) {
-  if (target === "program") return "Screen 1";
-  if (target === "stage") return "Stage";
-  return "NDI";
 }
 
 function SliderField({

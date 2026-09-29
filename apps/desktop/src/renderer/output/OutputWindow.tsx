@@ -9,7 +9,8 @@ import type {
   ScreenComposerRegion,
 } from "../../shared/types/screen-composer";
 import { ensureFontCatalogLoaded } from "../shared/hooks/useFontCatalog";
-import { useOwnScreen } from "../tauri/screens";
+import { ownScreenId, useOwnScreen } from "../tauri/screens";
+import { lookTargetForScreen } from "../../shared/types/looks";
 import { ScreenCanvas } from "../shared/components/ScreenCanvas";
 import { CanvasSlideLayer } from "../shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../shared/components/ScriptureTextLayer";
@@ -121,33 +122,60 @@ export function OutputWindow() {
 
   // The whole scene comes from Rust and this window renders it. The merge
   // below only exists to keep the styles this window seeds its own defaults with.
+  //
+  // A screen added beside the Screen shows the scene through its own column
+  // of the live look, which Rust applies (`services/look_scene.rs`). The event
+  // carries the Screen's scene, so such a window asks for its own whenever the
+  // scene or the looks change.
   useEffect(() => {
     let cancelled = false;
-    let detach: (() => void) | null = null;
+    const detach: Array<() => void> = [];
+    const screen = ownScreenId();
+    const ownColumn = screen !== null && screen !== "audience" && lookTargetForScreen(screen) !== null;
 
     void (async () => {
       const core = await import("../tauri/output");
-      const unlisten = await core.onOutputSceneChanged((scene) => {
-        if (!cancelled) setState((prev) => core.mergeScene(prev, scene));
-      });
+      const label = ownColumn
+        ? (await import("@tauri-apps/api/webviewWindow")).getCurrentWebviewWindow().label
+        : undefined;
+      // Only the newest answer is shown: an older one arriving late is
+      // a scene already replaced.
+      let asked = 0;
+      const refresh = () => {
+        const ask = ++asked;
+        core
+          .getOutputScene(label)
+          .then((scene) => {
+            if (!cancelled && ask === asked) setState((prev) => core.mergeScene(prev, scene));
+          })
+          .catch((error: unknown) => console.error("[Output] could not read the scene", error));
+      };
+
+      detach.push(
+        await core.onOutputSceneChanged((scene) => {
+          if (cancelled) return;
+          if (ownColumn) refresh();
+          else setState((prev) => core.mergeScene(prev, scene));
+        }),
+      );
+      if (ownColumn) {
+        const looks = await import("../tauri/looks");
+        detach.push(await looks.onLooksChanged(() => !cancelled && refresh()));
+      }
       if (cancelled) {
-        unlisten();
+        detach.splice(0).forEach((stop) => stop());
         return;
       }
-      detach = unlisten;
 
       // Late join, without a handshake: whatever is on screen right now.
-      const scene = await core.getOutputScene();
-      if (!cancelled) setState((prev) => core.mergeScene(prev, scene));
+      refresh();
     })().catch((error: unknown) => {
       console.error("[Output] could not reach the Rust core", error);
     });
 
     return () => {
       cancelled = true;
-      const stop = detach;
-      detach = null;
-      stop?.();
+      detach.splice(0).forEach((stop) => stop());
     };
   }, []);
 

@@ -20,9 +20,9 @@ use std::time::{Duration, Instant};
 
 use present_lib::services::compositor::scene::NoMedia;
 use present_lib::services::compositor::SceneCompositor;
+use present_lib::services::look_scene::scene_for_look;
 use present_lib::services::looks::LookPreset;
 use present_lib::services::ndi::finder::Finder;
-use present_lib::services::ndi::look::scene_for_ndi;
 use present_lib::services::ndi::output::{FrameSource, NdiStatus, OutputWorker};
 use present_lib::services::ndi::receiver::{Capture, Receiver};
 use present_lib::services::ndi::sender::Sender;
@@ -97,7 +97,7 @@ impl FrameSource for ProbeSource {
         } else {
             targets.ndi
         };
-        let scene = scene_for_ndi(&self.scene(started), &look);
+        let scene = scene_for_look(&self.scene(started), &look);
 
         let path = self.video_path.clone();
         let open: Opener = std::sync::Arc::new(move |_url: &str, size: (u32, u32)| {

@@ -1,4 +1,4 @@
-import { fileForSlug, type Release } from "@/lib/releases";
+import { fileForSlug, newestReleaseWith, type ReleaseManifest } from "@/lib/releases";
 import {
   getDesktopDownloadPath,
   getDesktopPlatformDownloadPath,
@@ -14,6 +14,8 @@ export type DesktopDownloadVariant = {
   label: string;
   note: string;
   slug: DesktopDownloadSlug;
+  /** The release it is from; `null` for a download set by hand. */
+  version: string | null;
 };
 
 export type DesktopDownloadTarget = {
@@ -26,6 +28,8 @@ export type DesktopDownloadTarget = {
   note: string;
   platform: DesktopDownloadPlatform;
   variants: DesktopDownloadVariant[];
+  /** The release its first download is from. Each platform has its own. */
+  version: string | null;
 };
 
 const DOWNLOAD_VARIANT_CONFIG: Record<
@@ -115,27 +119,33 @@ const readFirstConfiguredEnvValue = (keys: string[]): string => {
  *
  * The release manifest first: it is written by the job that built the files,
  * so it is right by construction and a new release needs no redeploy. The
- * environment variables stay as a fallback for anything the manifest has not
- * got: a hand-uploaded build, or the period before the first published
- * release.
+ * environment variables stay as a fallback for the period before the first
+ * published release.
+ *
+ * Each download comes from the newest release that has it, not from the
+ * newest release: platforms are built and published one at a time, and a
+ * version out for the Mac alone left Windows and Linux with nothing to
+ * download until they were built too.
  */
 const buildVariant = (
   slug: DesktopDownloadSlug,
-  release?: Release | null
+  manifest: ReleaseManifest
 ): DesktopDownloadVariant | null => {
   const { envKeys, fallbackFileName, label, note } =
     DOWNLOAD_VARIANT_CONFIG[slug];
-  const published = fileForSlug(release ?? null, slug);
+  const release = newestReleaseWith(manifest, slug);
+  const published = fileForSlug(release, slug);
 
-  // Once a release is published it is the whole truth about what exists. A
-  // variant it does not carry is not offered at all, rather than falling back
-  // to an environment variable pointing at some earlier upload. That is how
-  // an "Intel" button ended up linking to a file that had been deleted, and
-  // telling the operator the download was "temporarily unavailable" when in
-  // fact it had never been built.
-  const downloadUrl = release
-    ? published?.url ?? ""
-    : readFirstConfiguredEnvValue(envKeys);
+  // Once anything is published the manifest is the whole truth about what
+  // exists. A download no release carries is not offered at all, rather than
+  // falling back to an environment variable pointing at some earlier upload.
+  // That is how an "Intel" button ended up linking to a file that had been
+  // deleted, and telling the operator the download was "temporarily
+  // unavailable" when in fact it had never been built.
+  const downloadUrl =
+    manifest.versions.length > 0
+      ? published?.url ?? ""
+      : readFirstConfiguredEnvValue(envKeys);
   if (!downloadUrl) {
     return null;
   }
@@ -148,34 +158,35 @@ const buildVariant = (
     label,
     note,
     slug,
+    version: release?.version ?? null,
   };
 };
 
 const getPlatformVariants = (
   platform: DesktopDownloadPlatform,
-  release?: Release | null
+  manifest: ReleaseManifest
 ): DesktopDownloadVariant[] => {
   if (platform === "mac") {
     const splitVariants = [
-      buildVariant("mac-apple-silicon", release),
-      buildVariant("mac-intel", release),
+      buildVariant("mac-apple-silicon", manifest),
+      buildVariant("mac-intel", manifest),
     ].filter((variant): variant is DesktopDownloadVariant => variant !== null);
 
     if (splitVariants.length > 0) {
       return splitVariants;
     }
 
-    const genericVariant = buildVariant("mac", release);
+    const genericVariant = buildVariant("mac", manifest);
     return genericVariant ? [genericVariant] : [];
   }
 
   if (platform === "linux") {
-    return [buildVariant("linux", release), buildVariant("linux-rpm", release)].filter(
+    return [buildVariant("linux", manifest), buildVariant("linux-rpm", manifest)].filter(
       (variant): variant is DesktopDownloadVariant => variant !== null
     );
   }
 
-  const windowsVariant = buildVariant("windows", release);
+  const windowsVariant = buildVariant("windows", manifest);
   return windowsVariant ? [windowsVariant] : [];
 };
 
@@ -204,10 +215,10 @@ export const getDesktopDownloadFallbackFileName = (
 };
 
 export const getDesktopDownloadTargets = (
-  release?: Release | null
+  manifest: ReleaseManifest
 ): DesktopDownloadTarget[] => {
   return (["mac", "windows", "linux"] as const).map((platform) => {
-    const variants = getPlatformVariants(platform, release);
+    const variants = getPlatformVariants(platform, manifest);
     const primaryVariant = variants[0];
 
     return {
@@ -219,6 +230,7 @@ export const getDesktopDownloadTargets = (
       envKeys: variants.flatMap((variant) => variant.envKeys),
       platform,
       variants,
+      version: primaryVariant?.version ?? null,
     };
   });
 };
