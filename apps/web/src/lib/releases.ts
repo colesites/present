@@ -88,6 +88,23 @@ export const latestRelease = (manifest: ReleaseManifest): Release | null =>
   manifest.versions[0] ??
   null;
 
+/** Every release, newest first by version rather than by place in the file. */
+const newestFirst = (manifest: ReleaseManifest): Release[] =>
+  [...manifest.versions].sort((a, b) =>
+    isLaterVersion(a.version, b.version) ? -1 : isLaterVersion(b.version, a.version) ? 1 : 0,
+  );
+
+/**
+ * The newest release with a download for `slug`, or `null` if none has one.
+ *
+ * Each platform is built and published on its own (`publish-to-r2.mjs`), so
+ * the newest version can be a Mac build alone for a while. Windows and Linux
+ * are then still offered the release before, rather than nothing until they
+ * are built too.
+ */
+export const newestReleaseWith = (manifest: ReleaseManifest, slug: string): Release | null =>
+  newestFirst(manifest).find((release) => fileForSlug(release, slug) !== null) ?? null;
+
 /** Everything except the newest, for the "previous versions" list. */
 export const previousReleases = (manifest: ReleaseManifest): Release[] => {
   const latest = latestRelease(manifest);
@@ -161,22 +178,26 @@ export const isLaterVersion = (candidate: string, current: string): boolean => {
 /**
  * What an app on `target` (`darwin-aarch64`, …) at `current` should update to,
  * in the shape the Tauri updater reads, or `null` when there is nothing newer
- * for it: the newest release is not later, or was not built for that
- * platform, or was built without signing.
+ * for it: the newest release built and signed for that platform is not later.
+ *
+ * The newest built for it, not the newest of all: while a version is out for
+ * the Mac alone, Windows is offered the one before it rather than nothing.
  */
 export const updateFor = (
   manifest: ReleaseManifest,
   target: string,
   current: string,
 ): { version: string; notes: string; pub_date: string; url: string; signature: string } | null => {
-  const latest = latestRelease(manifest);
-  if (!latest || !isLaterVersion(latest.version, current)) return null;
-  const update = latest.updates?.[target];
-  if (!update?.url || !update.signature) return null;
+  const release = newestFirst(manifest).find((each) => {
+    const update = each.updates?.[target];
+    return Boolean(update?.url && update.signature);
+  });
+  const update = release?.updates?.[target];
+  if (!release || !update || !isLaterVersion(release.version, current)) return null;
   return {
-    version: latest.version,
-    notes: latest.notes ?? "",
-    pub_date: latest.publishedAt,
+    version: release.version,
+    notes: release.notes ?? "",
+    pub_date: release.publishedAt,
     url: update.url,
     signature: update.signature,
   };

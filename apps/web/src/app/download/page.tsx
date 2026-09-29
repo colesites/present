@@ -10,7 +10,6 @@ import {
 import {
   fetchReleaseManifest,
   humanSize,
-  latestRelease,
   previousReleases,
   releaseDownloads,
   type Release,
@@ -41,7 +40,17 @@ const platformIcons = {
   linux: Terminal,
 } as const;
 
-function DownloadRow({ variant }: { variant: DesktopDownloadVariant }) {
+/**
+ * One download. Its version is said here only when it is not the card's: a
+ * Mac build for one chip can be out before the other.
+ */
+function DownloadRow({
+  variant,
+  cardVersion,
+}: {
+  variant: DesktopDownloadVariant;
+  cardVersion: string | null;
+}) {
   return (
     <a
       href={variant.downloadPath}
@@ -50,7 +59,12 @@ function DownloadRow({ variant }: { variant: DesktopDownloadVariant }) {
       <span className="pr-3 text-[0.98rem] font-medium tracking-tight text-black/62 sm:text-[1.05rem]">
         {variant.label}
       </span>
-      <ArrowDownToLine className="h-5 w-5 shrink-0 text-black/58 sm:h-6 sm:w-6" />
+      <span className="flex shrink-0 items-center gap-3">
+        {variant.version && variant.version !== cardVersion ? (
+          <span className="text-[0.82rem] tabular-nums text-black/45">{variant.version}</span>
+        ) : null}
+        <ArrowDownToLine className="h-5 w-5 shrink-0 text-black/58 sm:h-6 sm:w-6" />
+      </span>
     </a>
   );
 }
@@ -76,9 +90,17 @@ function DownloadPlatformCard({ target }: { target: DesktopDownloadTarget }) {
     <div className="w-full overflow-hidden rounded-[22px] border border-black/10 bg-white shadow-[0_24px_60px_rgba(0,0,0,0.1)] sm:max-w-[29rem] sm:rounded-[26px] sm:shadow-[0_30px_80px_rgba(0,0,0,0.12)]">
       <div className="flex items-center gap-4 px-5 py-6 sm:gap-5 sm:px-7 sm:py-9">
         <Icon className="h-8 w-8 shrink-0 text-black sm:h-10 sm:w-10" />
-        <h2 className="text-[1.9rem] font-semibold tracking-tight text-black sm:text-[2.3rem]">
-          {target.label}
-        </h2>
+        <div className="text-left">
+          <h2 className="text-[1.9rem] font-semibold tracking-tight text-black sm:text-[2.3rem]">
+            {target.label}
+          </h2>
+          {/* Each platform's own: they are built and published one at a time. */}
+          {target.version ? (
+            <p className="mt-0.5 text-[0.85rem] font-medium tabular-nums text-black/45">
+              Version {target.version}
+            </p>
+          ) : null}
+        </div>
       </div>
 
       <div className="border-t border-black/10">
@@ -87,7 +109,7 @@ function DownloadPlatformCard({ target }: { target: DesktopDownloadTarget }) {
             key={variant.slug}
             className={index === 0 ? "" : "border-t border-black/10"}
           >
-            <DownloadRow variant={variant} />
+            <DownloadRow variant={variant} cardVersion={target.version} />
           </div>
         ))}
       </div>
@@ -178,11 +200,11 @@ function PreviousVersions({ releases }: { releases: Release[] }) {
 
 export default async function DownloadPage() {
   // The manifest the release job writes to R2. Downloads come from it, so a
-  // release needs no redeploy; the environment variables still answer for
-  // anything it does not carry.
+  // release needs no redeploy; the environment variables answer only until
+  // something has been published. Each download is the newest release's that
+  // has it, so a platform not yet built for the newest keeps the one before.
   const manifest = await fetchReleaseManifest();
-  const latest = latestRelease(manifest);
-  const targets = getDesktopDownloadTargets(latest);
+  const targets = getDesktopDownloadTargets(manifest);
   const previous = previousReleases(manifest);
 
   return (
@@ -216,12 +238,6 @@ export default async function DownloadPage() {
                   />
                 ))}
               </div>
-
-              {latest ? (
-                <p className="mt-6 text-[0.85rem] text-white/60">
-                  Version {latest.version}
-                </p>
-              ) : null}
 
               {previous.length > 0 ? <PreviousVersions releases={previous} /> : null}
             </div>
