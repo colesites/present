@@ -14,10 +14,13 @@ export function ScreenComposerWindow() {
   // chosen only from the main window's Media panel, and only while the
   // composer was on the screen, so a region being set up had no way to get
   // any.
-  const { allMediaItems } = useMediaFolders();
+  const { allMediaItems, folders } = useMediaFolders();
   useEffect(() => {
     useMediaLibraryStore.getState().setItems(allMediaItems);
   }, [allMediaItems]);
+  useEffect(() => {
+    useMediaLibraryStore.getState().setFolders(folders);
+  }, [folders]);
 
   return (
     <div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
