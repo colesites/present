@@ -12,6 +12,9 @@ import {
   withSelectedLook,
   withSelectedTarget,
   withTextPosition,
+  lookColumn,
+  lookTargetForScreen,
+  parseLookTarget,
 } from "../src/shared/lib/looks-config.mjs";
 
 /**
@@ -205,7 +208,8 @@ test("a selected look id that names no look falls back to the first", () => {
 });
 
 test("an unrecognised target falls back to program", () => {
-  const config = normalizeLooksConfig({ version: 2, selectedTarget: "hologram" }, CLOCK);
+  // Not a word, and not what an added screen's id can be.
+  const config = normalizeLooksConfig({ version: 2, selectedTarget: "holo gram" }, CLOCK);
 
   assert.equal(config.selectedTarget, "program");
 });
@@ -330,4 +334,66 @@ test("a normalised config survives a round trip through JSON unchanged", () => {
   const round = normalizeLooksConfig(JSON.parse(JSON.stringify(config)), CLOCK);
 
   assert.deepEqual(round, config);
+});
+
+// --- a column for each audience screen added in Screen Configuration -------
+// Twins of the same-named tests in `services/looks.rs`.
+
+const LOBBY = "a1b2c3d4e5";
+
+test("an added screen with no column shows what the Screen shows", () => {
+  const base = withTextPosition(createDefaultLooksConfig(CLOCK.now), "default", "program", { yPercent: 70 }, CLOCK.now);
+  const lobby = lookColumn(base.looks[0], LOBBY);
+
+  assert.equal(lobby.layers.mask, false);
+  for (const { key } of LOOK_LAYER_ORDER.filter((layer) => layer.key !== "mask")) {
+    assert.equal(lobby.layers[key], true, `${key} is left to the operator`);
+  }
+  assert.equal(lobby.textPosition.yPercent, 70, "the words where the Screen has them");
+  assert.deepEqual(base.looks[0].targets.screens, {}, "nothing is stored until it changes");
+});
+
+test("a layer changed on an added screen is that screen's alone", () => {
+  const next = withLayerEnabled(createDefaultLooksConfig(CLOCK.now), "default", LOBBY, "media", false, CLOCK.now);
+  const look = next.looks[0];
+
+  assert.equal(lookColumn(look, LOBBY).layers.media, false);
+  assert.equal(lookColumn(look, LOBBY).layers.slide, true, "the rest of its column stays");
+  assert.equal(look.targets.program.layers.media, true, "the Screen is untouched");
+  assert.equal(lookColumn(look, "f0f0f0f0f0").layers.media, true, "and so is every other screen");
+});
+
+test("added screens' columns survive a round trip and a bad id is dropped", () => {
+  const config = withSelectedTarget(
+    withLayerEnabled(createDefaultLooksConfig(CLOCK.now), "default", LOBBY, "slide", false, CLOCK.now),
+    LOBBY,
+    CLOCK.now,
+  );
+  const encoded = JSON.parse(JSON.stringify(config));
+  encoded.looks[0].targets.screens["not a screen"] = encoded.looks[0].targets.screens[LOBBY];
+
+  const read = normalizeLooksConfig(encoded, CLOCK);
+  assert.deepEqual(read, config);
+  assert.equal(read.selectedTarget, LOBBY);
+});
+
+test("a column is named by a word or an audience screen's id", () => {
+  assert.equal(parseLookTarget("program"), "program");
+  assert.equal(parseLookTarget("audience"), "program");
+  assert.equal(parseLookTarget("ndi"), "ndi");
+  assert.equal(parseLookTarget(LOBBY), LOBBY);
+  assert.equal(parseLookTarget("media"), null, "a stage screen has no look");
+  assert.equal(parseLookTarget(""), null);
+
+  assert.equal(lookTargetForScreen("audience"), "program");
+  assert.equal(lookTargetForScreen("worship"), null);
+});
+
+test("a copied look carries its added screens' columns, not shared with the source", () => {
+  const base = withLayerEnabled(createDefaultLooksConfig(CLOCK.now), "default", LOBBY, "props", false, CLOCK.now);
+  const added = withAddedLook(base, "Copy", CLOCK);
+  const changed = withLayerEnabled(added, "look-fixed", LOBBY, "props", true, CLOCK.now);
+
+  assert.equal(lookColumn(added.looks[1], LOBBY).layers.props, false, "the copy inherits the edit");
+  assert.equal(lookColumn(changed.looks[0], LOBBY).layers.props, false, "the source is untouched");
 });

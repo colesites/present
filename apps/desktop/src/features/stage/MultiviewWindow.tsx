@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, Settings2, X } from "lucide-react";
 import { CompositorPreviewLayer } from "../slides/components/CompositorPreviewLayer";
 import { cn } from "../../renderer/shared/lib/utils";
 import { useScreens, type ScreenInfo } from "../../renderer/tauri/screens";
-import { MEDIA_LAYOUT, WORSHIP_LAYOUT, useStageLayouts } from "./layouts";
+import { layoutForScreen, useStageLayouts } from "./layouts";
 import { formatClock } from "./StageLayoutView";
 import { Fitted } from "./StageLayoutWindow";
 import { useStageFeed } from "./useStageFeed";
@@ -120,9 +120,6 @@ export function MultiviewWindow() {
     return () => window.removeEventListener("keydown", onKey);
   }, [pages]);
 
-  const layoutFor = (screen: ScreenInfo) =>
-    layouts.find((layout) => layout.id === (screen.layout ?? (screen.id === "media" ? MEDIA_LAYOUT : WORSHIP_LAYOUT))) ??
-    layouts[0];
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0c12] text-white">
@@ -254,13 +251,14 @@ export function MultiviewWindow() {
               if (!screen) {
                 return <div key={`empty-${index}`} className="rounded-lg bg-black/40 ring-1 ring-white/[0.06]" />;
               }
+              const layout = screen.group === "stage" ? layoutForScreen(layouts, screen) : undefined;
               return (
                 <Tv key={screen.id} screen={screen} width={grid.tileWidth} height={grid.tileHeight}>
                   {screen.group === "audience" ? (
-                    <CompositorPreviewLayer className="absolute inset-0" />
-                  ) : (
-                    <Fitted layout={layoutFor(screen)} feed={feed} />
-                  )}
+                    <CompositorPreviewLayer className="absolute inset-0" screen={screen.id} />
+                  ) : layout ? (
+                    <Fitted layout={layout} feed={feed} />
+                  ) : null}
                 </Tv>
               );
             })}

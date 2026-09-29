@@ -26,7 +26,8 @@ const ANSWER_WITHIN_MS = 1500;
 let nextTick = 0;
 
 /**
- * The audience picture as the compositor draws it, over the preview.
+ * An audience screen's picture as the compositor draws it, over the preview:
+ * the Screen's unless another is named.
  *
  * Every format FFmpeg reads plays here, because there is no video element in
  * this path at all — which is the point of it. (The source scan that counts
@@ -36,7 +37,14 @@ let nextTick = 0;
  * An `<img>` whose `src` changes is blank until the next arrives, and a
  * preview that blinks twenty times a second is worse than one a frame behind.
  */
-export function CompositorPreviewLayer({ className }: { className?: string }) {
+export function CompositorPreviewLayer({
+  className,
+  screen = "audience",
+}: {
+  className?: string;
+  /** Which audience screen, by id (Screen Configuration). */
+  screen?: string;
+}) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const [shown, setShown] = useState<string | null>(null);
@@ -89,7 +97,7 @@ export function CompositorPreviewLayer({ className }: { className?: string }) {
       answeredAtRef.current = performance.now();
       frame = window.requestAnimationFrame(() => {
         nextTick += 1;
-        setLoading(previewFrameUrl(size.width, size.height, nextTick));
+        setLoading(previewFrameUrl(size.width, size.height, nextTick, screen));
       });
     };
     askRef.current = ask;
@@ -103,7 +111,7 @@ export function CompositorPreviewLayer({ className }: { className?: string }) {
       window.cancelAnimationFrame(frame);
       window.clearInterval(watchdog);
     };
-  }, [size]);
+  }, [size, screen]);
 
   return (
     <div ref={boxRef} className={className}>

@@ -18,9 +18,9 @@ use crate::services::media_protocol;
 use crate::services::video::{self, VideoDecoder};
 use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
-use super::look::scene_for_ndi;
 use super::output::{FrameSource, FALLBACK_SIZE};
 use super::video_feed::{Opener, RegionVideos, VideoFeed};
+use crate::services::look_scene::scene_for_look;
 
 pub struct AppFrameSource {
     app: AppHandle,
@@ -74,7 +74,7 @@ impl FrameSource for AppFrameSource {
         compositor.resize(size.0, size.1);
 
         let looks = looks.snapshot();
-        let scene = scene_for_ndi(&output.on_screen(), &looks.live_look().targets.ndi);
+        let scene = scene_for_look(&output.on_screen(), &looks.live_look().targets.ndi);
 
         let now = Instant::now();
         let frame = video.frame_for(&scene, now, size, open);

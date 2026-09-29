@@ -17,7 +17,7 @@ use crate::services::output::OutputScene;
 use crate::services::screen_picture::{self, Arrangement, Plan};
 use crate::services::screens::screen_for_label;
 use crate::services::video::{self, VideoDecoder};
-use crate::state::{DisplayState, FileState, OutputState};
+use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
 use super::{OutputView, SurfaceSource};
 use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed};
@@ -97,6 +97,7 @@ impl SurfaceSource for AppSurfaceSource {
 
         let Self {
             app,
+            screen: screen_id,
             compositor,
             video,
             regions,
@@ -110,7 +111,12 @@ impl SurfaceSource for AppSurfaceSource {
             return Err("the app is still starting".to_owned());
         };
 
-        let scene = output.on_screen();
+        // Through its own column of the live look, for a screen added beside
+        // the Screen: a change in Looks shows at once.
+        let scene = match app.try_state::<LooksState>() {
+            Some(looks) => looks.scene_for_screen(output.on_screen(), screen_id),
+            None => output.on_screen(),
+        };
         compositor.resize(size.0, size.1);
         let now = Instant::now();
         let frame = video.frame_for(&scene, now, size, open);

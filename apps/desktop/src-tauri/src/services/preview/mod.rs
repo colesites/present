@@ -28,7 +28,7 @@ use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed};
 use crate::services::output::OutputScene;
 use crate::services::thumbnails;
 use crate::services::video::{self, VideoDecoder};
-use crate::state::{DisplayState, FileState, OutputState};
+use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
 /// The largest preview that will be drawn, per side.
 ///
@@ -47,9 +47,12 @@ pub fn requested_size(width: Option<u32>, height: Option<u32>) -> (u32, u32) {
     (width, height)
 }
 
-/// Draws the scene on screen, for the operator to look at.
+/// Draws an audience screen's picture, for the operator to look at.
 pub struct PreviewSource {
     app: AppHandle,
+    /// Which audience screen: its colour, and for one added in Screen
+    /// Configuration its own column of the live look.
+    screen: String,
     compositor: SceneCompositor,
     video: VideoFeed,
     /// The videos playing in screen composer regions.
@@ -63,10 +66,11 @@ pub struct PreviewSource {
 }
 
 impl PreviewSource {
-    pub fn new(app: AppHandle) -> Self {
+    pub fn new(app: AppHandle, screen: &str) -> Self {
         let open = scoped_opener(app.clone());
         Self {
             app,
+            screen: screen.to_owned(),
             compositor: SceneCompositor::new(640, 360),
             video: VideoFeed::default(),
             regions: RegionVideos::new(),
@@ -89,11 +93,11 @@ impl PreviewSource {
             return Err("the app is still starting".to_owned());
         };
 
-        // The audience screen's colour, under everything, as on the screen.
+        // The screen's colour, under everything, as on the screen.
         let base = self
             .app
             .try_state::<DisplayState>()
-            .and_then(|displays| displays.screen(crate::services::screens::AUDIENCE))
+            .and_then(|displays| displays.screen(&self.screen))
             .and_then(|screen| screen.color)
             .as_deref()
             .and_then(crate::services::compositor::color::parse)
@@ -102,7 +106,10 @@ impl PreviewSource {
             self.last = None;
         }
 
-        let scene = output.on_screen();
+        let scene = match self.app.try_state::<LooksState>() {
+            Some(looks) => looks.scene_for_screen(output.on_screen(), &self.screen),
+            None => output.on_screen(),
+        };
         let now = Instant::now();
         let frame = self.video.frame_for(&scene, now, size, &self.open);
         let shown = frame.map(|frame| frame.presentation_seconds);

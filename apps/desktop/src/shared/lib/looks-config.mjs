@@ -16,7 +16,12 @@
  */
 
 /** @typedef {"mask"|"messages"|"props"|"announcements"|"presentation"|"slide"|"media"|"videoInput"} LookLayerKey */
-/** @typedef {"program"|"stage"|"ndi"} LookTargetKey */
+/**
+ * A column of a look: `program` for the Screen every setup has, `ndi` for the
+ * NDI output in Connections, `stage` kept only so a stored config reads, and
+ * an added audience screen's own id for the rest.
+ * @typedef {string} LookTargetKey
+ */
 
 export const LOOK_LAYER_ORDER = [
   { key: "mask", label: "Mask" },
@@ -29,11 +34,34 @@ export const LOOK_LAYER_ORDER = [
   { key: "videoInput", label: "Video Input" },
 ];
 
-export const LOOK_TARGET_ORDER = [
-  { key: "program", label: "Screen 1" },
-  { key: "stage", label: "Stage" },
-  { key: "ndi", label: "NDI" },
-];
+/** The three screens every setup has, by id (`services/screens.rs`). */
+const BUILT_IN_SCREENS = ["audience", "media", "worship"];
+
+/**
+ * An id an added screen can have: `screens::is_usable_id`. Added screens get
+ * ten hex digits, so one never reads as `program`, `stage` or `ndi`.
+ */
+export const isAddedScreenId = (id) =>
+  typeof id === "string" &&
+  id.length > 0 &&
+  id.length <= 32 &&
+  !BUILT_IN_SCREENS.includes(id) &&
+  !id.includes("--") &&
+  /^[A-Za-z0-9_-]+$/.test(id);
+
+/** The column a word or an audience screen's id names, or null. `LookTarget::parse`. */
+export const parseLookTarget = (value) => {
+  if (value === "program" || value === "audience") return "program";
+  if (value === "stage" || value === "ndi") return value;
+  return isAddedScreenId(value) ? value : null;
+};
+
+/**
+ * The column an audience screen is drawn through, or null for a stage
+ * screen, which shows its stage layout instead. `LookTarget::for_screen`.
+ */
+export const lookTargetForScreen = (screenId) =>
+  screenId === "audience" ? "program" : isAddedScreenId(screenId) ? screenId : null;
 
 const defaultTextPosition = {
   xPercent: 50,
@@ -87,6 +115,7 @@ export const createDefaultLookPreset = () => ({
       },
       textPosition: { ...defaultTextPosition },
     },
+    screens: {},
   },
 });
 
@@ -127,6 +156,34 @@ const normalizeLayers = (fallbackLayers, candidateLayers) =>
 
 export const generateLookId = () => `look-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
 
+/**
+ * An added audience screen's column until it is changed: every layer but the
+ * mask, with the words where the Screen has them. The operator's toggles still
+ * apply on top, so a screen added mid-service shows what the Screen shows.
+ * `LookTargets::screen_default`.
+ */
+export const screenDefaultColumn = (targets) => ({
+  layers: {
+    mask: false,
+    messages: true,
+    props: true,
+    announcements: true,
+    presentation: true,
+    slide: true,
+    media: true,
+    videoInput: true,
+  },
+  textPosition: { ...targets.program.textPosition },
+});
+
+/** A look's column for `target`, an added screen's default if it has none yet. */
+export const lookColumn = (look, target) => {
+  if (target === "program" || target === "stage" || target === "ndi") {
+    return look.targets[target];
+  }
+  return look.targets.screens?.[target] ?? screenDefaultColumn(look.targets);
+};
+
 const normalizeLookPreset = (candidate, fallbackLook, index, newId) => {
   const id =
     typeof candidate?.id === "string" && candidate.id.trim().length > 0
@@ -150,11 +207,26 @@ const normalizeLookPreset = (candidate, fallbackLook, index, newId) => {
     }),
   });
 
-  return {
-    id,
-    name,
-    targets: { program: target("program"), stage: target("stage"), ndi: target("ndi") },
+  const targets = {
+    program: target("program"),
+    stage: target("stage"),
+    ndi: target("ndi"),
+    screens: {},
   };
+  // Only an id an added screen could have: anything else names no screen.
+  const fallbackScreen = screenDefaultColumn(targets);
+  const storedScreens = candidate?.targets?.screens;
+  if (storedScreens && typeof storedScreens === "object" && !Array.isArray(storedScreens)) {
+    for (const [screenId, raw] of Object.entries(storedScreens)) {
+      if (!isAddedScreenId(screenId)) continue;
+      targets.screens[screenId] = {
+        layers: normalizeLayers(fallbackScreen.layers, raw?.layers),
+        textPosition: normalizeTextPosition({ ...fallbackScreen.textPosition, ...raw?.textPosition }),
+      };
+    }
+  }
+
+  return { id, name, targets };
 };
 
 /**
@@ -175,12 +247,7 @@ export const normalizeLooksConfig = (candidate, { now = Date.now(), newId = gene
     return fallback;
   }
 
-  const selectedTarget =
-    candidate.selectedTarget === "program" ||
-    candidate.selectedTarget === "stage" ||
-    candidate.selectedTarget === "ndi"
-      ? candidate.selectedTarget
-      : fallback.selectedTarget;
+  const selectedTarget = parseLookTarget(candidate.selectedTarget) ?? fallback.selectedTarget;
 
   const updatedAt =
     typeof candidate.updatedAt === "number" && Number.isFinite(candidate.updatedAt)
@@ -287,6 +354,12 @@ export const withAddedLook = (config, name, { now = Date.now(), newId = generate
       program: copyTarget("program"),
       stage: copyTarget("stage"),
       ndi: copyTarget("ndi"),
+      screens: Object.fromEntries(
+        Object.entries(sourceLook.targets.screens ?? {}).map(([screenId, column]) => [
+          screenId,
+          { layers: { ...column.layers }, textPosition: { ...column.textPosition } },
+        ]),
+      ),
     },
   };
 
@@ -308,41 +381,40 @@ export const withLookName = (config, lookId, name, now = Date.now()) => {
   };
 };
 
+/** A look with one column replaced: a fixed one in place, an added screen's in `screens`. */
+const withColumn = (look, target, change) => {
+  const column = change(lookColumn(look, target));
+  if (target === "program" || target === "stage" || target === "ndi") {
+    return { ...look, targets: { ...look.targets, [target]: column } };
+  }
+  return {
+    ...look,
+    targets: { ...look.targets, screens: { ...look.targets.screens, [target]: column } },
+  };
+};
+
 export const withLayerEnabled = (config, lookId, target, layer, enabled, now = Date.now()) => ({
   ...config,
   looks: config.looks.map((look) =>
     look.id !== lookId
       ? look
-      : {
-          ...look,
-          targets: {
-            ...look.targets,
-            [target]: {
-              ...look.targets[target],
-              layers: { ...look.targets[target].layers, [layer]: enabled },
-            },
-          },
-        },
+      : withColumn(look, target, (column) => ({
+          ...column,
+          layers: { ...column.layers, [layer]: enabled },
+        })),
   ),
   updatedAt: now,
 });
 
 export const withTextPosition = (config, lookId, target, patch, now = Date.now()) => ({
   ...config,
-  looks: config.looks.map((look) => {
-    if (look.id !== lookId) {
-      return look;
-    }
-    return {
-      ...look,
-      targets: {
-        ...look.targets,
-        [target]: {
-          ...look.targets[target],
-          textPosition: normalizeTextPosition({ ...look.targets[target].textPosition, ...patch }),
-        },
-      },
-    };
-  }),
+  looks: config.looks.map((look) =>
+    look.id !== lookId
+      ? look
+      : withColumn(look, target, (column) => ({
+          ...column,
+          textPosition: normalizeTextPosition({ ...column.textPosition, ...patch }),
+        })),
+  ),
   updatedAt: now,
 });

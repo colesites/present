@@ -16,7 +16,12 @@ export type LookLayerKey =
   | "media"
   | "videoInput";
 
-export type LookTargetKey = "program" | "stage" | "ndi";
+/**
+ * A column of a look: `program` for the Screen every setup has, `ndi` for the
+ * NDI output in Connections, `stage` kept only so a stored config reads, and
+ * an added audience screen's own id for the rest.
+ */
+export type LookTargetKey = "program" | "stage" | "ndi" | (string & {});
 
 export type LookTextPosition = {
   xPercent: number;
@@ -32,10 +37,18 @@ export type LookTargetState = {
   textPosition: LookTextPosition;
 };
 
+export type LookTargets = {
+  program: LookTargetState;
+  stage: LookTargetState;
+  ndi: LookTargetState;
+  /** The audience screens added in Screen Configuration, by id. */
+  screens: Record<string, LookTargetState>;
+};
+
 export type LookPreset = {
   id: string;
   name: string;
-  targets: Record<LookTargetKey, LookTargetState>;
+  targets: LookTargets;
 };
 
 export type LooksConfig = {
@@ -55,10 +68,11 @@ export declare const LOOK_LAYER_ORDER: ReadonlyArray<{
   label: string;
 }>;
 
-export declare const LOOK_TARGET_ORDER: ReadonlyArray<{
-  key: LookTargetKey;
-  label: string;
-}>;
+export declare const isAddedScreenId: (id: unknown) => boolean;
+export declare const parseLookTarget: (value: unknown) => LookTargetKey | null;
+export declare const lookTargetForScreen: (screenId: string) => LookTargetKey | null;
+export declare const screenDefaultColumn: (targets: LookTargets) => LookTargetState;
+export declare const lookColumn: (look: LookPreset, target: LookTargetKey) => LookTargetState;
 
 export declare const createDefaultLookPreset: () => LookPreset;
 export declare const createDefaultLooksConfig: (now?: number) => LooksConfig;

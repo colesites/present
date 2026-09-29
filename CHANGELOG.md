@@ -4,6 +4,38 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+### Changed
+
+- Choosing media for a background, such as the Bible background in Settings,
+  Slides, shows the media folders first, each with a picture from it and how
+  many videos and images it holds. Open a folder to choose from it, and
+  Folders to go back. The folder with the background in use says so. A search
+  looks in the open folder, or in all of them from the folder list. The
+  pictures are a proper size to tell apart, with their names under them,
+  where the whole library used to be squeezed into thin strips.
+- The screen chosen under the operator's preview lists the screens in Screen
+  Configuration by the names given there, audience screens and then stage
+  screens, the added ones too, where it offered Audience, Media and Worship.
+  An audience screen shows its own picture, with its colour and its look; a
+  stage screen shows the stage layout chosen for it, as the stage display
+  does.
+- Looks has a column for each audience screen, by its name in Screen
+  Configuration, and one for the NDI output, where it had Screen 1, Stage and
+  NDI. Each audience screen shows what its own column allows: its display,
+  its NDI, Syphon or SDI output, Multiview and the preview. A screen added
+  shows what the Screen shows until its column is changed. The operator's
+  toggles for the words, media, background and timer still apply to every
+  screen. The Stage column is gone: it changed nothing, and a stage screen
+  shows its stage layout.
+
+### Fixed
+
+- Closing the audience output could quit Present. A frame on its way to the
+  screen as the window closed was put on a picture that had already been
+  taken away, which a playing video, such as one in a Screen Composer region
+  or behind a passage, made all but certain. Closing a screen could also,
+  more rarely, freeze the app. Both are fixed.
+
 ## [0.4.4] - 2026-09-27
 
 ### Added

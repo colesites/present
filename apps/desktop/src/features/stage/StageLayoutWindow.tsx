@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { LayoutGrid } from "lucide-react";
 import { ownScreenId, useOwnScreen } from "../../renderer/tauri/screens";
 import { cn } from "../../renderer/shared/lib/utils";
-import { MEDIA_LAYOUT, WORSHIP_LAYOUT, useStageLayouts, type StageLayout } from "./layouts";
+import { layoutForScreen, useStageLayouts, type StageLayout } from "./layouts";
 import { StageLayoutView } from "./StageLayoutView";
 import { useStageFeed } from "./useStageFeed";
 
@@ -16,11 +16,8 @@ export function StageLayoutWindow() {
   const screen = useOwnScreen();
   const { layouts } = useStageLayouts();
   const feed = useStageFeed();
-  const fallback = ownScreenId() === "media" ? MEDIA_LAYOUT : WORSHIP_LAYOUT;
-  const layout =
-    layouts.find((each) => each.id === (screen?.layout ?? fallback)) ??
-    layouts.find((each) => each.id === fallback) ??
-    layouts[0];
+  // Until the screen has loaded, the layout its page says it is for.
+  const layout = layoutForScreen(layouts, screen ?? { id: ownScreenId() ?? "", layout: null });
 
   return (
     <div

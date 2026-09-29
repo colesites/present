@@ -9,7 +9,12 @@
 //!
 //! The loop stops on its own once nobody has asked for a while, so a machine
 //! whose operator never opens the preview draws nothing.
+//!
+//! One loop per audience screen asked for: each screen has its own colour,
+//! and one added in Screen Configuration its own column of the live look, so
+//! the operator's preview and Multiview's wall can each show a different one.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -18,6 +23,7 @@ use tauri::http;
 use tauri::AppHandle;
 
 use crate::services::preview::{self, PreviewSource};
+use crate::services::screens;
 
 /// How often the loop draws. The output's own rate: a preview that skips is
 /// not a preview of what the congregation is seeing.
@@ -38,6 +44,13 @@ const WIDEST_FOR: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 pub struct PreviewState {
+    /// By audience screen id.
+    loops: Mutex<HashMap<String, Loop>>,
+}
+
+/// One screen's drawing: what the requests and its loop share.
+#[derive(Default, Clone)]
+struct Loop {
     shared: Arc<Shared>,
     running: Arc<Mutex<bool>>,
 }
@@ -99,15 +112,50 @@ impl PreviewState {
         Self::default()
     }
 
-    /// The newest frame, and a promise to keep drawing.
-    pub fn frame(&self, app: &AppHandle, size: (u32, u32)) -> Option<Arc<Vec<u8>>> {
+    /// The newest frame of the audience screen `screen`, and a promise to
+    /// keep drawing it.
+    pub fn frame(&self, app: &AppHandle, screen: &str, size: (u32, u32)) -> Option<Arc<Vec<u8>>> {
+        let drawing = self
+            .loops
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(screen.to_owned())
+            .or_default()
+            .clone();
+        drawing.frame(app, screen, size)
+    }
+
+    /// Let go of the compositors, any video they have open, and the loops.
+    pub fn release(&self) {
+        for drawing in self
+            .loops
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+        {
+            drawing.shared.stop.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[cfg(test)]
+    fn is_running(&self) -> bool {
+        self.loops
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .any(Loop::is_running)
+    }
+}
+
+impl Loop {
+    fn frame(&self, app: &AppHandle, screen: &str, size: (u32, u32)) -> Option<Arc<Vec<u8>>> {
         self.shared.want(size);
         *self
             .shared
             .asked_at
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now());
-        self.ensure_drawing(app);
+        self.ensure_drawing(app, screen);
         self.shared
             .latest
             .lock()
@@ -116,7 +164,7 @@ impl PreviewState {
     }
 
     /// Start the loop if it is not already running.
-    fn ensure_drawing(&self, app: &AppHandle) {
+    fn ensure_drawing(&self, app: &AppHandle, screen: &str) {
         let mut running = self
             .running
             .lock()
@@ -130,6 +178,7 @@ impl PreviewState {
         let shared = Arc::clone(&self.shared);
         let still_running = Arc::clone(&self.running);
         let app = app.clone();
+        let screen = screen.to_owned();
         // A thread of its own, not the async pool: it draws for as long as
         // somebody is looking, which is not what a pool's tasks are for.
         std::thread::Builder::new()
@@ -139,18 +188,13 @@ impl PreviewState {
                 // has to hear about it, or nothing ever starts it again and
                 // the preview stays dark for the rest of the run.
                 let _running = Running(still_running);
-                draw_until_idle(&app, &shared);
+                draw_until_idle(&app, &screen, &shared);
             })
             .map(|_| ())
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "the preview could not start drawing");
                 *running = false;
             });
-    }
-
-    /// Let go of the compositor, any video it has open, and the loop.
-    pub fn release(&self) {
-        self.shared.stop.store(true, Ordering::Relaxed);
     }
 
     #[cfg(test)]
@@ -174,8 +218,8 @@ impl Drop for Running {
     }
 }
 
-fn draw_until_idle(app: &AppHandle, shared: &Shared) {
-    let mut source = PreviewSource::new(app.clone());
+fn draw_until_idle(app: &AppHandle, screen: &str, shared: &Shared) {
+    let mut source = PreviewSource::new(app.clone(), screen);
     loop {
         let started = Instant::now();
         if shared.stop.load(Ordering::Relaxed) {
@@ -234,7 +278,18 @@ pub fn size_from_uri(uri: &str) -> (u32, u32) {
     preview::requested_size(number("w"), number("h"))
 }
 
-/// The `output-frame://frame/audience?w=&h=&t=` response.
+/// Which audience screen a request is for: `frame/<screen id>`. The Screen
+/// for anything else, stage screens included, which the compositor does not
+/// draw.
+pub fn screen_from_uri(uri: &str) -> &str {
+    let path = uri.split_once('?').map_or(uri, |(path, _)| path);
+    path.split_once("/frame/")
+        .map(|(_, id)| id)
+        .filter(|id| screens::is_usable_id(id))
+        .unwrap_or(screens::AUDIENCE)
+}
+
+/// The `output-frame://frame/<screen>?w=&h=&t=` response.
 ///
 /// 204 while the loop has not drawn its first frame yet, and not 500: the
 /// preview is a picture of what is already on screen elsewhere, so the honest
@@ -246,7 +301,7 @@ pub fn respond(state: &PreviewState, app: &AppHandle, uri: &str) -> http::Respon
     let builder = http::Response::builder()
         .header("Cache-Control", "no-store")
         .header("Access-Control-Allow-Origin", "*");
-    match state.frame(app, size_from_uri(uri)) {
+    match state.frame(app, screen_from_uri(uri), size_from_uri(uri)) {
         Some(picture) => builder
             .status(200)
             .header("Content-Type", "image/jpeg")
@@ -281,6 +336,25 @@ mod tests {
             (preview::MAX_SIDE, preview::MAX_SIDE)
         );
         assert_eq!(size_from_uri("output-frame://frame/audience"), (640, 360));
+    }
+
+    #[test]
+    fn the_screen_comes_from_the_path_and_is_an_audience_screen() {
+        assert_eq!(
+            screen_from_uri("output-frame://frame/audience?w=480&h=270&t=12"),
+            "audience"
+        );
+        assert_eq!(
+            screen_from_uri("http://output-frame.localhost/frame/a1b2c3d4e5?t=3"),
+            "a1b2c3d4e5"
+        );
+        assert_eq!(
+            screen_from_uri("output-frame://frame/media?t=1"),
+            "audience",
+            "a stage screen is not drawn here"
+        );
+        assert_eq!(screen_from_uri("output-frame://frame/../x?t=1"), "audience");
+        assert_eq!(screen_from_uri("output-frame://frame"), "audience");
     }
 
     #[test]

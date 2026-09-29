@@ -1,17 +1,20 @@
-//! What the NDI stream shows: the audience scene, through the Looks window's
-//! NDI column.
+//! What a surface drawn through a look column shows: the audience scene,
+//! through that column. The NDI output in Connections goes through the NDI
+//! column, and each audience screen added in Screen Configuration through its
+//! own; the Screen every setup has is the program column, which the operator
+//! window folds into the scene itself.
 //!
 //! Electron's stream is a capture of the audience window, so it shows the
 //! program column, and the NDI column in the Looks window is saved and read by
 //! nothing. The owner's call for the rewrite is that the stream follows the NDI
-//! column.
+//! column — and a screen added beside the Screen follows its own.
 //!
 //! The audience scene arrives with the program column already folded in —
 //! `App.tsx:535-546` turns the live look's program layers into scene fields
-//! before the operator sends it. This replaces those fields with the NDI
-//! column's, derived the same way:
+//! before the operator sends it. This replaces those fields with the column's,
+//! derived the same way:
 //!
-//! | NDI layer                  | scene field       | `App.tsx`                  |
+//! | layer                      | scene field       | `App.tsx`                  |
 //! |----------------------------|-------------------|----------------------------|
 //! | slide or presentation      | `show_text`       | `showTextInOutput`         |
 //! | media or video input       | `show_media`      | `showMediaInOutput`        |
@@ -24,21 +27,21 @@
 //! deliberately does not gate the banner on its flag
 //! (`PresentContainer.tsx:1787-1792`: the gate raced the overlay and dropped
 //! banners); switching the program layer off clears the overlay instead. Nothing
-//! clears anything when the NDI column changes, so a flag that did not gate the
+//! clears anything when another column changes, so a flag that did not gate the
 //! banner would do nothing at all. Here it gates.
 //!
-//! **The operator's quick toggles reach the stream too** (owner, 2026-09-17).
-//! The NDI column says which layers the stream may carry; the toggles say what
-//! is showing this minute, and the scene arrives carrying them. A layer shows
+//! **The operator's quick toggles reach every column too** (owner, 2026-09-17).
+//! A column says which layers its surface may carry; the toggles say what is
+//! showing this minute, and the scene arrives carrying them. A layer shows
 //! when both agree, and the background is hidden if either asks — so clearing
-//! the words on the projector clears them on the stream, while a column with
-//! the words switched off never shows them whatever the operator does.
+//! the words on the projector clears them everywhere, while a column with the
+//! words switched off never shows them whatever the operator does.
 
 use crate::services::looks::{LookTargetState, LookTextPosition, TextAlign, VerticalAlign};
 use crate::services::output::{OutputScene, OutputTextPosition};
 
-pub fn scene_for_ndi(on_screen: &OutputScene, ndi: &LookTargetState) -> OutputScene {
-    let layers = &ndi.layers;
+pub fn scene_for_look(on_screen: &OutputScene, column: &LookTargetState) -> OutputScene {
+    let layers = &column.layers;
     let messages = layers.messages || layers.announcements;
 
     OutputScene {
@@ -48,7 +51,7 @@ pub fn scene_for_ndi(on_screen: &OutputScene, ndi: &LookTargetState) -> OutputSc
         // Either hiding the background hides it.
         hide_background: layers.mask || on_screen.hide_background,
         timer_visible: layers.props && on_screen.timer_visible,
-        text_position: Some(text_position(&ndi.text_position)),
+        text_position: Some(text_position(&column.text_position)),
         message_overlay: on_screen.message_overlay.clone().filter(|_| messages),
         ..on_screen.clone()
     }
@@ -121,7 +124,7 @@ mod tests {
         let program = program_scene();
         assert!(program.timer_visible, "the projector shows the timer");
 
-        let ndi = scene_for_ndi(&program, &default_ndi());
+        let ndi = scene_for_look(&program, &default_ndi());
         assert!(!ndi.timer_visible, "the default NDI column hides props");
         assert!(ndi.message_overlay.is_some(), "and shows messages");
         assert!(ndi.show_text);
@@ -140,8 +143,8 @@ mod tests {
         };
         let mut ndi = default_ndi();
         ndi.layers.props = true;
-        assert!(scene_for_ndi(&showing, &ndi).show_text);
-        assert!(scene_for_ndi(&showing, &ndi).timer_visible);
+        assert!(scene_for_look(&showing, &ndi).show_text);
+        assert!(scene_for_look(&showing, &ndi).timer_visible);
 
         // The operator clears each one.
         let cleared = OutputScene {
@@ -151,7 +154,7 @@ mod tests {
             hide_background: true,
             ..showing
         };
-        let stream = scene_for_ndi(&cleared, &ndi);
+        let stream = scene_for_look(&cleared, &ndi);
         assert!(!stream.show_text, "the words are gone from the stream");
         assert!(!stream.show_media);
         assert!(!stream.timer_visible);
@@ -169,7 +172,7 @@ mod tests {
         ndi.layers.slide = false;
         ndi.layers.presentation = false;
         assert!(
-            !scene_for_ndi(&showing, &ndi).show_text,
+            !scene_for_look(&showing, &ndi).show_text,
             "the stream is set up without words"
         );
     }
@@ -199,7 +202,7 @@ mod tests {
             ..program_scene()
         };
 
-        let none = scene_for_ndi(&scene, &target(off));
+        let none = scene_for_look(&scene, &target(off));
         assert!(!none.show_text && !none.show_media && !none.hide_background);
         assert!(!none.timer_visible && none.message_overlay.is_none());
 
@@ -210,7 +213,7 @@ mod tests {
                 ..off
             },
         ] {
-            assert!(scene_for_ndi(&scene, &target(layers)).show_text);
+            assert!(scene_for_look(&scene, &target(layers)).show_text);
         }
         for layers in [
             LookLayers { media: true, ..off },
@@ -219,7 +222,7 @@ mod tests {
                 ..off
             },
         ] {
-            assert!(scene_for_ndi(&scene, &target(layers)).show_media);
+            assert!(scene_for_look(&scene, &target(layers)).show_media);
         }
         for layers in [
             LookLayers {
@@ -231,12 +234,12 @@ mod tests {
                 ..off
             },
         ] {
-            assert!(scene_for_ndi(&scene, &target(layers))
+            assert!(scene_for_look(&scene, &target(layers))
                 .message_overlay
                 .is_some());
         }
-        assert!(scene_for_ndi(&scene, &target(LookLayers { mask: true, ..off })).hide_background);
-        assert!(scene_for_ndi(&scene, &target(LookLayers { props: true, ..off })).timer_visible);
+        assert!(scene_for_look(&scene, &target(LookLayers { mask: true, ..off })).hide_background);
+        assert!(scene_for_look(&scene, &target(LookLayers { props: true, ..off })).timer_visible);
     }
 
     #[test]
@@ -245,7 +248,7 @@ mod tests {
             message_overlay: None,
             ..program_scene()
         };
-        assert!(scene_for_ndi(&scene, &default_ndi())
+        assert!(scene_for_look(&scene, &default_ndi())
             .message_overlay
             .is_none());
     }
@@ -257,7 +260,7 @@ mod tests {
         ndi.text_position.text_align = TextAlign::Left;
         ndi.text_position.vertical_align = VerticalAlign::Bottom;
 
-        let position = scene_for_ndi(&program_scene(), &ndi)
+        let position = scene_for_look(&program_scene(), &ndi)
             .text_position
             .expect("a position");
         assert_eq!(position.y_percent, 80.0);
@@ -268,7 +271,7 @@ mod tests {
     #[test]
     fn everything_the_looks_do_not_govern_is_left_alone() {
         let scene = program_scene();
-        let ndi = scene_for_ndi(&scene, &default_ndi());
+        let ndi = scene_for_look(&scene, &default_ndi());
         assert_eq!(ndi.slide_text, scene.slide_text);
         assert_eq!(ndi.timer_text, scene.timer_text);
         assert_eq!(ndi.media_url, scene.media_url);

@@ -7,7 +7,7 @@ import type {
   LookTextPosition,
   LooksConfig,
 } from "../../../shared/types/looks";
-import { createDefaultLooksConfig, normalizeLooksConfig } from "../../../shared/types/looks";
+import { createDefaultLooksConfig, lookColumn, normalizeLooksConfig } from "../../../shared/types/looks";
 
 const LOOKS_STORAGE_KEY = "present-looks-config";
 
@@ -176,8 +176,8 @@ export function useLooksConfig() {
   );
 
   const activeTargetConfig = useMemo(
-    () => selectedLook.targets[looksConfig.selectedTarget],
-    [looksConfig.selectedTarget, selectedLook.targets],
+    () => lookColumn(selectedLook, looksConfig.selectedTarget),
+    [looksConfig.selectedTarget, selectedLook],
   );
 
   return {

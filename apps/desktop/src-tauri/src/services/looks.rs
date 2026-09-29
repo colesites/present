@@ -15,24 +15,73 @@
 //!
 //! No Tauri types here: the rules are testable on their own.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+
+use super::screens;
 
 const CURRENT_VERSION: u32 = 2;
 
-/// Which surface a look is describing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Which column of a look: a surface it describes.
+///
+/// On the wire, a word for the three every setup has and an added audience
+/// screen's own id for the rest. Screen ids are ten hex digits
+/// (`commands/screens.rs`), so they never read as one of the words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub enum LookTarget {
-    /// The audience output.
+    /// The audience screen every setup has — "Screen" until it is renamed.
+    /// Also named by its screen id, [`screens::AUDIENCE`].
     Program,
-    /// Both stage displays.
+    /// Kept so a stored config still reads. Stage screens show the stage
+    /// layout chosen for them, not a look, and nothing reads this.
     Stage,
-    /// The NDI sender.
+    /// The NDI output in Connections.
     Ndi,
+    /// An audience screen added in Screen Configuration, by its id.
+    Screen(String),
+}
+
+impl From<LookTarget> for String {
+    fn from(target: LookTarget) -> Self {
+        match target {
+            LookTarget::Program => "program".to_owned(),
+            LookTarget::Stage => "stage".to_owned(),
+            LookTarget::Ndi => "ndi".to_owned(),
+            LookTarget::Screen(id) => id,
+        }
+    }
+}
+
+impl TryFrom<String> for LookTarget {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        LookTarget::parse(&value).ok_or_else(|| format!("no look column is called {value:?}"))
+    }
 }
 
 impl LookTarget {
-    pub const ALL: [Self; 3] = [Self::Program, Self::Stage, Self::Ndi];
+    /// The column a word or an audience screen's id names.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "program" | screens::AUDIENCE => Some(Self::Program),
+            "stage" => Some(Self::Stage),
+            "ndi" => Some(Self::Ndi),
+            id if screens::is_usable_id(id) => Some(Self::Screen(id.to_owned())),
+            _ => None,
+        }
+    }
+
+    /// The column an audience screen is drawn through.
+    pub fn for_screen(screen: &str) -> Option<Self> {
+        match screen {
+            screens::AUDIENCE => Some(Self::Program),
+            id if screens::is_usable_id(id) => Some(Self::Screen(id.to_owned())),
+            _ => None,
+        }
+    }
 }
 
 /// One toggleable layer on a surface.
@@ -220,28 +269,61 @@ pub struct LookTargetState {
     pub text_position: LookTextPosition,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LookTargets {
     pub program: LookTargetState,
     pub stage: LookTargetState,
     pub ndi: LookTargetState,
+    /// The audience screens added in Screen Configuration, by id. A screen
+    /// with no column here yet is drawn as [`Self::screen_default`] says.
+    #[serde(default)]
+    pub screens: BTreeMap<String, LookTargetState>,
 }
 
 impl LookTargets {
-    pub fn get(&self, target: LookTarget) -> &LookTargetState {
+    pub fn get(&self, target: &LookTarget) -> LookTargetState {
         match target {
-            LookTarget::Program => &self.program,
-            LookTarget::Stage => &self.stage,
-            LookTarget::Ndi => &self.ndi,
+            LookTarget::Program => self.program,
+            LookTarget::Stage => self.stage,
+            LookTarget::Ndi => self.ndi,
+            LookTarget::Screen(id) => self
+                .screens
+                .get(id)
+                .copied()
+                .unwrap_or_else(|| self.screen_default()),
         }
     }
 
-    fn get_mut(&mut self, target: LookTarget) -> &mut LookTargetState {
+    fn get_mut(&mut self, target: &LookTarget) -> &mut LookTargetState {
         match target {
             LookTarget::Program => &mut self.program,
             LookTarget::Stage => &mut self.stage,
             LookTarget::Ndi => &mut self.ndi,
+            LookTarget::Screen(id) => {
+                let default = self.screen_default();
+                self.screens.entry(id.clone()).or_insert(default)
+            }
+        }
+    }
+
+    /// An added audience screen's column until it is changed: every layer
+    /// but the mask, with the words where the Screen has them. The operator's
+    /// toggles still apply on top (`services/look_scene.rs`), so a screen
+    /// added mid-service shows what the Screen shows.
+    pub fn screen_default(&self) -> LookTargetState {
+        LookTargetState {
+            layers: LookLayers {
+                mask: false,
+                messages: true,
+                props: true,
+                announcements: true,
+                presentation: true,
+                slide: true,
+                media: true,
+                video_input: true,
+            },
+            text_position: self.program.text_position,
         }
     }
 }
@@ -308,6 +390,7 @@ impl LookPreset {
                     },
                     text_position: LookTextPosition::DEFAULT,
                 },
+                screens: BTreeMap::new(),
             },
         }
     }
@@ -383,12 +466,11 @@ pub fn normalize(
         return fallback;
     };
 
-    let selected_target = match candidate.get("selectedTarget").and_then(|v| v.as_str()) {
-        Some("program") => LookTarget::Program,
-        Some("stage") => LookTarget::Stage,
-        Some("ndi") => LookTarget::Ndi,
-        _ => fallback.selected_target,
-    };
+    let selected_target = candidate
+        .get("selectedTarget")
+        .and_then(|v| v.as_str())
+        .and_then(LookTarget::parse)
+        .unwrap_or_else(|| fallback.selected_target.clone());
 
     let updated_at = candidate
         .get("updatedAt")
@@ -521,14 +603,37 @@ fn normalize_preset(
         }
     };
 
+    let mut normalized = LookTargets {
+        program: target_state("program", default_preset.targets.program),
+        stage: target_state("stage", default_preset.targets.stage),
+        ndi: target_state("ndi", default_preset.targets.ndi),
+        screens: BTreeMap::new(),
+    };
+    // Only an id an added screen could have: anything else names no screen.
+    let fallback = normalized.screen_default();
+    if let Some(stored) = targets
+        .and_then(|value| value.get("screens"))
+        .and_then(serde_json::Value::as_object)
+    {
+        for (id, raw) in stored {
+            if !screens::is_usable_id(id) {
+                continue;
+            }
+            let state = LookTargetState {
+                layers: normalize_layers(fallback.layers, raw.get("layers")),
+                text_position: normalize_text_position(
+                    fallback.text_position,
+                    raw.get("textPosition"),
+                ),
+            };
+            normalized.screens.insert(id.clone(), state);
+        }
+    }
+
     LookPreset {
         id,
         name,
-        targets: LookTargets {
-            program: target_state("program", default_preset.targets.program),
-            stage: target_state("stage", default_preset.targets.stage),
-            ndi: target_state("ndi", default_preset.targets.ndi),
-        },
+        targets: normalized,
     }
 }
 
@@ -676,7 +781,7 @@ pub fn set_look_name(config: &mut LooksConfig, look_id: &str, name: &str, now: i
 pub fn set_layer_enabled(
     config: &mut LooksConfig,
     look_id: &str,
-    target: LookTarget,
+    target: &LookTarget,
     layer: LookLayer,
     enabled: bool,
     now: i64,
@@ -690,7 +795,7 @@ pub fn set_layer_enabled(
 pub fn set_text_position(
     config: &mut LooksConfig,
     look_id: &str,
-    target: LookTarget,
+    target: &LookTarget,
     patch: LookTextPositionPatch,
     now: i64,
 ) {
@@ -848,8 +953,8 @@ mod tests {
             "looks": [{ "id": "a", "name": "A", "targets": {} }],
         }));
 
-        for target in LookTarget::ALL {
-            let layers = config.looks[0].targets.get(target).layers;
+        for target in [LookTarget::Program, LookTarget::Stage, LookTarget::Ndi] {
+            let layers = config.looks[0].targets.get(&target).layers;
             for layer in LookLayer::ALL {
                 let mut probe = layers;
                 probe.set(layer, !layers.get(layer));
@@ -899,8 +1004,9 @@ mod tests {
 
     #[test]
     fn an_unrecognised_target_falls_back_to_program() {
+        // Not a word, and not what an added screen's id can be.
         let config = normalize_value(serde_json::json!({
-            "version": 2, "selectedTarget": "hologram",
+            "version": 2, "selectedTarget": "holo gram",
         }));
 
         assert_eq!(config.selected_target, LookTarget::Program);
@@ -956,7 +1062,7 @@ mod tests {
         set_layer_enabled(
             &mut config,
             "default",
-            LookTarget::Program,
+            &LookTarget::Program,
             LookLayer::Media,
             false,
             NOW,
@@ -1031,7 +1137,7 @@ mod tests {
         set_layer_enabled(
             &mut config,
             "look-fixed",
-            LookTarget::Program,
+            &LookTarget::Program,
             LookLayer::Slide,
             false,
             NOW,
@@ -1073,7 +1179,7 @@ mod tests {
         set_layer_enabled(
             &mut config,
             "default",
-            LookTarget::Program,
+            &LookTarget::Program,
             LookLayer::Slide,
             false,
             NOW,
@@ -1096,7 +1202,7 @@ mod tests {
         set_text_position(
             &mut config,
             "default",
-            LookTarget::Program,
+            &LookTarget::Program,
             LookTextPositionPatch {
                 y_percent: Some(250.0),
                 ..LookTextPositionPatch::default()
@@ -1129,7 +1235,7 @@ mod tests {
         set_layer_enabled(
             &mut config,
             "default",
-            LookTarget::Program,
+            &LookTarget::Program,
             LookLayer::Slide,
             false,
             stamp,
@@ -1140,7 +1246,7 @@ mod tests {
         set_text_position(
             &mut config,
             "default",
-            LookTarget::Program,
+            &LookTarget::Program,
             LookTextPositionPatch::default(),
             stamp,
         );
@@ -1195,5 +1301,110 @@ mod tests {
 
         assert_eq!(config.live_look().id, "default");
         assert_eq!(config.selected_look().id, "default");
+    }
+
+    const LOBBY: &str = "a1b2c3d4e5";
+
+    #[test]
+    fn an_added_screen_with_no_column_shows_what_the_screen_shows() {
+        let mut config = LooksConfig::default_config(NOW);
+        set_text_position(
+            &mut config,
+            "default",
+            &LookTarget::Program,
+            LookTextPositionPatch {
+                y_percent: Some(70.0),
+                ..LookTextPositionPatch::default()
+            },
+            NOW,
+        );
+        let lobby = config.looks[0]
+            .targets
+            .get(&LookTarget::Screen(LOBBY.to_owned()));
+
+        assert!(!lobby.layers.mask);
+        for layer in LookLayer::ALL
+            .into_iter()
+            .filter(|layer| *layer != LookLayer::Mask)
+        {
+            assert!(lobby.layers.get(layer), "{layer:?} is left to the operator");
+        }
+        assert_eq!(
+            lobby.text_position.y_percent, 70.0,
+            "the words where the Screen has them"
+        );
+        assert!(
+            config.looks[0].targets.screens.is_empty(),
+            "nothing is stored until it changes"
+        );
+    }
+
+    #[test]
+    fn a_layer_changed_on_an_added_screen_is_that_screens_alone() {
+        let mut config = LooksConfig::default_config(NOW);
+        let lobby = LookTarget::Screen(LOBBY.to_owned());
+        set_layer_enabled(&mut config, "default", &lobby, LookLayer::Media, false, NOW);
+
+        let targets = &config.looks[0].targets;
+        assert!(!targets.get(&lobby).layers.media);
+        assert!(
+            targets.get(&lobby).layers.slide,
+            "the rest of its column stays"
+        );
+        assert!(targets.program.layers.media, "the Screen is untouched");
+        assert!(
+            targets
+                .get(&LookTarget::Screen("f0f0f0f0f0".to_owned()))
+                .layers
+                .media,
+            "and so is every other screen"
+        );
+    }
+
+    #[test]
+    fn added_screens_columns_survive_a_round_trip_and_a_bad_id_is_dropped() {
+        let mut config = LooksConfig::default_config(NOW);
+        let lobby = LookTarget::Screen(LOBBY.to_owned());
+        set_layer_enabled(&mut config, "default", &lobby, LookLayer::Slide, false, NOW);
+        set_selected_target(&mut config, lobby.clone(), NOW);
+
+        let mut encoded = serde_json::to_value(&config).expect("serialisable");
+        assert_eq!(
+            encoded["selectedTarget"], LOBBY,
+            "a screen is named by its id"
+        );
+        encoded["looks"][0]["targets"]["screens"]["not a screen"] =
+            encoded["looks"][0]["targets"]["screens"][LOBBY].clone();
+
+        let mut new_id = fixed_id();
+        let read = normalize(Some(&encoded), NOW, &mut new_id);
+        assert_eq!(read, config);
+        assert_eq!(read.selected_target, lobby);
+    }
+
+    #[test]
+    fn a_column_is_named_by_a_word_or_an_audience_screens_id() {
+        assert_eq!(LookTarget::parse("program"), Some(LookTarget::Program));
+        assert_eq!(
+            LookTarget::parse(screens::AUDIENCE),
+            Some(LookTarget::Program)
+        );
+        assert_eq!(LookTarget::parse("ndi"), Some(LookTarget::Ndi));
+        assert_eq!(
+            LookTarget::parse(LOBBY),
+            Some(LookTarget::Screen(LOBBY.to_owned()))
+        );
+        assert_eq!(
+            LookTarget::parse(screens::MEDIA),
+            None,
+            "a stage screen has no look"
+        );
+        assert_eq!(LookTarget::parse(""), None);
+
+        assert_eq!(
+            LookTarget::for_screen(screens::AUDIENCE),
+            Some(LookTarget::Program)
+        );
+        assert_eq!(LookTarget::for_screen(screens::WORSHIP), None);
     }
 }

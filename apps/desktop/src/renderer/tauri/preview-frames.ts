@@ -18,14 +18,21 @@
  * `tick` is what makes it a new request — without it the webview would show
  * the first frame forever, which is exactly what its image cache is for.
  */
-export const previewFrameUrl = (width: number, height: number, tick: number): string => {
+export const previewFrameUrl = (
+  width: number,
+  height: number,
+  tick: number,
+  screen = "audience",
+): string => {
   const side = (value: number) => Math.max(16, Math.min(1280, Math.round(value) || 16));
   const query = `w=${side(width)}&h=${side(height)}&t=${tick}`;
+  // Which audience screen: its colour, and its own column of the live look.
+  const path = `frame/${encodeURIComponent(screen)}`;
   // WebView2 does not resolve custom schemes, so Windows gets the form Tauri
   // rewrites them to — the same rule as `media_protocol::url_for`.
   return isWindows()
-    ? `http://output-frame.localhost/frame/audience?${query}`
-    : `output-frame://frame/audience?${query}`;
+    ? `http://output-frame.localhost/${path}?${query}`
+    : `output-frame://${path}?${query}`;
 };
 
 const isWindows = (): boolean =>

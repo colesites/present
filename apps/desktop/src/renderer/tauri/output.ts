@@ -38,7 +38,13 @@ export type OutputScene = Omit<
   screenComposerLayout: OutputState["screenComposerLayout"] | null;
 };
 
-export const getOutputScene = (): Promise<OutputScene> => invoke("get_output_scene");
+/**
+ * The scene on screen. An audience window that names itself by `label` gets
+ * it as its own screen shows it: through its own column of the live look, for
+ * a screen added beside the Screen.
+ */
+export const getOutputScene = (label?: string): Promise<OutputScene> =>
+  invoke("get_output_scene", { label: label ?? null });
 
 export const sendToOutput = (payload: unknown): Promise<void> =>
   invoke("send_to_output", { payload });

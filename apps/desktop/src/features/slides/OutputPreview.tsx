@@ -51,13 +51,16 @@ import type {
 import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
 import { youtubeEmbedUrl } from "../../shared/lib/youtube-embed.mjs";
 import { CompositorPreviewLayer } from "./components/CompositorPreviewLayer";
+import { StageScreenPreview } from "../stage/StageScreenPreview";
+import { useScreens } from "../../renderer/tauri/screens";
 
 interface SlideGroup {
   label: string;
   count: number;
 }
 
-export type OutputPreviewTarget = "audience" | "media" | "worship";
+/** A screen's id from Screen Configuration: an audience screen or a stage. */
+export type OutputPreviewTarget = string;
 
 const OUTPUT_BASE_WIDTH = 1280;
 const OUTPUT_BASE_HEIGHT = 720;
@@ -128,14 +131,6 @@ interface OutputPreviewProps {
   };
   previewTarget?: OutputPreviewTarget;
   onPreviewTargetChange?: (target: OutputPreviewTarget) => void;
-  worshipNextText?: string | null;
-  worshipNextFooter?: string | null;
-  worshipCurrentLabel?: string | null;
-  worshipCurrentRepeat?: string | null;
-  worshipCurrentInlineInstruction?: string | null;
-  worshipNextLabel?: string | null;
-  worshipNextRepeat?: string | null;
-  worshipNextInlineInstruction?: string | null;
 }
 
 const FilterSlider = memo(function FilterSlider({
@@ -230,14 +225,6 @@ export const OutputPreview = memo(function OutputPreview({
   timerLayout,
   previewTarget = "audience",
   onPreviewTargetChange,
-  worshipNextText,
-  worshipNextFooter,
-  worshipCurrentLabel,
-  worshipCurrentRepeat,
-  worshipCurrentInlineInstruction,
-  worshipNextLabel,
-  worshipNextRepeat,
-  worshipNextInlineInstruction,
 }: OutputPreviewProps) {
   // Pull the bits of the timers hook the preview's header controls need.
   const {
@@ -260,27 +247,17 @@ export const OutputPreview = memo(function OutputPreview({
     isScriptureSlide && (slideElements?.length ?? 0) === 0;
   const hasLibrarySlideLayer = Boolean(text || (slideElements?.length ?? 0) > 0);
   const hasHiddenTextLayerContent = Boolean(text) && !showText;
-  const isMediaPreview = previewTarget === "media";
-  const isWorshipPreview = previewTarget === "worship";
-  const isAudienceLikePreview = previewTarget === "audience" || isWorshipPreview;
-  const worshipPreviewText = appendInlineInstruction(
-    text,
-    worshipCurrentInlineInstruction,
-  );
-  const worshipPreviewElements = useMemo(
-    () =>
-      appendInlineInstructionToElements(
-        slideElements ?? null,
-        worshipCurrentInlineInstruction,
-      ),
-    [slideElements, worshipCurrentInlineInstruction],
-  );
-  const previewTitle =
-    previewTarget === "media"
-      ? "Media Stage Preview"
-      : previewTarget === "worship"
-        ? "Worship Stage Preview"
-        : "Audience Preview";
+  // The screens as Screen Configuration has them, by the names given there.
+  // The Screen until they have loaded, or if the one chosen has been removed.
+  const { screens } = useScreens();
+  const audienceScreens = screens?.filter((screen) => screen.group === "audience") ?? [];
+  const stageScreens = screens?.filter((screen) => screen.group === "stage") ?? [];
+  const previewScreen =
+    screens?.find((screen) => screen.id === previewTarget) ??
+    screens?.find((screen) => screen.id === "audience") ??
+    null;
+  const isStagePreview = previewScreen?.group === "stage";
+  const previewTitle = `${previewScreen?.name ?? "Screen"} Preview`;
   const libraryStyle = useMemo(
     () => ({
       fontFamily: fontFamily ?? "Inter",
@@ -294,7 +271,6 @@ export const OutputPreview = memo(function OutputPreview({
 
   // Timer label/text are derived from the shared `useTimers` hook. Local
   // aliases preserve the existing JSX read sites in the preview thumbnail.
-  const timerLabelForOutput = activeTimer?.name ?? "Timer Name";
   const timeUp = timerLayout.timeUp ?? DEFAULT_TIME_UP;
   const timerTextForOutput = getLiveTimerText(activeTimer, timeUp);
   const timeUpShowing = isTimeUpShowing(activeTimer, timeUp);
@@ -446,33 +422,18 @@ export const OutputPreview = memo(function OutputPreview({
                 played to the congregation, and a video on screen was decoded
                 twice on one machine. (The scan that counts audible players
                 reads comments too, so this one says it in words.) */}
-            <CompositorPreviewLayer className="absolute inset-0 z-20" />
-
-            {previewTarget === "media" ? (
-              <MediaStagePreview
-                currentText={text}
-                currentFooter={footer}
-                currentLabel={worshipCurrentLabel}
-                currentRepeat={worshipCurrentRepeat}
-                nextText={worshipNextText}
-                nextFooter={worshipNextFooter}
-                nextLabel={worshipNextLabel}
-                nextRepeat={worshipNextRepeat}
-                timerLabel={timerLabelForOutput}
-                timerText={timerTextForOutput}
-                timerTimeUp={timeUpShowing ? { color: timeUp.color, blink: timeUp.blink } : null}
+            {/* A stage screen shows its stage layout, as its own window does. */}
+            {isStagePreview && previewScreen ? (
+              <StageScreenPreview screen={previewScreen} className="absolute inset-0 z-30" />
+            ) : (
+              <CompositorPreviewLayer
+                className="absolute inset-0 z-20"
+                screen={previewScreen?.id ?? "audience"}
               />
-            ) : null}
+            )}
 
-            {isAudienceLikePreview ? (
+            {!isStagePreview ? (
               <>
-            {isWorshipPreview &&
-            (worshipCurrentLabel || worshipCurrentRepeat) ? (
-              <div className="absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] flex-wrap gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-sky-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
-                {worshipCurrentLabel ? <span>[{worshipCurrentLabel}]</span> : null}
-                {worshipCurrentRepeat ? <span>[{worshipCurrentRepeat}]</span> : null}
-              </div>
-            ) : null}
 
             {!hideBackground && backgroundColor ? (
               <div
@@ -503,7 +464,7 @@ export const OutputPreview = memo(function OutputPreview({
                     Math.round(scripturePreviewFontSize),
                     Math.round(scripturePreviewFooterFontSize),
                   ].join("|")}
-                  text={isWorshipPreview ? worshipPreviewText : text}
+                  text={text}
                   footer={footer}
                   fontFamily={scriptureFontFamily || fontFamily || "Inter"}
                   fontSize={scripturePreviewFontSize}
@@ -525,8 +486,8 @@ export const OutputPreview = memo(function OutputPreview({
                 />
                 ) : (
                   <CanvasSlideLayer
-                    text={isWorshipPreview ? worshipPreviewText : text}
-                    elements={isWorshipPreview ? worshipPreviewElements : slideElements}
+                    text={text}
+                    elements={slideElements}
                     canvasSize={canvasSize}
                     libraryStyle={libraryStyle}
                     className="absolute inset-0"
@@ -693,7 +654,7 @@ export const OutputPreview = memo(function OutputPreview({
 
       <div className="mt-2 flex shrink-0 items-center px-3">
         <select
-          value={previewTarget}
+          value={previewScreen?.id ?? "audience"}
           onChange={(event) =>
             onPreviewTargetChange?.(
               event.target.value as OutputPreviewTarget,
@@ -703,9 +664,27 @@ export const OutputPreview = memo(function OutputPreview({
           title="Change preview screen"
           aria-label="Preview screen"
         >
-          <option value="audience">Audience</option>
-          <option value="media">Media</option>
-          <option value="worship">Worship</option>
+          {audienceScreens.length === 0 && stageScreens.length === 0 ? (
+            <option value="audience">Screen</option>
+          ) : null}
+          {audienceScreens.length > 0 ? (
+            <optgroup label="Audience">
+              {audienceScreens.map((screen) => (
+                <option key={screen.id} value={screen.id}>
+                  {screen.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
+          {stageScreens.length > 0 ? (
+            <optgroup label="Stage">
+              {stageScreens.map((screen) => (
+                <option key={screen.id} value={screen.id}>
+                  {screen.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
         </select>
       </div>
 
@@ -1010,205 +989,6 @@ export const OutputPreview = memo(function OutputPreview({
     </div>
   );
 });
-
-function MediaStagePreview({
-  currentText,
-  currentFooter,
-  currentLabel,
-  currentRepeat,
-  nextText,
-  nextFooter,
-  nextLabel,
-  nextRepeat,
-  timerLabel,
-  timerText,
-  timerTimeUp,
-}: {
-  currentText: string | null;
-  currentFooter?: string | null;
-  currentLabel?: string | null;
-  currentRepeat?: string | null;
-  nextText?: string | null;
-  nextFooter?: string | null;
-  nextLabel?: string | null;
-  nextRepeat?: string | null;
-  timerLabel: string;
-  timerText: string;
-  /** Once the timer has run out: its colour, and whether it blinks. */
-  timerTimeUp?: { color: string; blink: boolean } | null;
-}) {
-  const [clockText, setClockText] = useState(() =>
-    new Date().toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit",
-    }),
-  );
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setClockText(
-        new Date().toLocaleTimeString([], {
-          hour: "numeric",
-          minute: "2-digit",
-          second: "2-digit",
-        }),
-      );
-    }, 1000);
-    return () => window.clearInterval(intervalId);
-  }, []);
-
-  return (
-    <div className="absolute inset-0 grid grid-rows-[minmax(0,1fr)_22%] gap-2 bg-black p-3 text-white">
-      <div className="grid min-h-0 grid-cols-2 gap-2">
-        <MediaStageCard
-          title="Current"
-          text={currentText}
-          footer={currentFooter}
-          sectionLabel={currentLabel}
-          repeat={currentRepeat}
-          tone="current"
-        />
-        <MediaStageCard
-          title="Next"
-          text={nextText}
-          footer={nextFooter}
-          sectionLabel={nextLabel}
-          repeat={nextRepeat}
-          tone="next"
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex min-w-0 flex-col justify-center rounded border border-zinc-600/70 bg-zinc-950 px-3">
-          <p className="truncate text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-            {timerLabel}
-          </p>
-          <p
-            className={cn(
-              "truncate text-2xl font-semibold tabular-nums text-red-400",
-              timerTimeUp?.blink && "present-time-up-blink",
-            )}
-            style={timerTimeUp ? { color: timerTimeUp.color } : undefined}
-          >
-            {timerText}
-          </p>
-        </div>
-        <div className="flex min-w-0 flex-col justify-center rounded border border-zinc-600/70 bg-zinc-950 px-3">
-          <p className="text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-            Clock
-          </p>
-          <p className="truncate text-2xl font-semibold tabular-nums text-zinc-100">
-            {clockText}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MediaStageCard({
-  title,
-  text,
-  footer,
-  sectionLabel,
-  repeat,
-  tone,
-}: {
-  title: string;
-  text?: string | null;
-  footer?: string | null;
-  sectionLabel?: string | null;
-  repeat?: string | null;
-  tone: "current" | "next";
-}) {
-  return (
-    <div
-      className={cn(
-        "relative min-h-0 overflow-hidden rounded border bg-zinc-950 p-3",
-        tone === "next" ? "border-amber-300/70" : "border-zinc-500/80",
-      )}
-    >
-      {(sectionLabel || repeat) ? (
-        <div
-          className={cn(
-            "mb-2 flex flex-wrap gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em]",
-            tone === "next" ? "text-amber-200" : "text-sky-200",
-          )}
-        >
-          {sectionLabel ? <span>[{sectionLabel}]</span> : null}
-          {repeat ? <span>[{repeat}]</span> : null}
-        </div>
-      ) : null}
-      <p
-        className={cn(
-          "line-clamp-5 text-xl font-semibold leading-tight",
-          tone === "next" ? "text-amber-300" : "text-zinc-50",
-        )}
-      >
-        {text?.trim() || "No slide selected"}
-      </p>
-      {footer ? (
-        <p className="mt-2 truncate text-[10px] uppercase tracking-wide text-zinc-400">
-          {footer}
-        </p>
-      ) : null}
-      <p className="absolute bottom-2 right-3 text-[9px] uppercase tracking-[0.16em] text-zinc-500">
-        {title}
-      </p>
-    </div>
-  );
-}
-
-function appendInlineInstruction(
-  text: string | null,
-  instruction: string | null | undefined,
-): string {
-  const cleanInstruction = instruction?.trim();
-  if (!cleanInstruction) {
-    return text ?? "";
-  }
-  const marker = `[${cleanInstruction}]`;
-  const lines = (text ?? "").split("\n");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (lines[index]?.trim()) {
-      if (lines[index]?.includes(marker)) {
-        return lines.join("\n");
-      }
-      lines[index] = `${lines[index]} ${marker}`;
-      return lines.join("\n");
-    }
-  }
-  return marker;
-}
-
-function appendInlineInstructionToElements(
-  elements: SlideElement[] | null,
-  instruction: string | null | undefined,
-): SlideElement[] | null {
-  const cleanInstruction = instruction?.trim();
-  if (!elements || !cleanInstruction) {
-    return elements;
-  }
-  const marker = `[${cleanInstruction}]`;
-  let hasApplied = false;
-
-  return elements.map((element) => {
-    if (hasApplied || element.type !== "text" || element.isPlaceholder) {
-      return element;
-    }
-
-    const content = element.content ?? "";
-    if (!content.trim()) {
-      return element;
-    }
-
-    hasApplied = true;
-    return {
-      ...element,
-      content: content.includes(marker) ? content : `${content} ${marker}`,
-    };
-  });
-}
 
 function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {
   if (items.length === 0) return null;
