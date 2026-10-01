@@ -4,6 +4,8 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-10-01
+
 ### Fixed
 
 - On Windows, media in a folder added to the Media panel showed blank: no
