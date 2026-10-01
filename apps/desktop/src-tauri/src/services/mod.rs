@@ -55,6 +55,7 @@ pub mod thumbnails;
 pub mod updates;
 pub mod video;
 pub mod video_modes;
+pub mod videopsalm;
 pub mod web_storage;
 pub mod webview_crash;
 pub mod window;

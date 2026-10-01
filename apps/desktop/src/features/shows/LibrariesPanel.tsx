@@ -70,16 +70,27 @@ import {
 } from "../../renderer/shared/components/ui/resizable";
 import { invoke } from "@tauri-apps/api/core";
 
+type ImportedSong = {
+  title: string;
+  authors: string[];
+  copyright: string | null;
+  ccliNumber: string | null;
+  body: string;
+  slideCount: number;
+};
+
 type ImportedSongFile = {
   fileName: string;
-  song: {
-    title: string;
-    authors: string[];
-    copyright: string | null;
-    ccliNumber: string | null;
-    body: string;
-    slideCount: number;
-  } | null;
+  song: ImportedSong | null;
+  error: string | null;
+};
+
+/** A VideoPsalm songbook file, as `import_videopsalm_songbooks` reads it. */
+type ImportedSongbook = {
+  fileName: string;
+  name: string;
+  songs: ImportedSong[];
+  skipped: number;
   error: string | null;
 };
 
@@ -410,6 +421,70 @@ export const LibrariesPanel = memo(
       }
     };
 
+    // VideoPsalm has no export, but its backup keeps each songbook as a
+    // `.json` file (`services/videopsalm.rs`). Each songbook's songs go into a
+    // category of its name, made if there is none.
+    const handleImportVideoPsalm = async () => {
+      let books: ImportedSongbook[] | null;
+      try {
+        books = await invoke<ImportedSongbook[] | null>("import_videopsalm_songbooks");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not open the songbooks");
+        return;
+      }
+      if (!books) {
+        return;
+      }
+      const categoryIdByName = new Map(
+        visibleCategories.map((category) => [normalizedCategoryKey(category.name), String(category._id)]),
+      );
+      let imported = 0;
+      const failed: string[] = [];
+      for (const book of books) {
+        if (book.error) {
+          failed.push(`${book.fileName}: ${book.error}`);
+          continue;
+        }
+        if (book.songs.length === 0) {
+          continue;
+        }
+        const key = normalizedCategoryKey(book.name);
+        let categoryId = categoryIdByName.get(key);
+        if (!categoryId) {
+          const created = await onCreateCategory(book.name);
+          if (typeof created === "string") {
+            categoryId = created;
+            categoryIdByName.set(key, created);
+          }
+        }
+        for (const song of book.songs) {
+          await onCreateLibraryItemFromDraft(
+            {
+              title: song.title,
+              body: song.body,
+              slides: [],
+              content: {
+                presentation: {
+                  author: song.authors.join(", "),
+                  artist: "",
+                },
+              },
+            } as LibraryItemDraft,
+            categoryId,
+          );
+          imported += 1;
+        }
+      }
+      if (imported > 0) {
+        toast.success(`Imported ${imported} ${imported === 1 ? "song" : "songs"} from VideoPsalm`);
+      } else if (failed.length === 0) {
+        toast.error("Those songbooks have no songs with words to import.");
+      }
+      if (failed.length > 0) {
+        toast.error(`Could not read ${failed.length}: ${failed.slice(0, 3).join("; ")}`);
+      }
+    };
+
     const handleImportLibraries = async () => {
       if (!window.electronAPI?.selectFolder || !window.electronAPI.importLibraryBundle) {
         toast.error("Library import is unavailable in this build.");
@@ -725,6 +800,9 @@ export const LibrariesPanel = memo(
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => void handleImportOpenLyrics()}>
                       OpenLyrics songs (.xml)…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => void handleImportVideoPsalm()}>
+                      VideoPsalm songbooks (.json)…
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

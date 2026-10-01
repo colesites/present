@@ -371,6 +371,7 @@ pub fn run() {
             commands::browser_mode::fetch_browser_suggestions,
             commands::thumbnails::get_media_thumbnail,
             commands::songs::import_openlyrics_songs,
+            commands::songs::import_videopsalm_songbooks,
             commands::scripture::parse_scripture_reference,
             commands::scripture::understand_spoken_scripture,
             commands::control::get_control_settings,

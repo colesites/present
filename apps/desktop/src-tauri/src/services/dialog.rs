@@ -367,6 +367,25 @@ pub fn select_openlyrics_files(
         .map(Some)
 }
 
+/// VideoPsalm songbooks: the `.json` files in its backup's songbook folder.
+/// Read by Rust itself, so nothing is granted to the webview.
+pub fn select_videopsalm_files(
+    app: &AppHandle,
+    requester: Option<&WebviewWindow>,
+) -> AppResult<Option<Vec<PathBuf>>> {
+    let Some(picked) = builder(app, requester)
+        .add_filter("VideoPsalm songbooks", &["json"])
+        .blocking_pick_files()
+    else {
+        return Ok(None);
+    };
+    picked
+        .into_iter()
+        .map(to_path)
+        .collect::<AppResult<Vec<_>>>()
+        .map(Some)
+}
+
 pub fn select_presentation_files(
     app: &AppHandle,
     state: &FileState,
