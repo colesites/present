@@ -1,6 +1,6 @@
 [package]
 name = "present"
-version = "0.4.5"
+version = "0.4.6"
 description = "Presentation software for churches, conferences and live events"
 authors = ["Cole"]
 license = "MIT"
@@ -34,6 +34,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 # Where that file goes, before Tauri's path resolver exists. Tauri's version.
 dirs = "6"
+# A Windows path the webview can use: `C:\…` rather than the `\\?\C:\…` that
+# canonicalising gives (`services/file_scope.rs`). Tauri's version.
+dunce = "1"
 # rustls rather than the system TLS stack, so the same code path is exercised on
 # macOS, Windows and Linux. No default features: we need neither blocking nor
 # cookies nor the compression codecs.

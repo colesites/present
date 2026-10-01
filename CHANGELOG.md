@@ -4,6 +4,16 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-10-01
+
+### Fixed
+
+- On Windows, media in a folder added to the Media panel showed blank: no
+  pictures, no video stills, and nothing played. The folder was kept under a
+  form of its path that Windows does not read a file name after, so every
+  file in it was looked for somewhere it was not. Folders already added are
+  put right when Present starts, and keep their media.
+
 ## [0.4.5] - 2026-09-29
 
 ### Changed
