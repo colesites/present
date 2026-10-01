@@ -1,6 +1,6 @@
 [package]
 name = "present"
-version = "0.4.6"
+version = "0.4.7"
 description = "Presentation software for churches, conferences and live events"
 authors = ["Cole"]
 license = "MIT"
@@ -133,6 +133,12 @@ tauri-plugin-single-instance = { version = "2.4.4", features = ["deep-link"] }
 # and installed, then a restart (`services/updates.rs`). Held at 2.11: 2.12
 # takes Tauri to 2.12 with it, and a second wry, ahead of the JavaScript side.
 tauri-plugin-updater = "=2.11.0"
+# The updater's own HTTP client, named only to hand it the roots below
+# (`services/updates.rs`). The version the plugin uses, with its features.
+reqwest-updater = { package = "reqwest", version = "0.13", default-features = false }
+# Mozilla's root certificates, as the app's own requests trust them, for the
+# updater to fall back on where the computer's store cannot vouch.
+webpki-root-certs = "1"
 
 # macOS reports monitor names as "Monitor #<model number>" (tao's
 # platform_impl/macos/monitor.rs:208). Reading the name a human would recognise

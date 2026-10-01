@@ -29,6 +29,8 @@ export type Settings = {
   timerClockColor: string;
   timerNameColor: string;
   timerNameBannerEnabled: boolean;
+  /** The name with the clock on the audience screens; missing means shown. */
+  timerShowName?: boolean;
   timerNameBannerColor: string;
   timerTitlePosition: "top" | "bottom";
   /** Behind the clock: a colour, or "" for nothing. */

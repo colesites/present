@@ -55,7 +55,6 @@ export type SpokenScripture = {
  * books installed there (`services/scripture_agent.rs`).
  */
 export async function understandSpokenScripture(
-  webAppBaseUrl: string,
   sessionToken: string,
   heard: string,
   books: BibleBookRecord[],
@@ -65,7 +64,6 @@ export async function understandSpokenScripture(
     confidence: number;
     mayProject: boolean;
   } | null>("understand_spoken_scripture", {
-    webAppBaseUrl,
     sessionToken,
     heard,
     books,

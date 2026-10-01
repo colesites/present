@@ -23,7 +23,7 @@ const context = createContext({
 });
 new Script(transpiled.outputText).runInContext(context);
 
-const { parseReference } = module.exports;
+const { findReferenceInSentence, parseReference } = module.exports;
 
 const table = JSON.parse(
   readFileSync(new URL("./fixtures/scripture-references.json", import.meta.url), "utf8"),
@@ -101,4 +101,24 @@ test("normalizes ordinal book names in speech", () => {
   assert.equal(parsed.chapter, 1);
   assert.equal(parsed.verseStart, 2);
   assert.equal(parsed.errors.length, 0);
+});
+
+// The Bible agent's Find it: what AssemblyAI heard, read here with no model.
+test("finds a reference said in the middle of a sentence", () => {
+  const read = (sentence) => {
+    const found = findReferenceInSentence(sentence, table.books);
+    return found
+      ? [found.book?.id ?? null, found.chapter, found.verseStart, found.verseEnd]
+      : null;
+  };
+  assert.deepEqual(read("turn with me to John chapter 3 verse 16 this morning"), ["jhn", 3, 16, null]);
+  assert.deepEqual(read("Turn with me to John chapter three verse sixteen."), ["jhn", 3, 16, null]);
+  assert.deepEqual(read("let us read first John 1 9 together"), ["1jn", 1, 9, null]);
+  assert.deepEqual(
+    read("my ex used to read Psalm 23 verses 1 to 4"),
+    ["psa", 23, 1, 4],
+    "a short name early in the sentence does not hide the reference after it",
+  );
+  assert.equal(read("and that is all for this morning"), null);
+  assert.equal(read("John"), null, "a book with no chapter is not a reference");
 });

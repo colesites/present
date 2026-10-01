@@ -189,6 +189,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
   );
   const [settingsTimerNameBannerEnabled, setSettingsTimerNameBannerEnabled] =
     useState(DEFAULT_TIMER_NAME_BANNER_ENABLED);
+  // The timer's name with its clock on the audience screens.
+  const [settingsTimerShowName, setSettingsTimerShowName] = useState(true);
   const [settingsTimerNameBannerColor, setSettingsTimerNameBannerColor] =
     useState(DEFAULT_TIMER_NAME_BANNER_COLOR);
   const [settingsTimerTitlePosition, setSettingsTimerTitlePosition] = useState<
@@ -356,6 +358,9 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     }
     if (typeof parsed.timerNameBannerEnabled === "boolean") {
       setSettingsTimerNameBannerEnabled(parsed.timerNameBannerEnabled);
+    }
+    if (typeof parsed.timerShowName === "boolean") {
+      setSettingsTimerShowName(parsed.timerShowName);
     }
     if (typeof parsed.timerNameBannerColor === "string") {
       setSettingsTimerNameBannerColor(parsed.timerNameBannerColor);
@@ -563,6 +568,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
         timerClockColor: settingsTimerClockColor,
         timerNameColor: settingsTimerNameColor,
         timerNameBannerEnabled: settingsTimerNameBannerEnabled,
+        timerShowName: settingsTimerShowName,
         timerNameBannerColor: settingsTimerNameBannerColor,
         timerTitlePosition: settingsTimerTitlePosition,
         timerBoxColor: settingsTimerBoxColor,
@@ -617,6 +623,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     settingsTimerClockColor,
     settingsTimerNameColor,
     settingsTimerNameBannerEnabled,
+    settingsTimerShowName,
     settingsTimerNameBannerColor,
     settingsTimerTitlePosition,
     settingsTimerBoxColor,
@@ -756,6 +763,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     setSettingsTimerNameColor,
     settingsTimerNameBannerEnabled,
     setSettingsTimerNameBannerEnabled,
+    settingsTimerShowName,
+    setSettingsTimerShowName,
     settingsTimerNameBannerColor,
     setSettingsTimerNameBannerColor,
     settingsTimerTitlePosition,

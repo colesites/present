@@ -25,6 +25,8 @@ export interface TimerLayoutValue {
   clockColor: string;
   nameColor: string;
   nameBannerEnabled: boolean;
+  /** The name with the clock on the audience screens. */
+  showName: boolean;
   nameBannerColor: string;
   titlePosition: "top" | "bottom";
   /** Behind the clock, or "" for nothing. */
@@ -137,7 +139,7 @@ export function TimerSettings({
     setDraft(null);
   };
 
-  const showNameInBox = !current.nameBannerEnabled;
+  const showNameInBox = current.showName && !current.nameBannerEnabled;
   const nameLine = (
     <div
       style={{ fontSize: nameFont * scale, color: current.nameColor }}
@@ -177,7 +179,7 @@ export function TimerSettings({
             className="relative mx-auto aspect-video w-full max-w-[560px] touch-none select-none overflow-hidden rounded-lg bg-black ring-1 ring-white/10"
           >
             <div className="pointer-events-none absolute inset-[5%] rounded border border-dashed border-white/10" />
-            {current.nameBannerEnabled ? (
+            {current.showName && current.nameBannerEnabled ? (
               <div
                 style={{
                   backgroundColor: current.nameBannerColor,
@@ -296,75 +298,89 @@ export function TimerSettings({
       </SettingsGroup>
 
       <SettingsGroup title="Name" description="The timer's name, like Sermon or Offering.">
-        <SettingsRow label="Size">
-          <SettingsSlider
-            label="Name size"
-            value={nameFont}
-            min={MIN_NAME_FONT}
-            max={MAX_NAME_FONT}
-            suffix="px"
-            onChange={(value) => update({ nameFontPx: value })}
-          />
-        </SettingsRow>
-        <SettingsRow label="Color">
-          <div className="w-[180px]">
-            <ColorInput label="Name color" value={current.nameColor} onChange={(value) => update({ nameColor: value })} />
-          </div>
-        </SettingsRow>
         <SettingsRow
-          label="Place"
-          description={
-            current.nameBannerEnabled
-              ? "The banner across the top or the bottom of the screen."
-              : "Above or below the clock."
-          }
+          label="Show the name"
+          description="With the clock on the audience screens. Stage screens show it where their layout has it."
         >
-          <Segmented
-            label={current.nameBannerEnabled ? "Banner at the top or bottom" : "Name above or below the clock"}
-            className="w-[168px]"
-            value={current.titlePosition}
-            onChange={(value) => update({ titlePosition: value === "top" ? "top" : "bottom" })}
-            options={
-              current.nameBannerEnabled
-                ? [
-                    { value: "top", label: "Top" },
-                    { value: "bottom", label: "Bottom" },
-                  ]
-                : [
-                    { value: "top", label: "Above" },
-                    { value: "bottom", label: "Below" },
-                  ]
-            }
-          />
-        </SettingsRow>
-        <SettingsRow label="Banner" description="The name in a band across the screen instead.">
           <SettingsSwitch
-            label="Name as a banner"
-            checked={current.nameBannerEnabled}
-            onChange={(checked) => update({ nameBannerEnabled: checked })}
+            label="Show the timer's name"
+            checked={current.showName}
+            onChange={(checked) => update({ showName: checked })}
           />
         </SettingsRow>
-        {current.nameBannerEnabled ? (
+        {current.showName ? (
           <>
-            <SettingsRow label="Banner color">
-              <div className="w-[180px]">
-                <ColorInput
-                  label="Banner color"
-                  value={current.nameBannerColor}
-                  onChange={(value) => update({ nameBannerColor: value })}
-                />
-              </div>
-            </SettingsRow>
-            <SettingsRow label="Banner height">
+            <SettingsRow label="Size">
               <SettingsSlider
-                label="Banner height"
-                value={current.nameBannerHeightPx}
-                min={MIN_BANNER_HEIGHT}
-                max={MAX_BANNER_HEIGHT}
+                label="Name size"
+                value={nameFont}
+                min={MIN_NAME_FONT}
+                max={MAX_NAME_FONT}
                 suffix="px"
-                onChange={(value) => update({ nameBannerHeightPx: value })}
+                onChange={(value) => update({ nameFontPx: value })}
               />
             </SettingsRow>
+            <SettingsRow label="Color">
+              <div className="w-[180px]">
+                <ColorInput label="Name color" value={current.nameColor} onChange={(value) => update({ nameColor: value })} />
+              </div>
+            </SettingsRow>
+            <SettingsRow
+              label="Place"
+              description={
+                current.nameBannerEnabled
+                  ? "The banner across the top or the bottom of the screen."
+                  : "Above or below the clock."
+              }
+            >
+              <Segmented
+                label={current.nameBannerEnabled ? "Banner at the top or bottom" : "Name above or below the clock"}
+                className="w-[168px]"
+                value={current.titlePosition}
+                onChange={(value) => update({ titlePosition: value === "top" ? "top" : "bottom" })}
+                options={
+                  current.nameBannerEnabled
+                    ? [
+                        { value: "top", label: "Top" },
+                        { value: "bottom", label: "Bottom" },
+                      ]
+                    : [
+                        { value: "top", label: "Above" },
+                        { value: "bottom", label: "Below" },
+                      ]
+                }
+              />
+            </SettingsRow>
+            <SettingsRow label="Banner" description="The name in a band across the screen instead.">
+              <SettingsSwitch
+                label="Name as a banner"
+                checked={current.nameBannerEnabled}
+                onChange={(checked) => update({ nameBannerEnabled: checked })}
+              />
+            </SettingsRow>
+            {current.nameBannerEnabled ? (
+              <>
+                <SettingsRow label="Banner color">
+                  <div className="w-[180px]">
+                    <ColorInput
+                      label="Banner color"
+                      value={current.nameBannerColor}
+                      onChange={(value) => update({ nameBannerColor: value })}
+                    />
+                  </div>
+                </SettingsRow>
+                <SettingsRow label="Banner height">
+                  <SettingsSlider
+                    label="Banner height"
+                    value={current.nameBannerHeightPx}
+                    min={MIN_BANNER_HEIGHT}
+                    max={MAX_BANNER_HEIGHT}
+                    suffix="px"
+                    onChange={(value) => update({ nameBannerHeightPx: value })}
+                  />
+                </SettingsRow>
+              </>
+            ) : null}
           </>
         ) : null}
       </SettingsGroup>
@@ -468,7 +484,7 @@ function TimeUpPreview({ layout }: { layout: TimerLayoutValue }) {
           borderRadius: clockFont * 0.12 * scale,
         }}
       >
-        {!layout.nameBannerEnabled && layout.titlePosition === "top" ? name : null}
+        {layout.showName && !layout.nameBannerEnabled && layout.titlePosition === "top" ? name : null}
         <div
           className={cn(
             "whitespace-nowrap leading-none tabular-nums",
@@ -481,7 +497,7 @@ function TimeUpPreview({ layout }: { layout: TimerLayoutValue }) {
         >
           {timeUp.enabled ? timeUp.text.trim() || DEFAULT_TIME_UP.text : "00:00:00"}
         </div>
-        {!layout.nameBannerEnabled && layout.titlePosition !== "top" ? name : null}
+        {layout.showName && !layout.nameBannerEnabled && layout.titlePosition !== "top" ? name : null}
       </div>
     </div>
   );

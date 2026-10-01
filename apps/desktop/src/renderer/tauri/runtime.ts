@@ -33,36 +33,15 @@ export const isTauri = (): boolean =>
 
 export const getAppInfo = (): Promise<AppInfo> => invoke<AppInfo>("get_app_info");
 
-/** Matches `SpeechUsageSource` in `src-tauri/src/services/speech.rs`. */
-export type SpeechUsageSource = "bible" | "library" | "song";
-
 /**
- * Mint an AssemblyAI streaming token through the Rust core.
- *
- * The web app remains the broker — the desktop must never carry an AssemblyAI
- * key. What changes is the transport: a request from Rust is not a browser
- * request, so there is no CORS preflight and no origin allowlist to keep in step
- * with the app's origin. See `services/speech.rs` for the full reasoning.
+ * An AssemblyAI streaming token for a session of at most `maxSessionSeconds`,
+ * minted by the Rust core with the key built into the app
+ * (`src-tauri/src/services/speech.rs`).
  */
-export const requestSpeechToken = (args: {
-  webAppBaseUrl: string;
-  sessionToken: string;
-  source: SpeechUsageSource;
-}): Promise<unknown> => invoke("request_speech_token", args);
-
-/**
- * Report a finished streaming session for billing.
- *
- * Speech search is metered by the second, so this must not be dropped. Under
- * Electron it was a fire-and-forget `fetch` from the renderer, which the Tauri
- * origin's CORS preflight would have failed silently.
- */
-export const reportSpeechUsage = (args: {
-  webAppBaseUrl: string;
-  authBearer: string;
-  sessionId: string;
-  endedAtMs: number;
-}): Promise<unknown> => invoke("report_speech_usage", args);
+export const mintSpeechToken = (
+  maxSessionSeconds: number,
+): Promise<{ token: string; expiresInSeconds: number }> =>
+  invoke("mint_speech_token", { maxSessionSeconds: Math.max(1, Math.round(maxSessionSeconds)) });
 
 /** Mirrors `Display` in `src-tauri/src/services/display.rs`. */
 export type DisplayRect = { x: number; y: number; width: number; height: number };

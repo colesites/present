@@ -22,8 +22,12 @@ import { resolveRequestAuthContext } from "@/lib/server/request-auth";
 
 const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
 
-/** Fast and cheap matters more than clever: this answers in one short object. */
-const DEFAULT_MODEL = "openai/gpt-5.6-luna-fast";
+/**
+ * Fast and cheap matters more than clever: this answers in one short object.
+ * The desktop calls the gateway itself from 0.4.7 (`services/scripture_agent.rs`)
+ * with the same model; this route is for the versions before it.
+ */
+const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
 
 /** A model that has not answered in this long will not answer usefully. */
 // Measured against the gateway with this prompt: the chosen model answers in

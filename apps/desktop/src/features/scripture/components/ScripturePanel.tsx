@@ -11,7 +11,7 @@ import {
   useImperativeHandle,
   type ChangeEvent,
 } from "react";
-import { parseReference, type ParsedReference } from "../lib/parser";
+import { findReferenceInSentence, parseReference, type ParsedReference } from "../lib/parser";
 import { understandSpokenScripture } from "../../../renderer/tauri/scripture";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
@@ -42,10 +42,7 @@ import {
 import { ScriptureInput, type ScriptureInputRef } from "./ScriptureInput";
 import type { BibleVerse } from "../lib/db";
 import { ScriptureResults } from "./ScriptureResults";
-import {
-  desktopWebBaseUrl,
-  useDesktopSessionStore,
-} from "../../../renderer/shared/store/desktopSession";
+import { useDesktopSessionStore } from "../../../renderer/shared/store/desktopSession";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -139,7 +136,6 @@ export const ScripturePanel = memo(
     const availableVersions = useMemo(() => liveVersions ?? [], [liveVersions]);
 
     const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
-    const webAppBaseUrl = useMemo(() => desktopWebBaseUrl(), []);
 
     const {
       activeImport,
@@ -545,33 +541,50 @@ export const ScripturePanel = memo(
         return;
       }
 
+      // A reference as the Bible tab's own box reads one: "John 3:16-18".
+      const asLookup = ({ book, chapter, verseStart, verseEnd }: ParsedReference) => {
+        let spoken = `${book?.name ?? ""} ${chapter ?? 1}`;
+        if (verseStart) {
+          spoken += `:${verseStart}`;
+          if (verseEnd) {
+            spoken += `-${verseEnd}`;
+          }
+        }
+        return spoken;
+      };
+
       identifyTimeoutRef.current = window.setTimeout(() => {
-        // Everything that was heard goes to the model: AssemblyAI turns
-        // sound into a sentence and the model decides what the sentence
-        // meant. It answers `null` for anything it is unsure of, and for
-        // everything when nobody is signed in or it cannot be reached — in
-        // which case this behaves exactly as it did before.
-        void understandSpokenScripture(webAppBaseUrl, sessionToken ?? "", text, availableBooks)
+        // Find it: what AssemblyAI heard, read here, with no model. Nothing
+        // goes on screen until the operator shows it, so the moment matters
+        // more than reading every way a reference can be said, and the
+        // model's few seconds are what this mode does without.
+        if (onHeard === "find") {
+          const found = findReferenceInSentence(text, availableBooks);
+          if (found?.book) {
+            setLookupValue(asLookup(found));
+          }
+          return;
+        }
+
+        // Show it: everything that was heard goes to the model. AssemblyAI
+        // turns sound into a sentence and the model decides what the
+        // sentence meant. It answers `null` for anything it is unsure of,
+        // and for everything when nobody is signed in or it cannot be
+        // reached — in which case this behaves exactly as it did before.
+        void understandSpokenScripture(sessionToken ?? "", text, availableBooks)
           .then((understood) => {
-            // Anything the model resolved to a book the operator has goes
-            // straight up. Anything it could not read is left alone: there is
-            // no list of maybes to pick from any more, because nobody running
-            // a service has a hand free to pick from one.
-            if (!understood?.mayProject || !understood.reference.book) {
+            // Anything it could not read is left alone: there is no list of
+            // maybes to pick from, because nobody running a service has a
+            // hand free to pick from one.
+            if (!understood?.reference.book) {
               return;
             }
-            const { book, chapter, verseStart, verseEnd } = understood.reference;
-            let spoken = `${book.name} ${chapter ?? 1}`;
-            if (verseStart) {
-              spoken += `:${verseStart}`;
-              if (verseEnd) {
-                spoken += `-${verseEnd}`;
-              }
-            }
-            // Found either way. On screen at once unless the operator asked
-            // for it to wait here, in the Bible tab, to be shown.
+            // Found either way; on screen only when the model is sure
+            // (`scripture_agent::PROJECT_AT`). "God is good all the time"
+            // named a Psalm, less sure, and waits here instead.
+            const spoken = asLookup(understood.reference);
             setLookupValue(spoken);
-            if (onHeard === "show") {
+            if (understood.mayProject) {
               void handleEnter(spoken, { addToService: addHeardToService });
             }
           })
@@ -592,7 +605,6 @@ export const ScripturePanel = memo(
       heardSentence,
       availableBooks,
       isListening,
-      webAppBaseUrl,
       sessionToken,
       handleEnter,
       setLookupValue,

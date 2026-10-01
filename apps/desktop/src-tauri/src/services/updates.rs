@@ -19,7 +19,7 @@ use std::time::Duration;
 use tauri::menu::MenuItem;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use tauri_plugin_updater::{Update, UpdaterExt};
+use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 
 use crate::services::window_spec::WindowRole;
 
@@ -121,6 +121,60 @@ pub fn menu_chosen(app: &AppHandle) {
     tauri::async_runtime::spawn(async move { check(&app, Asked::ByOperator).await });
 }
 
+/// The updater, trusting Mozilla's roots as well as the computer's.
+///
+/// Its client trusted only the computer's own store, where the app's other
+/// requests trust the roots built into it. The update site's certificate is
+/// from Let's Encrypt's newest roots, reached from the long-standing ISRG
+/// Root X1 only by a cross-signature, and a Windows store that cannot vouch
+/// for that refused every check and every download: "couldn't check for
+/// updates" on any network. The computer's store is still asked first.
+fn updater(app: &AppHandle) -> tauri_plugin_updater::Result<Updater> {
+    app.updater_builder()
+        .configure_client(|client| client.tls_certs_merge(bundled_roots()))
+        .build()
+}
+
+fn bundled_roots() -> impl Iterator<Item = reqwest_updater::Certificate> {
+    webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .filter_map(|der| reqwest_updater::Certificate::from_der(der).ok())
+}
+
+/// An error and what caused it, as one line. The updater's errors keep the
+/// reason they failed — a refused certificate, a timeout — in their source,
+/// and "error sending request" alone says nothing.
+fn reason(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts = vec![error.to_string()];
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !parts.iter().any(|part| part.contains(&text)) {
+            parts.push(text);
+        }
+        source = cause.source();
+    }
+    parts.join(": ")
+}
+
+/// Tell the operator an update could not be had, why, and where else to get it.
+fn could_not(app: &AppHandle, message: String) {
+    let opener = app.clone();
+    app.dialog()
+        .message(message)
+        .title("Check for Updates")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Open Downloads".to_owned(),
+            "Close".to_owned(),
+        ))
+        .show(move |open| {
+            if open {
+                open_downloads(&opener);
+            }
+        });
+}
+
 async fn check(app: &AppHandle, asked: Asked) {
     if !configured(app) {
         if asked == Asked::ByOperator {
@@ -159,7 +213,7 @@ async fn check(app: &AppHandle, asked: Asked) {
     }
 
     let current = app.package_info().version.to_string();
-    let found = match app.updater() {
+    let found = match updater(app) {
         Ok(updater) => updater.check().await,
         Err(error) => Err(error),
     };
@@ -176,13 +230,15 @@ async fn check(app: &AppHandle, asked: Asked) {
             }
         }
         Err(error) => {
-            tracing::warn!(%error, "could not check for an update");
+            let why = reason(&error);
+            tracing::warn!(error = %why, "could not check for an update");
             if asked == Asked::ByOperator {
-                app.dialog()
-                    .message("Present couldn't check for updates. Check the internet connection and try again.")
-                    .title("Check for Updates")
-                    .kind(MessageDialogKind::Warning)
-                    .show(|_| {});
+                could_not(
+                    app,
+                    format!(
+                        "Present couldn't check for updates. The newest version can also be downloaded from the website.\n\n{why}"
+                    ),
+                );
             }
         }
     }
@@ -208,16 +264,16 @@ async fn download(app: &AppHandle, update: Update, asked: Asked) {
                 tracing::info!(%version, "an update is downloaded and waiting");
             }
             Err(error) => {
-                tracing::warn!(%error, %version, "could not download the update");
+                let why = reason(&error);
+                tracing::warn!(error = %why, %version, "could not download the update");
                 set_label(app, CHECK_LABEL, true);
                 if asked == Asked::ByOperator {
-                    app.dialog()
-                        .message(format!(
-                            "Present {version} couldn't be downloaded. Try again in a moment."
-                        ))
-                        .title("Check for Updates")
-                        .kind(MessageDialogKind::Warning)
-                        .show(|_| {});
+                    could_not(
+                        app,
+                        format!(
+                            "Present {version} couldn't be downloaded. It can also be downloaded from the website.\n\n{why}"
+                        ),
+                    );
                 }
                 return;
             }
@@ -332,6 +388,39 @@ pub fn restart_to_update_command(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_updater_falls_back_on_the_roots_built_into_the_app() {
+        let roots: Vec<_> = bundled_roots().collect();
+        assert!(
+            roots.len() > 100,
+            "Mozilla's roots, all readable: {}",
+            roots.len()
+        );
+    }
+
+    #[test]
+    fn a_failure_says_what_caused_it() {
+        #[derive(Debug)]
+        struct Outer(std::io::Error);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("error sending request")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let error = Outer(std::io::Error::other(
+            "invalid peer certificate: UnknownIssuer",
+        ));
+        assert_eq!(
+            reason(&error),
+            "error sending request: invalid peer certificate: UnknownIssuer"
+        );
+    }
 
     #[test]
     fn the_menu_says_which_version_it_will_restart_into() {

@@ -342,6 +342,28 @@ export function parseReference(
   return result;
 }
 
+/**
+ * The first reference said anywhere in a sentence, as a preacher says one:
+ * "turn with me to John chapter three verse sixteen this morning".
+ *
+ * Read from each word in turn, so a word early on that is also a book's short
+ * name ("am", "ex") does not hide the reference after it. `null` when the
+ * sentence names no book with a chapter it has.
+ */
+export function findReferenceInSentence(
+  sentence: string,
+  availableBooks: BibleBookRecord[],
+): ParsedReference | null {
+  const words = sentence.trim().split(/\s+/).filter(Boolean);
+  for (let start = 0; start < words.length; start += 1) {
+    const parsed = parseReference(words.slice(start).join(" "), availableBooks);
+    if (parsed.book && parsed.chapter && parsed.errors.length === 0) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
 export function isValidCharacter(char: string): boolean {
   return /^[A-Za-z0-9\s:.-]$/.test(char);
 }

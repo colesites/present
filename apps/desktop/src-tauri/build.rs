@@ -1,7 +1,53 @@
 fn main() {
     ffmpeg_search_path();
     decklink_shim();
+    service_keys();
     tauri_build::build();
+}
+
+/// The keys the listening agents call AssemblyAI and the AI Gateway with
+/// (`src/services/service_keys.rs`), from the build's environment.
+///
+/// Each is kept scrambled against a mask made fresh for every build, so
+/// neither is in the app as readable text: `strings` on the binary does not
+/// find it. That is all it does. The app has to put the key back together to
+/// use it, so anyone who takes the app apart can too; the spending limits on
+/// both accounts are what bound the cost of that.
+///
+/// A key not in the environment builds as none, and the agent says it is not
+/// set up rather than failing to build.
+fn service_keys() {
+    use std::hash::{BuildHasher, Hasher};
+
+    let random = std::collections::hash_map::RandomState::new();
+    let mut counter = 0u64;
+    let mut mask_byte = || {
+        let mut hasher = random.build_hasher();
+        hasher.write_u64(counter);
+        counter += 1;
+        (hasher.finish() & 0xff) as u8
+    };
+
+    let mut source = String::from("// Written by build.rs: each key XORed with its mask.\n");
+    for (constant, variable) in [
+        ("ASSEMBLYAI", "ASSEMBLYAI_API_KEY"),
+        ("AI_GATEWAY", "AI_GATEWAY_API_KEY"),
+    ] {
+        println!("cargo:rerun-if-env-changed={variable}");
+        let key = std::env::var(variable).unwrap_or_default();
+        let key = key.trim().as_bytes();
+        let mask: Vec<u8> = key.iter().map(|_| mask_byte()).collect();
+        let scrambled: Vec<u8> = key
+            .iter()
+            .zip(&mask)
+            .map(|(byte, mask)| byte ^ mask)
+            .collect();
+        source.push_str(&format!(
+            "pub const {constant}: (&[u8], &[u8]) = (&{scrambled:?}, &{mask:?});\n"
+        ));
+    }
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    std::fs::write(out.join("service_keys.rs"), source).expect("service_keys.rs");
 }
 
 /// SDI out on a Mac (`src/services/sdi.rs`): a small C++ layer over
