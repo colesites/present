@@ -223,6 +223,8 @@ interface SettingsScreenProps {
   setSettingsTimerNameColor: (value: string) => void;
   settingsTimerNameBannerEnabled: boolean;
   setSettingsTimerNameBannerEnabled: (value: boolean) => void;
+  settingsTimerShowName?: boolean;
+  setSettingsTimerShowName?: (value: boolean) => void;
   settingsTimerNameBannerColor: string;
   setSettingsTimerNameBannerColor: (value: string) => void;
   settingsTimerTitlePosition: "top" | "bottom";
@@ -313,6 +315,8 @@ export function SettingsScreen({
   setSettingsTimerNameColor,
   settingsTimerNameBannerEnabled,
   setSettingsTimerNameBannerEnabled,
+  settingsTimerShowName = true,
+  setSettingsTimerShowName,
   settingsTimerNameBannerColor,
   setSettingsTimerNameBannerColor,
   settingsTimerTitlePosition,
@@ -488,6 +492,7 @@ export function SettingsScreen({
               clockColor: settingsTimerClockColor,
               nameColor: settingsTimerNameColor,
               nameBannerEnabled: settingsTimerNameBannerEnabled,
+              showName: settingsTimerShowName,
               nameBannerColor: settingsTimerNameBannerColor,
               titlePosition: settingsTimerTitlePosition,
               boxColor: settingsTimerBoxColor,
@@ -502,6 +507,7 @@ export function SettingsScreen({
               setSettingsTimerClockColor(layout.clockColor);
               setSettingsTimerNameColor(layout.nameColor);
               setSettingsTimerNameBannerEnabled(layout.nameBannerEnabled);
+              setSettingsTimerShowName?.(layout.showName);
               setSettingsTimerNameBannerColor(layout.nameBannerColor);
               setSettingsTimerTitlePosition(layout.titlePosition);
               setSettingsTimerBoxColor(layout.boxColor);

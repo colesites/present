@@ -359,6 +359,7 @@ export function PresentContainer({
     settingsTimerClockColor,
     settingsTimerNameColor,
     settingsTimerNameBannerEnabled,
+    settingsTimerShowName,
     settingsTimerNameBannerColor,
     settingsTimerTitlePosition,
     settingsTimerBoxColor,
@@ -1864,13 +1865,18 @@ export function PresentContainer({
         ? { color: settingsTimerTimeUp.color, blink: settingsTimerTimeUp.blink }
         : null,
     };
-    window.electronAPI.sendToOutput(payload);
+    // The audience screens show the name only when Settings says to; the
+    // stage screens show it as their layouts say, so theirs keeps it.
+    window.electronAPI.sendToOutput(
+      settingsTimerShowName ? payload : { ...payload, timerLabel: null },
+    );
     if (window.electronAPI.sendToStage) {
       window.electronAPI.sendToStage(payload);
     }
     window.electronAPI.sendToWorshipStage?.(payload);
   }, [
     isTimerLayerEnabled,
+    settingsTimerShowName,
     settingsTimerTimeUp,
     timers.activeTimer,
     timers.activeTimer?.isRunning,
