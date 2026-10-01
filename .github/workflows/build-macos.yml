@@ -85,6 +85,12 @@ jobs:
         env:
           CONVEX_URL: https://wary-iguana-735.convex.cloud
           WEB_APP_URL: https://present.multivrs.space
+          # The keys the listening agents call AssemblyAI and the AI Gateway
+          # with, built into the app scrambled (`src-tauri/build.rs`). Without
+          # them the build still succeeds, and voice search says it is not
+          # set up.
+          ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           # Signs the update packages the app updates itself from. Without
           # these secrets the build still succeeds and makes none.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

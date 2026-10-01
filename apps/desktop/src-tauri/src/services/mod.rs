@@ -40,6 +40,7 @@ pub mod screens;
 pub mod scripture;
 pub mod scripture_agent;
 pub mod sdi;
+pub mod service_keys;
 pub mod shortcuts;
 pub mod slide;
 pub mod speech;

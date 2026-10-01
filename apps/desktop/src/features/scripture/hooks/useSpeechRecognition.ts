@@ -1,8 +1,11 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useMutation } from "convex/react";
+import { ConvexError } from "convex/values";
+import { api } from "@present/backend/convex/_generated/api";
+import type { Id } from "@present/backend/convex/_generated/dataModel";
 import {
-  ensureFreshDesktopAccessToken,
   updateDesktopBillingSnapshot,
   type DesktopBillingSnapshot,
 } from "../../../renderer/shared/store/desktopSession";
@@ -97,11 +100,6 @@ interface AssemblyAiTokenResponse {
   billing?: DesktopBillingSnapshot;
 }
 
-interface AssemblyAiTokenErrorPayload {
-  error?: string;
-  message?: string;
-}
-
 interface AssemblyAiMessage {
   type?: string;
   id?: string;
@@ -131,21 +129,9 @@ interface StreamingSession {
   maxDurationSeconds: number;
 }
 
-const DEFAULT_WEB_APP_URL = "https://present.multivrs.space";
 const ASSEMBLYAI_STREAM_URL = "wss://streaming.assemblyai.com/v3/ws";
 const SPEECH_QUOTA_EXHAUSTED_MESSAGE =
   "You've used all of your speech-to-search time for this billing period. Upgrade your plan or wait for the next billing period to continue using voice search.";
-
-const resolveWebBaseUrl = (): string => {
-  const configured = process.env.WEB_APP_URL;
-  if (configured) {
-    return configured;
-  }
-
-  return process.env.NODE_ENV === "development"
-    ? "http://localhost:3001"
-    : DEFAULT_WEB_APP_URL;
-};
 
 const sanitizeKeyterms = (value: string[] | undefined): string[] =>
   Array.from(
@@ -206,6 +192,10 @@ const float32ToPcm16 = (input: Float32Array): ArrayBuffer => {
   return output.buffer;
 };
 
+/** A Convex refusal's own words, rather than its request id and stack. */
+const convexMessage = (error: unknown): unknown =>
+  error instanceof ConvexError && typeof error.data === "string" ? error.data : error;
+
 const formatSpeechError = (error: unknown): string => {
   if (typeof error === "string" && error.trim()) {
     if (/speech-to-search quota exhausted|quota exhausted/i.test(error)) {
@@ -224,22 +214,6 @@ const formatSpeechError = (error: unknown): string => {
   }
 
   return "Voice input failed to start.";
-};
-
-const parseAssemblyAiTokenPayload = (
-  payload: AssemblyAiTokenResponse | AssemblyAiTokenErrorPayload | null,
-  fallbackMessage: string,
-): AssemblyAiTokenResponse => {
-  if (!payload || !("token" in payload) || typeof payload.token !== "string") {
-    const errorPayload = payload as AssemblyAiTokenErrorPayload | null;
-    throw new Error(
-      errorPayload?.message
-      ?? errorPayload?.error
-      ?? fallbackMessage,
-    );
-  }
-
-  return payload;
 };
 
 const computeBoundedSessionUsageSeconds = (input: {
@@ -326,6 +300,11 @@ export function useSpeechRecognition(
     usageSource = "bible",
     throwOnStartFailure = false,
   } = options;
+
+  // The plan's speech time, kept by Convex: a session starts with the
+  // microphone and ends with it.
+  const startUsageSession = useMutation(api.billing.startSpeechUsageSession);
+  const completeUsageSession = useMutation(api.billing.completeSpeechUsageSession);
 
   const [isListening, setIsListening] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -489,43 +468,25 @@ export function useSpeechRecognition(
     setPendingCommittedUsageSeconds(localUsedSeconds);
 
     if (session.billingSessionId) {
-      const authBearerPromise =
-        typeof window !== "undefined" && window.electronAPI
-          ? ensureFreshDesktopAccessToken().catch((): null => null)
-          : Promise.resolve(sessionToken);
-
-      void authBearerPromise.then((authBearer) => {
-        if (!authBearer) {
-          return;
-        }
-
-        // Through the Rust core for the same reason the token request goes
-        // there — a browser preflight from the app's origin would drop it
-        // silently, and this call is what meters the feature.
-        void import("../../../renderer/tauri/runtime")
-          .then(({ reportSpeechUsage }) =>
-            reportSpeechUsage({
-              webAppBaseUrl: resolveWebBaseUrl(),
-              authBearer,
-              sessionId: session.billingSessionId as string,
-              endedAtMs,
-            }),
-          )
-          .then((payload) => {
-            const usage = payload as AssemblyAiUsageResponse | null;
-            if (usage?.billing) {
-              updateDesktopBillingSnapshot(usage.billing);
-            }
-            // Recorded, so nothing is pending. The web-route path this replaced
-            // did this; the Rust path had not.
-            if (usage) {
-              setPendingCommittedUsageSeconds(0);
-            }
-          })
-          .catch((error: unknown) => {
-            console.error("[Speech] usage report failed", error);
-          });
-      });
+      // Straight to Convex, which meters the feature: the session started
+      // there when the microphone did is ended there.
+      void completeUsageSession({
+        sessionId: session.billingSessionId as Id<"speechUsageSessions">,
+        endedAtMs,
+      })
+        .then((payload) => {
+          const usage = payload as AssemblyAiUsageResponse | null;
+          if (usage?.billing) {
+            updateDesktopBillingSnapshot(usage.billing);
+          }
+          // Recorded, so nothing is pending.
+          if (usage) {
+            setPendingCommittedUsageSeconds(0);
+          }
+        })
+        .catch((error: unknown) => {
+          console.error("[Speech] usage report failed", error);
+        });
     }
 
     setActiveSessionStartedAtMs(null);
@@ -566,7 +527,7 @@ export function useSpeechRecognition(
     session.mediaStream.getTracks().forEach((track) => track.stop());
     void session.audioContext.close().catch((): void => undefined);
   }, [
-    sessionToken,
+    completeUsageSession,
     setPendingCommittedUsageSeconds,
     setActiveSessionStartedAtMs,
     setSharedActiveSessionStartedAtMs,
@@ -577,41 +538,45 @@ export function useSpeechRecognition(
       throw new Error("Sign in to use voice search.");
     }
 
-    // The web route is called from the Rust core. The broker does not move — the desktop must never hold an AssemblyAI key
-    // — but a request from Rust is not a browser request, so there is no CORS
-    // preflight and no origin allowlist to keep in step with the app's origin.
-    // That preflight is why this ended up being used through the web app.
-    const fetchFromRustCore = async (): Promise<AssemblyAiTokenResponse> => {
-      const { requestSpeechToken } = await import("../../../renderer/tauri/runtime");
-
-      try {
-        const payload = await requestSpeechToken({
-          webAppBaseUrl: resolveWebBaseUrl(),
-          sessionToken,
-          source: usageSource,
-        });
-        return parseAssemblyAiTokenPayload(
-          payload as AssemblyAiTokenResponse | null,
-          "Live transcription could not start.",
-        );
-      } catch (error) {
-        // Rust rejects with `{ kind, message }`; surface the message the same
-        // way the web-route path does.
-        const appError = error as { message?: string } | null;
-        throw new Error(
-          formatSpeechError(
-            appError?.message ?? "Live transcription could not start.",
-          ),
-        );
-      }
+    // Straight from the desktop, with nothing through the website: the usage
+    // session from Convex, which keeps a plan within its speech time and its
+    // features, then a token from AssemblyAI for no longer than that, minted
+    // with the key built into the app (`services/speech.rs`).
+    let usage: {
+      sessionId: Id<"speechUsageSessions">;
+      allowedDurationSeconds: number;
+      billing: unknown;
     };
-
-    const payload = await fetchFromRustCore();
-    if (payload.billing) {
-      updateDesktopBillingSnapshot(payload.billing);
+    try {
+      usage = await startUsageSession({ source: usageSource, requestedMaxDurationSeconds: 15 * 60 });
+    } catch (error) {
+      throw new Error(formatSpeechError(convexMessage(error)));
     }
-    return payload;
-  }, [sessionToken, usageSource]);
+
+    try {
+      const { mintSpeechToken } = await import("../../../renderer/tauri/runtime");
+      const minted = await mintSpeechToken(usage.allowedDurationSeconds);
+      const payload: AssemblyAiTokenResponse = {
+        token: minted.token,
+        expiresInSeconds: minted.expiresInSeconds,
+        sessionId: usage.sessionId,
+        allowedDurationSeconds: usage.allowedDurationSeconds,
+        billing: usage.billing as DesktopBillingSnapshot,
+      };
+      if (payload.billing) {
+        updateDesktopBillingSnapshot(payload.billing);
+      }
+      return payload;
+    } catch (error) {
+      // The session was started for a stream that never opened: end it now,
+      // so it costs nothing.
+      void completeUsageSession({ sessionId: usage.sessionId, endedAtMs: Date.now() }).catch(
+        (): void => undefined,
+      );
+      const appError = error as { message?: string } | null;
+      throw new Error(formatSpeechError(appError?.message ?? "Live transcription could not start."));
+    }
+  }, [completeUsageSession, sessionToken, startUsageSession, usageSource]);
 
   const startAssemblyAiListening = useCallback(async () => {
     if (!hasStreamingSupport) {

@@ -22,20 +22,17 @@ pub fn parse_scripture_reference(input: String, books: Vec<Book>) -> Reference {
 /// only carries it across.
 #[tauri::command]
 pub async fn understand_spoken_scripture(
-    web_app_base_url: String,
     session_token: String,
     heard: String,
     books: Vec<scripture::Book>,
 ) -> AppResult<Option<SpokenScripture>> {
-    Ok(
-        scripture_agent::ask(&web_app_base_url, &session_token, &heard, &books)
-            .await
-            .map(|understanding| SpokenScripture {
-                may_project: understanding.may_project(),
-                confidence: understanding.confidence,
-                reference: understanding.reference,
-            }),
-    )
+    Ok(scripture_agent::ask(&session_token, &heard, &books)
+        .await
+        .map(|understanding| SpokenScripture {
+            may_project: understanding.may_project(),
+            confidence: understanding.confidence,
+            reference: understanding.reference,
+        }))
 }
 
 /// What the renderer is told about a sentence.
