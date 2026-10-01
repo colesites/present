@@ -4,6 +4,41 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-10-01
+
+### Added
+
+- Songs can be imported from VideoPsalm. VideoPsalm has no export, but its
+  backup keeps each songbook as a `.json` file: in Libraries, Import ▸
+  VideoPsalm songbooks (.json)… reads them, and each songbook's songs go into
+  a category of the songbook's name. A song's verses become its slides, with
+  its authors, copyright and CCLI number.
+- The timer's name can be left off the audience screens: Settings, Timer,
+  Name, Show the name. The stage screens still show it where their layout
+  has it.
+
+### Changed
+
+- The listening agents call AssemblyAI and the model from the app itself,
+  not through the website. The time each plan has for voice search is still
+  kept, by the same account it always was.
+- The Bible agent's "Find it" reads what AssemblyAI heard, with no model: a
+  reference said anywhere in a sentence, like "turn with me to John chapter
+  three verse sixteen", opens in the Bible tab at once.
+- The Bible agent's "Show it" asks a faster model, Gemini 2.5 Flash-Lite, and
+  puts a passage on screen by itself only when the model is sure of it. One
+  it is less sure of, like a Psalm read into "God is good all the time",
+  opens in the Bible tab instead.
+
+### Fixed
+
+- On Windows, Check for Updates could say Present couldn't check, on any
+  network. The update site's certificate is from Let's Encrypt's newest
+  roots, which a Windows computer's own store may not vouch for; Present now
+  also trusts the roots built into it, as its other requests always have.
+  When a check or download does fail, it says why and offers the downloads
+  page.
+
 ## [0.4.6] - 2026-10-01
 
 ### Fixed
