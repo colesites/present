@@ -16,7 +16,7 @@ use std::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
-use crate::services::file_scope::{FileScope, Grant};
+use crate::services::file_scope::{display_path, FileScope, Grant};
 
 use super::persist;
 
@@ -64,7 +64,24 @@ impl FileState {
     /// operator's folder because a USB stick was out is not acceptable.
     pub fn load(config_dir: &Path) -> Self {
         let path = config_dir.join(FOLDERS_FILE);
-        let folders: MediaFolders = persist::load_or_default(&path, "media folders");
+        let mut folders: MediaFolders = persist::load_or_default(&path, "media folders");
+
+        // A folder added on Windows before 0.4.5 was saved in the verbatim
+        // form, which left every file in it blank (`display_path`). Its id is
+        // kept, so nothing that names its media changes.
+        let mut corrected = false;
+        for folder in &mut folders.folders {
+            let plain = display_path(Path::new(&folder.path));
+            if plain != folder.path {
+                folder.path = plain;
+                corrected = true;
+            }
+        }
+        if corrected {
+            if let Err(error) = persist::save_atomic(&path, &folders) {
+                tracing::warn!(%error, "could not save the corrected media folder paths");
+            }
+        }
 
         let mut scope = FileScope::new();
         for folder in &folders.folders {
@@ -95,7 +112,7 @@ impl FileState {
     /// two entries pointing at the same files.
     pub fn add_folder(&self, path: &Path) -> AppResult<MediaFolder> {
         let canonical = self.write_scope().allow_dir(path, Grant::Media)?;
-        let canonical_string = canonical.display().to_string();
+        let canonical_string = display_path(&canonical);
 
         if let Some(existing) = self
             .read_folders()
@@ -264,6 +281,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
         std::fs::canonicalize(&dir).expect("canonical")
+    }
+
+    /// The Media panel names each file as its folder's path, `/` and the
+    /// name, and that has to be a file the scope finds. On Windows the folder
+    /// came back verbatim (`\\?\C:\…`), where `/` is no separator, and every
+    /// file in it showed blank.
+    #[test]
+    fn a_file_named_from_its_folders_path_is_found() {
+        let dir = temp_dir("named");
+        let media = dir.join("media");
+        std::fs::create_dir_all(&media).expect("media dir");
+        std::fs::write(media.join("clip.mp4"), "video").expect("clip");
+
+        let state = FileState::load(&dir.join("config"));
+        let folder = state.add_folder(&media).expect("added");
+        assert!(!folder.path.starts_with(r"\\?\"), "{}", folder.path);
+        let found = state
+            .resolve_existing(&format!("{}/clip.mp4", folder.path))
+            .expect("the file the panel names");
+        assert!(found.ends_with("clip.mp4"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_saved_verbatim_loads_plain_and_keeps_its_id() {
+        let dir = temp_dir("verbatim");
+        let config = dir.join("config");
+        let media = dir.join("media");
+        std::fs::create_dir_all(&config).expect("config dir");
+        std::fs::create_dir_all(&media).expect("media dir");
+        std::fs::write(media.join("clip.mp4"), "video").expect("clip");
+        // As 0.4.4 saved it.
+        let verbatim = std::fs::canonicalize(&media).expect("canonical");
+        assert!(verbatim.display().to_string().starts_with(r"\\?\"));
+        let saved = MediaFolders {
+            version: CURRENT_VERSION,
+            folders: vec![MediaFolder {
+                id: "folder-1".to_owned(),
+                name: "media".to_owned(),
+                path: verbatim.display().to_string(),
+            }],
+        };
+        persist::save_atomic(&config.join(FOLDERS_FILE), &saved).expect("saved");
+
+        let state = FileState::load(&config);
+        let folders = state.folders();
+        assert_eq!(
+            folders[0].id, "folder-1",
+            "what names its media is unchanged"
+        );
+        assert!(!folders[0].path.starts_with(r"\\?\"), "{}", folders[0].path);
+        state
+            .resolve_existing(&format!("{}/clip.mp4", folders[0].path))
+            .expect("the file the panel names");
     }
 
     #[test]

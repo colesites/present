@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
+use crate::services::file_scope::display_path;
 use crate::state::file_state::FileState;
 
 /// One file in a media folder. Matches `read-folder`'s return shape
@@ -148,7 +149,7 @@ pub fn rename_media_file(
 
     if next == old {
         return Ok(RenamedFile {
-            path: next.display().to_string(),
+            path: display_path(&next),
             name: next_name,
         });
     }
@@ -160,7 +161,7 @@ pub fn rename_media_file(
     std::fs::rename(&old, &next)?;
 
     Ok(RenamedFile {
-        path: next.display().to_string(),
+        path: display_path(&next),
         name: next_name,
     })
 }
@@ -191,7 +192,7 @@ pub fn create_directory(state: &FileState, parent_path: &str, name: &str) -> App
 
     let candidate = state.resolve_new(&candidate.display().to_string())?;
     std::fs::create_dir(&candidate)?;
-    Ok(candidate.display().to_string())
+    Ok(display_path(&candidate))
 }
 
 pub fn rename_directory(state: &FileState, old_path: &str, new_path: &str) -> AppResult<bool> {
@@ -293,7 +294,7 @@ pub fn export_library_bundle(
     )?;
 
     Ok(ExportedBundle {
-        path: root.display().to_string(),
+        path: display_path(&root),
         item_count: items.len(),
     })
 }
@@ -376,7 +377,7 @@ pub fn import_library_bundle(state: &FileState, folder_path: &str) -> AppResult<
     }
 
     Ok(ImportedBundle {
-        path: folder.display().to_string(),
+        path: display_path(&folder),
         item_count: items.len(),
         items,
     })

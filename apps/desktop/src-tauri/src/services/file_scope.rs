@@ -155,6 +155,18 @@ fn is_within(root: &Path, candidate: &Path) -> bool {
     }
 }
 
+/// A path as the webview is handed it, and as the folder list saves it.
+///
+/// Canonicalising on Windows gives the verbatim form, `\\?\C:\Users\…`. The
+/// scope compares those among themselves, which is right, but one handed to
+/// the webview breaks: the Media panel builds each file's path as the folder's
+/// and `/` and the name, and in a verbatim path `/` is not a separator, so
+/// every file in a folder named a file that does not exist and showed blank.
+/// The plain form where Windows allows one; unchanged everywhere else.
+pub fn display_path(path: &Path) -> String {
+    dunce::simplified(path).display().to_string()
+}
+
 /// Fully resolve a path that exists, following symlinks.
 ///
 /// Symlink resolution is the point. Without it a link inside a media folder
@@ -201,6 +213,19 @@ fn canonicalize_for_create(path: &Path) -> AppResult<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_handed_to_the_webview_is_never_the_verbatim_form() {
+        #[cfg(windows)]
+        assert_eq!(
+            display_path(Path::new(r"\\?\C:\Users\cole\Media")),
+            r"C:\Users\cole\Media"
+        );
+        assert_eq!(
+            display_path(Path::new("/Users/cole/Media")),
+            "/Users/cole/Media"
+        );
+    }
 
     /// A real directory tree, because the whole point of this module is that it
     /// touches the filesystem — a scope tested against synthetic paths would
