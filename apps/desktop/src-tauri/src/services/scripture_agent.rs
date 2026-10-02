@@ -78,13 +78,31 @@ pub const INSTRUCTION: &str = "\
 You turn what a preacher said into a Bible reference. Reply with JSON only: \
 {\"book\":string,\"chapter\":number,\"verse\":number|null,\"verseEnd\":number|null,\
 \"confidence\":number}. Use a book name exactly as given in the list. \
-confidence is 0 to 1: 1 when the reference is unmistakable, below 0.5 when you \
+When the sentence names a verse or a chapter but no book, it means one in the \
+open passage. confidence is 0 to 1: 1 when the reference is unmistakable, below 0.5 when you \
 are guessing or the sentence names no reference. Answer with nothing else.";
 
 /// The request body for an OpenAI-shaped chat endpoint, which is what the
 /// gateway speaks.
-pub fn request_body(model: &str, heard: &str, books: &[Book]) -> serde_json::Value {
+///
+/// `open`: the passage in the Bible tab, so "now look at verse eighteen"
+/// can be read within it. Measured with it on this prompt, it read every
+/// verse or chapter said alone within the open passage, still preferred a
+/// reference that was named, and made the model less sure of a sentence that
+/// only sounded like scripture ("God is good all the time" went from 0.8 to
+/// 0.4), not more.
+pub fn request_body(
+    model: &str,
+    heard: &str,
+    books: &[Book],
+    open: Option<&str>,
+) -> serde_json::Value {
     let names: Vec<&str> = books.iter().map(|book| book.name.as_str()).collect();
+    let open = open
+        .map(str::trim)
+        .filter(|open| !open.is_empty())
+        .map(|open| format!("Open passage: {open}\n"))
+        .unwrap_or_default();
     serde_json::json!({
         "model": model,
         "temperature": 0,
@@ -95,7 +113,7 @@ pub fn request_body(model: &str, heard: &str, books: &[Book]) -> serde_json::Val
             { "role": "system", "content": INSTRUCTION },
             {
                 "role": "user",
-                "content": format!("Books: {}\nHeard: {heard}", names.join(", ")),
+                "content": format!("Books: {}\n{open}Heard: {heard}", names.join(", ")),
             }
         ]
     })
@@ -175,7 +193,12 @@ const ASK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
 /// `None` when there is nothing to ask about, nobody signed in, or the model
 /// could not be reached — all of which are ordinary, and none of which stop
 /// the operator doing it themselves.
-pub async fn ask(session_token: &str, heard: &str, books: &[Book]) -> Option<Understanding> {
+pub async fn ask(
+    session_token: &str,
+    heard: &str,
+    books: &[Book],
+    open: Option<&str>,
+) -> Option<Understanding> {
     // Everything that was heard, whatever it looks like. What it meant is the
     // model's question to answer, not this file's to pre-judge.
     //
@@ -206,7 +229,7 @@ pub async fn ask(session_token: &str, heard: &str, books: &[Book]) -> Option<Und
     let response = client
         .post(GATEWAY_URL)
         .bearer_auth(key)
-        .json(&request_body(MODEL, heard.trim(), books))
+        .json(&request_body(MODEL, heard.trim(), books, open))
         .send()
         .await
         .map_err(|error| tracing::warn!(%error, "the AI Gateway could not be reached"))
@@ -270,22 +293,27 @@ mod tests {
         // The only sentences that do not: the ones there is no way to ask
         // about, or no way to check an answer against.
         assert!(
-            ask("", "John 3:16", &books).await.is_none(),
+            ask("", "John 3:16", &books, None).await.is_none(),
             "nobody signed in"
         );
         assert!(
-            ask("token", "   ", &books).await.is_none(),
+            ask("token", "   ", &books, None).await.is_none(),
             "nothing was said"
         );
         assert!(
-            ask("token", "John 3:16", &[]).await.is_none(),
+            ask("token", "John 3:16", &[], None).await.is_none(),
             "no books installed, so no answer could be checked"
         );
     }
 
     #[test]
     fn the_model_is_asked_for_one_object_and_told_which_books_exist() {
-        let body = request_body("some-fast-model", "the third chapter of John", &books());
+        let body = request_body(
+            "some-fast-model",
+            "the third chapter of John",
+            &books(),
+            None,
+        );
         assert_eq!(body["model"], "some-fast-model");
         assert_eq!(body["temperature"], 0);
         assert_eq!(body["response_format"]["type"], "json_object");
@@ -418,7 +446,29 @@ mod tests {
     #[test]
     fn the_desktop_asks_the_gateway_itself() {
         assert!(GATEWAY_URL.starts_with("https://ai-gateway.vercel.sh/"));
-        assert_eq!(request_body(MODEL, "John 3 16", &books())["model"], MODEL);
+        assert_eq!(
+            request_body(MODEL, "John 3 16", &books(), None)["model"],
+            MODEL
+        );
+    }
+
+    #[test]
+    fn the_open_passage_is_sent_when_there_is_one() {
+        let user = |open| {
+            request_body(MODEL, "now look at verse eighteen", &books(), open)["messages"][1]
+                ["content"]
+                .as_str()
+                .expect("a message")
+                .to_owned()
+        };
+        assert!(user(Some("John 3:16"))
+            .contains("Open passage: John 3:16\nHeard: now look at verse eighteen"));
+        assert!(!user(None).contains("Open passage"));
+        assert!(!user(Some("  ")).contains("Open passage"), "nothing open");
+        assert!(
+            INSTRUCTION.contains("open passage"),
+            "and the model is told what it is for"
+        );
     }
 
     #[test]

@@ -25,14 +25,18 @@ pub async fn understand_spoken_scripture(
     session_token: String,
     heard: String,
     books: Vec<scripture::Book>,
+    // The passage in the Bible tab, for a verse or chapter said on its own.
+    open_passage: Option<String>,
 ) -> AppResult<Option<SpokenScripture>> {
-    Ok(scripture_agent::ask(&session_token, &heard, &books)
-        .await
-        .map(|understanding| SpokenScripture {
-            may_project: understanding.may_project(),
-            confidence: understanding.confidence,
-            reference: understanding.reference,
-        }))
+    Ok(
+        scripture_agent::ask(&session_token, &heard, &books, open_passage.as_deref())
+            .await
+            .map(|understanding| SpokenScripture {
+                may_project: understanding.may_project(),
+                confidence: understanding.confidence,
+                reference: understanding.reference,
+            }),
+    )
 }
 
 /// What the renderer is told about a sentence.

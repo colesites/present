@@ -643,7 +643,15 @@ export const ScripturePanel = memo(
         // sentence meant. It answers `null` for anything it is unsure of,
         // and for everything when nobody is signed in or it cannot be
         // reached — in which case this behaves exactly as it did before.
-        void understandSpokenScripture(sessionToken ?? "", text, availableBooks)
+        // With the passage in the box, so "now look at verse eighteen" is
+        // read within it.
+        const open = openPassageRef.current;
+        void understandSpokenScripture(
+          sessionToken ?? "",
+          text,
+          availableBooks,
+          open.book ? asLookup(open) : null,
+        )
           .then((understood) => {
             // Anything it could not read is left alone: there is no list of
             // maybes to pick from, because nobody running a service has a
