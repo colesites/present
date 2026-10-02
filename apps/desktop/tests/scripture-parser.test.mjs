@@ -23,7 +23,7 @@ const context = createContext({
 });
 new Script(transpiled.outputText).runInContext(context);
 
-const { findReferenceInSentence, parseReference } = module.exports;
+const { findReferenceInSentence, findRelativeReference, parseReference } = module.exports;
 
 const table = JSON.parse(
   readFileSync(new URL("./fixtures/scripture-references.json", import.meta.url), "utf8"),
@@ -121,4 +121,24 @@ test("finds a reference said in the middle of a sentence", () => {
   );
   assert.equal(read("and that is all for this morning"), null);
   assert.equal(read("John"), null, "a book with no chapter is not a reference");
+});
+
+test("a verse or chapter said alone moves within the passage that is open", () => {
+  const john = table.books.find((book) => book.id === "jhn");
+  const open = { book: john, chapter: 3, verseStart: 16, verseEnd: null, versionCode: null, errors: [] };
+  const read = (sentence) => {
+    const found = findRelativeReference(sentence, open);
+    return found ? [found.book?.id ?? null, found.chapter, found.verseStart, found.verseEnd] : null;
+  };
+  assert.deepEqual(read("now look at verse eighteen"), ["jhn", 3, 18, null]);
+  assert.deepEqual(read("verses 17 to 19"), ["jhn", 3, 17, 19]);
+  assert.deepEqual(read("turn over to chapter four"), ["jhn", 4, null, null]);
+  assert.deepEqual(read("chapter four verse two"), ["jhn", 4, 2, null]);
+  assert.equal(read("we will have lunch at 3:30"), null, "no verse or chapter was said");
+  assert.equal(read("chapter ninety"), null, "John has 21");
+  assert.equal(
+    findRelativeReference("verse 18", { book: null, chapter: null, verseStart: null, verseEnd: null, versionCode: null, errors: [] }),
+    null,
+    "nothing open to move within",
+  );
 });

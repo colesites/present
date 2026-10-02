@@ -11,7 +11,12 @@ import {
   useImperativeHandle,
   type ChangeEvent,
 } from "react";
-import { findReferenceInSentence, parseReference, type ParsedReference } from "../lib/parser";
+import {
+  findReferenceInSentence,
+  findRelativeReference,
+  parseReference,
+  type ParsedReference,
+} from "../lib/parser";
 import { understandSpokenScripture } from "../../../renderer/tauri/scripture";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
@@ -66,6 +71,19 @@ interface ScripturePanelProps {
   bibleAgent?: BibleAgentSettings;
   activeSlideId?: string | null;
 }
+
+
+/** A reference as the Bible tab's own box reads one: "John 3:16-18". */
+const asLookup = ({ book, chapter, verseStart, verseEnd }: ParsedReference): string => {
+  let spoken = `${book?.name ?? ""} ${chapter ?? 1}`;
+  if (verseStart) {
+    spoken += `:${verseStart}`;
+    if (verseEnd) {
+      spoken += `-${verseEnd}`;
+    }
+  }
+  return spoken;
+};
 
 export interface BibleAgentSettings {
   /** A heard passage goes on screen, or waits here to be shown. */
@@ -143,6 +161,7 @@ export const ScripturePanel = memo(
       uninstallVersion,
       lookupRef,
       searchVersesByText,
+      findQuotedVerseInText,
       prewarmSearchPool,
       downloadVersion,
       hostedVersions,
@@ -381,6 +400,50 @@ export const ScripturePanel = memo(
       ],
     );
 
+    // Find it: what AssemblyAI heard, read here with no model, while it is
+    // still being said. A reference named in the sentence, a verse or chapter
+    // said on its own within the passage already open, or a verse quoted
+    // word for word; whichever reads first is put in the box. Nothing goes on
+    // screen until the operator shows it.
+    const openPassageRef = useRef(parsedRef);
+    useEffect(() => {
+      openPassageRef.current = parsedRef;
+    }, [parsedRef]);
+    const findRequestRef = useRef(0);
+    const findFromSpeech = useCallback(
+      (heard: string, finished: boolean) => {
+        const text = heard.trim();
+        if (!text) return;
+        const request = ++findRequestRef.current;
+        const fill = (spoken: string) => {
+          // An answer to words since added to is not the newest; one already
+          // in the box is not put there again.
+          if (request !== findRequestRef.current) return;
+          if (useScripturePanelStore.getState().lookupValue === spoken) return;
+          setLookupValue(spoken);
+        };
+        const named =
+          findReferenceInSentence(text, availableBooks) ??
+          findRelativeReference(text, openPassageRef.current);
+        if (named?.book) {
+          fill(asLookup(named));
+          return;
+        }
+        void findQuotedVerseInText({
+          query: text,
+          versionCode: effectiveSelectedVersionCode,
+          // Every installed version once the sentence is finished; the one
+          // chosen while it is still being said.
+          everyVersion: finished,
+        })
+          .then((verse) => {
+            if (verse) fill(`${verse.bookName} ${verse.chapter}:${verse.verse}`);
+          })
+          .catch((): void => undefined);
+      },
+      [availableBooks, effectiveSelectedVersionCode, findQuotedVerseInText, setLookupValue],
+    );
+
     const onSpeechResult = useCallback(
       (result: { transcript: string; isFinal: boolean }) => {
         if (!result.transcript) return;
@@ -398,6 +461,10 @@ export const ScripturePanel = memo(
 
         handleAiQueryChange(result.transcript);
 
+        if (onHeard === "find") {
+          findFromSpeech(transcript, result.isFinal);
+        }
+
         if (!result.isFinal) {
           return;
         }
@@ -409,7 +476,14 @@ export const ScripturePanel = memo(
         // about everything that was heard. Asking here as well would ask
         // twice about the same sentence and race its own answer.
       },
-      [handleAiQueryChange, showAdjacentLiveVerse, voiceCommands],
+      [findFromSpeech, handleAiQueryChange, onHeard, showAdjacentLiveVerse, voiceCommands],
+    );
+
+    // The installed books' names, for AssemblyAI to listen for: "Habakkuk"
+    // and "Philemon" are heard as names, not as sounds near them.
+    const bookKeyterms = useMemo(
+      () => Array.from(new Set(availableBooks.map((book) => book.name))),
+      [availableBooks],
     );
 
     const {
@@ -425,8 +499,28 @@ export const ScripturePanel = memo(
         lang: speechLang,
         inputDeviceId: speechInputDeviceId,
         sessionToken,
+        keyterms: bookKeyterms,
         usageSource: "bible",
       });
+
+    // Find it looks for a quote in every installed version once a sentence is
+    // finished. Each version's words are indexed once, a few hundred
+    // milliseconds apiece, so it is done as listening starts, one at a time
+    // with a pause between, rather than in front of the first quote.
+    useEffect(() => {
+      if (!isListening || onHeard !== "find") return;
+      let cancelled = false;
+      void (async () => {
+        for (const version of availableVersions) {
+          await new Promise((resolve) => window.setTimeout(resolve, 150));
+          if (cancelled) return;
+          await prewarmSearchPool(version.code).catch((): void => undefined);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [availableVersions, isListening, onHeard, prewarmSearchPool]);
 
     useEffect(() => {
       if (isActive) {
@@ -537,35 +631,13 @@ export const ScripturePanel = memo(
       }
 
       const text = heardSentence.trim();
-      if (!text) {
+      // Find it reads what is heard as it is said (`findFromSpeech`); this
+      // is Show it's, which asks the model about each finished sentence.
+      if (!text || onHeard === "find") {
         return;
       }
 
-      // A reference as the Bible tab's own box reads one: "John 3:16-18".
-      const asLookup = ({ book, chapter, verseStart, verseEnd }: ParsedReference) => {
-        let spoken = `${book?.name ?? ""} ${chapter ?? 1}`;
-        if (verseStart) {
-          spoken += `:${verseStart}`;
-          if (verseEnd) {
-            spoken += `-${verseEnd}`;
-          }
-        }
-        return spoken;
-      };
-
       identifyTimeoutRef.current = window.setTimeout(() => {
-        // Find it: what AssemblyAI heard, read here, with no model. Nothing
-        // goes on screen until the operator shows it, so the moment matters
-        // more than reading every way a reference can be said, and the
-        // model's few seconds are what this mode does without.
-        if (onHeard === "find") {
-          const found = findReferenceInSentence(text, availableBooks);
-          if (found?.book) {
-            setLookupValue(asLookup(found));
-          }
-          return;
-        }
-
         // Show it: everything that was heard goes to the model. AssemblyAI
         // turns sound into a sentence and the model decides what the
         // sentence meant. It answers `null` for anything it is unsure of,
