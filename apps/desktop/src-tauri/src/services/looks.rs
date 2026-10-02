@@ -94,6 +94,9 @@ pub enum LookLayer {
     Mask,
     Messages,
     Props,
+    /// The live timer's clock. Until 0.4.9 the Props layer was what turned it
+    /// on and off; see [`normalize_layers`].
+    Timer,
     Announcements,
     Presentation,
     Slide,
@@ -103,10 +106,11 @@ pub enum LookLayer {
 
 impl LookLayer {
     /// The order the Looks window lists them in (`LOOK_LAYER_ORDER`).
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Mask,
         Self::Messages,
         Self::Props,
+        Self::Timer,
         Self::Announcements,
         Self::Presentation,
         Self::Slide,
@@ -120,6 +124,7 @@ impl LookLayer {
             Self::Mask => "mask",
             Self::Messages => "messages",
             Self::Props => "props",
+            Self::Timer => "timer",
             Self::Announcements => "announcements",
             Self::Presentation => "presentation",
             Self::Slide => "slide",
@@ -135,6 +140,7 @@ pub struct LookLayers {
     pub mask: bool,
     pub messages: bool,
     pub props: bool,
+    pub timer: bool,
     pub announcements: bool,
     pub presentation: bool,
     pub slide: bool,
@@ -148,6 +154,7 @@ impl LookLayers {
             LookLayer::Mask => self.mask,
             LookLayer::Messages => self.messages,
             LookLayer::Props => self.props,
+            LookLayer::Timer => self.timer,
             LookLayer::Announcements => self.announcements,
             LookLayer::Presentation => self.presentation,
             LookLayer::Slide => self.slide,
@@ -161,6 +168,7 @@ impl LookLayers {
             LookLayer::Mask => self.mask = enabled,
             LookLayer::Messages => self.messages = enabled,
             LookLayer::Props => self.props = enabled,
+            LookLayer::Timer => self.timer = enabled,
             LookLayer::Announcements => self.announcements = enabled,
             LookLayer::Presentation => self.presentation = enabled,
             LookLayer::Slide => self.slide = enabled,
@@ -252,6 +260,15 @@ impl LookTextPosition {
     }
 }
 
+/// `value` kept between `low` and `high`; NaN, which would get past both, is
+/// `low`.
+fn clamp_between(value: f64, low: f64, high: f64) -> f64 {
+    if value.is_nan() {
+        return low;
+    }
+    value.clamp(low, high.max(low))
+}
+
 fn clamp_percent(value: f64) -> f64 {
     // NaN would survive `min`/`max` and reach the layout as a garbage
     // percentage; the JS `Math.min(Math.max(v, 0), 100)` produces NaN there
@@ -262,11 +279,134 @@ fn clamp_percent(value: f64) -> f64 {
     value.clamp(0.0, 100.0)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LookTargetState {
     pub layers: LookLayers,
     pub text_position: LookTextPosition,
+    /// Where this column puts what it shows. Saved before there were
+    /// layouts, a column has none: everything where the Screen puts it.
+    #[serde(default)]
+    pub layout: LookLayout,
+}
+
+// --- layouts ---------------------------------------------------------------
+
+/// Where a column puts each layer on its screen, and how big — so one slide
+/// shown once can be full screen on the projector and a lower third on the
+/// stream. A layer left `None` is where the Screen puts it, so a column no one
+/// has laid out draws exactly as screens always have.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LookLayout {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<WordsPlacement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<MediaPlacement>,
+    /// The props, all of them, scaled evenly into this box.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub props: Option<LookBox>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer: Option<TimerPlacement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<MessagePlacement>,
+}
+
+impl LookLayout {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// A box on the screen, as percentages of it: its centre, and its size.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LookBox {
+    pub x_percent: f64,
+    pub y_percent: f64,
+    pub width_percent: f64,
+    pub height_percent: f64,
+}
+
+impl LookBox {
+    pub const FULL: Self = Self {
+        x_percent: 50.0,
+        y_percent: 50.0,
+        width_percent: 100.0,
+        height_percent: 100.0,
+    };
+
+    /// Kept on the screen and big enough to see: a box dragged half off it
+    /// is pulled back, and one shrunk to nothing is given a little size.
+    fn clamped(self) -> Self {
+        let width = clamp_between(self.width_percent, MIN_BOX_PERCENT, 100.0);
+        let height = clamp_between(self.height_percent, MIN_BOX_PERCENT, 100.0);
+        Self {
+            x_percent: clamp_between(self.x_percent, width / 2.0, 100.0 - width / 2.0),
+            y_percent: clamp_between(self.y_percent, height / 2.0, 100.0 - height / 2.0),
+            width_percent: width,
+            height_percent: height,
+        }
+    }
+}
+
+/// The smallest a box can be, as a percentage of the screen.
+const MIN_BOX_PERCENT: f64 = 5.0;
+/// How much smaller or bigger than the Screen's a layer can be drawn.
+const MIN_SCALE_PERCENT: f64 = 25.0;
+const MAX_SCALE_PERCENT: f64 = 400.0;
+
+/// Where the slide's words go, and how they look there.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordsPlacement {
+    pub area: LookBox,
+    pub text_align: TextAlign,
+    pub vertical_align: VerticalAlign,
+    /// How big the words are, as a percentage of the Screen's size for them.
+    pub scale_percent: f64,
+    /// A designed slide's words on their own, laid out afresh in the box, in
+    /// the slide's font — a lower third of a song — rather than the whole
+    /// slide scaled down into it.
+    pub text_only: bool,
+    /// A colour behind the box (`#rrggbb` or `#rrggbbaa`), or nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backdrop: Option<String>,
+}
+
+/// Where the background media goes, fitted inside its box or filling it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaPlacement {
+    pub area: LookBox,
+    /// Fill the box, cropping what does not fit, rather than fit inside it.
+    pub fill: bool,
+}
+
+/// Where the timer's clock is centred, and how big it is.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimerPlacement {
+    pub x_percent: f64,
+    pub y_percent: f64,
+    pub scale_percent: f64,
+}
+
+/// Which edge a message banner runs along on this screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MessageEdge {
+    /// Wherever the operator sent it.
+    AsSent,
+    Top,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessagePlacement {
+    pub edge: MessageEdge,
+    pub scale_percent: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -284,13 +424,13 @@ pub struct LookTargets {
 impl LookTargets {
     pub fn get(&self, target: &LookTarget) -> LookTargetState {
         match target {
-            LookTarget::Program => self.program,
-            LookTarget::Stage => self.stage,
-            LookTarget::Ndi => self.ndi,
+            LookTarget::Program => self.program.clone(),
+            LookTarget::Stage => self.stage.clone(),
+            LookTarget::Ndi => self.ndi.clone(),
             LookTarget::Screen(id) => self
                 .screens
                 .get(id)
-                .copied()
+                .cloned()
                 .unwrap_or_else(|| self.screen_default()),
         }
     }
@@ -317,6 +457,7 @@ impl LookTargets {
                 mask: false,
                 messages: true,
                 props: true,
+                timer: true,
                 announcements: true,
                 presentation: true,
                 slide: true,
@@ -324,6 +465,7 @@ impl LookTargets {
                 video_input: true,
             },
             text_position: self.program.text_position,
+            layout: LookLayout::default(),
         }
     }
 }
@@ -352,6 +494,7 @@ impl LookPreset {
                         mask: false,
                         messages: false,
                         props: true,
+                        timer: true,
                         announcements: false,
                         presentation: true,
                         slide: true,
@@ -359,12 +502,14 @@ impl LookPreset {
                         video_input: true,
                     },
                     text_position: LookTextPosition::DEFAULT,
+                    layout: LookLayout::default(),
                 },
                 stage: LookTargetState {
                     layers: LookLayers {
                         mask: false,
                         messages: true,
                         props: true,
+                        timer: true,
                         announcements: false,
                         presentation: true,
                         slide: true,
@@ -376,12 +521,15 @@ impl LookPreset {
                         height_percent: 70.0,
                         ..LookTextPosition::DEFAULT
                     },
+                    layout: LookLayout::default(),
                 },
                 ndi: LookTargetState {
                     layers: LookLayers {
                         mask: false,
                         messages: true,
-                        props: false,
+                        // Props were never hidden from the stream; the timer was.
+                        props: true,
+                        timer: false,
                         announcements: false,
                         presentation: true,
                         slide: true,
@@ -389,6 +537,7 @@ impl LookPreset {
                         video_input: true,
                     },
                     text_position: LookTextPosition::DEFAULT,
+                    layout: LookLayout::default(),
                 },
                 screens: BTreeMap::new(),
             },
@@ -600,13 +749,14 @@ fn normalize_preset(
                 fallback.text_position,
                 raw.and_then(|value| value.get("textPosition")),
             ),
+            layout: normalize_layout(raw.and_then(|value| value.get("layout"))),
         }
     };
 
     let mut normalized = LookTargets {
-        program: target_state("program", default_preset.targets.program),
-        stage: target_state("stage", default_preset.targets.stage),
-        ndi: target_state("ndi", default_preset.targets.ndi),
+        program: target_state("program", default_preset.targets.program.clone()),
+        stage: target_state("stage", default_preset.targets.stage.clone()),
+        ndi: target_state("ndi", default_preset.targets.ndi.clone()),
         screens: BTreeMap::new(),
     };
     // Only an id an added screen could have: anything else names no screen.
@@ -625,6 +775,7 @@ fn normalize_preset(
                     fallback.text_position,
                     raw.get("textPosition"),
                 ),
+                layout: normalize_layout(raw.get("layout")),
             };
             normalized.screens.insert(id.clone(), state);
         }
@@ -639,14 +790,26 @@ fn normalize_preset(
 
 /// Only an actual boolean is honoured. A truthy string or number falls back to
 /// the default — `"yes"` must not turn the mask on.
+///
+/// A column saved before the Timer layer existed: its Props switch was the
+/// timer's, so the timer takes that value, and Props — which then hid
+/// nothing, props showing whatever it said — starts as it would by default.
 fn normalize_layers(fallback: LookLayers, candidate: Option<&serde_json::Value>) -> LookLayers {
     let mut layers = fallback;
-    for layer in LookLayer::ALL {
-        if let Some(value) = candidate
-            .and_then(|value| value.get(layer.key()))
+    let read = |key: &str| {
+        candidate
+            .and_then(|value| value.get(key))
             .and_then(serde_json::Value::as_bool)
-        {
+    };
+    for layer in LookLayer::ALL {
+        if let Some(value) = read(layer.key()) {
             layers.set(layer, value);
+        }
+    }
+    if read(LookLayer::Timer.key()).is_none() {
+        if let Some(props) = read(LookLayer::Props.key()) {
+            layers.timer = props;
+            layers.props = fallback.props;
         }
     }
     layers
@@ -686,6 +849,102 @@ fn normalize_text_position(
         },
     }
     .clamped()
+}
+
+/// A stored layout as far as it can be read. A part that cannot be read is
+/// left where the Screen puts it — never somewhere made up.
+pub fn normalize_layout(candidate: Option<&serde_json::Value>) -> LookLayout {
+    let part = |key: &str| {
+        candidate
+            .and_then(|value| value.get(key))
+            .filter(|value| value.is_object())
+    };
+    let number =
+        |value: &serde_json::Value, key: &str| value.get(key).and_then(serde_json::Value::as_f64);
+    let flag = |value: &serde_json::Value, key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    };
+    let scale = |value: &serde_json::Value| {
+        clamp_between(
+            number(value, "scalePercent").unwrap_or(100.0),
+            MIN_SCALE_PERCENT,
+            MAX_SCALE_PERCENT,
+        )
+    };
+    let area = |value: Option<&serde_json::Value>| -> Option<LookBox> {
+        let value = value?;
+        Some(
+            LookBox {
+                x_percent: number(value, "xPercent")?,
+                y_percent: number(value, "yPercent")?,
+                width_percent: number(value, "widthPercent")?,
+                height_percent: number(value, "heightPercent")?,
+            }
+            .clamped(),
+        )
+    };
+
+    LookLayout {
+        words: part("words").and_then(|words| {
+            Some(WordsPlacement {
+                area: area(words.get("area"))?,
+                text_align: match words.get("textAlign").and_then(serde_json::Value::as_str) {
+                    Some("left") => TextAlign::Left,
+                    Some("right") => TextAlign::Right,
+                    _ => TextAlign::Center,
+                },
+                vertical_align: match words
+                    .get("verticalAlign")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    Some("top") => VerticalAlign::Top,
+                    Some("bottom") => VerticalAlign::Bottom,
+                    _ => VerticalAlign::Middle,
+                },
+                scale_percent: scale(words),
+                text_only: flag(words, "textOnly"),
+                backdrop: words
+                    .get("backdrop")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|color| is_hex_color(color))
+                    .map(str::to_owned),
+            })
+        }),
+        media: part("media").and_then(|media| {
+            Some(MediaPlacement {
+                area: area(media.get("area"))?,
+                fill: flag(media, "fill"),
+            })
+        }),
+        props: area(part("props")),
+        timer: part("timer").and_then(|timer| {
+            Some(TimerPlacement {
+                x_percent: clamp_percent(number(timer, "xPercent")?),
+                y_percent: clamp_percent(number(timer, "yPercent")?),
+                scale_percent: scale(timer),
+            })
+        }),
+        messages: part("messages").map(|messages| MessagePlacement {
+            edge: match messages.get("edge").and_then(serde_json::Value::as_str) {
+                Some("top") => MessageEdge::Top,
+                Some("bottom") => MessageEdge::Bottom,
+                _ => MessageEdge::AsSent,
+            },
+            scale_percent: scale(messages),
+        }),
+    }
+}
+
+/// `#rgb`, `#rrggbb` or `#rrggbbaa`: what the backdrop picker writes and both
+/// renderers read.
+fn is_hex_color(value: &str) -> bool {
+    value.strip_prefix('#').is_some_and(|hex| {
+        matches!(hex.len(), 3 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit())
+    })
 }
 
 // --- transitions ---------------------------------------------------------
@@ -802,6 +1061,21 @@ pub fn set_text_position(
     if let Some(look) = config.look_mut(look_id) {
         let state = look.targets.get_mut(target);
         state.text_position = state.text_position.patched(patch);
+    }
+    config.updated_at = now;
+}
+
+/// Lay a column out afresh. The layout is read as a stored one is, so a part
+/// the window sent that cannot be read is left where the Screen puts it.
+pub fn set_layout(
+    config: &mut LooksConfig,
+    look_id: &str,
+    target: &LookTarget,
+    layout: &serde_json::Value,
+    now: i64,
+) {
+    if let Some(look) = config.look_mut(look_id) {
+        look.targets.get_mut(target).layout = normalize_layout(Some(layout));
     }
     config.updated_at = now;
 }
@@ -1406,5 +1680,153 @@ mod tests {
             Some(LookTarget::Program)
         );
         assert_eq!(LookTarget::for_screen(screens::WORSHIP), None);
+    }
+
+    #[test]
+    fn a_column_saved_before_layouts_has_none() {
+        let config = normalize_value(serde_json::json!({
+            "version": 2,
+            "selectedTarget": "program",
+            "selectedLookId": "default",
+            "liveLookId": "default",
+            "looks": [{ "id": "default", "name": "Default", "targets": { "program": { "layers": {} } } }],
+        }));
+        assert!(config.looks[0].targets.program.layout.is_default());
+        assert_eq!(
+            serde_json::to_value(&LookPreset::default_preset().targets.ndi.layout).expect("json"),
+            serde_json::json!({}),
+            "as the JS writes it"
+        );
+    }
+
+    #[test]
+    fn a_layout_is_read_with_its_boxes_kept_on_the_screen_and_its_sizes_within_reason() {
+        let layout = normalize_layout(Some(&serde_json::json!({
+            "words": {
+                "area": { "xPercent": 98, "yPercent": 84, "widthPercent": 90, "heightPercent": 2 },
+                "textAlign": "left",
+                "verticalAlign": "sideways",
+                "scalePercent": 1000,
+                "textOnly": true,
+                "backdrop": " #000000b3 ",
+            },
+            "media": { "area": { "xPercent": 25, "yPercent": 50, "widthPercent": 50, "heightPercent": 100 }, "fill": "yes" },
+            "props": { "xPercent": 50, "yPercent": 50, "widthPercent": 40 },
+            "timer": { "xPercent": 120, "yPercent": 10, "scalePercent": 1 },
+            "messages": { "edge": "left" },
+        })));
+        assert_eq!(
+            layout,
+            LookLayout {
+                words: Some(WordsPlacement {
+                    // Pulled back onto the screen, and given a little height.
+                    area: LookBox {
+                        x_percent: 55.0,
+                        y_percent: 84.0,
+                        width_percent: 90.0,
+                        height_percent: 5.0,
+                    },
+                    text_align: TextAlign::Left,
+                    vertical_align: VerticalAlign::Middle,
+                    scale_percent: 400.0,
+                    text_only: true,
+                    backdrop: Some("#000000b3".to_owned()),
+                }),
+                // A fill that is not `true` is not filled.
+                media: Some(MediaPlacement {
+                    area: LookBox {
+                        x_percent: 25.0,
+                        y_percent: 50.0,
+                        width_percent: 50.0,
+                        height_percent: 100.0,
+                    },
+                    fill: false,
+                }),
+                // A box missing a side is no box.
+                props: None,
+                timer: Some(TimerPlacement {
+                    x_percent: 100.0,
+                    y_percent: 10.0,
+                    scale_percent: 25.0,
+                }),
+                messages: Some(MessagePlacement {
+                    edge: MessageEdge::AsSent,
+                    scale_percent: 100.0,
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn a_backdrop_that_is_not_a_colour_is_left_out() {
+        let layout = normalize_layout(Some(&serde_json::json!({
+            "words": {
+                "area": { "xPercent": 50, "yPercent": 50, "widthPercent": 50, "heightPercent": 50 },
+                "backdrop": "url(javascript:alert(1))",
+            },
+        })));
+        let words = layout.words.expect("words");
+        assert_eq!(words.backdrop, None);
+        assert_eq!(words.scale_percent, 100.0);
+        assert!(!words.text_only);
+    }
+
+    #[test]
+    fn a_column_is_laid_out_afresh_an_added_screens_in_its_own_place() {
+        let lower_third = serde_json::json!({
+            "words": {
+                "area": { "xPercent": 50.0, "yPercent": 84.0, "widthPercent": 90.0, "heightPercent": 24.0 },
+                "textAlign": "center",
+                "verticalAlign": "middle",
+                "scalePercent": 70.0,
+                "textOnly": true,
+            },
+        });
+        let mut config = LooksConfig::default_config(NOW);
+        set_layout(&mut config, "default", &LookTarget::Ndi, &lower_third, NOW);
+        let targets = &config.looks[0].targets;
+        assert_eq!(
+            serde_json::to_value(&targets.ndi.layout).expect("json"),
+            lower_third
+        );
+        assert!(
+            targets.program.layout.is_default(),
+            "the Screen is left alone"
+        );
+
+        let lobby = LookTarget::Screen("a1b2c3d4e5".to_owned());
+        set_layout(&mut config, "default", &lobby, &lower_third, NOW);
+        assert_eq!(
+            serde_json::to_value(&config.looks[0].targets.get(&lobby).layout).expect("json"),
+            lower_third
+        );
+    }
+
+    #[test]
+    fn a_column_saved_before_the_timer_layer_keeps_its_timer_and_shows_props() {
+        // Its Props switch was the timer's: off meant no clock.
+        let config = normalize_value(serde_json::json!({
+            "version": 2,
+            "looks": [{
+                "id": "default",
+                "targets": { "program": { "layers": { "props": false } } }
+            }],
+        }));
+        let program = config.looks[0].targets.program.layers;
+        assert!(!program.timer, "the clock stays off");
+        assert!(program.props, "and props, which it never hid, show");
+
+        let saved = normalize_value(serde_json::json!({
+            "version": 2,
+            "looks": [{
+                "id": "default",
+                "targets": { "program": { "layers": { "props": false, "timer": true } } }
+            }],
+        }));
+        let program = saved.looks[0].targets.program.layers;
+        assert!(
+            program.timer && !program.props,
+            "a column saved with both keeps both"
+        );
     }
 }

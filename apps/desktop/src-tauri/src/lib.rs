@@ -346,6 +346,7 @@ pub fn run() {
             commands::looks::set_look_layer,
             commands::looks::set_look_layers,
             commands::looks::set_look_text_position,
+            commands::looks::set_look_layout,
             commands::auth::get_stored_auth_session,
             commands::auth::set_stored_auth_session,
             commands::auth::clear_stored_auth_session,

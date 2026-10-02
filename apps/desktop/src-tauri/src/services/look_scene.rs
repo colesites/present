@@ -19,7 +19,8 @@
 //! | slide or presentation      | `show_text`       | `showTextInOutput`         |
 //! | media or video input       | `show_media`      | `showMediaInOutput`        |
 //! | mask                       | `hide_background` | `hideBackgroundInOutput`   |
-//! | props                      | `timer_visible`   | `isTimerLayerEnabled`      |
+//! | timer                      | `timer_visible`   | `isTimerLayerEnabled`      |
+//! | props                      | `props_overlay`   | —                          |
 //! | text position              | `text_position`   | `outputTextPosition`       |
 //! | messages or announcements  | `message_overlay` | `isMessageLayerEnabled`    |
 //!
@@ -36,24 +37,115 @@
 //! when both agree, and the background is hidden if either asks — so clearing
 //! the words on the projector clears them everywhere, while a column with the
 //! words switched off never shows them whatever the operator does.
+//!
+//! **Then the column's layout** (`LookLayout`): where on its screen each layer
+//! goes. The words, media and props are boxes the screen's renderer draws
+//! into (`screen_layout`); the timer and the banner are moved and sized
+//! through their own fields, so they are drawn at the size they are shown.
 
-use crate::services::looks::{LookTargetState, LookTextPosition, TextAlign, VerticalAlign};
-use crate::services::output::{OutputScene, OutputTextPosition};
+use crate::services::looks::{
+    LookBox, LookLayout, LookTargetState, LookTextPosition, MessageEdge, TextAlign, VerticalAlign,
+};
+use crate::services::output::{LayerBox, OutputScene, OutputTextPosition, ScreenLayout};
+
+/// The Screen every setup has, through the program column. The operator
+/// window folds that column's layers into the scene before sending it — all
+/// but props, which it leaves to this — so only they and the layout are
+/// applied here. The banner is not gated, as the module's notes say.
+pub fn scene_for_program(on_screen: &OutputScene, column: &LookTargetState) -> OutputScene {
+    let scene = OutputScene {
+        props_overlay: if column.layers.props {
+            on_screen.props_overlay.clone()
+        } else {
+            Vec::new()
+        },
+        ..on_screen.clone()
+    };
+    laid_out(scene, &column.layout)
+}
 
 pub fn scene_for_look(on_screen: &OutputScene, column: &LookTargetState) -> OutputScene {
     let layers = &column.layers;
     let messages = layers.messages || layers.announcements;
 
-    OutputScene {
+    let scene = OutputScene {
         // The column allows it, the operator is showing it.
         show_text: (layers.slide || layers.presentation) && on_screen.show_text,
         show_media: (layers.media || layers.video_input) && on_screen.show_media,
         // Either hiding the background hides it.
         hide_background: layers.mask || on_screen.hide_background,
-        timer_visible: layers.props && on_screen.timer_visible,
+        timer_visible: layers.timer && on_screen.timer_visible,
+        // The props the operator put up, where the column has them.
+        props_overlay: if layers.props {
+            on_screen.props_overlay.clone()
+        } else {
+            Vec::new()
+        },
         text_position: Some(text_position(&column.text_position)),
         message_overlay: on_screen.message_overlay.clone().filter(|_| messages),
         ..on_screen.clone()
+    };
+    laid_out(scene, &column.layout)
+}
+
+/// The scene with a column's layout applied. A column no one laid out leaves
+/// it exactly as it was.
+fn laid_out(mut scene: OutputScene, layout: &LookLayout) -> OutputScene {
+    if layout.is_default() {
+        return scene;
+    }
+    if let Some(words) = layout.words.as_ref() {
+        scene.text_position = Some(text_position(&LookTextPosition {
+            x_percent: words.area.x_percent,
+            y_percent: words.area.y_percent,
+            width_percent: words.area.width_percent,
+            height_percent: words.area.height_percent,
+            text_align: words.text_align,
+            vertical_align: words.vertical_align,
+        }));
+    }
+    scene.screen_layout = Some(ScreenLayout {
+        words_box: layout.words.as_ref().map(|words| layer_box(words.area)),
+        words_text_only: layout.words.as_ref().is_some_and(|words| words.text_only),
+        words_scale: layout
+            .words
+            .as_ref()
+            .map_or(1.0, |words| words.scale_percent / 100.0),
+        words_backdrop: layout
+            .words
+            .as_ref()
+            .and_then(|words| words.backdrop.clone()),
+        media_box: layout
+            .media
+            .map_or(LayerBox::FULL, |media| layer_box(media.area)),
+        media_fill: layout.media.is_some_and(|media| media.fill),
+        props_box: layout.props.map_or(LayerBox::FULL, layer_box),
+    });
+    if let (Some(placed), Some(timer)) = (layout.timer, scene.timer_layout.as_mut()) {
+        let scale = placed.scale_percent / 100.0;
+        timer.x_percent = placed.x_percent;
+        timer.y_percent = placed.y_percent;
+        timer.clock_font_px *= scale;
+        timer.name_font_px *= scale;
+        timer.name_banner_height_px *= scale;
+    }
+    if let (Some(placed), Some(message)) = (layout.messages, scene.message_overlay.as_mut()) {
+        match placed.edge {
+            MessageEdge::AsSent => {}
+            MessageEdge::Top => message.position = "top".to_owned(),
+            MessageEdge::Bottom => message.position = "bottom".to_owned(),
+        }
+        message.font_scale *= placed.scale_percent / 100.0;
+    }
+    scene
+}
+
+fn layer_box(area: LookBox) -> LayerBox {
+    LayerBox {
+        x_percent: area.x_percent,
+        y_percent: area.y_percent,
+        width_percent: area.width_percent,
+        height_percent: area.height_percent,
     }
 }
 
@@ -82,7 +174,7 @@ fn text_position(position: &LookTextPosition) -> OutputTextPosition {
 mod tests {
     use super::*;
     use crate::services::looks::{LookLayers, LookPreset};
-    use crate::services::output::MessageOverlay;
+    use crate::services::output::{MessageOverlay, PropsOverlayItem};
 
     fn default_ndi() -> LookTargetState {
         LookPreset::default_preset().targets.ndi
@@ -96,7 +188,7 @@ mod tests {
             show_text: program.layers.slide || program.layers.presentation,
             show_media: program.layers.media || program.layers.video_input,
             hide_background: program.layers.mask,
-            timer_visible: program.layers.props,
+            timer_visible: program.layers.timer,
             message_overlay: Some(banner()),
             slide_text: Some("Amazing grace".to_owned()),
             timer_text: Some("00:05:00".to_owned()),
@@ -118,6 +210,126 @@ mod tests {
         }
     }
 
+    fn timer_layout() -> crate::services::output::TimerLayout {
+        crate::services::output::TimerLayout {
+            x_percent: 50.0,
+            y_percent: 90.0,
+            clock_font_px: 100.0,
+            name_font_px: 40.0,
+            name_banner_height_px: 48.0,
+            clock_color: "#ffffff".to_owned(),
+            name_color: "#ffffff".to_owned(),
+            name_banner_enabled: false,
+            name_banner_color: "#000000".to_owned(),
+            title_position: "bottom".to_owned(),
+            box_color: None,
+        }
+    }
+
+    #[test]
+    fn a_column_no_one_laid_out_leaves_the_scene_as_it_was() {
+        let program = program_scene();
+        let ndi = scene_for_look(&program, &default_ndi());
+        assert_eq!(ndi.screen_layout, None);
+        let screen = scene_for_program(&program, &LookPreset::default_preset().targets.program);
+        assert_eq!(screen, program, "the Screen shows what the operator sent");
+    }
+
+    #[test]
+    fn a_lower_third_column_puts_the_words_in_their_band() {
+        let mut column = default_ndi();
+        column.layout = crate::services::looks::normalize_layout(Some(&serde_json::json!({
+            "words": {
+                "area": { "xPercent": 50, "yPercent": 84, "widthPercent": 90, "heightPercent": 24 },
+                "textAlign": "left",
+                "verticalAlign": "bottom",
+                "scalePercent": 70,
+                "textOnly": true,
+                "backdrop": "#000000b3",
+            },
+            "media": { "area": { "xPercent": 25, "yPercent": 50, "widthPercent": 50, "heightPercent": 100 }, "fill": true },
+        })));
+        let scene = scene_for_look(&program_scene(), &column);
+        let layout = scene.screen_layout.expect("a layout");
+        assert_eq!(
+            layout.words_box,
+            Some(LayerBox {
+                x_percent: 50.0,
+                y_percent: 84.0,
+                width_percent: 90.0,
+                height_percent: 24.0
+            })
+        );
+        assert!(layout.words_text_only);
+        assert!((layout.words_scale - 0.7).abs() < 1e-9);
+        assert_eq!(layout.words_backdrop.as_deref(), Some("#000000b3"));
+        assert_eq!(layout.media_box.x_percent, 25.0);
+        assert!(layout.media_fill);
+        assert_eq!(layout.props_box, LayerBox::FULL);
+
+        let position = scene.text_position.expect("the words' box");
+        assert_eq!((position.y_percent, position.height_percent), (84.0, 24.0));
+        assert_eq!(
+            (
+                position.text_align.as_str(),
+                position.vertical_align.as_str()
+            ),
+            ("left", "bottom")
+        );
+    }
+
+    #[test]
+    fn the_timer_and_banner_are_moved_and_sized_for_their_screen() {
+        let mut column = default_ndi();
+        column.layers.timer = true;
+        column.layout = crate::services::looks::normalize_layout(Some(&serde_json::json!({
+            "timer": { "xPercent": 88, "yPercent": 10, "scalePercent": 50 },
+            "messages": { "edge": "top", "scalePercent": 150 },
+        })));
+        let program = OutputScene {
+            timer_layout: Some(timer_layout()),
+            ..program_scene()
+        };
+        let scene = scene_for_look(&program, &column);
+
+        let timer = scene.timer_layout.expect("timer");
+        assert_eq!((timer.x_percent, timer.y_percent), (88.0, 10.0));
+        assert_eq!((timer.clock_font_px, timer.name_font_px), (50.0, 20.0));
+        let banner = scene.message_overlay.expect("banner");
+        assert_eq!(banner.position, "top");
+        assert!((banner.font_scale - 1.5).abs() < 1e-9);
+
+        // The operator's own screen keeps them where they were sent.
+        assert_eq!(program.timer_layout.expect("timer").x_percent, 50.0);
+    }
+
+    #[test]
+    fn the_screens_column_takes_its_props_and_layout_but_not_its_message_gate() {
+        let mut column = LookPreset::default_preset().targets.program;
+        column.layers.props = false;
+        assert!(
+            !column.layers.messages,
+            "the program's messages flag is off by default"
+        );
+        column.layout = crate::services::looks::normalize_layout(Some(&serde_json::json!({
+            "props": { "xPercent": 80, "yPercent": 20, "widthPercent": 30, "heightPercent": 30 },
+        })));
+        let program = OutputScene {
+            props_overlay: vec![prop()],
+            ..program_scene()
+        };
+        let scene = scene_for_program(&program, &column);
+        assert!(scene.props_overlay.is_empty(), "props off on the Screen");
+        assert!(
+            scene.message_overlay.is_some(),
+            "the banner is not gated here"
+        );
+        assert_eq!(
+            scene.screen_layout.expect("layout").props_box.width_percent,
+            30.0
+        );
+    }
+
     #[test]
     fn with_the_default_look_the_stream_gains_the_banner_and_loses_the_timer() {
         // The visible difference the owner accepted when choosing the NDI column.
@@ -125,7 +337,7 @@ mod tests {
         assert!(program.timer_visible, "the projector shows the timer");
 
         let ndi = scene_for_look(&program, &default_ndi());
-        assert!(!ndi.timer_visible, "the default NDI column hides props");
+        assert!(!ndi.timer_visible, "the default NDI column hides the timer");
         assert!(ndi.message_overlay.is_some(), "and shows messages");
         assert!(ndi.show_text);
         assert!(ndi.show_media);
@@ -142,7 +354,7 @@ mod tests {
             ..program_scene()
         };
         let mut ndi = default_ndi();
-        ndi.layers.props = true;
+        ndi.layers.timer = true;
         assert!(scene_for_look(&showing, &ndi).show_text);
         assert!(scene_for_look(&showing, &ndi).timer_visible);
 
@@ -183,6 +395,7 @@ mod tests {
             mask: false,
             messages: false,
             props: false,
+            timer: false,
             announcements: false,
             presentation: false,
             slide: false,
@@ -239,7 +452,7 @@ mod tests {
                 .is_some());
         }
         assert!(scene_for_look(&scene, &target(LookLayers { mask: true, ..off })).hide_background);
-        assert!(scene_for_look(&scene, &target(LookLayers { props: true, ..off })).timer_visible);
+        assert!(scene_for_look(&scene, &target(LookLayers { timer: true, ..off })).timer_visible);
     }
 
     #[test]
@@ -275,6 +488,47 @@ mod tests {
         assert_eq!(ndi.slide_text, scene.slide_text);
         assert_eq!(ndi.timer_text, scene.timer_text);
         assert_eq!(ndi.media_url, scene.media_url);
-        assert_eq!(ndi.props_overlay, scene.props_overlay);
+        assert_eq!(
+            ndi.props_overlay, scene.props_overlay,
+            "the NDI column shows props"
+        );
+    }
+
+    fn prop() -> PropsOverlayItem {
+        PropsOverlayItem {
+            id: "logo".to_owned(),
+            kind: "image".to_owned(),
+            media_id: None,
+            image_url: Some("local-media://media/logo.png".to_owned()),
+            media_url: None,
+            youtube_url: None,
+            ndi_source_name: None,
+            capture_device_id: None,
+            capture_device_label: None,
+            shown_at_ms: None,
+            text: None,
+            position: "top-right".to_owned(),
+            opacity: 1.0,
+            size_percent: 20.0,
+            color: None,
+            font_size: None,
+        }
+    }
+
+    #[test]
+    fn props_show_where_the_column_has_them() {
+        let scene = OutputScene {
+            props_overlay: vec![prop()],
+            ..program_scene()
+        };
+        let mut column = default_ndi();
+        assert_eq!(scene_for_look(&scene, &column).props_overlay.len(), 1);
+        column.layers.props = false;
+        assert!(scene_for_look(&scene, &column).props_overlay.is_empty());
+        assert!(
+            scene_for_look(&scene, &column).timer_visible
+                == (column.layers.timer && scene.timer_visible),
+            "and the timer is its own layer's"
+        );
     }
 }

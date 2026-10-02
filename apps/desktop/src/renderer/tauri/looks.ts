@@ -16,6 +16,7 @@ import { safelyUnlisten } from "./electron-bridge";
 
 import type {
   LookLayerKey,
+  LookLayout,
   LookTargetKey,
   LookTextPosition,
   LooksConfig,
@@ -68,6 +69,13 @@ export const setLookTextPosition = (
   target: LookTargetKey,
   patch: Partial<LookTextPosition>,
 ): Promise<LooksConfig> => invoke("set_look_text_position", { lookId, target, patch });
+
+/** Lay a column out afresh: where each layer goes on its screen. */
+export const setLookLayout = (
+  lookId: string,
+  target: LookTargetKey,
+  layout: LookLayout,
+): Promise<LooksConfig> => invoke("set_look_layout", { lookId, target, layout });
 
 /**
  * Subscribe to flag changes. Resolves to an unsubscribe function.

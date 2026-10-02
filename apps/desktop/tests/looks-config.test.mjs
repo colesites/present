@@ -12,6 +12,8 @@ import {
   withSelectedLook,
   withSelectedTarget,
   withTextPosition,
+  withLayout,
+  normalizeLayout,
   lookColumn,
   lookTargetForScreen,
   parseLookTarget,
@@ -41,13 +43,14 @@ test("no stored config yields the defaults", () => {
   assert.equal(config.updatedAt, CLOCK.now);
 });
 
-test("the default program look shows presentation, slide, media and props", () => {
+test("the default program look shows presentation, slide, media, props and the timer", () => {
   const { layers } = createDefaultLookPreset().targets.program;
 
   assert.deepEqual(layers, {
     mask: false,
     messages: false,
     props: true,
+    timer: true,
     announcements: false,
     presentation: true,
     slide: true,
@@ -396,4 +399,99 @@ test("a copied look carries its added screens' columns, not shared with the sour
 
   assert.equal(lookColumn(added.looks[1], LOBBY).layers.props, false, "the copy inherits the edit");
   assert.equal(lookColumn(changed.looks[0], LOBBY).layers.props, false, "the source is untouched");
+});
+
+test("a column saved before the Timer layer keeps its timer and shows props", () => {
+  const config = normalizeLooksConfig(
+    { version: 2, looks: [{ id: "default", targets: { program: { layers: { props: false } } } }] },
+    CLOCK,
+  );
+  assert.equal(config.looks[0].targets.program.layers.timer, false, "the clock stays off");
+  assert.equal(config.looks[0].targets.program.layers.props, true, "and props, which it never hid, show");
+
+  const saved = normalizeLooksConfig(
+    { version: 2, looks: [{ id: "default", targets: { program: { layers: { props: false, timer: true } } } }] },
+    CLOCK,
+  );
+  assert.equal(saved.looks[0].targets.program.layers.timer, true);
+  assert.equal(saved.looks[0].targets.program.layers.props, false, "a column saved with both keeps both");
+});
+
+test("a column saved before layouts has none: everything where the Screen puts it", () => {
+  const config = normalizeLooksConfig(
+    {
+      version: 2,
+      selectedTarget: "program",
+      selectedLookId: "default",
+      liveLookId: "default",
+      looks: [{ id: "default", name: "Default", targets: { program: { layers: {} } } }],
+    },
+    CLOCK,
+  );
+  assert.deepEqual(config.looks[0].targets.program.layout, {});
+  assert.deepEqual(createDefaultLookPreset().targets.ndi.layout, {});
+});
+
+test("a layout is read with its boxes kept on the screen and its sizes within reason", () => {
+  const layout = normalizeLayout({
+    words: {
+      area: { xPercent: 98, yPercent: 84, widthPercent: 90, heightPercent: 2 },
+      textAlign: "left",
+      verticalAlign: "sideways",
+      scalePercent: 1000,
+      textOnly: true,
+      backdrop: " #000000b3 ",
+    },
+    media: { area: { xPercent: 25, yPercent: 50, widthPercent: 50, heightPercent: 100 }, fill: "yes" },
+    props: { xPercent: 50, yPercent: 50, widthPercent: 40 },
+    timer: { xPercent: 120, yPercent: 10, scalePercent: 1 },
+    messages: { edge: "left" },
+  });
+  assert.deepEqual(layout, {
+    words: {
+      // Pulled back onto the screen, and given a little height.
+      area: { xPercent: 55, yPercent: 84, widthPercent: 90, heightPercent: 5 },
+      textAlign: "left",
+      verticalAlign: "middle",
+      scalePercent: 400,
+      textOnly: true,
+      backdrop: "#000000b3",
+    },
+    // A fill that is not `true` is not filled.
+    media: { area: { xPercent: 25, yPercent: 50, widthPercent: 50, heightPercent: 100 }, fill: false },
+    // A box missing a side is no box: the props stay where the Screen has them.
+    timer: { xPercent: 100, yPercent: 10, scalePercent: 25 },
+    messages: { edge: "asSent", scalePercent: 100 },
+  });
+});
+
+test("a backdrop that is not a colour is left out", () => {
+  const layout = normalizeLayout({
+    words: {
+      area: { xPercent: 50, yPercent: 50, widthPercent: 50, heightPercent: 50 },
+      backdrop: "url(javascript:alert(1))",
+    },
+  });
+  assert.equal(layout.words.backdrop, undefined);
+  assert.equal(layout.words.scalePercent, 100);
+  assert.equal(layout.words.textOnly, false);
+});
+
+test("a column is laid out afresh, an added screen's in its own place", () => {
+  const config = createDefaultLooksConfig(CLOCK.now);
+  const lowerThird = {
+    words: {
+      area: { xPercent: 50, yPercent: 84, widthPercent: 90, heightPercent: 24 },
+      textAlign: "center",
+      verticalAlign: "middle",
+      scalePercent: 70,
+      textOnly: true,
+    },
+  };
+  const ndi = withLayout(config, "default", "ndi", lowerThird, CLOCK.now);
+  assert.deepEqual(ndi.looks[0].targets.ndi.layout, lowerThird);
+  assert.deepEqual(ndi.looks[0].targets.program.layout, {}, "the Screen is left alone");
+
+  const lobby = withLayout(config, "default", "a1b2c3d4e5", lowerThird, CLOCK.now);
+  assert.deepEqual(lobby.looks[0].targets.screens.a1b2c3d4e5.layout, lowerThird);
 });
