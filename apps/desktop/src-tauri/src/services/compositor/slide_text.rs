@@ -19,7 +19,8 @@
 use cosmic_text::{Align, Weight};
 use tiny_skia::{Color, PixmapMut};
 
-use crate::services::output::{LibraryStyle, OutputScene, ScriptureStyle};
+use crate::services::output::{LibraryStyle, OutputScene, OutputTextPosition, ScriptureStyle};
+use crate::services::slide::{SlideElement, SlideElementType};
 
 use super::geometry::Viewport;
 use super::text::{self, Shadow, TextStyle};
@@ -63,7 +64,7 @@ fn footer_shadow() -> Shadow {
 
 /// What the window draws when a scene arrives without a style. The initial
 /// state in `OutputWindow.tsx`.
-fn default_scripture_style() -> ScriptureStyle {
+pub(super) fn default_scripture_style() -> ScriptureStyle {
     ScriptureStyle {
         font_size: 96.0,
         footer_font_size: 70.0,
@@ -76,7 +77,7 @@ fn default_scripture_style() -> ScriptureStyle {
     }
 }
 
-fn default_library_style() -> LibraryStyle {
+pub(super) fn default_library_style() -> LibraryStyle {
     LibraryStyle {
         font_family: "Inter".to_owned(),
         font_size: 72.0,
@@ -273,6 +274,110 @@ pub fn draw_scripture(
         Some(&verse_shadow()),
         None,
     );
+}
+
+/// A designed slide's words without its design, for a screen whose layout
+/// gives the words a box of their own (a lower third).
+///
+/// Every visible text element's words, in reading order — top to bottom,
+/// then left to right — laid out afresh in `pixmap` in the first one's font,
+/// weight and colour, at its size times `scale`, shrunk to fit, aligned as
+/// the screen's text position says. `false` when the slide has no words.
+pub fn draw_words_of(
+    pixmap: &mut PixmapMut<'_>,
+    elements: &[SlideElement],
+    full: &Viewport,
+    scale: f32,
+    position: Option<&OutputTextPosition>,
+) -> bool {
+    let mut texts: Vec<&SlideElement> = elements
+        .iter()
+        .filter(|element| element.element_type == SlideElementType::Text && element.is_visible())
+        .collect();
+    texts.sort_by(|a, b| {
+        a.y()
+            .partial_cmp(&b.y())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(
+                a.x()
+                    .partial_cmp(&b.x())
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+    });
+    let words = texts
+        .iter()
+        .map(|element| {
+            super::text::paragraphs_of(element)
+                .join("\n")
+                .trim()
+                .to_owned()
+        })
+        .filter(|words| !words.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let Some(first) = texts.first() else {
+        return false;
+    };
+    if words.is_empty() {
+        return false;
+    }
+
+    let style = first.style.clone().unwrap_or_default();
+    let (frame_width, frame_height) = (pixmap.width() as f32, pixmap.height() as f32);
+    let padding = (frame_width.min(frame_height) * 0.08).min(SCRIPTURE_PADDING);
+    let content_width = (frame_width - padding * 2.0).max(1.0);
+    let content_height = (frame_height - padding * 2.0).max(1.0);
+    let deck_scale = full.scale_x().min(full.scale_y()) as f32;
+    let wanted = (style.font_size.unwrap_or(64.0) as f32 * deck_scale * scale).max(8.0);
+    let bold = style.font_bold.unwrap_or(false);
+    let weight = match style.font_weight.as_deref() {
+        Some(value) => weight_of(value),
+        None if bold => Weight::BOLD,
+        None => Weight::NORMAL,
+    };
+    let text_align = position.map_or("center", |position| position.text_align.as_str());
+    let vertical_align = position.map_or("middle", |position| position.vertical_align.as_str());
+    let words_style = |font_size: f32| TextStyle {
+        font_size,
+        line_height: font_size * 1.25,
+        family: style
+            .font_family
+            .clone()
+            .filter(|name| !name.trim().is_empty()),
+        weight,
+        italic: style.font_style.as_deref() == Some("italic"),
+        letter_spacing_em: 0.0,
+        align: align_of(text_align),
+        wrap: true,
+    };
+    let fitted = fit_font_size(
+        |size| {
+            let (height, width) = text::measure(&words, content_width, &words_style(size));
+            height <= content_height && width <= content_width
+        },
+        wanted,
+    );
+    let words_style = words_style(fitted);
+    let (height, _) = text::measure(&words, content_width, &words_style);
+    let ink = style
+        .color
+        .as_deref()
+        .and_then(super::color::parse)
+        .unwrap_or(Color::WHITE);
+    text::draw_paragraph(
+        pixmap,
+        &words,
+        (
+            padding,
+            padding + vertical_start(vertical_align, content_height, height),
+            content_width,
+        ),
+        &words_style,
+        ink,
+        Some(&verse_shadow()),
+        None,
+    );
+    true
 }
 
 /// `CanvasSlideLayer`'s fallback: `fillText(text, width / 2, height / 2,

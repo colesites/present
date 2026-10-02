@@ -106,7 +106,7 @@ fn weight_of(style: Option<&SlideElementStyle>) -> Weight {
 /// `textBody` wins when it is there, because an imported deck carries its real
 /// paragraph structure. Otherwise `content` is split on newlines, which is what
 /// the Canvas version does — an operator's typed line break is a paragraph.
-fn paragraphs_of(element: &SlideElement) -> Vec<String> {
+pub(super) fn paragraphs_of(element: &SlideElement) -> Vec<String> {
     if let Some(body) = &element.text_body {
         if !body.paragraphs.is_empty() {
             return body

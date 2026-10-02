@@ -117,6 +117,103 @@ pub struct TimerLayout {
     pub box_color: Option<String>,
 }
 
+/// A box on a screen, as percentages of it: where its centre is, and its
+/// size. How a screen's layout in Looks places a layer.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayerBox {
+    pub x_percent: f64,
+    pub y_percent: f64,
+    pub width_percent: f64,
+    pub height_percent: f64,
+}
+
+impl LayerBox {
+    /// All of the screen: where every layer is unless a layout says otherwise.
+    pub const FULL: Self = Self {
+        x_percent: 50.0,
+        y_percent: 50.0,
+        width_percent: 100.0,
+        height_percent: 100.0,
+    };
+
+    pub fn is_full(&self) -> bool {
+        let near = |a: f64, b: f64| (a - b).abs() < 0.01;
+        near(self.x_percent, 50.0)
+            && near(self.y_percent, 50.0)
+            && near(self.width_percent, 100.0)
+            && near(self.height_percent, 100.0)
+    }
+
+    /// In pixels of a `width` by `height` screen, kept on it: left, top,
+    /// width, height. `None` for a box with nothing left of it.
+    pub fn rect(&self, width: u32, height: u32) -> Option<(f32, f32, f32, f32)> {
+        let finite = |value: f64, fallback: f64| if value.is_finite() { value } else { fallback };
+        let (w, h) = (f64::from(width), f64::from(height));
+        let box_w = finite(self.width_percent, 100.0).clamp(0.0, 100.0) / 100.0 * w;
+        let box_h = finite(self.height_percent, 100.0).clamp(0.0, 100.0) / 100.0 * h;
+        let left = (finite(self.x_percent, 50.0) / 100.0 * w - box_w / 2.0).clamp(0.0, w);
+        let top = (finite(self.y_percent, 50.0) / 100.0 * h - box_h / 2.0).clamp(0.0, h);
+        let right = (left + box_w).min(w);
+        let bottom = (top + box_h).min(h);
+        let (box_w, box_h) = ((right - left).round(), (bottom - top).round());
+        (box_w >= 1.0 && box_h >= 1.0).then_some((
+            left.round() as f32,
+            top.round() as f32,
+            box_w as f32,
+            box_h as f32,
+        ))
+    }
+}
+
+/// How one screen lays its layers out, where it is not as the slide was
+/// made: from its column of the live look (`services/look_scene.rs`). Put on
+/// the scene for each screen it is drawn for; the operator never sends it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenLayout {
+    /// Where the words go. `None`: where the slide puts them.
+    pub words_box: Option<LayerBox>,
+    /// A designed slide's words laid out afresh in their box, in its first
+    /// text's font and colour, rather than the whole slide scaled into it.
+    /// Scripture and plain words are always laid out in the box.
+    pub words_text_only: bool,
+    /// The words' size, as a share of what the slide asks for.
+    pub words_scale: f64,
+    /// Behind the words' box, a colour: what makes a lower third.
+    pub words_backdrop: Option<String>,
+    pub media_box: LayerBox,
+    /// The media fills its box, cropped, rather than fitting inside it.
+    pub media_fill: bool,
+    /// The props, as on the whole screen, scaled evenly into this box. The
+    /// timer and the message banner are placed through their own fields
+    /// instead (`timer_layout`, `message_overlay`), so they are drawn at the
+    /// size they are shown rather than shrunk.
+    pub props_box: LayerBox,
+}
+
+impl ScreenLayout {
+    /// Everything where the slide and the operator put it.
+    pub const NONE: Self = Self {
+        words_box: None,
+        words_text_only: false,
+        words_scale: 1.0,
+        words_backdrop: None,
+        media_box: LayerBox::FULL,
+        media_fill: false,
+        props_box: LayerBox::FULL,
+    };
+
+    /// The words' size multiplier, never nothing and never absurd.
+    pub fn words_scale(&self) -> f32 {
+        if self.words_scale.is_finite() {
+            self.words_scale.clamp(0.25, 4.0) as f32
+        } else {
+            1.0
+        }
+    }
+}
+
 /// How the live timer looks once it has run out, `timerTimeUp` on the wire:
 /// its words are then the operator's message (Settings, Timer), drawn in this
 /// colour, and blinking if asked.
@@ -246,6 +343,10 @@ pub struct OutputScene {
     /// Set while the live timer has run out and nothing followed it.
     #[serde(default)]
     pub timer_time_up: Option<TimeUpStyle>,
+
+    /// This screen's layout of the layers, from Looks; `None` for as made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_layout: Option<ScreenLayout>,
 }
 
 impl Default for OutputScene {
@@ -283,6 +384,7 @@ impl Default for OutputScene {
             timer_running: false,
             timer_visible: false,
             timer_time_up: None,
+            screen_layout: None,
         }
     }
 }

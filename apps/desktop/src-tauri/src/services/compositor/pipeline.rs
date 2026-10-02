@@ -24,9 +24,10 @@
 
 use std::time::{Duration, Instant};
 
-use tiny_skia::{Color, Pixmap, Transform};
+use tiny_skia::{Color, FilterQuality, Pixmap, PixmapPaint, Transform};
 
-use crate::services::output::{MediaKind, OutputScene};
+use crate::services::output::{LayerBox, MediaKind, OutputScene, ScreenLayout};
+use crate::services::slide::SlideElementType;
 
 use super::transition;
 use crate::services::video::VideoFrame;
@@ -200,6 +201,8 @@ pub type RegionFrame<'a> = (String, &'a VideoFrame);
 struct OverlayKey {
     message: Option<crate::services::output::MessageOverlay>,
     props: Vec<crate::services::output::PropsOverlayItem>,
+    /// Where this screen's layout puts the props; `None` for all of it.
+    props_box: Option<LayerBox>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -453,8 +456,16 @@ impl SceneCompositor {
             .filter(|_| scene.show_media && !scene.hide_background)
             .filter(|_| !scene.screen_composer_enabled);
 
-        // 1. The background media, letterboxed as `object-contain` does.
+        // 1. The background media, letterboxed as `object-contain` does, or
+        //    where this screen's layout puts it, fitted or filling its box.
+        let media_area = scene
+            .screen_layout
+            .as_ref()
+            .and_then(media_area_of(self.width, self.height));
         let media_rect = match (media_url, video.filter(|video| video.is_well_formed())) {
+            (Some(_), Some(video)) if media_area.is_some() => {
+                self.draw_video_in(&mut frame, video, media_area, &mut report)
+            }
             (Some(_), Some(video)) => self.draw_video(&mut frame, video, &mut report),
             (Some(_), None) if scene.media_type == Some(MediaKind::Video) => {
                 // A video with no decoded frame yet is not a still. The image
@@ -466,7 +477,7 @@ impl SceneCompositor {
             }
             (Some(url), None) => {
                 frame.clear(self.base);
-                self.draw_still(&mut frame, url, loader, &mut report)
+                self.draw_still(&mut frame, url, loader, media_area, &mut report)
             }
             (None, _) => {
                 frame.clear(self.base);
@@ -649,6 +660,11 @@ impl SceneCompositor {
         let key = OverlayKey {
             message: scene.message_overlay.clone(),
             props: scene.props_overlay.clone(),
+            props_box: scene
+                .screen_layout
+                .as_ref()
+                .map(|layout| layout.props_box)
+                .filter(|area| !area.is_full()),
         };
         if key.message.is_none() && key.props.is_empty() {
             return None;
@@ -656,12 +672,33 @@ impl SceneCompositor {
         if self.overlay_for.as_ref() != Some(&key) || self.overlay_layer.is_none() {
             let mut layer = Pixmap::new(self.width, self.height)?;
             let mut counts = OverlayCounts::default();
+            // Props under the banner, as the window stacks them: where the
+            // screen's layout puts them, drawn as on the whole screen and
+            // scaled evenly into that box.
+            match key.props_box {
+                Some(area) => {
+                    let mut props_layer = Pixmap::new(self.width, self.height)?;
+                    let props = super::overlays::draw_props(
+                        &mut props_layer.as_mut(),
+                        &scene.props_overlay,
+                        loader,
+                    );
+                    counts.drawn += props.drawn;
+                    counts.deferred += props.deferred;
+                    draw_into_box(&mut layer.as_mut(), &props_layer, &area);
+                }
+                None => {
+                    let props = super::overlays::draw_props(
+                        &mut layer.as_mut(),
+                        &scene.props_overlay,
+                        loader,
+                    );
+                    counts.drawn += props.drawn;
+                    counts.deferred += props.deferred;
+                }
+            }
             {
                 let mut view = layer.as_mut();
-                // Props under the banner, as the window stacks them.
-                let props = super::overlays::draw_props(&mut view, &scene.props_overlay, loader);
-                counts.drawn += props.drawn;
-                counts.deferred += props.deferred;
                 if let Some(message) = scene.message_overlay.as_ref() {
                     if super::overlays::is_moving(message) {
                         super::overlays::draw_message_plate(&mut view, message);
@@ -692,7 +729,15 @@ impl SceneCompositor {
         keep: Keep<'_>,
         viewport: &geometry::Viewport,
     ) {
-        if scene.show_text && !scene.screen_composer_enabled {
+        let words_box = scene
+            .screen_layout
+            .as_ref()
+            .and_then(|layout| layout.words_box.map(|area| (layout, area)));
+        if let (true, false, Some((layout, area))) =
+            (scene.show_text, scene.screen_composer_enabled, words_box)
+        {
+            self.draw_words_in_box(layers, scene, loader, report, keep, layout, &area, viewport);
+        } else if scene.show_text && !scene.screen_composer_enabled {
             match slide_text::layer_for(scene) {
                 SlideTextLayer::Scripture => {
                     slide_text::draw_scripture(
@@ -742,6 +787,168 @@ impl SceneCompositor {
                 self.draw_composer_regions(layers, scene, &layout, loader, report);
             }
         }
+    }
+
+    /// The slide's words in the box this screen's layout gives them, over the
+    /// layout's backdrop if it has one. Scripture and plain words are laid
+    /// out afresh in the box; a designed slide is either scaled evenly into
+    /// it, or, for "text only", its words are laid out there in its font.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_words_in_box(
+        &self,
+        layers: &mut Pixmap,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+        report: &mut Rendered,
+        keep: Keep<'_>,
+        layout: &ScreenLayout,
+        area: &LayerBox,
+        viewport: &geometry::Viewport,
+    ) {
+        let Some((x, y, w, h)) = area.rect(layers.width(), layers.height()) else {
+            return;
+        };
+        // Nothing to show is nothing at all: not a lower third's empty band.
+        let layer = slide_text::layer_for(scene);
+        let elements = scene.slide_elements().unwrap_or_default();
+        let has_words = match layer {
+            // Only chosen with words to show.
+            SlideTextLayer::Scripture | SlideTextLayer::PlainText => true,
+            SlideTextLayer::Elements if layout.words_text_only => elements.iter().any(|element| {
+                element.element_type == SlideElementType::Text
+                    && element.is_visible()
+                    && super::text::paragraphs_of(element)
+                        .iter()
+                        .any(|line| !line.trim().is_empty())
+            }),
+            SlideTextLayer::Elements => elements.iter().any(|element| element.is_visible()),
+        };
+        if !has_words {
+            return;
+        }
+        // The backdrop stays put through a transition: it is drawn with what
+        // does not move, never with what does.
+        let backdrop = layout
+            .words_backdrop
+            .as_deref()
+            .filter(|_| !matches!(keep, Keep::Only(_)))
+            .and_then(color::parse);
+        if let (Some(backdrop), Some(rect)) = (backdrop, tiny_skia::Rect::from_xywh(x, y, w, h)) {
+            let mut paint = tiny_skia::Paint::default();
+            paint.set_color(backdrop);
+            layers.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+        let Some(mut words) = Pixmap::new(w as u32, h as u32) else {
+            return;
+        };
+        let scale = layout.words_scale();
+        match layer {
+            SlideTextLayer::Scripture => {
+                let mut style = scene
+                    .scripture_style
+                    .clone()
+                    .unwrap_or_else(slide_text::default_scripture_style);
+                style.font_size *= f64::from(scale);
+                style.footer_font_size *= f64::from(scale);
+                // Aligned as the column's box says: a lower third centred
+                // along its band, say, whatever the full-screen style has.
+                if let Some(position) = scene.text_position.as_ref() {
+                    style.text_align = position.text_align.clone();
+                    style.vertical_align = position.vertical_align.clone();
+                }
+                slide_text::draw_scripture(
+                    &mut words.as_mut(),
+                    scene.slide_text.as_deref().unwrap_or_default(),
+                    scene.slide_footer.as_deref(),
+                    Some(&style),
+                );
+                report.elements_drawn += 1;
+            }
+            SlideTextLayer::PlainText => {
+                let mut style = scene
+                    .library_style
+                    .clone()
+                    .unwrap_or_else(slide_text::default_library_style);
+                style.font_size *= f64::from(scale);
+                slide_text::draw_plain(
+                    &mut words.as_mut(),
+                    scene.slide_text.as_deref().unwrap_or_default(),
+                    Some(&style),
+                    viewport,
+                );
+                report.elements_drawn += 1;
+            }
+            SlideTextLayer::Elements if layout.words_text_only => {
+                // The words are laid out together, so they move together: on
+                // the side of a transition any one of them is on.
+                let mut texts = elements
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, element)| element.element_type == SlideElementType::Text);
+                let here = match keep {
+                    Keep::Everything => true,
+                    Keep::Only(_) => texts.any(|(index, element)| keep.wants(index, element)),
+                    Keep::Except(_) => texts.all(|(index, element)| keep.wants(index, element)),
+                };
+                if here
+                    && slide_text::draw_words_of(
+                        &mut words.as_mut(),
+                        &elements,
+                        viewport,
+                        scale,
+                        scene.text_position.as_ref(),
+                    )
+                {
+                    report.elements_drawn += 1;
+                }
+            }
+            SlideTextLayer::Elements => {
+                // The slide as designed, scaled evenly to fit the box.
+                let fit = (f64::from(w) / viewport.canvas_width)
+                    .min(f64::from(h) / viewport.canvas_height);
+                let (slide_w, slide_h) = (
+                    (viewport.canvas_width * fit).round().max(1.0),
+                    (viewport.canvas_height * fit).round().max(1.0),
+                );
+                let Some(mut slide) = Pixmap::new(slide_w as u32, slide_h as u32) else {
+                    return;
+                };
+                let inner = geometry::Viewport {
+                    canvas_width: viewport.canvas_width,
+                    canvas_height: viewport.canvas_height,
+                    frame_width: slide_w,
+                    frame_height: slide_h,
+                };
+                for (index, element) in elements.iter().enumerate() {
+                    if !element.is_visible() || !keep.wants(index, element) {
+                        continue;
+                    }
+                    if !element.element_type.is_composited() {
+                        report.elements_deferred += 1;
+                        continue;
+                    }
+                    if super::scene::draw_element_into(&mut slide, element, &inner, loader) {
+                        report.elements_drawn += 1;
+                    }
+                }
+                words.draw_pixmap(
+                    ((f64::from(w) - slide_w) / 2.0).round() as i32,
+                    ((f64::from(h) - slide_h) / 2.0).round() as i32,
+                    slide.as_ref(),
+                    &PixmapPaint::default(),
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+        layers.draw_pixmap(
+            x as i32,
+            y as i32,
+            words.as_ref(),
+            &PixmapPaint::default(),
+            Transform::identity(),
+            None,
+        );
     }
 
     /// The screen composer's regions, each drawn inside its own rectangle, as
@@ -1207,6 +1414,7 @@ impl SceneCompositor {
         frame: &mut Frame,
         url: &str,
         loader: &dyn MediaLoader,
+        area: Option<MediaArea>,
         report: &mut Rendered,
     ) -> Option<MediaRect> {
         let now = Instant::now();
@@ -1228,6 +1436,10 @@ impl SceneCompositor {
             return None;
         };
 
+        if let Some(area) = area {
+            report.background_media_drawn = true;
+            return draw_media_in(frame, decoded, area);
+        }
         let rect = contained_rect(decoded.width(), decoded.height(), self.width, self.height)?;
         images::draw(
             &mut frame.pixmap_mut(),
@@ -1241,6 +1453,89 @@ impl SceneCompositor {
         report.background_media_drawn = true;
         Some(rect)
     }
+
+    /// A video frame where this screen's layout puts its media.
+    fn draw_video_in(
+        &self,
+        frame: &mut Frame,
+        video: &VideoFrame,
+        area: Option<MediaArea>,
+        report: &mut Rendered,
+    ) -> Option<MediaRect> {
+        frame.clear(self.base);
+        let (Some(area), Some(pixmap)) = (area, video_to_pixmap(video)) else {
+            report.background_media_missing = true;
+            return None;
+        };
+        report.background_media_drawn = true;
+        draw_media_in(frame, &pixmap, area)
+    }
+}
+
+/// Where a screen's layout puts the media, in pixels, and how it fits there.
+type MediaArea = ((f32, f32, f32, f32), images::ObjectFit);
+
+/// The media's place on a `width` by `height` screen, when its layout moves
+/// it or fills its box; `None` for the whole screen, letterboxed, as before.
+fn media_area_of(width: u32, height: u32) -> impl Fn(&ScreenLayout) -> Option<MediaArea> {
+    move |layout| {
+        if layout.media_box.is_full() && !layout.media_fill {
+            return None;
+        }
+        let fit = if layout.media_fill {
+            images::ObjectFit::Cover
+        } else {
+            images::ObjectFit::Contain
+        };
+        layout.media_box.rect(width, height).map(|rect| (rect, fit))
+    }
+}
+
+/// Draw media into its box: fitted inside it, or filling it, cropped.
+fn draw_media_in(
+    frame: &mut Frame,
+    source: &Pixmap,
+    ((x, y, w, h), fit): MediaArea,
+) -> Option<MediaRect> {
+    images::draw(
+        &mut frame.pixmap_mut(),
+        source,
+        Transform::from_translate(x, y),
+        w,
+        h,
+        fit,
+        None,
+    );
+    Some((x as u32, y as u32, w as u32, h as u32))
+}
+
+/// Draw a whole-screen layer into a box of the screen, scaled evenly to fit
+/// it and centred in it.
+fn draw_into_box(target: &mut tiny_skia::PixmapMut<'_>, layer: &Pixmap, area: &LayerBox) {
+    let (width, height) = (layer.width() as f32, layer.height() as f32);
+    let Some((x, y, w, h)) = area.rect(layer.width(), layer.height()) else {
+        return;
+    };
+    let scale = (w / width).min(h / height);
+    let paint = PixmapPaint {
+        quality: FilterQuality::Bilinear,
+        ..PixmapPaint::default()
+    };
+    target.draw_pixmap(
+        0,
+        0,
+        layer.as_ref(),
+        &paint,
+        Transform::from_row(
+            scale,
+            0.0,
+            0.0,
+            scale,
+            x + (w - width * scale) / 2.0,
+            y + (h - height * scale) / 2.0,
+        ),
+        None,
+    );
 }
 
 /// Where `object-contain` puts a `source`-sized image in the frame.
@@ -2188,6 +2483,229 @@ mod tests {
             !compositor.rebuilt_last_frame(),
             "and cached like any slide"
         );
+    }
+
+    /// A screen's layout from Looks, with its words in a lower third over a
+    /// blue band.
+    fn lower_third() -> ScreenLayout {
+        ScreenLayout {
+            words_box: Some(LayerBox {
+                x_percent: 50.0,
+                y_percent: 84.0,
+                width_percent: 90.0,
+                height_percent: 24.0,
+            }),
+            words_backdrop: Some("#0000ff".to_owned()),
+            ..ScreenLayout::NONE
+        }
+    }
+
+    /// The rows of the frame with words on them: near-white pixels.
+    fn rows_with_words(frame: &Frame) -> Vec<u32> {
+        let pixmap = frame.pixmap();
+        let width = pixmap.width();
+        let mut rows: Vec<u32> = pixmap
+            .pixels()
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.red() > 200 && p.green() > 200)
+            .map(|(index, _)| index as u32 / width)
+            .collect();
+        rows.dedup();
+        rows
+    }
+
+    #[test]
+    fn a_verse_laid_out_as_a_lower_third_stays_in_its_band() {
+        let mut compositor = SceneCompositor::new(640, 360);
+        let scene = OutputScene {
+            active_slide_id: Some("scripture:0".to_owned()),
+            slide_text: Some("For God so loved the world".to_owned()),
+            slide_footer: Some("John 3:16".to_owned()),
+            screen_layout: Some(lower_third()),
+            ..scene()
+        };
+        let (frame, report) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(report.elements_drawn, 1);
+
+        // The band runs from 72% of the way down to 96%.
+        let rows = rows_with_words(frame);
+        assert!(!rows.is_empty(), "the verse is on the frame");
+        assert!(
+            rows.iter().all(|row| (259..=346).contains(row)),
+            "only in the band: rows {}..{}",
+            rows[0],
+            rows[rows.len() - 1]
+        );
+        assert_eq!(
+            frame.pixel_at(36, 262),
+            Some((0, 0, 255, 255)),
+            "on its backdrop"
+        );
+        assert_eq!(
+            frame.pixel_at(320, 100),
+            Some((0, 0, 0, 255)),
+            "and nothing above it"
+        );
+    }
+
+    #[test]
+    fn a_designed_slide_shown_text_only_is_its_words_in_the_box() {
+        let mut compositor = SceneCompositor::new(640, 360);
+        let scene = OutputScene {
+            slide_canvas_size: Some("1920x1080".to_owned()),
+            slide_elements: Some(json!([
+                {
+                    "id": "shape", "type": "shape",
+                    "x": 0.0, "y": 0.0, "width": 1920.0, "height": 400.0,
+                    "style": { "backgroundColor": "#00ff00" }
+                },
+                {
+                    "id": "words", "type": "text",
+                    "x": 100.0, "y": 100.0, "width": 1720.0, "height": 300.0,
+                    "content": "Amazing grace how sweet the sound",
+                    "style": { "fontSize": 90, "color": "#ffffff" }
+                }
+            ])),
+            screen_layout: Some(ScreenLayout {
+                words_text_only: true,
+                ..lower_third()
+            }),
+            ..scene()
+        };
+        let (frame, _) = compositor.render(&scene, None, &NoMedia).expect("frame");
+
+        let rows = rows_with_words(frame);
+        assert!(!rows.is_empty(), "the words are on the frame");
+        assert!(
+            rows.iter().all(|row| (259..=346).contains(row)),
+            "in the band"
+        );
+        let green = frame
+            .pixmap()
+            .pixels()
+            .iter()
+            .filter(|p| p.green() > 200 && p.red() < 50)
+            .count();
+        assert_eq!(green, 0, "and nothing of the slide but its words");
+    }
+
+    #[test]
+    fn a_designed_slide_in_a_box_is_scaled_into_it_whole() {
+        let mut compositor = SceneCompositor::new(160, 90);
+        let scene = OutputScene {
+            slide_canvas_size: Some("1920x1080".to_owned()),
+            slide_elements: Some(json!([{
+                "id": "a", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 1920.0, "height": 1080.0,
+                "style": { "backgroundColor": "#00ff00" }
+            }])),
+            screen_layout: Some(ScreenLayout {
+                // The right half of the screen, a slide's shape in its middle.
+                words_box: Some(LayerBox {
+                    x_percent: 75.0,
+                    y_percent: 50.0,
+                    width_percent: 50.0,
+                    height_percent: 100.0,
+                }),
+                ..ScreenLayout::NONE
+            }),
+            ..scene()
+        };
+        let (frame, _) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(frame.pixel_at(120, 45), Some((0, 255, 0, 255)), "the slide");
+        assert_eq!(
+            frame.pixel_at(40, 45),
+            Some((0, 0, 0, 255)),
+            "not on the left"
+        );
+        assert_eq!(
+            frame.pixel_at(120, 5),
+            Some((0, 0, 0, 255)),
+            "kept its shape"
+        );
+    }
+
+    #[test]
+    fn an_empty_slide_leaves_no_band() {
+        let mut compositor = SceneCompositor::new(640, 360);
+        let scene = OutputScene {
+            screen_layout: Some(lower_third()),
+            ..scene()
+        };
+        let (frame, _) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(frame.pixel_at(36, 262), Some((0, 0, 0, 255)));
+    }
+
+    #[test]
+    fn media_goes_where_the_screens_layout_puts_it() {
+        let mut compositor = SceneCompositor::new(160, 90);
+        let video = frame_of(160, 90, [0, 0, 255, 255]);
+        let layout = |fill| ScreenLayout {
+            media_box: LayerBox {
+                x_percent: 25.0,
+                y_percent: 50.0,
+                width_percent: 50.0,
+                height_percent: 100.0,
+            },
+            media_fill: fill,
+            ..ScreenLayout::NONE
+        };
+
+        let filled = OutputScene {
+            screen_layout: Some(layout(true)),
+            ..video_scene()
+        };
+        let (frame, report) = compositor
+            .render(&filled, Some(&video), &NoMedia)
+            .expect("frame");
+        assert!(report.background_media_drawn);
+        assert_eq!(
+            frame.pixel_at(40, 5),
+            Some((255, 0, 0, 255)),
+            "filling the left half"
+        );
+        assert_eq!(
+            frame.pixel_at(120, 45),
+            Some((0, 0, 0, 255)),
+            "and only that"
+        );
+
+        let fitted = OutputScene {
+            screen_layout: Some(layout(false)),
+            ..video_scene()
+        };
+        let (frame, _) = compositor
+            .render(&fitted, Some(&video), &NoMedia)
+            .expect("frame");
+        assert_eq!(
+            frame.pixel_at(40, 45),
+            Some((255, 0, 0, 255)),
+            "fitted in it"
+        );
+        assert_eq!(frame.pixel_at(40, 5), Some((0, 0, 0, 255)), "letterboxed");
+    }
+
+    #[test]
+    fn a_layer_goes_into_a_box_evenly_and_centred() {
+        let mut layer = Pixmap::new(100, 100).expect("layer");
+        layer.fill(Color::from_rgba8(255, 0, 0, 255));
+        let mut target = Pixmap::new(100, 100).expect("target");
+        // The right half: the layer at half size, centred down it.
+        draw_into_box(
+            &mut target.as_mut(),
+            &layer,
+            &LayerBox {
+                x_percent: 75.0,
+                y_percent: 50.0,
+                width_percent: 50.0,
+                height_percent: 100.0,
+            },
+        );
+        let at = |x: u32, y: u32| target.pixel(x, y).map(|p| (p.red(), p.alpha()));
+        assert_eq!(at(75, 50), Some((255, 255)));
+        assert_eq!(at(25, 50), Some((0, 0)), "not on the left");
+        assert_eq!(at(75, 10), Some((0, 0)), "nor stretched to the top");
     }
 
     #[test]
