@@ -42,6 +42,35 @@ export type OutputTextPosition = {
   verticalAlign: ScriptureVerticalAlign;
 };
 
+/** A box on a screen, as percentages of it: its centre, and its size. */
+export type LayerBox = {
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+};
+
+/**
+ * Where a screen's column of the live look puts its layers (Looks). Rust
+ * adds it to the scene for each screen it is drawn for (`ScreenLayout` in
+ * `services/output.rs`); the operator never sends it.
+ */
+export type ScreenLayout = {
+  /** Where the words go; none for where the slide puts them. */
+  wordsBox: LayerBox | null;
+  /** A designed slide's words laid out afresh in their box, rather than the slide scaled into it. */
+  wordsTextOnly: boolean;
+  /** The words' size, as a share of what the slide asks for. */
+  wordsScale: number;
+  /** Behind the words' box. */
+  wordsBackdrop: string | null;
+  mediaBox: LayerBox;
+  /** The media fills its box, cropped, rather than fitting inside it. */
+  mediaFill: boolean;
+  /** The props, as on the whole screen, scaled evenly into this box. */
+  propsBox: LayerBox;
+};
+
 // State matching what useOutputBroadcast sends
 export type OutputState = {
   mediaUrl: string | null;
@@ -93,6 +122,7 @@ export type OutputState = {
   screenComposerLayout?: ScreenComposerLayout | null;
   messageOverlay?: MessageOverlay | null;
   propsOverlay?: PropsOverlayItem[] | null;
+  screenLayout?: ScreenLayout | null;
 };
 
 // One visible prop currently overlaid on the audience output. Renderer

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use crate::errors::AppResult;
-use crate::services::look_scene::scene_for_look;
+use crate::services::look_scene::{scene_for_look, scene_for_program};
 use crate::services::looks::{self, LookTarget, LooksConfig};
 use crate::services::output::OutputScene;
 
@@ -56,13 +56,17 @@ impl LooksState {
 
     /// The scene on screen as the audience screen `screen` shows it: through
     /// its own column of the live look, for one added in Screen
-    /// Configuration. The Screen every setup has shows it as it is — the
-    /// operator window folds its column into the scene itself.
+    /// Configuration. The Screen every setup has shows it as the operator
+    /// window sent it — which folds most of its column into the scene itself
+    /// — with that column's props and layout.
     pub fn scene_for_screen(&self, on_screen: OutputScene, screen: &str) -> OutputScene {
         match LookTarget::for_screen(screen) {
             Some(target @ LookTarget::Screen(_)) => {
                 let column = self.read().live_look().targets.get(&target);
                 scene_for_look(&on_screen, &column)
+            }
+            Some(LookTarget::Program) => {
+                scene_for_program(&on_screen, &self.read().live_look().targets.program)
             }
             _ => on_screen,
         }

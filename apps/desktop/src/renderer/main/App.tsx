@@ -580,7 +580,7 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   const showMediaInOutput =
     programLooks.layers.media || programLooks.layers.videoInput;
   const hideBackgroundInOutput = programLooks.layers.mask;
-  const isTimerLayerEnabled = programLooks.layers.props;
+  const isTimerLayerEnabled = programLooks.layers.timer;
   const isMessageLayerEnabled =
     programLooks.layers.messages || programLooks.layers.announcements;
   const outputTextPosition: OutputTextPosition = {
@@ -623,7 +623,7 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
 
   const setIsTimerLayerEnabled = useCallback(
     (show: boolean) => {
-      setLayerEnabledForLook(looksConfig.liveLookId, "program", "props", show);
+      setLayerEnabledForLook(looksConfig.liveLookId, "program", "timer", show);
     },
     [looksConfig.liveLookId, setLayerEnabledForLook]
   );

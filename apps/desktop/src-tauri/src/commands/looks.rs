@@ -189,3 +189,31 @@ pub async fn set_look_text_position(
     })?;
     broadcast(&app, &state, changed)
 }
+
+/// Lay a column out afresh: where each layer goes on its screen. Read as a
+/// stored layout is, so a part that cannot be read is left where the Screen
+/// puts it.
+#[tauri::command]
+pub async fn set_look_layout(
+    app: AppHandle,
+    state: State<'_, LooksState>,
+    look_id: String,
+    target: LookTarget,
+    layout: serde_json::Value,
+) -> AppResult<LooksConfig> {
+    let changed = state.update(|config| {
+        let before = config
+            .looks
+            .iter()
+            .find(|look| look.id == look_id)
+            .map(|look| look.targets.get(&target).layout);
+        looks::set_layout(config, &look_id, &target, &layout, now_ms());
+        let after = config
+            .looks
+            .iter()
+            .find(|look| look.id == look_id)
+            .map(|look| look.targets.get(&target).layout);
+        before != after
+    })?;
+    broadcast(&app, &state, changed)
+}

@@ -4,6 +4,35 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-10-03
+
+### Added
+
+- Looks has a Timer layer of its own. The timer used to come and go with
+  the Props switch; now Props shows or hides the props and Timer the timer,
+  on each screen and on the NDI output. A look saved before keeps its timer
+  as its Props switch had it, and shows props.
+- Each screen can be laid out its own way in Looks, so what is shown once
+  looks different on each: full screen on the projector, a lower third on
+  the stream. Under Layout, for each audience screen and the NDI output:
+  - the words go in a box anywhere on the screen, aligned and sized as
+    chosen, over a band of colour if wanted. A designed slide can show just
+    its words there, in its own font, or shrink into the box whole.
+  - the media goes in a box of its own, fitted inside it or filling it.
+  - the props shrink evenly into a box, keeping their places in it.
+  - the timer moves and resizes.
+  - message banners keep to the top or the bottom, and resize.
+
+  Lower third, Upper third, Side by side and Media in a corner set a screen
+  up in one click, and every box can be dragged and sized on a picture of
+  the screen. A screen no one lays out looks as it always has.
+
+### Changed
+
+- Looks' Text position, which moved the words in the operator's preview but
+  not on the screens, is replaced by the layout's Words box, which moves
+  them on the screens.
+
 ## [0.4.8] - 2026-10-02
 
 ### Changed

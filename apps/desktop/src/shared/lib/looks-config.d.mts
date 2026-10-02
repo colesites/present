@@ -10,6 +10,7 @@ export type LookLayerKey =
   | "mask"
   | "messages"
   | "props"
+  | "timer"
   | "announcements"
   | "presentation"
   | "slide"
@@ -32,9 +33,49 @@ export type LookTextPosition = {
   verticalAlign: "top" | "middle" | "bottom";
 };
 
+/** A box on the screen, as percentages of it: its centre, and its size. */
+export type LookBox = {
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+};
+
+/** Where the slide's words go, and how they look there. */
+export type WordsPlacement = {
+  area: LookBox;
+  textAlign: "left" | "center" | "right";
+  verticalAlign: "top" | "middle" | "bottom";
+  /** The words' size, as a percentage of the Screen's size for them. */
+  scalePercent: number;
+  /** A designed slide's words on their own, laid out afresh in the box. */
+  textOnly: boolean;
+  /** A colour behind the box, `#rrggbb` or `#rrggbbaa`. */
+  backdrop?: string;
+};
+
+export type MediaPlacement = { area: LookBox; fill: boolean };
+export type TimerPlacement = { xPercent: number; yPercent: number; scalePercent: number };
+export type MessageEdge = "asSent" | "top" | "bottom";
+export type MessagePlacement = { edge: MessageEdge; scalePercent: number };
+
+/**
+ * Where a column puts each layer on its screen. A layer left out is where the
+ * Screen puts it, so a column no one has laid out draws as screens always have.
+ */
+export type LookLayout = {
+  words?: WordsPlacement;
+  media?: MediaPlacement;
+  /** The props, all of them, scaled evenly into this box. */
+  props?: LookBox;
+  timer?: TimerPlacement;
+  messages?: MessagePlacement;
+};
+
 export type LookTargetState = {
   layers: Record<LookLayerKey, boolean>;
   textPosition: LookTextPosition;
+  layout: LookLayout;
 };
 
 export type LookTargets = {
@@ -122,5 +163,15 @@ export declare const withTextPosition: (
   lookId: string,
   target: LookTargetKey,
   patch: Partial<LookTextPosition>,
+  now?: number,
+) => LooksConfig;
+
+export declare const normalizeLayout: (candidate: unknown) => LookLayout;
+
+export declare const withLayout: (
+  config: LooksConfig,
+  lookId: string,
+  target: LookTargetKey,
+  layout: LookLayout,
   now?: number,
 ) => LooksConfig;

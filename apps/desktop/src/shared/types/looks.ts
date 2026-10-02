@@ -8,7 +8,14 @@
  */
 
 export type {
+  LookBox,
   LookLayerKey,
+  LookLayout,
+  MediaPlacement,
+  MessageEdge,
+  MessagePlacement,
+  TimerPlacement,
+  WordsPlacement,
   LookPreset,
   LookTargetKey,
   LookTargetState,
@@ -26,11 +33,13 @@ export {
   isAddedScreenId,
   lookColumn,
   lookTargetForScreen,
+  normalizeLayout,
   normalizeLooksConfig,
   parseLookTarget,
   screenDefaultColumn,
   withAddedLook,
   withLayerEnabled,
+  withLayout,
   withLookName,
   withSelectedLook,
   withSelectedTarget,

@@ -6,6 +6,7 @@ import { cn } from "../../renderer/shared/lib/utils";
 import { useLooksConfig } from "../../renderer/shared/hooks";
 import { Input } from "../../renderer/shared/components/ui/input";
 import { useScreens } from "../../renderer/tauri/screens";
+import { LayoutEditor } from "./LayoutEditor";
 import {
   LOOK_LAYER_ORDER,
   lookColumn,
@@ -40,7 +41,7 @@ export function LooksWindow() {
     setLookName,
     setLayerEnabledForLook,
     setLayersEnabledForLook,
-    setTextPositionForLook,
+    setLayoutForLook,
   } = useLooksConfig();
   const { screens } = useScreens();
 
@@ -73,8 +74,8 @@ export function LooksWindow() {
         <div>
           <h1 className="text-lg font-semibold text-foreground">Looks</h1>
           <p className="text-[11px] text-muted-foreground">
-            The layers each audience screen shows, and where its words sit. Stage screens show the
-            stage layout chosen for them in Screen Configuration.
+            The layers each audience screen shows, and where each one sits on it. Stage screens show
+            the stage layout chosen for them in Screen Configuration.
           </p>
         </div>
       </div>
@@ -158,7 +159,7 @@ export function LooksWindow() {
 
           <div className="mt-auto space-y-1.5">
             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Text position for
+              Layout for
             </p>
             <div className="space-y-1">
               {columns.map((column) => (
@@ -267,149 +268,20 @@ export function LooksWindow() {
             </div>
           </section>
 
-          {/* Text position */}
-          <section className="mt-6">
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Text Position — {currentColumn.label}
-            </p>
-            <p className="mb-4 text-[11px] text-muted-foreground">
-              Where the words sit on {currentColumn.label}, without moving them anywhere else.
-            </p>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <SliderField
-                label="Horizontal"
-                value={activeTargetConfig.textPosition.xPercent}
-                onChange={(value) =>
-                  setTextPositionForLook(selectedLook.id, currentTarget, {
-                    xPercent: value,
-                  })
-                }
-              />
-              <SliderField
-                label="Vertical"
-                value={activeTargetConfig.textPosition.yPercent}
-                onChange={(value) =>
-                  setTextPositionForLook(selectedLook.id, currentTarget, {
-                    yPercent: value,
-                  })
-                }
-              />
-              <SliderField
-                label="Width"
-                value={activeTargetConfig.textPosition.widthPercent}
-                onChange={(value) =>
-                  setTextPositionForLook(selectedLook.id, currentTarget, {
-                    widthPercent: value,
-                  })
-                }
-              />
-              <SliderField
-                label="Height"
-                value={activeTargetConfig.textPosition.heightPercent}
-                onChange={(value) =>
-                  setTextPositionForLook(selectedLook.id, currentTarget, {
-                    heightPercent: value,
-                  })
-                }
-              />
-            </div>
-
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
-              <ToggleGroup
-                title="Text Align"
-                options={[
-                  { key: "left", label: "Left" },
-                  { key: "center", label: "Center" },
-                  { key: "right", label: "Right" },
-                ]}
-                value={activeTargetConfig.textPosition.textAlign}
-                onChange={(value) =>
-                  setTextPositionForLook(selectedLook.id, currentTarget, {
-                    textAlign: value as "left" | "center" | "right",
-                  })
-                }
-              />
-              <ToggleGroup
-                title="Vertical Align"
-                options={[
-                  { key: "top", label: "Top" },
-                  { key: "middle", label: "Middle" },
-                  { key: "bottom", label: "Bottom" },
-                ]}
-                value={activeTargetConfig.textPosition.verticalAlign}
-                onChange={(value) =>
-                  setTextPositionForLook(selectedLook.id, currentTarget, {
-                    verticalAlign: value as "top" | "middle" | "bottom",
-                  })
-                }
-              />
-            </div>
-          </section>
+          <LayoutEditor
+            key={`${selectedLook.id}:${currentTarget}`}
+            layout={activeTargetConfig.layout ?? {}}
+            // The Screen's banner is never held back by its Messages switch
+            // (`services/look_scene.rs`), so it shows there whatever it says.
+            layers={
+              currentTarget === "program"
+                ? { ...activeTargetConfig.layers, messages: true }
+                : activeTargetConfig.layers
+            }
+            columnLabel={currentColumn.label}
+            onChange={(layout) => setLayoutForLook(selectedLook.id, currentTarget, layout)}
+          />
         </main>
-      </div>
-    </div>
-  );
-}
-
-function SliderField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-}) {
-  const normalized = Math.max(0, Math.min(100, Math.round(value)));
-  return (
-    <label className="space-y-1.5">
-      <div className="flex items-center justify-between text-[11px] text-foreground">
-        <span>{label}</span>
-        <span className="text-muted-foreground">{normalized}%</span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        value={normalized}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="h-1.5 w-full accent-primary"
-      />
-    </label>
-  );
-}
-
-function ToggleGroup({
-  title,
-  options,
-  value,
-  onChange,
-}: {
-  title: string;
-  options: Array<{ key: string; label: string }>;
-  value: string;
-  onChange: (key: string) => void;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <p className="text-[11px] text-foreground">{title}</p>
-      <div className="inline-flex rounded-md border border-border bg-muted/20 p-1">
-        {options.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            onClick={() => onChange(option.key)}
-            className={cn(
-              "rounded px-2.5 py-1 text-[11px] transition-colors",
-              value === option.key
-                ? "bg-primary/20 text-primary"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
       </div>
     </div>
   );

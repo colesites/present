@@ -15,7 +15,7 @@
  * TypeScript types; import from there in `.ts` and `.tsx`.
  */
 
-/** @typedef {"mask"|"messages"|"props"|"announcements"|"presentation"|"slide"|"media"|"videoInput"} LookLayerKey */
+/** @typedef {"mask"|"messages"|"props"|"timer"|"announcements"|"presentation"|"slide"|"media"|"videoInput"} LookLayerKey */
 /**
  * A column of a look: `program` for the Screen every setup has, `ndi` for the
  * NDI output in Connections, `stage` kept only so a stored config reads, and
@@ -27,6 +27,7 @@ export const LOOK_LAYER_ORDER = [
   { key: "mask", label: "Mask" },
   { key: "messages", label: "Messages" },
   { key: "props", label: "Props" },
+  { key: "timer", label: "Timer" },
   { key: "announcements", label: "Announcements" },
   { key: "presentation", label: "Presentation" },
   { key: "slide", label: "Slide" },
@@ -81,6 +82,7 @@ export const createDefaultLookPreset = () => ({
         mask: false,
         messages: false,
         props: true,
+        timer: true,
         announcements: false,
         presentation: true,
         slide: true,
@@ -88,12 +90,14 @@ export const createDefaultLookPreset = () => ({
         videoInput: true,
       },
       textPosition: { ...defaultTextPosition },
+      layout: {},
     },
     stage: {
       layers: {
         mask: false,
         messages: true,
         props: true,
+        timer: true,
         announcements: false,
         presentation: true,
         slide: true,
@@ -101,12 +105,15 @@ export const createDefaultLookPreset = () => ({
         videoInput: false,
       },
       textPosition: { ...defaultTextPosition, yPercent: 44, heightPercent: 70 },
+      layout: {},
     },
     ndi: {
       layers: {
         mask: false,
         messages: true,
-        props: false,
+        // Props were never hidden from the stream; the timer was.
+        props: true,
+        timer: false,
         announcements: false,
         presentation: true,
         slide: true,
@@ -114,6 +121,7 @@ export const createDefaultLookPreset = () => ({
         videoInput: true,
       },
       textPosition: { ...defaultTextPosition },
+      layout: {},
     },
     screens: {},
   },
@@ -144,8 +152,8 @@ const normalizeTextPosition = (position) => ({
  * the fallback otherwise. A layer flag decides whether the congregation sees
  * something, so a malformed value must not become "visible" by accident.
  */
-const normalizeLayers = (fallbackLayers, candidateLayers) =>
-  LOOK_LAYER_ORDER.reduce(
+const normalizeLayers = (fallbackLayers, candidateLayers) => {
+  const layers = LOOK_LAYER_ORDER.reduce(
     (accumulator, layer) => {
       const value = candidateLayers?.[layer.key];
       accumulator[layer.key] = typeof value === "boolean" ? value : fallbackLayers[layer.key];
@@ -153,6 +161,86 @@ const normalizeLayers = (fallbackLayers, candidateLayers) =>
     },
     { ...fallbackLayers },
   );
+  // Saved before the Timer layer: its Props switch was the timer's, and
+  // props, which it never hid, start as they would by default.
+  if (typeof candidateLayers?.timer !== "boolean" && typeof candidateLayers?.props === "boolean") {
+    layers.timer = candidateLayers.props;
+    layers.props = fallbackLayers.props;
+  }
+  return layers;
+};
+
+/** The smallest a box can be, and how much smaller or bigger than the Screen's a layer can be drawn. */
+const MIN_BOX_PERCENT = 5;
+const MIN_SCALE_PERCENT = 25;
+const MAX_SCALE_PERCENT = 400;
+
+const isNumber = (value) => typeof value === "number" && Number.isFinite(value);
+const clampBetween = (value, low, high) =>
+  Number.isNaN(value) ? low : Math.min(Math.max(value, low), Math.max(high, low));
+const scaleOf = (part) =>
+  clampBetween(isNumber(part.scalePercent) ? part.scalePercent : 100, MIN_SCALE_PERCENT, MAX_SCALE_PERCENT);
+const isPart = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+/** A box kept on the screen and big enough to see. `LookBox::clamped`. */
+const normalizeBox = (box) => {
+  if (!isPart(box)) return null;
+  const { xPercent, yPercent, widthPercent, heightPercent } = box;
+  if (![xPercent, yPercent, widthPercent, heightPercent].every(isNumber)) return null;
+  const width = clampBetween(widthPercent, MIN_BOX_PERCENT, 100);
+  const height = clampBetween(heightPercent, MIN_BOX_PERCENT, 100);
+  return {
+    xPercent: clampBetween(xPercent, width / 2, 100 - width / 2),
+    yPercent: clampBetween(yPercent, height / 2, 100 - height / 2),
+    widthPercent: width,
+    heightPercent: height,
+  };
+};
+
+const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/**
+ * Where a column puts each layer on its screen, as far as it can be read. A
+ * part that cannot be read is left out — where the Screen puts it — never
+ * somewhere made up. `normalize_layout`.
+ */
+export const normalizeLayout = (candidate) => {
+  const layout = {};
+  if (!isPart(candidate)) return layout;
+  const { words, media, props, timer, messages } = candidate;
+
+  const wordsArea = isPart(words) ? normalizeBox(words.area) : null;
+  if (wordsArea) {
+    const backdrop = typeof words.backdrop === "string" ? words.backdrop.trim() : "";
+    layout.words = {
+      area: wordsArea,
+      textAlign: words.textAlign === "left" || words.textAlign === "right" ? words.textAlign : "center",
+      verticalAlign:
+        words.verticalAlign === "top" || words.verticalAlign === "bottom" ? words.verticalAlign : "middle",
+      scalePercent: scaleOf(words),
+      textOnly: words.textOnly === true,
+      ...(HEX_COLOR.test(backdrop) ? { backdrop } : {}),
+    };
+  }
+  const mediaArea = isPart(media) ? normalizeBox(media.area) : null;
+  if (mediaArea) layout.media = { area: mediaArea, fill: media.fill === true };
+  const propsArea = normalizeBox(props);
+  if (propsArea) layout.props = propsArea;
+  if (isPart(timer) && isNumber(timer.xPercent) && isNumber(timer.yPercent)) {
+    layout.timer = {
+      xPercent: clampPercent(timer.xPercent),
+      yPercent: clampPercent(timer.yPercent),
+      scalePercent: scaleOf(timer),
+    };
+  }
+  if (isPart(messages)) {
+    layout.messages = {
+      edge: messages.edge === "top" || messages.edge === "bottom" ? messages.edge : "asSent",
+      scalePercent: scaleOf(messages),
+    };
+  }
+  return layout;
+};
 
 export const generateLookId = () => `look-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
 
@@ -167,6 +255,7 @@ export const screenDefaultColumn = (targets) => ({
     mask: false,
     messages: true,
     props: true,
+    timer: true,
     announcements: true,
     presentation: true,
     slide: true,
@@ -174,6 +263,7 @@ export const screenDefaultColumn = (targets) => ({
     videoInput: true,
   },
   textPosition: { ...targets.program.textPosition },
+  layout: {},
 });
 
 /** A look's column for `target`, an added screen's default if it has none yet. */
@@ -205,6 +295,7 @@ const normalizeLookPreset = (candidate, fallbackLook, index, newId) => {
       ...fallbackLook.targets[key].textPosition,
       ...candidate?.targets?.[key]?.textPosition,
     }),
+    layout: normalizeLayout(candidate?.targets?.[key]?.layout),
   });
 
   const targets = {
@@ -222,6 +313,7 @@ const normalizeLookPreset = (candidate, fallbackLook, index, newId) => {
       targets.screens[screenId] = {
         layers: normalizeLayers(fallbackScreen.layers, raw?.layers),
         textPosition: normalizeTextPosition({ ...fallbackScreen.textPosition, ...raw?.textPosition }),
+        layout: normalizeLayout(raw?.layout),
       };
     }
   }
@@ -415,6 +507,17 @@ export const withTextPosition = (config, lookId, target, patch, now = Date.now()
           ...column,
           textPosition: normalizeTextPosition({ ...column.textPosition, ...patch }),
         })),
+  ),
+  updatedAt: now,
+});
+
+/** A column laid out afresh, read as a stored layout is. `set_layout`. */
+export const withLayout = (config, lookId, target, layout, now = Date.now()) => ({
+  ...config,
+  looks: config.looks.map((look) =>
+    look.id !== lookId
+      ? look
+      : withColumn(look, target, (column) => ({ ...column, layout: normalizeLayout(layout) })),
   ),
   updatedAt: now,
 });

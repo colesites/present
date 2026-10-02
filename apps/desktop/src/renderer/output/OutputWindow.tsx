@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Camera } from "lucide-react";
-import type { OutputState } from "../../shared/types/output-window";
+import type { LayerBox, OutputState, ScreenLayout } from "../../shared/types/output-window";
 import type {
   ScreenComposerLayout,
   ScreenComposerRegion,
@@ -16,6 +16,13 @@ import { CanvasSlideLayer } from "../shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../shared/components/ScriptureTextLayer";
 import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
 import { youtubeEmbedUrl } from "../../shared/lib/youtube-embed.mjs";
+import {
+  FULL_BOX,
+  boxStyle,
+  isFullBox,
+  screenIntoBoxTransform,
+  wordsOfSlide,
+} from "../../shared/lib/screen-layout.mjs";
 
 const DEFAULT_SCREEN_LAYOUT: ScreenComposerLayout = {
   id: "live-default",
@@ -123,15 +130,17 @@ export function OutputWindow() {
   // The whole scene comes from Rust and this window renders it. The merge
   // below only exists to keep the styles this window seeds its own defaults with.
   //
-  // A screen added beside the Screen shows the scene through its own column
-  // of the live look, which Rust applies (`services/look_scene.rs`). The event
-  // carries the Screen's scene, so such a window asks for its own whenever the
-  // scene or the looks change.
+  // Every audience screen shows the scene through its own column of the live
+  // look — the Screen through the program column's props and layout, one
+  // added beside it through its own — which Rust applies
+  // (`services/look_scene.rs`). The event carries the scene as the operator
+  // sent it, so such a window asks for its own whenever the scene or the
+  // looks change.
   useEffect(() => {
     let cancelled = false;
     const detach: Array<() => void> = [];
     const screen = ownScreenId();
-    const ownColumn = screen !== null && screen !== "audience" && lookTargetForScreen(screen) !== null;
+    const ownColumn = screen !== null && lookTargetForScreen(screen) !== null;
 
     void (async () => {
       const core = await import("../tauri/output");
@@ -519,7 +528,9 @@ export function OutputWindow() {
                   </div>
                 ))
             : null}
-          <PropsOverlayLayer items={webOnlyProps} />
+          <PropsInTheirBox layout={state.screenLayout}>
+            <PropsOverlayLayer items={webOnlyProps} />
+          </PropsInTheirBox>
         </div>
       </ScreenCanvas>
     );
@@ -530,28 +541,38 @@ export function OutputWindow() {
       <ScreenCanvas effects={!nativeSurface}>
         <div className="relative flex h-full w-full items-center justify-center overflow-hidden" style={screenBackground}>
           {state.showMedia && state.mediaUrl && !state.hideBackground ? (
-            state.mediaType === "video" ? (
-              <video
-                ref={legacyVideoRef}
-                aria-label="Output media video"
-                src={state.mediaUrl}
-                className="absolute inset-0 h-full w-full object-contain"
-                loop={state.videoSettings.loop}
-                muted
-                playsInline
-                onLoadedData={(event) => followOperator(event.currentTarget)}
-                style={{ filter: state.mediaFilterCSS }}
-              >
-                <track kind="captions" />
-              </video>
-            ) : (
-              <OutputImageLayer
-                url={state.mediaUrl}
-                fitMode="contain"
-                className="absolute inset-0"
-                filter={state.mediaFilterCSS}
-              />
-            )
+            // Where this screen's layout puts the media: the whole screen,
+            // letterboxed, unless its column says otherwise.
+            <div
+              className="absolute overflow-hidden"
+              style={boxStyle(state.screenLayout?.mediaBox ?? FULL_BOX)}
+            >
+              {state.mediaType === "video" ? (
+                <video
+                  ref={legacyVideoRef}
+                  aria-label="Output media video"
+                  src={state.mediaUrl}
+                  className={cn(
+                    "absolute inset-0 h-full w-full",
+                    state.screenLayout?.mediaFill ? "object-cover" : "object-contain",
+                  )}
+                  loop={state.videoSettings.loop}
+                  muted
+                  playsInline
+                  onLoadedData={(event) => followOperator(event.currentTarget)}
+                  style={{ filter: state.mediaFilterCSS }}
+                >
+                  <track kind="captions" />
+                </video>
+              ) : (
+                <OutputImageLayer
+                  url={state.mediaUrl}
+                  fitMode={state.screenLayout?.mediaFill ? "cover" : "contain"}
+                  className="absolute inset-0"
+                  filter={state.mediaFilterCSS}
+                />
+              )}
+            </div>
           ) : null}
 
           {state.slideBackgroundColor ? (
@@ -561,7 +582,15 @@ export function OutputWindow() {
             />
           ) : null}
 
-          {state.showText ? (
+          {state.showText && state.screenLayout?.wordsBox ? (
+            <LaidOutWords
+              state={state}
+              layout={state.screenLayout}
+              area={state.screenLayout.wordsBox}
+              elements={renderableSlideElements}
+              scripture={shouldUseScriptureTextLayer}
+            />
+          ) : state.showText ? (
             shouldUseScriptureTextLayer ? (
               <ScriptureTextLayer
                 text={state.slideText}
@@ -598,7 +627,9 @@ export function OutputWindow() {
           {/* Overlays must render in the default (non-composer) path too —
               this is the common output mode. */}
           <TimerOverlayLayer state={state} />
-          <PropsOverlayLayer items={state.propsOverlay ?? null} />
+          <PropsInTheirBox layout={state.screenLayout}>
+            <PropsOverlayLayer items={state.propsOverlay ?? null} />
+          </PropsInTheirBox>
           <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
         </div>
       </ScreenCanvas>
@@ -632,10 +663,173 @@ export function OutputWindow() {
           </div>
         ))}
         {!hasCountdownRegion ? <TimerOverlayLayer state={state} /> : null}
-        <PropsOverlayLayer items={state.propsOverlay ?? null} />
+        <PropsInTheirBox layout={state.screenLayout}>
+          <PropsOverlayLayer items={state.propsOverlay ?? null} />
+        </PropsInTheirBox>
         <MessageOverlayLayer overlay={state.messageOverlay ?? null} />
       </div>
     </ScreenCanvas>
+  );
+}
+
+/**
+ * The props where this screen's layout puts them: drawn as on the whole
+ * screen and scaled evenly into their box, as the compositor does.
+ */
+function PropsInTheirBox({
+  layout,
+  children,
+}: {
+  layout: ScreenLayout | null | undefined;
+  children: React.ReactNode;
+}) {
+  if (!layout || isFullBox(layout.propsBox)) return <>{children}</>;
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 z-40"
+      style={{ transform: screenIntoBoxTransform(layout.propsBox), transformOrigin: "0 0" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+const CANVAS_WIDTHS: Record<string, number> = {
+  "1920x1080": 1920,
+  "1280x720": 1280,
+  "1024x768": 1024,
+  "800x600": 800,
+};
+
+/**
+ * The slide's words in the box this screen's layout gives them, over its
+ * backdrop: scripture and plain words laid out afresh there, a designed slide
+ * scaled evenly into it — or, "text only", its words alone in its font. The
+ * compositor's `draw_words_in_box`.
+ */
+function LaidOutWords({
+  state,
+  layout,
+  area,
+  elements,
+  scripture,
+}: {
+  state: OutputState;
+  layout: ScreenLayout;
+  area: LayerBox;
+  elements: NonNullable<OutputState["slideElements"]> | null;
+  scripture: boolean;
+}) {
+  const scale = Number.isFinite(layout.wordsScale) ? clampNumber(layout.wordsScale, 0.25, 4) : 1;
+  const textAlign = state.textPosition?.textAlign ?? "center";
+  const verticalAlign = state.textPosition?.verticalAlign ?? "middle";
+  const canvasSize = state.slideCanvasSize ?? "1920x1080";
+  const [canvasWidth, canvasHeight] = canvasSize.split("x").map(Number);
+  const ratio = canvasWidth > 0 && canvasHeight > 0 ? canvasWidth / canvasHeight : 16 / 9;
+  // The slide's sizes are in its canvas's pixels; this page's are the screen's.
+  const deckScale =
+    (typeof window === "undefined" ? 1920 : window.innerWidth) / (CANVAS_WIDTHS[canvasSize] ?? 1920);
+
+  const showsSlide = !scripture && Boolean(elements?.some((element) => element.isVisible !== false));
+  const words = showsSlide && layout.wordsTextOnly ? wordsOfSlide(elements) : null;
+  const plain = !scripture && !showsSlide ? state.slideText?.trim() || null : null;
+  // Nothing to show is nothing at all: not a lower third's empty band.
+  if (!scripture && !plain && !(showsSlide && (!layout.wordsTextOnly || words))) return null;
+
+  const padding = "min(8cqmin, 48px)";
+  const textClassName =
+    "pointer-events-none select-none leading-snug drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]";
+  let content: React.ReactNode;
+  if (scripture) {
+    const style = state.scriptureStyle;
+    content = (
+      <ScriptureTextLayer
+        text={state.slideText ?? ""}
+        footer={state.slideFooter}
+        fontFamily={style.fontFamily}
+        fontSize={style.fontSize * scale}
+        fontWeight={style.fontWeight}
+        footerFontSize={style.footerFontSize * scale}
+        footerFontFamily={style.fontFamily}
+        footerFontWeight={style.fontWeight}
+        textAlign={textAlign}
+        verticalAlign={verticalAlign}
+        footerAlign={style.footerAlign}
+        footerPosition={style.footerPosition}
+        maxFontSize={style.fontSize * scale}
+        minScale={0.2}
+        fitScale={1}
+        containerClassName="absolute inset-0 flex flex-col text-white"
+        bodyClassName="min-h-0 w-full flex-1"
+        textClassName={textClassName}
+        footerClassName="mt-2 uppercase tracking-wide text-white/90 drop-shadow-md"
+      />
+    );
+  } else if (showsSlide && !layout.wordsTextOnly) {
+    content = (
+      <div
+        className="absolute inset-0 m-auto"
+        style={{
+          width: `min(100cqw, calc(100cqh * ${ratio}))`,
+          height: `min(100cqh, calc(100cqw / ${ratio}))`,
+        }}
+      >
+        <CanvasSlideLayer
+          text={state.slideText}
+          elements={elements}
+          canvasSize={state.slideCanvasSize}
+          libraryStyle={state.libraryStyle}
+          className="absolute inset-0"
+        />
+      </div>
+    );
+  } else {
+    const style = words?.style;
+    const library = state.libraryStyle;
+    const fontSize = (style ? (style.fontSize ?? 64) : library.fontSize) * deckScale * scale;
+    content = (
+      <div
+        className="absolute inset-0 flex flex-col"
+        style={{
+          color: style?.color ?? "#ffffff",
+          fontStyle: (style ? style.fontStyle === "italic" : library.fontItalic) ? "italic" : undefined,
+        }}
+      >
+        <ScriptureTextLayer
+          text={words?.text ?? plain ?? ""}
+          fontFamily={style?.fontFamily ?? library.fontFamily}
+          fontSize={fontSize}
+          fontWeight={
+            style
+              ? (style.fontWeight ?? (style.fontBold ? "700" : "400"))
+              : library.fontBold
+                ? "700"
+                : "400"
+          }
+          textAlign={textAlign}
+          verticalAlign={verticalAlign}
+          footerAlign="center"
+          footerPosition="bottom"
+          maxFontSize={fontSize}
+          minScale={0.2}
+          fitScale={1}
+          containerClassName="absolute inset-0 flex flex-col"
+          bodyClassName="min-h-0 w-full flex-1"
+          textClassName={textClassName}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="absolute z-10 overflow-hidden [container-type:size]"
+      style={{ ...boxStyle(area), backgroundColor: layout.wordsBackdrop ?? undefined }}
+    >
+      <div className="absolute" style={{ inset: scripture || !showsSlide || layout.wordsTextOnly ? padding : 0 }}>
+        {content}
+      </div>
+    </div>
   );
 }
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   LookLayerKey,
+  LookLayout,
   LookTargetKey,
   LookTextPosition,
   LooksConfig,
@@ -161,6 +162,14 @@ export function useLooksConfig() {
     [looksConfig.selectedLookId, setTextPositionForLook],
   );
 
+  /** Where a column puts each layer on its screen, all at once. */
+  const setLayoutForLook = useCallback(
+    (lookId: string, target: LookTargetKey, layout: LookLayout) => {
+      apply((core) => core.setLookLayout(lookId, target, layout));
+    },
+    [apply],
+  );
+
   const selectedLook = useMemo(
     () =>
       looksConfig.looks.find((look) => look.id === looksConfig.selectedLookId) ??
@@ -195,5 +204,6 @@ export function useLooksConfig() {
     setLayersEnabledForLook,
     setTextPosition,
     setTextPositionForLook,
+    setLayoutForLook,
   };
 }

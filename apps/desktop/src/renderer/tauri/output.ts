@@ -121,4 +121,6 @@ export const mergeScene = (previous: OutputState, scene: OutputScene): OutputSta
   libraryStyle: scene.libraryStyle ?? previous.libraryStyle,
   timerLayout: scene.timerLayout ?? previous.timerLayout,
   screenComposerLayout: scene.screenComposerLayout ?? previous.screenComposerLayout,
+  // Left out of a scene with no layout, which must clear the last one.
+  screenLayout: scene.screenLayout ?? null,
 });
