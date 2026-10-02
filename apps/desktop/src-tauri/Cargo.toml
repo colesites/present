@@ -1,6 +1,6 @@
 [package]
 name = "present"
-version = "0.4.7"
+version = "0.4.8"
 description = "Presentation software for churches, conferences and live events"
 authors = ["Cole"]
 license = "MIT"

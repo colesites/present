@@ -4,6 +4,28 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-10-02
+
+### Changed
+
+- The Bible agent's Show it tells the model which passage is open in the
+  Bible tab, so "now look at verse eighteen" with John 3:16 open goes to
+  John 3:18, and "chapter four" to John 4. A reference that is named still
+  wins, and a sentence that only sounds like scripture is read as less
+  likely, not more.
+- The Bible agent's Find it reads what is heard while it is still being
+  said, so a passage is in the Bible tab as the preacher names it rather
+  than after the sentence ends. Besides a reference, it now finds:
+  - a verse quoted rather than named: "Jesus wept" is John 11:35, "the Lord
+    is my shepherd" Psalm 23:1, looked for in the version chosen and then in
+    the others installed. Only a quote of one verse counts; a way of
+    speaking that several verses share, like "in the name of Jesus", finds
+    nothing.
+  - a verse or chapter said on its own, within the passage already open:
+    "now look at verse eighteen" with John 3:16 open is John 3:18.
+- Both of the Bible agent's modes listen for the names of the books
+  installed, so names like Habakkuk and Philemon are heard as names.
+
 ## [0.4.7] - 2026-10-01
 
 ### Added

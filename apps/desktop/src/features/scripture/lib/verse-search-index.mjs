@@ -105,3 +105,82 @@ export function searchVerseIndex(index, input) {
   );
   return matches.slice(0, limit).map((match) => match.entry.verse);
 }
+
+/** The fewest words in a row that make a quote of a verse longer than this. */
+export const QUOTE_MIN_RUN = 5;
+
+/** A word in more than this share of verses is too common to look a quote up by. */
+const COMMON_SHARE = 0.02;
+
+const wordsOf = (normalized) => normalized.split(" ").filter(Boolean);
+
+/**
+ * The longest run of words two texts share, in order and unbroken: its length,
+ * and where it ends in `a`.
+ */
+function longestSharedRun(a, b) {
+  let best = { length: 0, end: 0 };
+  const run = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i += 1) {
+    let diagonal = 0;
+    for (let j = 1; j <= b.length; j += 1) {
+      const above = run[j];
+      run[j] = a[i - 1] === b[j - 1] ? diagonal + 1 : 0;
+      if (run[j] > best.length) best = { length: run[j], end: i };
+      diagonal = above;
+    }
+  }
+  return best;
+}
+
+/**
+ * The one verse a sentence quotes, word for word, or `null`.
+ *
+ * For the listening agent's Find it, which reads what was heard without a
+ * model: "Jesus wept" said aloud is John 11:35 though no reference was named.
+ * A verse counts as quoted when the sentence has all of it, for a verse of up
+ * to `QUOTE_MIN_RUN` words, or that many of its words in a row, and those
+ * words include one the Bible does not use everywhere: "in the name of Jesus"
+ * is in a verse, but it is a way of speaking, not a quote. A quote more than
+ * one verse has equally ("his mercy endureth for ever") finds none of them
+ * rather than a guess.
+ *
+ * `commonAfter`: a word in more verses than this is too common to count;
+ * by default 2% of the Bible, and never fewer than 50 verses.
+ */
+export function findQuotedVerse(index, heard, { commonAfter } = {}) {
+  const heardWords = wordsOf(normalizeVerseSearchText(heard));
+  if (heardWords.length < 2) return null;
+
+  const tooCommon = commonAfter ?? Math.max(50, index.entries.length * COMMON_SHARE);
+  const isUncommon = (word) => {
+    if (word.length < 3 || STOP_WORDS.has(word)) return false;
+    const entryIndexes = index.postings.get(word);
+    return Boolean(entryIndexes) && entryIndexes.length <= tooCommon;
+  };
+
+  const candidates = new Set();
+  for (const word of new Set(heardWords)) {
+    if (isUncommon(word)) index.postings.get(word).forEach((entryIndex) => candidates.add(entryIndex));
+  }
+
+  let best = null;
+  let bestRun = 0;
+  let tied = false;
+  for (const entryIndex of candidates) {
+    const entry = index.entries[entryIndex];
+    const verseWords = wordsOf(entry.normalizedText);
+    const needed = Math.max(2, Math.min(verseWords.length, QUOTE_MIN_RUN));
+    const run = longestSharedRun(heardWords, verseWords);
+    if (run.length < needed) continue;
+    if (!heardWords.slice(run.end - run.length, run.end).some(isUncommon)) continue;
+    if (run.length > bestRun) {
+      best = entry.verse;
+      bestRun = run.length;
+      tied = false;
+    } else if (run.length === bestRun) {
+      tied = true;
+    }
+  }
+  return tied ? null : best;
+}

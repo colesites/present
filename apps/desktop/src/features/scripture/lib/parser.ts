@@ -364,6 +364,43 @@ export function findReferenceInSentence(
   return null;
 }
 
+/**
+ * A verse or chapter said on its own, read against the passage already open:
+ * "look at verse eighteen" with John 3 open is John 3:18, "chapter four" is
+ * John 4, "chapter four verse two" is John 4:2. Only when "verse" or
+ * "chapter" is said, so a time like "3:30" in a sentence is not a passage.
+ * `null` when nothing open or nothing said reads as one.
+ */
+export function findRelativeReference(
+  sentence: string,
+  current: ParsedReference,
+): ParsedReference | null {
+  const book = current.book;
+  if (!book || !current.chapter || !/\b(verses?|chapters?)\b/i.test(sentence)) {
+    return null;
+  }
+  const saidChapter = /\bchapters?\b/i.test(sentence);
+  // The same reading of spoken numbers and words a typed reference gets:
+  // "chapter four verse two" is "4:2", "verse eighteen" is ":18".
+  const normalized = normalizeReferenceInput(sentence);
+  const match = saidChapter
+    ? normalized.match(/(?:^|\s)(\d+)(?::(\d+)(?:-(\d+))?)?(?=\s|$)/)
+    : normalized.match(/(?<!\d):(\d+)(?:-(\d+))?(?=\s|$)/);
+  if (!match) {
+    return null;
+  }
+  const [chapter, verseStart, verseEnd] = saidChapter
+    ? [Number(match[1]), match[2] ? Number(match[2]) : null, match[3] ? Number(match[3]) : null]
+    : [current.chapter, Number(match[1]), match[2] ? Number(match[2]) : null];
+  if (chapter < 1 || chapter > book.chapters || (verseStart !== null && verseStart < 1)) {
+    return null;
+  }
+  if (verseStart !== null && verseEnd !== null && verseEnd <= verseStart) {
+    return null;
+  }
+  return { book, chapter, verseStart, verseEnd, versionCode: null, errors: [] };
+}
+
 export function isValidCharacter(char: string): boolean {
   return /^[A-Za-z0-9\s:.-]$/.test(char);
 }

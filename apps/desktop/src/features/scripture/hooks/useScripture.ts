@@ -6,6 +6,7 @@ import { type ParsedReference } from "../lib/parser";
 import { toast } from "sonner";
 import {
   buildVerseSearchIndex,
+  findQuotedVerse,
   normalizeVerseSearchText,
   searchVerseIndex,
 } from "../lib/verse-search-index.mjs";
@@ -390,30 +391,39 @@ export function useScripture() {
     [getSearchIndex, resolveVersion],
   );
 
-  const identifyVerseFromText = useCallback(
+  /**
+   * The one verse a sentence quotes, for the listening agent's Find it: "Jesus
+   * wept" said aloud. Looked for in the version chosen, then in the others
+   * installed, since a preacher quoting the KJV is not quoting the NIV the
+   * Bible tab may be showing (`findQuotedVerse` in `verse-search-index.mjs`).
+   * `everyVersion: false` looks in the chosen one only, for words still being
+   * said.
+   */
+  const findQuotedVerseInText = useCallback(
     async (input: {
       query: string;
       versionCode?: string | null;
+      everyVersion?: boolean;
     }): Promise<BibleVerse | null> => {
-      const normalizedQuery = normalizeVerseSearchText(input.query);
-      if (normalizedQuery.length < 3) {
+      if (normalizeVerseSearchText(input.query).length < 3) {
         return null;
       }
-
-      const targetVersion = resolveVersion(input.versionCode ?? null);
-      if (!targetVersion) {
-        return null;
+      const chosen = resolveVersion(input.versionCode ?? null);
+      const others =
+        input.everyVersion === false
+          ? []
+          : (versions ?? []).filter((version) => version.id !== chosen?.id);
+      const order = [chosen, ...others];
+      for (const version of order) {
+        if (!version) continue;
+        const verse = findQuotedVerse(await getSearchIndex(version.id), input.query);
+        if (verse) {
+          return verse as BibleVerse;
+        }
       }
-
-      const index = await getSearchIndex(targetVersion.id);
-      const [bestMatch] = searchVerseIndex(index, {
-        query: input.query,
-        limit: 1,
-        mode: "broad",
-      }) as BibleVerse[];
-      return bestMatch ?? null;
+      return null;
     },
-    [getSearchIndex, resolveVersion],
+    [getSearchIndex, resolveVersion, versions],
   );
 
   const prewarmSearchPool = useCallback(
@@ -440,7 +450,7 @@ export function useScripture() {
     uninstallVersion,
     lookupRef,
     searchVersesByText,
-    identifyVerseFromText,
+    findQuotedVerseInText,
     prewarmSearchPool,
   };
 }

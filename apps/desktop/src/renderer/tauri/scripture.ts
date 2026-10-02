@@ -58,6 +58,8 @@ export async function understandSpokenScripture(
   sessionToken: string,
   heard: string,
   books: BibleBookRecord[],
+  /** The passage in the Bible tab, for "verse eighteen" said on its own. */
+  openPassage: string | null = null,
 ): Promise<SpokenScripture | null> {
   const answer = await invoke<{
     reference: RustReference;
@@ -67,6 +69,7 @@ export async function understandSpokenScripture(
     sessionToken,
     heard,
     books,
+    openPassage,
   });
   if (!answer) {
     return null;
