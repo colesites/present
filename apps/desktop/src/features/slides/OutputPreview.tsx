@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Pause,
   Play,
+  Presentation as PresentationIcon,
   RotateCcw,
   SkipBack,
   SkipForward,
@@ -91,10 +92,15 @@ interface OutputPreviewProps {
   onVideoSettingsChange: (settings: Partial<VideoSettings>) => void;
   onToggleVideoPlayback: () => void;
   showText: boolean;
+  /** The Slide layer: a presentation's slides (PDF, PowerPoint). */
+  showSlide: boolean;
+  /** The slide live is a presentation's, so it shows as the Slide layer says. */
+  isPresentationSlide: boolean;
   showMedia: boolean;
   hideBackground: boolean;
   textPosition: OutputTextPosition;
   onToggleText: () => void;
+  onToggleSlide: () => void;
   onToggleMedia: () => void;
   onToggleHideBackground: () => void;
   onClearMedia: () => void;
@@ -201,10 +207,13 @@ export const OutputPreview = memo(function OutputPreview({
   onVideoSettingsChange,
   onToggleVideoPlayback,
   showText,
+  showSlide,
+  isPresentationSlide,
   showMedia,
   hideBackground,
   textPosition,
   onToggleText,
+  onToggleSlide,
   onToggleMedia,
   onToggleHideBackground,
   onClearMedia,
@@ -246,7 +255,10 @@ export const OutputPreview = memo(function OutputPreview({
   const shouldUseScriptureTextLayer =
     isScriptureSlide && (slideElements?.length ?? 0) === 0;
   const hasLibrarySlideLayer = Boolean(text || (slideElements?.length ?? 0) > 0);
-  const hasHiddenTextLayerContent = Boolean(text) && !showText;
+  // The slide shows as its layer says: Slide for a presentation's, Text for
+  // any other.
+  const slideShows = isPresentationSlide ? showSlide : showText;
+  const hasHiddenTextLayerContent = hasLibrarySlideLayer && !slideShows;
   // The screens as Screen Configuration has them, by the names given there.
   // The Screen until they have loaded, or if the one chosen has been removed.
   const { screens } = useScreens();
@@ -442,7 +454,7 @@ export const OutputPreview = memo(function OutputPreview({
               />
             ) : null}
 
-            {showText &&
+            {slideShows &&
               (shouldUseScriptureTextLayer
                 ? Boolean(text)
                 : hasLibrarySlideLayer) && (
@@ -519,7 +531,9 @@ export const OutputPreview = memo(function OutputPreview({
               !isTimerLayerEnabled &&
               propsOverlay.length === 0 && (
               <div className="absolute inset-0 z-0 flex h-full items-center justify-center">
-                <p className="text-xs text-zinc-500">Text layer is hidden</p>
+                <p className="text-xs text-zinc-500">
+                  {isPresentationSlide ? "Slide layer is hidden" : "Text layer is hidden"}
+                </p>
               </div>
             )}
 
@@ -547,10 +561,13 @@ export const OutputPreview = memo(function OutputPreview({
                 if (showText) {
                   onToggleText();
                 }
+                if (showSlide) {
+                  onToggleSlide();
+                }
                 onClearMedia();
               }}
               className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-secondary hover:text-foreground focus:outline-none focus-visible:outline-none"
-              title="Clear text and media"
+              title="Clear text, slide and media"
             >
               <X className="h-4 w-4" />
             </button>
@@ -588,6 +605,24 @@ export const OutputPreview = memo(function OutputPreview({
               }
             >
               <MessageSquare className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onToggleSlide}
+              aria-pressed={showSlide}
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md transition focus:outline-none focus-visible:outline-none",
+                showSlide
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+              title={
+                showSlide
+                  ? "Hide slide layer (PDF and PowerPoint)"
+                  : "Show slide layer (PDF and PowerPoint)"
+              }
+            >
+              <PresentationIcon className="h-4 w-4" />
             </button>
             <button
               type="button"

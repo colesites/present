@@ -182,6 +182,9 @@ pub struct ScreenLayout {
     pub words_scale: f64,
     /// Behind the words' box, a colour: what makes a lower third.
     pub words_backdrop: Option<String>,
+    /// A presentation's slide, scaled evenly into this box. Its own, not the
+    /// words': a lower third is for words, and a PDF's page has none.
+    pub slide_box: LayerBox,
     pub media_box: LayerBox,
     /// The media fills its box, cropped, rather than fitting inside it.
     pub media_fill: bool,
@@ -199,6 +202,7 @@ impl ScreenLayout {
         words_text_only: false,
         words_scale: 1.0,
         words_backdrop: None,
+        slide_box: LayerBox::FULL,
         media_box: LayerBox::FULL,
         media_fill: false,
         props_box: LayerBox::FULL,
@@ -287,6 +291,10 @@ pub struct OutputScene {
     pub media_url: Option<String>,
     pub media_id: Option<String>,
     pub media_type: Option<MediaKind>,
+    /// Whether the slide on screen shows. The operator sends it as the layer
+    /// the slide is on says: the Slide layer for a presentation's, the Text
+    /// layer for any other (`presentation_slide`). Everything that draws the
+    /// slide asks this alone.
     pub show_text: bool,
     pub show_media: bool,
     pub hide_background: bool,
@@ -316,6 +324,11 @@ pub struct OutputScene {
     pub slide_elements: Option<serde_json::Value>,
     pub slide_canvas_size: Option<String>,
     pub slide_background_color: Option<String>,
+    /// The slide is a presentation's — a PDF's page, a PowerPoint's slide —
+    /// so it is on the Slide layer rather than the Text layer: a column shows
+    /// it as its Slide switch says, in its slide box rather than its words'.
+    #[serde(default)]
+    pub presentation_slide: bool,
 
     pub scripture_style: Option<ScriptureStyle>,
     pub library_style: Option<LibraryStyle>,
@@ -372,6 +385,7 @@ impl Default for OutputScene {
             slide_elements: None,
             slide_canvas_size: None,
             slide_background_color: None,
+            presentation_slide: false,
             scripture_style: None,
             library_style: None,
             timer_layout: None,
@@ -525,6 +539,14 @@ pub enum OutputUpdate {
         slide_canvas_size: Option<String>,
         #[serde(default)]
         slide_background_color: Option<String>,
+        /// A presentation's slide, on the Slide layer.
+        #[serde(default)]
+        presentation_slide: bool,
+        /// Whether it shows, as its layer says. Sent with the slide so a deck
+        /// on a layer that is off is never on screen for the moment between
+        /// the slide arriving and the switch that hides it.
+        #[serde(default)]
+        show_text: Option<bool>,
     },
     #[serde(rename_all = "camelCase")]
     MessageOverlay { overlay: Option<MessageOverlay> },
@@ -651,6 +673,8 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
             slide_elements,
             slide_canvas_size,
             slide_background_color,
+            presentation_slide,
+            show_text,
         } => {
             let incoming = OutputScene {
                 slide_text: slide_text.clone(),
@@ -677,6 +701,10 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
             scene.slide_elements = slide_elements;
             scene.slide_canvas_size = slide_canvas_size;
             scene.slide_background_color = slide_background_color;
+            scene.presentation_slide = presentation_slide;
+            if let Some(show) = show_text {
+                scene.show_text = show;
+            }
         }
         OutputUpdate::MessageOverlay { overlay } => {
             scene.message_overlay = overlay;
@@ -705,6 +733,7 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
             scene.slide_footer = None;
             scene.slide_elements = None;
             scene.slide_canvas_size = None;
+            scene.presentation_slide = false;
             scene.media_url = None;
             scene.media_type = None;
             scene.media_id = None;
@@ -786,6 +815,8 @@ mod tests {
             slide_elements: elements,
             slide_canvas_size: None,
             slide_background_color: background.map(str::to_owned),
+            presentation_slide: false,
+            show_text: None,
         }
     }
 
@@ -806,6 +837,67 @@ mod tests {
 
         assert_eq!(scene.active_slide_id.as_deref(), Some("b"));
         assert_eq!(scene.slide_text.as_deref(), Some("How sweet the sound"));
+    }
+
+    /// `update`, a presentation's slide or not, showing or not.
+    fn on_layer(mut update: OutputUpdate, presentation: bool, show: bool) -> OutputUpdate {
+        if let OutputUpdate::ActiveSlide {
+            presentation_slide,
+            show_text,
+            ..
+        } = &mut update
+        {
+            *presentation_slide = presentation;
+            *show_text = Some(show);
+        }
+        update
+    }
+
+    #[test]
+    fn a_presentation_slide_arrives_showing_as_its_own_layer_says() {
+        // The words are up and the Slide layer is off: a PDF's page clicked
+        // now must not be on screen for the moment before the switch that
+        // hides it arrives. It comes with whether it shows.
+        let mut scene = OutputScene {
+            show_text: true,
+            ..OutputScene::default()
+        };
+        apply(
+            &mut scene,
+            slide(Some("a"), Some("Amazing grace"), None, None),
+        );
+        apply(
+            &mut scene,
+            on_layer(
+                slide(
+                    Some("presentation_deck:0"),
+                    Some("Page 1"),
+                    Some(serde_json::json!([{ "id": "page", "type": "image" }])),
+                    None,
+                ),
+                true,
+                false,
+            ),
+        );
+        assert!(scene.presentation_slide);
+        assert!(!scene.show_text, "the Slide layer is off");
+
+        // And the words after it, on the Text layer again.
+        apply(
+            &mut scene,
+            on_layer(
+                slide(Some("b"), Some("How sweet the sound"), None, None),
+                false,
+                true,
+            ),
+        );
+        assert!(!scene.presentation_slide);
+        assert!(scene.show_text);
+
+        // Clearing leaves no presentation on screen.
+        scene.presentation_slide = true;
+        apply(&mut scene, OutputUpdate::Clear);
+        assert!(!scene.presentation_slide);
     }
 
     /// The rule that stops the audience screen flickering blank between items.

@@ -235,6 +235,11 @@ export interface MainViewOutputState {
   onToggleFreeze: () => void;
   showTextInOutput: boolean;
   setShowTextInOutput: (show: boolean) => void;
+  /** The Slide layer: a presentation's slides (PDF, PowerPoint). */
+  showSlideInOutput: boolean;
+  setShowSlideInOutput: (show: boolean) => void;
+  /** The slide live is a presentation's, so the Slide layer's. */
+  isPresentationSlideLive: boolean;
   hideBackgroundInOutput: boolean;
   setHideBackgroundInOutput: (hide: boolean) => void;
   outputTextPosition: OutputTextPosition;
@@ -386,6 +391,9 @@ export function MainView({
     onToggleFreeze,
     showTextInOutput,
     setShowTextInOutput,
+    showSlideInOutput,
+    setShowSlideInOutput,
+    isPresentationSlideLive,
     hideBackgroundInOutput,
     setHideBackgroundInOutput,
     outputTextPosition,
@@ -683,6 +691,10 @@ export function MainView({
     setShowTextInOutput(!showTextInOutput);
   }, [setShowTextInOutput, showTextInOutput]);
 
+  const handleToggleSlideInOutput = React.useCallback(() => {
+    setShowSlideInOutput(!showSlideInOutput);
+  }, [setShowSlideInOutput, showSlideInOutput]);
+
   const handleToggleMediaInOutput = React.useCallback(() => {
     setShowMediaInOutput(!showMediaInOutput);
   }, [setShowMediaInOutput, showMediaInOutput]);
@@ -738,10 +750,13 @@ export function MainView({
       onVideoSettingsChange: updateVideoSettings,
       onToggleVideoPlayback,
       showText: showTextInOutput,
+      showSlide: showSlideInOutput,
+      isPresentationSlide: isPresentationSlideLive,
       showMedia: showMediaInOutput,
       hideBackground: hideBackgroundInOutput,
       textPosition: outputTextPosition,
       onToggleText: handleToggleTextInOutput,
+      onToggleSlide: handleToggleSlideInOutput,
       onToggleMedia: handleToggleMediaInOutput,
       onToggleHideBackground: handleToggleHideBackground,
       onClearMedia: handleClearOutputMedia,
@@ -779,12 +794,14 @@ export function MainView({
       handleToggleHideBackground,
       handleToggleMediaInOutput,
       handleToggleMessageLayer,
+      handleToggleSlideInOutput,
       handleToggleTextInOutput,
       handleToggleTimerLayer,
       propsOverlay,
       hideBackgroundInOutput,
       isMessageLayerEnabled,
       isOutputFrozen,
+      isPresentationSlideLive,
       isTimerLayerEnabled,
       isVideoPlaying,
       mediaFilters,
@@ -800,6 +817,7 @@ export function MainView({
       scriptureTextAlign,
       scriptureVerticalAlign,
       showMediaInOutput,
+      showSlideInOutput,
       showTextInOutput,
       outputTextPosition,
       slideGroups,

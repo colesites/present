@@ -245,10 +245,31 @@ type PresentationImportUiState = {
 
 const IMPORT_ERROR_DURATION_MS = 6000;
 
+/**
+ * A presentation is an item of a service, so it needs one to go into. One
+ * toast, however many times it is asked: by its id, a second replaces the
+ * first rather than stacking under it.
+ */
+function toastImportNeedsService() {
+  toast.error("Open a service first, then import files into it.", {
+    id: "import-needs-service",
+    duration: IMPORT_ERROR_DURATION_MS,
+  });
+}
+
 function normalizeSlideElements(
   elements: SlideElement[] | null | undefined,
 ): SlideElement[] | null {
   return Array.isArray(elements) && elements.length > 0 ? elements : null;
+}
+
+/**
+ * A presentation's slide — a PDF's page, a PowerPoint's — by its id: decks
+ * imported into a service are `presentation_…`. It goes on the Slide layer,
+ * not the Text layer.
+ */
+function isPresentationSlideId(slideId: string | null | undefined): boolean {
+  return Boolean(slideId?.startsWith("presentation_"));
 }
 
 function buildServicePresentationLibraryItem(
@@ -287,6 +308,8 @@ interface PresentContainerProps {
   scripturePanelRef: React.RefObject<ScripturePanelRef>;
   showTextInOutput: boolean;
   setShowTextInOutput: (show: boolean) => void;
+  showSlideInOutput: boolean;
+  setShowSlideInOutput: (show: boolean) => void;
   showMediaInOutput: boolean;
   setShowMediaInOutput: (show: boolean) => void;
   hideBackgroundInOutput: boolean;
@@ -314,6 +337,8 @@ export function PresentContainer({
   contentSource,
   showTextInOutput,
   setShowTextInOutput,
+  showSlideInOutput,
+  setShowSlideInOutput,
   showMediaInOutput,
   setShowMediaInOutput,
   hideBackgroundInOutput,
@@ -880,6 +905,10 @@ export function PresentContainer({
 
   const outputActiveSlideId =
     broadcastSnapshot?.slideId ?? activeSlideId ?? null;
+  // A presentation's slide shows as the Slide layer says, any other as the
+  // Text layer does.
+  const isPresentationSlideLive = isPresentationSlideId(outputActiveSlideId);
+  const slideShowsInOutput = isPresentationSlideLive ? showSlideInOutput : showTextInOutput;
 
   const publishSavedSlidesToLiveOutput = useCallback(
     ({
@@ -1761,6 +1790,7 @@ export function PresentContainer({
   // on the audience output now (`services/app_menu.rs`).
   useMenuChecks({
     text: showTextInOutput,
+    slide: showSlideInOutput,
     media: showMediaInOutput,
     background: !hideBackgroundInOutput,
     freeze: isOutputFrozen,
@@ -1800,6 +1830,7 @@ export function PresentContainer({
     onNextItem: () => moveServiceItem(1),
     onPreviousItem: () => moveServiceItem(-1),
     onText: (to) => setShowTextInOutput(applySwitch(to, showTextInOutput)),
+    onSlide: (to) => setShowSlideInOutput(applySwitch(to, showSlideInOutput)),
     onMedia: (to) => setShowMediaInOutput(applySwitch(to, showMediaInOutput)),
     // "Background on" is the operator's hide-background switched off.
     onBackground: (to) => setHideBackgroundInOutput(!applySwitch(to, !hideBackgroundInOutput)),
@@ -1829,8 +1860,13 @@ export function PresentContainer({
     }
     previousOutputActiveSlideRef.current = outputActiveSlideId;
 
-    const hasSlideText = Boolean(outputSlideContent?.text?.trim());
-    if (!hasSlideText || showTextInOutput) {
+    // A slide taken live shows: the words turn the Text layer on, and a
+    // presentation's slide, a page with no words of its own, the Slide layer.
+    const hasSlideContent = isPresentationSlideLive
+      ? Boolean(outputSlideContent?.elements?.length || outputSlideContent?.text?.trim())
+      : Boolean(outputSlideContent?.text?.trim());
+    const layerShowing = isPresentationSlideLive ? showSlideInOutput : showTextInOutput;
+    if (!hasSlideContent || layerShowing) {
       return;
     }
     if (!outputActiveSlideId) {
@@ -1840,12 +1876,20 @@ export function PresentContainer({
       return;
     }
 
-    setShowTextInOutput(true);
+    if (isPresentationSlideLive) {
+      setShowSlideInOutput(true);
+    } else {
+      setShowTextInOutput(true);
+    }
     lastAutoEnabledSlideRef.current = outputActiveSlideId;
   }, [
+    isPresentationSlideLive,
     outputActiveSlideId,
+    outputSlideContent?.elements?.length,
     outputSlideContent?.text,
+    setShowSlideInOutput,
     setShowTextInOutput,
+    showSlideInOutput,
     showTextInOutput,
   ]);
 
@@ -1996,7 +2040,7 @@ export function PresentContainer({
 
   useOutputBroadcast({
     activeMediaItem: effectiveActiveMediaItem,
-    showText: showTextInOutput,
+    showText: slideShowsInOutput,
     showMedia: showMediaInOutput,
     hideBackground: hideBackgroundInOutput,
     textPosition: outputTextPosition,
@@ -2055,6 +2099,7 @@ export function PresentContainer({
     slideElements: outputSlideContent?.elements ?? null,
     slideCanvasSize: outputSlideContent?.canvasSize ?? null,
     slideBackgroundColor: outputSlideContent?.backgroundColor ?? null,
+    presentationSlide: isPresentationSlideLive,
   });
 
   useAppNavigation({
@@ -2075,11 +2120,14 @@ export function PresentContainer({
         return;
       }
 
-      if (!selectedServiceId || !isInsideService) {
-        toast.error("Open a service first, then import files into it.", {
-          duration: IMPORT_ERROR_DURATION_MS,
-        });
+      // Into the service that is open, or the one chosen in the list, which
+      // opens: the deck is shown in it once it is in.
+      if (!selectedServiceId) {
+        toastImportNeedsService();
         return;
+      }
+      if (!isInsideService) {
+        handleEnterService(selectedServiceId);
       }
 
       let importedCount = 0;
@@ -2173,6 +2221,7 @@ export function PresentContainer({
     },
     [
       addPresentationToService,
+      handleEnterService,
       isInsideService,
       selectedServiceId,
       serviceItems.length,
@@ -2184,11 +2233,12 @@ export function PresentContainer({
     ],
   );
 
+  // One import at a time: asked again while its dialog is open or its files
+  // are being read, it does nothing rather than open a second.
+  const importInProgressRef = useRef(false);
   const handleImportRequest = useCallback(async (mode: PresentationImportMode = "presentation") => {
-    if (!selectedServiceId || !isInsideService) {
-      toast.error("Open a service first, then import files into it.", {
-        duration: IMPORT_ERROR_DURATION_MS,
-      });
+    if (!selectedServiceId) {
+      toastImportNeedsService();
       return;
     }
 
@@ -2199,6 +2249,10 @@ export function PresentContainer({
       return;
     }
 
+    if (importInProgressRef.current) {
+      return;
+    }
+    importInProgressRef.current = true;
     try {
       const selectedFiles = await window.electronAPI.selectPresentationFiles();
       if (!selectedFiles?.length) {
@@ -2221,18 +2275,29 @@ export function PresentContainer({
           duration: IMPORT_ERROR_DURATION_MS,
         },
       );
+    } finally {
+      importInProgressRef.current = false;
     }
-  }, [handleImportFiles, isInsideService, selectedServiceId]);
+  }, [handleImportFiles, selectedServiceId]);
 
+  // File ▸ Import, with the handler as it is now. Listened for once: the
+  // handler is new on nearly every render of this window, which redraws as
+  // the timers tick, and listening afresh on each could leave listeners from
+  // the renders just gone still hearing the menu, each carrying it out as
+  // things stood when it was made — the same toast three or four times.
+  const importRequestRef = useRef(handleImportRequest);
+  useEffect(() => {
+    importRequestRef.current = handleImportRequest;
+  });
   useEffect(() => {
     if (!window.electronAPI?.onOpenImportFromMenu) {
       return;
     }
 
     return window.electronAPI.onOpenImportFromMenu((mode) => {
-      void handleImportRequest(mode ?? "presentation");
+      void importRequestRef.current(mode ?? "presentation");
     });
-  }, [handleImportRequest]);
+  }, []);
 
   return (
     <>
@@ -2487,6 +2552,9 @@ export function PresentContainer({
           onToggleFreeze: () => setIsOutputFrozen((prev) => !prev),
           showTextInOutput,
           setShowTextInOutput,
+          showSlideInOutput,
+          setShowSlideInOutput,
+          isPresentationSlideLive,
           hideBackgroundInOutput,
           setHideBackgroundInOutput,
           outputTextPosition,

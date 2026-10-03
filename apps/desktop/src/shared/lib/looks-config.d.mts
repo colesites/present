@@ -65,6 +65,8 @@ export type MessagePlacement = { edge: MessageEdge; scalePercent: number };
  */
 export type LookLayout = {
   words?: WordsPlacement;
+  /** A presentation's slide (PDF, PowerPoint), scaled evenly into this box. */
+  slide?: LookBox;
   media?: MediaPlacement;
   /** The props, all of them, scaled evenly into this box. */
   props?: LookBox;

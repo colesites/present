@@ -31,6 +31,7 @@ const empty = {
 
 test("a switch action binds as a toggle", () => {
   assert.deepEqual(plain(actionFor("text")), { action: "text", to: "toggle" });
+  assert.deepEqual(plain(actionFor("slide")), { action: "slide", to: "toggle" });
   assert.deepEqual(plain(actionFor("nextSlide")), { action: "nextSlide" });
 });
 

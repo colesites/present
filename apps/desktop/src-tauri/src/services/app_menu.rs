@@ -76,6 +76,7 @@ fn control_for(id: &str) -> Option<Action> {
         "presentation.next-item" => Action::NextItem,
         "presentation.previous-item" => Action::PreviousItem,
         "presentation.text" => Action::Text { to: Switch::Toggle },
+        "presentation.slide" => Action::Slide { to: Switch::Toggle },
         "presentation.media" => Action::Media { to: Switch::Toggle },
         "presentation.background" => Action::Background { to: Switch::Toggle },
         "presentation.freeze" => Action::Freeze { to: Switch::Toggle },
@@ -182,6 +183,17 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
         )?)
         .item(&item(IMPORT_IMAGES_ITEM, "PowerPoint or PDF as Images…")?)
         .separator()
+        // Into the libraries, as the Libraries tab's own Import button does.
+        .item(&item(
+            "file.import-library-export",
+            "Present Library Export…",
+        )?)
+        .item(&item("file.import-openlyrics", "OpenLyrics Songs (.xml)…")?)
+        .item(&item(
+            "file.import-videopsalm",
+            "VideoPsalm Songbooks (.json)…",
+        )?)
+        .separator()
         .item(&item("file.add-media-folder", "Media Folder…")?)
         .build()?;
     let mut file = SubmenuBuilder::new(app, "File")
@@ -259,6 +271,7 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
     let presentation = presentation
         .separator()
         .item(&check("text", "presentation.text", "Text on Output")?)
+        .item(&check("slide", "presentation.slide", "Slide on Output")?)
         .item(&check("media", "presentation.media", "Media on Output")?)
         .item(&check(
             "background",
@@ -425,6 +438,7 @@ mod tests {
         }
         for id in [
             "presentation.text",
+            "presentation.slide",
             "presentation.media",
             "presentation.background",
             "presentation.freeze",
@@ -441,6 +455,7 @@ mod tests {
         // whenever the menu was out of date.
         for id in [
             "presentation.text",
+            "presentation.slide",
             "presentation.media",
             "presentation.background",
             "presentation.freeze",

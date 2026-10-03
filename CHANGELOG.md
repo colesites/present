@@ -4,6 +4,37 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-10-03
+
+### Added
+
+- Presentations have a Slide layer of their own, as in ProPresenter: a PDF's
+  pages and a PowerPoint's slides are on it, apart from the words of songs
+  and scripture on the Text layer and from the media under both.
+  - The Slide switch under the Messages switch beside the preview shows or
+    hides them, as do Presentation ▸ Slide on Output and a pedal or OSC
+    message bound to "Show or hide the slide". Taking a page live turns the layer on,
+    as taking words live turns on Text, and the clear button turns both off.
+  - Looks has a Slide row for each screen and the NDI output, and the layout
+    a Slide box: the presentation shrinks evenly into it, keeping its shape.
+    The Words box is for words, so a lower third no longer squeezes a page
+    into its band.
+  - A presentation's background colour is its slide's, and goes with it.
+
+  A look saved before has its Slide layer on wherever its Text layer was.
+- File ▸ Import has the Libraries tab's imports too: a Present library
+  export, OpenLyrics songs and VideoPsalm songbooks.
+
+### Fixed
+
+- An imported PDF shows on the screens, the preview and the NDI output. Its
+  pages were in the slide grid and black everywhere else, and a PowerPoint's
+  pictures were missing from them in the same way.
+- Importing a PowerPoint or PDF from the menu does it once. It could say
+  "Open a service first" three or four times over, even with a service open.
+  A service chosen in the list but not opened is now opened and imported
+  into; with none chosen, the message shows once.
+
 ## [0.4.9] - 2026-10-03
 
 ### Added

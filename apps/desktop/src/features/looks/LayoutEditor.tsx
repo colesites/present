@@ -12,10 +12,15 @@ import {
 import { LAYOUT_PRESETS, STARTING_PLACEMENTS, boxStyle } from "../../shared/lib/screen-layout.mjs";
 
 /** The parts of a screen a column can place. */
-type Part = "words" | "media" | "props" | "timer" | "messages";
+type Part = "words" | "slide" | "media" | "props" | "timer" | "messages";
+/** The parts placed as a box, dragged and sized on the screen. */
+type BoxPart = "words" | "slide" | "media" | "props";
 
 const PARTS: Array<{ key: Part; label: string; layers: LookLayerKey[]; tint: string }> = [
-  { key: "words", label: "Words", layers: ["slide", "presentation"], tint: "amber" },
+  // The Text layer's words, and the Slide layer's presentations. The look's
+  // keys are older than the names (`looks-config.mjs`).
+  { key: "words", label: "Words", layers: ["slide"], tint: "amber" },
+  { key: "slide", label: "Slide", layers: ["presentation"], tint: "orange" },
   { key: "media", label: "Media", layers: ["media", "videoInput"], tint: "sky" },
   { key: "props", label: "Props", layers: ["props"], tint: "violet" },
   { key: "timer", label: "Timer", layers: ["timer"], tint: "emerald" },
@@ -29,6 +34,7 @@ const PART_OF = Object.fromEntries(PARTS.map((part) => [part.key, part])) as Rec
 
 const TINTS: Record<string, { box: string; chip: string }> = {
   amber: { box: "border-amber-400/80 bg-amber-400/10 text-amber-200", chip: "bg-amber-400/20 text-amber-200" },
+  orange: { box: "border-orange-400/80 bg-orange-400/10 text-orange-200", chip: "bg-orange-400/20 text-orange-200" },
   sky: { box: "border-sky-400/80 bg-sky-400/10 text-sky-200", chip: "bg-sky-400/20 text-sky-200" },
   violet: { box: "border-violet-400/80 bg-violet-400/10 text-violet-200", chip: "bg-violet-400/20 text-violet-200" },
   emerald: { box: "border-emerald-400/80 bg-emerald-400/15 text-emerald-200", chip: "bg-emerald-400/20 text-emerald-200" },
@@ -38,8 +44,8 @@ const TINTS: Record<string, { box: string; chip: string }> = {
 const MIN_BOX = 5;
 
 type Drag =
-  | { kind: "move"; part: "words" | "media" | "props"; from: LookBox; x: number; y: number }
-  | { kind: "resize"; part: "words" | "media" | "props"; from: LookBox; x: number; y: number; corner: Corner }
+  | { kind: "move"; part: BoxPart; from: LookBox; x: number; y: number }
+  | { kind: "resize"; part: BoxPart; from: LookBox; x: number; y: number; corner: Corner }
   | { kind: "timer"; from: { xPercent: number; yPercent: number }; x: number; y: number };
 
 type Corner = "nw" | "ne" | "sw" | "se";
@@ -77,13 +83,17 @@ const resized = (box: LookBox, corner: Corner, dx: number, dy: number): LookBox 
   });
 };
 
-const areaOf = (layout: LookLayout, part: "words" | "media" | "props"): LookBox | null =>
-  part === "words" ? (layout.words?.area ?? null) : part === "media" ? (layout.media?.area ?? null) : (layout.props ?? null);
+const areaOf = (layout: LookLayout, part: BoxPart): LookBox | null =>
+  part === "words"
+    ? (layout.words?.area ?? null)
+    : part === "media"
+      ? (layout.media?.area ?? null)
+      : (layout[part] ?? null);
 
-const withArea = (layout: LookLayout, part: "words" | "media" | "props", area: LookBox): LookLayout => {
+const withArea = (layout: LookLayout, part: BoxPart, area: LookBox): LookLayout => {
   if (part === "words" && layout.words) return { ...layout, words: { ...layout.words, area } };
   if (part === "media" && layout.media) return { ...layout, media: { ...layout.media, area } };
-  if (part === "props") return { ...layout, props: area };
+  if (part === "slide" || part === "props") return { ...layout, [part]: area };
   return layout;
 };
 
@@ -180,7 +190,7 @@ export function LayoutEditor({
     setDraft(null);
   };
 
-  const placeBox = (part: "words" | "media" | "props") => {
+  const placeBox = (part: BoxPart) => {
     const area = areaOf(shown, part);
     if (!area) return null;
     const tint = TINTS[PART_OF[part].tint];
@@ -195,7 +205,13 @@ export function LayoutEditor({
         className={cn(
           "absolute cursor-move select-none rounded-[3px] border-2 border-dashed",
           tint.box,
-          isSelected ? "z-30 border-solid" : part === "media" ? "z-0" : "z-10",
+          isSelected
+            ? "z-30 border-solid"
+            : part === "media"
+              ? "z-0"
+              : part === "slide"
+                ? "z-[5]"
+                : "z-10",
           !shows(part) && "opacity-40",
         )}
         style={{
@@ -223,7 +239,13 @@ export function LayoutEditor({
           </div>
         ) : (
           <span className={cn("absolute left-1 top-1 rounded px-1 text-[10px] font-medium", tint.chip)}>
-            {part === "media" ? (shown.media?.fill ? "Media · fill" : "Media · fit") : "Props"}
+            {part === "media"
+              ? shown.media?.fill
+                ? "Media · fill"
+                : "Media · fit"
+              : part === "slide"
+                ? "Slide"
+                : "Props"}
           </span>
         )}
         {isSelected
@@ -305,6 +327,7 @@ export function LayoutEditor({
               <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(56,189,248,0.10),rgba(56,189,248,0.02))]" />
             ) : null}
             {placeBox("media")}
+            {placeBox("slide")}
             {placeBox("props")}
             {placeBox("words")}
             {!shown.words && shows("words") ? (
@@ -423,7 +446,7 @@ function PartPanel({
 }) {
   const placed = Boolean(layout[part]);
   const { label } = PART_OF[part];
-  const { words, media, props, timer, messages } = layout;
+  const { words, slide, media, props, timer, messages } = layout;
   const place = (on: boolean) => {
     const next = { ...layout };
     if (on) Object.assign(next, { [part]: STARTING_PLACEMENTS[part] });
@@ -515,6 +538,16 @@ function PartPanel({
         </>
       ) : null}
 
+      {part === "slide" && slide ? (
+        <>
+          <p className="text-[10px] text-muted-foreground">
+            A presentation's slide — a PDF's page, a PowerPoint's — shrunk evenly into this box, its shape
+            kept.
+          </p>
+          <BoxFields area={slide} onChange={(area) => onChange({ ...layout, slide: area })} />
+        </>
+      ) : null}
+
       {part === "props" && props ? (
         <>
           <p className="text-[10px] text-muted-foreground">
@@ -578,7 +611,9 @@ function PartPanel({
         <p className="text-[10px] text-muted-foreground">
           {part === "words"
             ? "The words are where the slide puts them, full screen."
-            : part === "media"
+            : part === "slide"
+              ? "A presentation's slide fills the screen."
+              : part === "media"
               ? "The media fills the screen, letterboxed."
               : part === "props"
                 ? "Each prop sits where it was put up."

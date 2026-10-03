@@ -575,14 +575,20 @@ export function OutputWindow() {
             </div>
           ) : null}
 
-          {state.slideBackgroundColor ? (
+          {/* A presentation's colour is its slide's: it goes with the slide. */}
+          {state.slideBackgroundColor && !state.presentationSlide ? (
             <div
               className="absolute inset-0"
               style={{ backgroundColor: state.slideBackgroundColor }}
             />
           ) : null}
 
-          {state.showText && state.screenLayout?.wordsBox ? (
+          {state.presentationSlide ? (
+            // The Slide layer's, never in the words' box.
+            state.showText ? (
+              <PresentationSlide state={state} elements={renderableSlideElements} />
+            ) : null
+          ) : state.showText && state.screenLayout?.wordsBox ? (
             <LaidOutWords
               state={state}
               layout={state.screenLayout}
@@ -690,6 +696,45 @@ function PropsInTheirBox({
       style={{ transform: screenIntoBoxTransform(layout.propsBox), transformOrigin: "0 0" }}
     >
       {children}
+    </div>
+  );
+}
+
+/**
+ * A presentation's slide — a PDF's page, a PowerPoint's — with its colour,
+ * which is the slide's: on the whole screen, or drawn as on it and scaled
+ * evenly into the box this screen's layout gives it. The compositor's
+ * `draw_presentation_slide`.
+ */
+function PresentationSlide({
+  state,
+  elements,
+}: {
+  state: OutputState;
+  elements: NonNullable<OutputState["slideElements"]> | null;
+}) {
+  const box = state.screenLayout?.slideBox;
+  const slide = (
+    <>
+      {state.slideBackgroundColor ? (
+        <div className="absolute inset-0" style={{ backgroundColor: state.slideBackgroundColor }} />
+      ) : null}
+      <CanvasSlideLayer
+        text={state.slideText}
+        elements={elements}
+        canvasSize={state.slideCanvasSize}
+        libraryStyle={state.libraryStyle}
+        className="absolute inset-0 z-10"
+      />
+    </>
+  );
+  if (!box || isFullBox(box)) return slide;
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 z-10"
+      style={{ transform: screenIntoBoxTransform(box), transformOrigin: "0 0" }}
+    >
+      {slide}
     </div>
   );
 }

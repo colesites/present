@@ -493,7 +493,9 @@ impl SceneCompositor {
 
         // 3. The slide's background colour, over the media. The window draws
         //    it as a full-screen div after the media, whatever the mask says.
-        if !scene.screen_composer_enabled {
+        //    A presentation's is its slide's, on the Slide layer with it and
+        //    in its box: `draw_presentation_slide`.
+        if !scene.screen_composer_enabled && !scene.presentation_slide {
             if let Some(background) = scene.slide_background_color.as_deref() {
                 shapes::fill_background(&mut frame.pixmap_mut(), background);
             }
@@ -733,50 +735,17 @@ impl SceneCompositor {
             .screen_layout
             .as_ref()
             .and_then(|layout| layout.words_box.map(|area| (layout, area)));
-        if let (true, false, Some((layout, area))) =
+        if scene.presentation_slide {
+            // The Slide layer's, never in the words' box.
+            if scene.show_text && !scene.screen_composer_enabled {
+                self.draw_presentation_slide(layers, scene, loader, report, keep, viewport);
+            }
+        } else if let (true, false, Some((layout, area))) =
             (scene.show_text, scene.screen_composer_enabled, words_box)
         {
             self.draw_words_in_box(layers, scene, loader, report, keep, layout, &area, viewport);
         } else if scene.show_text && !scene.screen_composer_enabled {
-            match slide_text::layer_for(scene) {
-                SlideTextLayer::Scripture => {
-                    slide_text::draw_scripture(
-                        &mut layers.as_mut(),
-                        scene.slide_text.as_deref().unwrap_or_default(),
-                        scene.slide_footer.as_deref(),
-                        scene.scripture_style.as_ref(),
-                    );
-                    report.elements_drawn += 1;
-                }
-                SlideTextLayer::PlainText => {
-                    slide_text::draw_plain(
-                        &mut layers.as_mut(),
-                        scene.slide_text.as_deref().unwrap_or_default(),
-                        scene.library_style.as_ref(),
-                        viewport,
-                    );
-                    report.elements_drawn += 1;
-                }
-                SlideTextLayer::Elements => {
-                    for (index, element) in scene
-                        .slide_elements()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .enumerate()
-                    {
-                        if !element.is_visible() || !keep.wants(index, &element) {
-                            continue;
-                        }
-                        if !element.element_type.is_composited() {
-                            report.elements_deferred += 1;
-                            continue;
-                        }
-                        if super::scene::draw_element_into(layers, &element, viewport, loader) {
-                            report.elements_drawn += 1;
-                        }
-                    }
-                }
-            }
+            self.draw_slide_as_made(layers, scene, loader, report, keep, viewport);
         }
 
         // The screen composer replaces the slide rather than sitting above it:
@@ -786,6 +755,101 @@ impl SceneCompositor {
             if let Some(layout) = scene.screen_composer_layout() {
                 self.draw_composer_regions(layers, scene, &layout, loader, report);
             }
+        }
+    }
+
+    /// The slide on the whole screen, as it was made: scripture or plain words
+    /// laid out by their style, a designed slide's elements where it put them.
+    fn draw_slide_as_made(
+        &self,
+        layers: &mut Pixmap,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+        report: &mut Rendered,
+        keep: Keep<'_>,
+        viewport: &geometry::Viewport,
+    ) {
+        match slide_text::layer_for(scene) {
+            SlideTextLayer::Scripture => {
+                slide_text::draw_scripture(
+                    &mut layers.as_mut(),
+                    scene.slide_text.as_deref().unwrap_or_default(),
+                    scene.slide_footer.as_deref(),
+                    scene.scripture_style.as_ref(),
+                );
+                report.elements_drawn += 1;
+            }
+            SlideTextLayer::PlainText => {
+                slide_text::draw_plain(
+                    &mut layers.as_mut(),
+                    scene.slide_text.as_deref().unwrap_or_default(),
+                    scene.library_style.as_ref(),
+                    viewport,
+                );
+                report.elements_drawn += 1;
+            }
+            SlideTextLayer::Elements => {
+                for (index, element) in scene
+                    .slide_elements()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .enumerate()
+                {
+                    if !element.is_visible() || !keep.wants(index, &element) {
+                        continue;
+                    }
+                    if !element.element_type.is_composited() {
+                        report.elements_deferred += 1;
+                        continue;
+                    }
+                    if super::scene::draw_element_into(layers, &element, viewport, loader) {
+                        report.elements_drawn += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    /// A presentation's slide — a PDF's page, a PowerPoint's slide — with its
+    /// background colour, which is the slide's and goes with it: on the whole
+    /// screen, or scaled evenly into the box this screen's layout gives it.
+    fn draw_presentation_slide(
+        &self,
+        layers: &mut Pixmap,
+        scene: &OutputScene,
+        loader: &dyn MediaLoader,
+        report: &mut Rendered,
+        keep: Keep<'_>,
+        viewport: &geometry::Viewport,
+    ) {
+        let area = scene
+            .screen_layout
+            .as_ref()
+            .map(|layout| layout.slide_box)
+            .filter(|area| !area.is_full());
+        // Drawn as on the whole screen, then shrunk into its box, as the
+        // props are: the slide keeps its shape and everything on it its place.
+        let mut boxed = match area {
+            Some(_) => match Pixmap::new(layers.width(), layers.height()) {
+                Some(pixmap) => Some(pixmap),
+                None => return,
+            },
+            None => None,
+        };
+        let target = match boxed.as_mut() {
+            Some(pixmap) => pixmap,
+            None => &mut *layers,
+        };
+        // The colour stays put through a transition, as a lower third's band
+        // does: drawn with what does not move.
+        if !matches!(keep, Keep::Only(_)) {
+            if let Some(background) = scene.slide_background_color.as_deref() {
+                shapes::fill_background(&mut target.as_mut(), background);
+            }
+        }
+        self.draw_slide_as_made(target, scene, loader, report, keep, viewport);
+        if let (Some(slide), Some(area)) = (boxed.as_ref(), area) {
+            draw_into_box(&mut layers.as_mut(), slide, &area);
         }
     }
 
@@ -2624,6 +2688,96 @@ mod tests {
             Some((0, 0, 0, 255)),
             "kept its shape"
         );
+    }
+
+    /// A PDF's page: the whole slide one colour, on the Slide layer.
+    fn presentation_page() -> OutputScene {
+        OutputScene {
+            presentation_slide: true,
+            slide_canvas_size: Some("1920x1080".to_owned()),
+            slide_text: Some("Page 1".to_owned()),
+            slide_elements: Some(json!([{
+                "id": "page", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 1920.0, "height": 1080.0,
+                "style": { "backgroundColor": "#00ff00" }
+            }])),
+            ..scene()
+        }
+    }
+
+    #[test]
+    fn a_presentation_slide_is_not_squeezed_into_the_words_band() {
+        // A lower third is for words. A PDF's page has none, and shrunk into
+        // the band it was a sliver of a picture, or nothing at all.
+        let mut compositor = SceneCompositor::new(160, 90);
+        let scene = OutputScene {
+            screen_layout: Some(lower_third()),
+            ..presentation_page()
+        };
+        let (frame, report) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(report.elements_drawn, 1);
+        assert_eq!(
+            frame.pixel_at(80, 10),
+            Some((0, 255, 0, 255)),
+            "full screen"
+        );
+        assert_eq!(
+            frame.pixel_at(80, 80),
+            Some((0, 255, 0, 255)),
+            "with no band"
+        );
+    }
+
+    #[test]
+    fn a_presentation_slide_goes_into_its_own_box_whole() {
+        let mut compositor = SceneCompositor::new(160, 90);
+        let scene = OutputScene {
+            slide_background_color: Some("#0000ff".to_owned()),
+            screen_layout: Some(ScreenLayout {
+                // The right half of the screen, a slide's shape in its middle.
+                slide_box: LayerBox {
+                    x_percent: 75.0,
+                    y_percent: 50.0,
+                    width_percent: 50.0,
+                    height_percent: 100.0,
+                },
+                ..lower_third()
+            }),
+            ..presentation_page()
+        };
+        let (frame, _) = compositor.render(&scene, None, &NoMedia).expect("frame");
+        assert_eq!(frame.pixel_at(120, 45), Some((0, 255, 0, 255)), "the slide");
+        assert_eq!(
+            frame.pixel_at(40, 45),
+            Some((0, 0, 0, 255)),
+            "and its colour, which goes with it, not on the left"
+        );
+        assert_eq!(
+            frame.pixel_at(120, 5),
+            Some((0, 0, 0, 255)),
+            "kept its shape"
+        );
+    }
+
+    #[test]
+    fn a_presentation_off_its_layer_takes_its_colour_with_it() {
+        let mut compositor = SceneCompositor::new(160, 90);
+        let hidden = OutputScene {
+            show_text: false,
+            slide_background_color: Some("#0000ff".to_owned()),
+            ..presentation_page()
+        };
+        let (frame, report) = compositor.render(&hidden, None, &NoMedia).expect("frame");
+        assert_eq!(report.elements_drawn, 0);
+        assert_eq!(frame.pixel_at(80, 45), Some((0, 0, 0, 255)), "nothing");
+
+        // The words' colour stays when the words go, as it always has.
+        let words = OutputScene {
+            presentation_slide: false,
+            ..hidden
+        };
+        let (frame, _) = compositor.render(&words, None, &NoMedia).expect("frame");
+        assert_eq!(frame.pixel_at(80, 45), Some((0, 0, 255, 255)));
     }
 
     #[test]
