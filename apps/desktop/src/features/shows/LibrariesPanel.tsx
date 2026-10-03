@@ -564,6 +564,17 @@ export const LibrariesPanel = memo(
       }
     };
 
+    // File ▸ Import in the application menu: the same as the Import button.
+    useMenuCommand("library.import-export", () => {
+      void handleImportLibraries();
+    });
+    useMenuCommand("library.import-openlyrics", () => {
+      void handleImportOpenLyrics();
+    });
+    useMenuCommand("library.import-videopsalm", () => {
+      void handleImportVideoPsalm();
+    });
+
     return (
       <>
         <ResizablePanelGroup direction="horizontal" className="flex h-full min-h-0 overflow-hidden bg-background">

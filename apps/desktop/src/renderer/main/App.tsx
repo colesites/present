@@ -904,6 +904,23 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     setViewMode("show");
     runMenuCommand("services.create");
   });
+  // File ▸ Import's songs and libraries: the Libraries tab's own Import
+  // button, so it comes on screen first.
+  useMenuCommand("file.import-library-export", () => {
+    setBottomTab("shows");
+    setViewMode("show");
+    runMenuCommand("library.import-export");
+  });
+  useMenuCommand("file.import-openlyrics", () => {
+    setBottomTab("shows");
+    setViewMode("show");
+    runMenuCommand("library.import-openlyrics");
+  });
+  useMenuCommand("file.import-videopsalm", () => {
+    setBottomTab("shows");
+    setViewMode("show");
+    runMenuCommand("library.import-videopsalm");
+  });
   useMenuCommand("file.add-media-folder", () => {
     setBottomTab("media");
     setViewMode("show");

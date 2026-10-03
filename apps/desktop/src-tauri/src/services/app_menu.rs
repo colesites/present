@@ -183,6 +183,17 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
         )?)
         .item(&item(IMPORT_IMAGES_ITEM, "PowerPoint or PDF as Images…")?)
         .separator()
+        // Into the libraries, as the Libraries tab's own Import button does.
+        .item(&item(
+            "file.import-library-export",
+            "Present Library Export…",
+        )?)
+        .item(&item("file.import-openlyrics", "OpenLyrics Songs (.xml)…")?)
+        .item(&item(
+            "file.import-videopsalm",
+            "VideoPsalm Songbooks (.json)…",
+        )?)
+        .separator()
         .item(&item("file.add-media-folder", "Media Folder…")?)
         .build()?;
     let mut file = SubmenuBuilder::new(app, "File")
