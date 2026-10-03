@@ -245,6 +245,18 @@ type PresentationImportUiState = {
 
 const IMPORT_ERROR_DURATION_MS = 6000;
 
+/**
+ * A presentation is an item of a service, so it needs one to go into. One
+ * toast, however many times it is asked: by its id, a second replaces the
+ * first rather than stacking under it.
+ */
+function toastImportNeedsService() {
+  toast.error("Open a service first, then import files into it.", {
+    id: "import-needs-service",
+    duration: IMPORT_ERROR_DURATION_MS,
+  });
+}
+
 function normalizeSlideElements(
   elements: SlideElement[] | null | undefined,
 ): SlideElement[] | null {
@@ -2108,11 +2120,14 @@ export function PresentContainer({
         return;
       }
 
-      if (!selectedServiceId || !isInsideService) {
-        toast.error("Open a service first, then import files into it.", {
-          duration: IMPORT_ERROR_DURATION_MS,
-        });
+      // Into the service that is open, or the one chosen in the list, which
+      // opens: the deck is shown in it once it is in.
+      if (!selectedServiceId) {
+        toastImportNeedsService();
         return;
+      }
+      if (!isInsideService) {
+        handleEnterService(selectedServiceId);
       }
 
       let importedCount = 0;
@@ -2206,6 +2221,7 @@ export function PresentContainer({
     },
     [
       addPresentationToService,
+      handleEnterService,
       isInsideService,
       selectedServiceId,
       serviceItems.length,
@@ -2217,11 +2233,12 @@ export function PresentContainer({
     ],
   );
 
+  // One import at a time: asked again while its dialog is open or its files
+  // are being read, it does nothing rather than open a second.
+  const importInProgressRef = useRef(false);
   const handleImportRequest = useCallback(async (mode: PresentationImportMode = "presentation") => {
-    if (!selectedServiceId || !isInsideService) {
-      toast.error("Open a service first, then import files into it.", {
-        duration: IMPORT_ERROR_DURATION_MS,
-      });
+    if (!selectedServiceId) {
+      toastImportNeedsService();
       return;
     }
 
@@ -2232,6 +2249,10 @@ export function PresentContainer({
       return;
     }
 
+    if (importInProgressRef.current) {
+      return;
+    }
+    importInProgressRef.current = true;
     try {
       const selectedFiles = await window.electronAPI.selectPresentationFiles();
       if (!selectedFiles?.length) {
@@ -2254,18 +2275,29 @@ export function PresentContainer({
           duration: IMPORT_ERROR_DURATION_MS,
         },
       );
+    } finally {
+      importInProgressRef.current = false;
     }
-  }, [handleImportFiles, isInsideService, selectedServiceId]);
+  }, [handleImportFiles, selectedServiceId]);
 
+  // File ▸ Import, with the handler as it is now. Listened for once: the
+  // handler is new on nearly every render of this window, which redraws as
+  // the timers tick, and listening afresh on each could leave listeners from
+  // the renders just gone still hearing the menu, each carrying it out as
+  // things stood when it was made — the same toast three or four times.
+  const importRequestRef = useRef(handleImportRequest);
+  useEffect(() => {
+    importRequestRef.current = handleImportRequest;
+  });
   useEffect(() => {
     if (!window.electronAPI?.onOpenImportFromMenu) {
       return;
     }
 
     return window.electronAPI.onOpenImportFromMenu((mode) => {
-      void handleImportRequest(mode ?? "presentation");
+      void importRequestRef.current(mode ?? "presentation");
     });
-  }, [handleImportRequest]);
+  }, []);
 
   return (
     <>

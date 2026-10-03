@@ -42,7 +42,12 @@ const subscribe = (event: string, handler: (payload: never) => void): (() => voi
   let detach: UnlistenFn | null = null;
   let cancelled = false;
 
-  void listen(event, (message) => handler(message.payload as never))
+  // Nothing reaches a handler once it is let go. Tauri keeps delivering
+  // until the unlisten has been round to Rust and back, and a subscription
+  // let go before its listen had even resolved is only unlistened then.
+  void listen(event, (message) => {
+    if (!cancelled) handler(message.payload as never);
+  })
     .then((unlisten) => {
       if (cancelled) {
         safelyUnlisten(unlisten);
