@@ -15,6 +15,16 @@
 //! So this goes through `FileState`, the same as the protocol handler, and a
 //! URL outside the granted folders yields `None` — the frame renders without
 //! it rather than the read succeeding.
+//!
+//! **A `data:` URL is the one exception, because it is not a path.** A PDF's
+//! pages and a PowerPoint's pictures are imported as them
+//! (`import-documents.ts`, `pptx::convert`), so those slides are images with no
+//! file behind them. Until this read them, a PDF was in the slide grid and
+//! nowhere else: black on the screens, the preview and the stream. The bytes
+//! are in the URL itself, so nothing is opened and there is no scope to check;
+//! only the size is.
+
+use base64::Engine;
 
 use crate::services::media_protocol;
 use crate::state::FileState;
@@ -47,8 +57,42 @@ impl<'a> ScopedMediaLoader<'a> {
     }
 }
 
+/// The bytes a base64 `data:` URL carries, or `None` for any other URL, or one
+/// whose bytes would be more than `max_bytes`.
+fn data_url_bytes(url: &str, max_bytes: u64) -> Option<Vec<u8>> {
+    let scheme = url.get(..5)?;
+    if !scheme.eq_ignore_ascii_case("data:") {
+        return None;
+    }
+    let (header, payload) = url[5..].split_once(',')?;
+    // `data:image/png;base64,…`. One spelled out in percent-escapes is an SVG
+    // or text, which nothing here decodes anyway.
+    let base64 = header
+        .rsplit(';')
+        .next()
+        .is_some_and(|last| last.trim().eq_ignore_ascii_case("base64"));
+    if !base64 {
+        return None;
+    }
+    // Four characters for every three bytes: the size is known before decoding.
+    if payload.len() as u64 / 4 * 3 > max_bytes {
+        tracing::warn!(
+            size = payload.len(),
+            "the compositor refused an oversized embedded image"
+        );
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(payload.trim())
+        .ok()
+}
+
 impl MediaLoader for ScopedMediaLoader<'_> {
     fn load(&self, url: &str) -> Option<Vec<u8>> {
+        if let Some(bytes) = data_url_bytes(url, self.max_bytes) {
+            return Some(bytes);
+        }
+
         // `local-media://…` and the Windows `http://local-media.localhost/…`
         // form both go through the same parser the protocol handler uses, so
         // the two cannot drift into disagreeing about what a URL means.
@@ -175,6 +219,86 @@ mod tests {
         let loader = ScopedMediaLoader::with_max_bytes(&state, 4);
 
         assert!(loader.load(&media_protocol::url_for(&inside)).is_none());
+    }
+
+    fn data_url(bytes: &[u8]) -> String {
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        )
+    }
+
+    #[test]
+    fn an_imported_pdf_page_loads_from_its_data_url() {
+        // A PDF's pages are imported as `data:` URLs, with nothing on disk.
+        // Read as a path they loaded nothing, and the deck was black on every
+        // screen while it showed in the slide grid.
+        let (state, _media, _inside) = granted("data-url");
+        let loader = ScopedMediaLoader::new(&state);
+
+        let page = png_bytes();
+        assert_eq!(loader.load(&data_url(&page)), Some(page));
+    }
+
+    #[test]
+    fn a_pdf_page_reaches_the_frame() {
+        // The whole way a PDF's page goes: a slide whose one element is a
+        // picture with its bytes in its URL, as `import-documents.ts` makes
+        // it, drawn through the loader the screens, the preview and NDI use.
+        let state = FileState::load(&temp_dir("data-url-frame"));
+        let loader = ScopedMediaLoader::new(&state);
+        let mut page = image::RgbaImage::new(4, 4);
+        for pixel in page.pixels_mut() {
+            pixel.0 = [0, 255, 0, 255];
+        }
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(page)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encode");
+        let scene = crate::services::output::OutputScene {
+            show_text: true,
+            presentation_slide: true,
+            slide_text: Some("Page 1".to_owned()),
+            slide_canvas_size: Some("1920x1080".to_owned()),
+            slide_elements: Some(serde_json::json!([{
+                "id": "pdf_page_1_image", "type": "image",
+                "x": 0.0, "y": 0.0, "width": 1920.0, "height": 1080.0,
+                "content": data_url(&png.into_inner()),
+                "style": { "objectFit": "contain" }
+            }])),
+            ..crate::services::output::OutputScene::default()
+        };
+
+        let (frame, report) = super::super::scene::render(&scene, 64, 36, &loader).expect("frame");
+        assert_eq!(report.elements_drawn, 1, "the page was drawn");
+        assert_eq!(frame.pixel_at(32, 18), Some((0, 255, 0, 255)));
+    }
+
+    #[test]
+    fn a_data_url_needs_no_granted_folder() {
+        // The bytes are in the URL: there is no file to scope.
+        let state = FileState::load(&temp_dir("data-url-ungranted"));
+        let loader = ScopedMediaLoader::new(&state);
+
+        assert!(loader.load(&data_url(&png_bytes())).is_some());
+    }
+
+    #[test]
+    fn an_oversized_data_url_is_refused_before_it_is_decoded() {
+        let (state, _media, _inside) = granted("data-url-oversize");
+        let loader = ScopedMediaLoader::with_max_bytes(&state, 4);
+
+        assert!(loader.load(&data_url(&png_bytes())).is_none());
+    }
+
+    #[test]
+    fn a_data_url_that_is_not_base64_loads_nothing() {
+        let (state, _media, _inside) = granted("data-url-text");
+        let loader = ScopedMediaLoader::new(&state);
+
+        assert!(loader.load("data:image/svg+xml,%3Csvg%2F%3E").is_none());
+        assert!(loader.load("data:image/png;base64,not base64!").is_none());
+        assert!(loader.load("data:").is_none());
     }
 
     #[test]
