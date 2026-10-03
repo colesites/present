@@ -29,8 +29,13 @@ export const LOOK_LAYER_ORDER = [
   { key: "props", label: "Props" },
   { key: "timer", label: "Timer" },
   { key: "announcements", label: "Announcements" },
-  { key: "presentation", label: "Presentation" },
-  { key: "slide", label: "Slide" },
+  // A presentation's slides — a PDF's pages, a PowerPoint's — on a layer of
+  // their own, as ProPresenter keeps them, apart from the words and the media.
+  { key: "presentation", label: "Slide" },
+  // The words: a song, a verse, a slide made here. The key is older than the
+  // Slide layer's name for presentations; the two were one Text layer until
+  // 0.4.10.
+  { key: "slide", label: "Text" },
   { key: "media", label: "Media" },
   { key: "videoInput", label: "Video Input" },
 ];
@@ -207,7 +212,7 @@ const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 export const normalizeLayout = (candidate) => {
   const layout = {};
   if (!isPart(candidate)) return layout;
-  const { words, media, props, timer, messages } = candidate;
+  const { words, slide, media, props, timer, messages } = candidate;
 
   const wordsArea = isPart(words) ? normalizeBox(words.area) : null;
   if (wordsArea) {
@@ -222,6 +227,8 @@ export const normalizeLayout = (candidate) => {
       ...(HEX_COLOR.test(backdrop) ? { backdrop } : {}),
     };
   }
+  const slideArea = normalizeBox(slide);
+  if (slideArea) layout.slide = slideArea;
   const mediaArea = isPart(media) ? normalizeBox(media.area) : null;
   if (mediaArea) layout.media = { area: mediaArea, fill: media.fill === true };
   const propsArea = normalizeBox(props);

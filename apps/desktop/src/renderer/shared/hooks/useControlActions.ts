@@ -20,6 +20,7 @@ export type ControlAction =
   | { action: "nextItem" }
   | { action: "previousItem" }
   | { action: "text"; to: ControlSwitch }
+  | { action: "slide"; to: ControlSwitch }
   | { action: "media"; to: ControlSwitch }
   | { action: "background"; to: ControlSwitch }
   | { action: "freeze"; to: ControlSwitch }
@@ -31,6 +32,7 @@ export type ControlHandlers = {
   onNextItem: () => void;
   onPreviousItem: () => void;
   onText: (to: ControlSwitch) => void;
+  onSlide: (to: ControlSwitch) => void;
   onMedia: (to: ControlSwitch) => void;
   onBackground: (to: ControlSwitch) => void;
   onFreeze: (to: ControlSwitch) => void;
@@ -63,6 +65,8 @@ export function useControlActions(handlers: ControlHandlers): void {
             return current.onPreviousItem();
           case "text":
             return current.onText(switchOf(payload.to));
+          case "slide":
+            return current.onSlide(switchOf(payload.to));
           case "media":
             return current.onMedia(switchOf(payload.to));
           case "background":

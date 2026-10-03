@@ -442,6 +442,7 @@ test("a layout is read with its boxes kept on the screen and its sizes within re
       textOnly: true,
       backdrop: " #000000b3 ",
     },
+    slide: { xPercent: 90, yPercent: 50, widthPercent: 40, heightPercent: 40 },
     media: { area: { xPercent: 25, yPercent: 50, widthPercent: 50, heightPercent: 100 }, fill: "yes" },
     props: { xPercent: 50, yPercent: 50, widthPercent: 40 },
     timer: { xPercent: 120, yPercent: 10, scalePercent: 1 },
@@ -457,6 +458,8 @@ test("a layout is read with its boxes kept on the screen and its sizes within re
       textOnly: true,
       backdrop: "#000000b3",
     },
+    // Pulled back onto the screen, as the words' box is.
+    slide: { xPercent: 80, yPercent: 50, widthPercent: 40, heightPercent: 40 },
     // A fill that is not `true` is not filled.
     media: { area: { xPercent: 25, yPercent: 50, widthPercent: 50, heightPercent: 100 }, fill: false },
     // A box missing a side is no box: the props stay where the Screen has them.

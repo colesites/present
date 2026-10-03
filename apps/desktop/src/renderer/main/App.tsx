@@ -575,8 +575,11 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   const { looksConfig, liveLook, setLayerEnabledForLook, setLayersEnabledForLook } =
     useLooksConfig();
   const programLooks = liveLook.targets.program;
-  const showTextInOutput =
-    programLooks.layers.slide || programLooks.layers.presentation;
+  // The words, and a presentation's slides (PDF, PowerPoint): one switch
+  // each, as ProPresenter has a Slide layer apart from the media. The look's
+  // keys are older than the names (`looks-config.mjs`).
+  const showTextInOutput = programLooks.layers.slide;
+  const showSlideInOutput = programLooks.layers.presentation;
   const showMediaInOutput =
     programLooks.layers.media || programLooks.layers.videoInput;
   const hideBackgroundInOutput = programLooks.layers.mask;
@@ -592,14 +595,16 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // leave one of a pair on, which read as a toggle that would not respond.
   const setShowTextInOutput = useCallback(
     (show: boolean) => {
-      setLayersEnabledForLook(
-        looksConfig.liveLookId,
-        "program",
-        ["slide", "presentation"],
-        show
-      );
+      setLayerEnabledForLook(looksConfig.liveLookId, "program", "slide", show);
     },
-    [looksConfig.liveLookId, setLayersEnabledForLook]
+    [looksConfig.liveLookId, setLayerEnabledForLook]
+  );
+
+  const setShowSlideInOutput = useCallback(
+    (show: boolean) => {
+      setLayerEnabledForLook(looksConfig.liveLookId, "program", "presentation", show);
+    },
+    [looksConfig.liveLookId, setLayerEnabledForLook]
   );
 
   const setShowMediaInOutput = useCallback(
@@ -961,6 +966,8 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
       scripturePanelRef={scripturePanelRef}
       showTextInOutput={showTextInOutput}
       setShowTextInOutput={setShowTextInOutput}
+      showSlideInOutput={showSlideInOutput}
+      setShowSlideInOutput={setShowSlideInOutput}
       showMediaInOutput={showMediaInOutput}
       setShowMediaInOutput={setShowMediaInOutput}
       hideBackgroundInOutput={hideBackgroundInOutput}

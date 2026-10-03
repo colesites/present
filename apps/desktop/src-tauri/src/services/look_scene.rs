@@ -16,7 +16,9 @@
 //!
 //! | layer                      | scene field       | `App.tsx`                  |
 //! |----------------------------|-------------------|----------------------------|
-//! | slide or presentation      | `show_text`       | `showTextInOutput`         |
+//! | slide (Text), for words    | `show_text`       | `showTextInOutput`         |
+//! | presentation (Slide), for  | `show_text`       | `showSlideInOutput`        |
+//! | a presentation's slides    |                   |                            |
 //! | media or video input       | `show_media`      | `showMediaInOutput`        |
 //! | mask                       | `hide_background` | `hideBackgroundInOutput`   |
 //! | timer                      | `timer_visible`   | `isTimerLayerEnabled`      |
@@ -38,10 +40,17 @@
 //! the words on the projector clears them everywhere, while a column with the
 //! words switched off never shows them whatever the operator does.
 //!
+//! **Text and Slide share the one slide on screen.** A presentation's slide —
+//! a PDF's page, a PowerPoint's — is on the Slide layer and anything else on
+//! the Text layer, as `presentation_slide` says; `show_text` is whether that
+//! slide shows, and a column passes it only where its switch for that layer
+//! is on.
+//!
 //! **Then the column's layout** (`LookLayout`): where on its screen each layer
-//! goes. The words, media and props are boxes the screen's renderer draws
-//! into (`screen_layout`); the timer and the banner are moved and sized
-//! through their own fields, so they are drawn at the size they are shown.
+//! goes. The words, a presentation's slide, the media and props are boxes the
+//! screen's renderer draws into (`screen_layout`); the timer and the banner
+//! are moved and sized through their own fields, so they are drawn at the
+//! size they are shown.
 
 use crate::services::looks::{
     LookBox, LookLayout, LookTargetState, LookTextPosition, MessageEdge, TextAlign, VerticalAlign,
@@ -68,9 +77,16 @@ pub fn scene_for_look(on_screen: &OutputScene, column: &LookTargetState) -> Outp
     let layers = &column.layers;
     let messages = layers.messages || layers.announcements;
 
+    // A presentation's slide is the Slide layer's, any other the Text layer's.
+    let slide_layer = if on_screen.presentation_slide {
+        layers.presentation
+    } else {
+        layers.slide
+    };
+
     let scene = OutputScene {
         // The column allows it, the operator is showing it.
-        show_text: (layers.slide || layers.presentation) && on_screen.show_text,
+        show_text: slide_layer && on_screen.show_text,
         show_media: (layers.media || layers.video_input) && on_screen.show_media,
         // Either hiding the background hides it.
         hide_background: layers.mask || on_screen.hide_background,
@@ -115,6 +131,7 @@ fn laid_out(mut scene: OutputScene, layout: &LookLayout) -> OutputScene {
             .words
             .as_ref()
             .and_then(|words| words.backdrop.clone()),
+        slide_box: layout.slide.map_or(LayerBox::FULL, layer_box),
         media_box: layout
             .media
             .map_or(LayerBox::FULL, |media| layer_box(media.area)),
@@ -266,6 +283,11 @@ mod tests {
         assert_eq!(layout.media_box.x_percent, 25.0);
         assert!(layout.media_fill);
         assert_eq!(layout.props_box, LayerBox::FULL);
+        assert_eq!(
+            layout.slide_box,
+            LayerBox::FULL,
+            "a presentation is not squeezed into the words' band"
+        );
 
         let position = scene.text_position.expect("the words' box");
         assert_eq!((position.y_percent, position.height_percent), (84.0, 24.0));
@@ -419,15 +441,21 @@ mod tests {
         assert!(!none.show_text && !none.show_media && !none.hide_background);
         assert!(!none.timer_visible && none.message_overlay.is_none());
 
-        for layers in [
-            LookLayers { slide: true, ..off },
-            LookLayers {
-                presentation: true,
-                ..off
-            },
-        ] {
-            assert!(scene_for_look(&scene, &target(layers)).show_text);
-        }
+        // The words are the Text layer's, a presentation's slide the Slide
+        // layer's, and neither switch shows the other.
+        let words = LookLayers { slide: true, ..off };
+        let decks = LookLayers {
+            presentation: true,
+            ..off
+        };
+        assert!(scene_for_look(&scene, &target(words)).show_text);
+        assert!(!scene_for_look(&scene, &target(decks)).show_text);
+        let deck = OutputScene {
+            presentation_slide: true,
+            ..scene.clone()
+        };
+        assert!(scene_for_look(&deck, &target(decks)).show_text);
+        assert!(!scene_for_look(&deck, &target(words)).show_text);
         for layers in [
             LookLayers { media: true, ..off },
             LookLayers {

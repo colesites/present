@@ -18,17 +18,11 @@ import {
 /** A column of the layer grid: an audience screen, or the NDI output. */
 type LookColumn = { key: LookTargetKey; label: string; ndi: boolean };
 
-type LookLayerRow = {
-  key: LookLayerKey | "text";
-  label: string;
+/** What goes on the two layers a slide can be on, which share a name otherwise easy to mix up. */
+const LAYER_HINTS: Partial<Record<LookLayerKey, string>> = {
+  presentation: "PDF, PowerPoint",
+  slide: "Songs, scripture",
 };
-
-const LOOK_LAYER_ROWS: LookLayerRow[] = [
-  ...LOOK_LAYER_ORDER.filter(
-    (layer) => layer.key !== "slide" && layer.key !== "presentation"
-  ),
-  { key: "text", label: "Text" },
-];
 
 export function LooksWindow() {
   const {
@@ -40,7 +34,6 @@ export function LooksWindow() {
     removeLook,
     setLookName,
     setLayerEnabledForLook,
-    setLayersEnabledForLook,
     setLayoutForLook,
   } = useLooksConfig();
   const { screens } = useScreens();
@@ -207,19 +200,23 @@ export function LooksWindow() {
                 ))}
               </div>
 
-              {LOOK_LAYER_ROWS.map((layer) => (
+              {LOOK_LAYER_ORDER.map((layer) => (
                 <div
                   key={layer.key}
                   className="grid min-w-max items-center border-b border-border/60 px-4 py-2.5 text-[13px] text-foreground last:border-b-0"
                   style={gridColumns}
                 >
-                  <span>{layer.label}</span>
+                  <span>
+                    {layer.label}
+                    {LAYER_HINTS[layer.key] ? (
+                      <span className="ml-1.5 text-[11px] text-muted-foreground">
+                        {LAYER_HINTS[layer.key]}
+                      </span>
+                    ) : null}
+                  </span>
                   {columns.map((column) => {
                     const { layers } = lookColumn(selectedLook, column.key);
-                    const checked =
-                      layer.key === "text"
-                        ? Boolean(layers.slide || layers.presentation)
-                        : Boolean(layers[layer.key]);
+                    const checked = Boolean(layers[layer.key]);
                     return (
                       <label
                         key={`${layer.key}-${column.key}`}
@@ -228,24 +225,14 @@ export function LooksWindow() {
                         <input
                           type="checkbox"
                           checked={checked}
-                          onChange={(event) => {
-                            const enabled = event.target.checked;
-                            if (layer.key === "text") {
-                              setLayersEnabledForLook(
-                                selectedLook.id,
-                                column.key,
-                                ["slide", "presentation"],
-                                enabled
-                              );
-                              return;
-                            }
+                          onChange={(event) =>
                             setLayerEnabledForLook(
                               selectedLook.id,
                               column.key,
                               layer.key,
-                              enabled
-                            );
-                          }}
+                              event.target.checked
+                            )
+                          }
                           className="peer sr-only"
                           aria-label={`${layer.label} on ${column.label}`}
                         />

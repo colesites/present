@@ -39,10 +39,18 @@ type ActiveSlidePayload = {
   slideElements: SlideElement[] | null | undefined;
   slideCanvasSize: CanvasSizePreset | null | undefined;
   slideBackgroundColor: string | null | undefined;
+  /** A presentation's slide (PDF, PowerPoint), on the Slide layer. */
+  presentationSlide: boolean;
+  /**
+   * Whether it shows, as its layer says. With the slide, so a deck on a layer
+   * that is off is not on screen until the switch that hides it arrives.
+   */
+  showText: boolean;
 };
 
 type Params = {
   activeMediaItem: MediaItem;
+  /** Whether the slide shows: its layer's switch, Slide or Text. */
   showText: boolean;
   showMedia: boolean;
   hideBackground: boolean;
@@ -119,6 +127,7 @@ export function useOutputBroadcast({
   slideElements,
   slideCanvasSize,
   slideBackgroundColor,
+  presentationSlide = false,
 }: Params & {
   activeSlideId?: string | null;
   slideText?: string | null;
@@ -126,6 +135,7 @@ export function useOutputBroadcast({
   slideElements?: SlideElement[] | null;
   slideCanvasSize?: CanvasSizePreset | null;
   slideBackgroundColor?: string | null;
+  presentationSlide?: boolean;
 }) {
   /* Track previous video time to only sync when it actually changes */
   const prevVideoTimeRef = useRef<number | undefined>(undefined);
@@ -303,6 +313,8 @@ export function useOutputBroadcast({
       slideElements,
       slideCanvasSize,
       slideBackgroundColor,
+      presentationSlide,
+      showText,
     };
     const previousSlidePayload = lastSlidePayloadRef.current;
     const shouldKeepPreviousSlide =
@@ -310,8 +322,9 @@ export function useOutputBroadcast({
       previousSlidePayload != null &&
       previousSlidePayload.slideId === activeSlideId &&
       (showText || Boolean(activeSlideId));
+    // Kept, but showing as its layer says now.
     const activeSlidePayload = shouldKeepPreviousSlide
-      ? previousSlidePayload
+      ? { ...previousSlidePayload, showText }
       : incomingSlidePayload;
     if (activeSlidePayload) {
       lastSlidePayloadRef.current = activeSlidePayload;
@@ -430,6 +443,7 @@ export function useOutputBroadcast({
     slideElements,
     slideCanvasSize,
     slideBackgroundColor,
+    presentationSlide,
     syncTrigger,
     worshipStageSyncTrigger,
   ]);

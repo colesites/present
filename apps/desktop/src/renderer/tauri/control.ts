@@ -18,6 +18,7 @@ export type ControlAction =
   | { action: "nextItem" }
   | { action: "previousItem" }
   | { action: "text"; to: ControlSwitchValue }
+  | { action: "slide"; to: ControlSwitchValue }
   | { action: "media"; to: ControlSwitchValue }
   | { action: "background"; to: ControlSwitchValue }
   | { action: "freeze"; to: ControlSwitchValue }
@@ -57,6 +58,7 @@ export const CONTROL_ACTION_CHOICES = [
   { value: "nextItem", label: "Next item" },
   { value: "previousItem", label: "Previous item" },
   { value: "text", label: "Show or hide the words" },
+  { value: "slide", label: "Show or hide the slide (PDF, PowerPoint)" },
   { value: "media", label: "Show or hide the media" },
   { value: "background", label: "Show or hide the background" },
   { value: "freeze", label: "Freeze or unfreeze" },
@@ -69,6 +71,7 @@ export type ControlActionChoice = (typeof CONTROL_ACTION_CHOICES)[number]["value
 export function actionFor(choice: ControlActionChoice): ControlAction {
   switch (choice) {
     case "text":
+    case "slide":
     case "media":
     case "background":
     case "freeze":

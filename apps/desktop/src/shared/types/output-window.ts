@@ -64,6 +64,8 @@ export type ScreenLayout = {
   wordsScale: number;
   /** Behind the words' box. */
   wordsBackdrop: string | null;
+  /** A presentation's slide, as on the whole screen, scaled evenly into this box. */
+  slideBox: LayerBox;
   mediaBox: LayerBox;
   /** The media fills its box, cropped, rather than fitting inside it. */
   mediaFill: boolean;
@@ -76,6 +78,10 @@ export type OutputState = {
   mediaUrl: string | null;
   mediaType: "image" | "video" | null;
   mediaId: string | null;
+  /**
+   * Whether the slide on screen shows: as the Slide layer says for a
+   * presentation's slide, the Text layer for any other (`presentationSlide`).
+   */
   showText: boolean;
   showMedia: boolean;
   hideBackground: boolean;
@@ -95,6 +101,8 @@ export type OutputState = {
   slideElements?: SlideElement[] | null;
   slideCanvasSize?: CanvasSizePreset | null;
   slideBackgroundColor?: string | null;
+  /** The slide is a presentation's (PDF, PowerPoint): the Slide layer's, not the Text layer's. */
+  presentationSlide?: boolean;
   timerLabel?: string | null;
   timerText?: string | null;
   timerRunning?: boolean;

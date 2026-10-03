@@ -98,7 +98,12 @@ pub enum LookLayer {
     /// on and off; see [`normalize_layers`].
     Timer,
     Announcements,
+    /// The Slide layer: a presentation's slides, a PDF's pages or a
+    /// PowerPoint's, as ProPresenter keeps them apart from the media under
+    /// them. Until 0.4.10 it was switched with `Slide`, as one Text layer.
     Presentation,
+    /// The Text layer: the words — a song, a verse, a slide made here. The
+    /// key is older than the Slide layer's name for presentations.
     Slide,
     Media,
     VideoInput,
@@ -301,6 +306,10 @@ pub struct LookTargetState {
 pub struct LookLayout {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub words: Option<WordsPlacement>,
+    /// A presentation's slide, scaled evenly into this box: the words' box
+    /// is for words, and a PDF's page has none to lay out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slide: Option<LookBox>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaPlacement>,
     /// The props, all of them, scaled evenly into this box.
@@ -914,6 +923,7 @@ pub fn normalize_layout(candidate: Option<&serde_json::Value>) -> LookLayout {
                     .map(str::to_owned),
             })
         }),
+        slide: area(part("slide")),
         media: part("media").and_then(|media| {
             Some(MediaPlacement {
                 area: area(media.get("area"))?,
@@ -1710,6 +1720,7 @@ mod tests {
                 "textOnly": true,
                 "backdrop": " #000000b3 ",
             },
+            "slide": { "xPercent": 90, "yPercent": 50, "widthPercent": 40, "heightPercent": 40 },
             "media": { "area": { "xPercent": 25, "yPercent": 50, "widthPercent": 50, "heightPercent": 100 }, "fill": "yes" },
             "props": { "xPercent": 50, "yPercent": 50, "widthPercent": 40 },
             "timer": { "xPercent": 120, "yPercent": 10, "scalePercent": 1 },
@@ -1731,6 +1742,13 @@ mod tests {
                     scale_percent: 400.0,
                     text_only: true,
                     backdrop: Some("#000000b3".to_owned()),
+                }),
+                // Pulled back onto the screen, as the words' box is.
+                slide: Some(LookBox {
+                    x_percent: 80.0,
+                    y_percent: 50.0,
+                    width_percent: 40.0,
+                    height_percent: 40.0,
                 }),
                 // A fill that is not `true` is not filled.
                 media: Some(MediaPlacement {

@@ -131,6 +131,7 @@ export function useMenuCommandListener(enabled = true): void {
 /** What the menu's ticks report, by the key `app_menu.rs` files them under. */
 export type MenuCheck =
   | "text"
+  | "slide"
   | "media"
   | "background"
   | "timer"

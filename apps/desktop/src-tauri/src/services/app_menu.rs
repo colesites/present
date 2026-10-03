@@ -76,6 +76,7 @@ fn control_for(id: &str) -> Option<Action> {
         "presentation.next-item" => Action::NextItem,
         "presentation.previous-item" => Action::PreviousItem,
         "presentation.text" => Action::Text { to: Switch::Toggle },
+        "presentation.slide" => Action::Slide { to: Switch::Toggle },
         "presentation.media" => Action::Media { to: Switch::Toggle },
         "presentation.background" => Action::Background { to: Switch::Toggle },
         "presentation.freeze" => Action::Freeze { to: Switch::Toggle },
@@ -259,6 +260,7 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
     let presentation = presentation
         .separator()
         .item(&check("text", "presentation.text", "Text on Output")?)
+        .item(&check("slide", "presentation.slide", "Slide on Output")?)
         .item(&check("media", "presentation.media", "Media on Output")?)
         .item(&check(
             "background",
@@ -425,6 +427,7 @@ mod tests {
         }
         for id in [
             "presentation.text",
+            "presentation.slide",
             "presentation.media",
             "presentation.background",
             "presentation.freeze",
@@ -441,6 +444,7 @@ mod tests {
         // whenever the menu was out of date.
         for id in [
             "presentation.text",
+            "presentation.slide",
             "presentation.media",
             "presentation.background",
             "presentation.freeze",

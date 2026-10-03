@@ -42,6 +42,10 @@ pub enum Action {
     Text {
         to: Switch,
     },
+    /// A presentation's slides: a PDF's pages, a PowerPoint's.
+    Slide {
+        to: Switch,
+    },
     /// The media under them.
     Media {
         to: Switch,
@@ -268,6 +272,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Action::Text { to: Switch::Toggle }).expect("it writes"),
             r#"{"action":"text","to":"toggle"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Action::Slide { to: Switch::Off }).expect("it writes"),
+            r#"{"action":"slide","to":"off"}"#
         );
         assert_eq!(
             serde_json::to_string(&Action::GoToSlide { index: 3 }).expect("it writes"),

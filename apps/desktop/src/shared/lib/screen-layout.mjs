@@ -31,8 +31,8 @@ export const boxStyle = (box) => ({
 
 /**
  * The whole screen scaled evenly into a box and centred there, as a
- * transform on a full-screen layer: how the props go into theirs, as the
- * compositor draws them (`draw_into_box`).
+ * transform on a full-screen layer: how the props and a presentation's slide
+ * go into theirs, as the compositor draws them (`draw_into_box`).
  * @param {Box} box
  */
 export const screenIntoBoxTransform = (box) => {
@@ -140,6 +140,7 @@ export const LAYOUT_PRESETS = [
 /** The box each part of a layout starts from when it is first switched on. */
 export const STARTING_PLACEMENTS = {
   words: LAYOUT_PRESETS[1].layout.words,
+  slide: { xPercent: 50, yPercent: 50, widthPercent: 60, heightPercent: 60 },
   media: { area: { xPercent: 50, yPercent: 50, widthPercent: 60, heightPercent: 60 }, fill: false },
   props: { xPercent: 50, yPercent: 50, widthPercent: 60, heightPercent: 60 },
   timer: { xPercent: 88, yPercent: 10, scalePercent: 100 },

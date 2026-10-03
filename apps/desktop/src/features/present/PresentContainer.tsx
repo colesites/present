@@ -251,6 +251,15 @@ function normalizeSlideElements(
   return Array.isArray(elements) && elements.length > 0 ? elements : null;
 }
 
+/**
+ * A presentation's slide — a PDF's page, a PowerPoint's — by its id: decks
+ * imported into a service are `presentation_…`. It goes on the Slide layer,
+ * not the Text layer.
+ */
+function isPresentationSlideId(slideId: string | null | undefined): boolean {
+  return Boolean(slideId?.startsWith("presentation_"));
+}
+
 function buildServicePresentationLibraryItem(
   refId: string,
   presentation: ServicePresentation,
@@ -287,6 +296,8 @@ interface PresentContainerProps {
   scripturePanelRef: React.RefObject<ScripturePanelRef>;
   showTextInOutput: boolean;
   setShowTextInOutput: (show: boolean) => void;
+  showSlideInOutput: boolean;
+  setShowSlideInOutput: (show: boolean) => void;
   showMediaInOutput: boolean;
   setShowMediaInOutput: (show: boolean) => void;
   hideBackgroundInOutput: boolean;
@@ -314,6 +325,8 @@ export function PresentContainer({
   contentSource,
   showTextInOutput,
   setShowTextInOutput,
+  showSlideInOutput,
+  setShowSlideInOutput,
   showMediaInOutput,
   setShowMediaInOutput,
   hideBackgroundInOutput,
@@ -880,6 +893,10 @@ export function PresentContainer({
 
   const outputActiveSlideId =
     broadcastSnapshot?.slideId ?? activeSlideId ?? null;
+  // A presentation's slide shows as the Slide layer says, any other as the
+  // Text layer does.
+  const isPresentationSlideLive = isPresentationSlideId(outputActiveSlideId);
+  const slideShowsInOutput = isPresentationSlideLive ? showSlideInOutput : showTextInOutput;
 
   const publishSavedSlidesToLiveOutput = useCallback(
     ({
@@ -1761,6 +1778,7 @@ export function PresentContainer({
   // on the audience output now (`services/app_menu.rs`).
   useMenuChecks({
     text: showTextInOutput,
+    slide: showSlideInOutput,
     media: showMediaInOutput,
     background: !hideBackgroundInOutput,
     freeze: isOutputFrozen,
@@ -1800,6 +1818,7 @@ export function PresentContainer({
     onNextItem: () => moveServiceItem(1),
     onPreviousItem: () => moveServiceItem(-1),
     onText: (to) => setShowTextInOutput(applySwitch(to, showTextInOutput)),
+    onSlide: (to) => setShowSlideInOutput(applySwitch(to, showSlideInOutput)),
     onMedia: (to) => setShowMediaInOutput(applySwitch(to, showMediaInOutput)),
     // "Background on" is the operator's hide-background switched off.
     onBackground: (to) => setHideBackgroundInOutput(!applySwitch(to, !hideBackgroundInOutput)),
@@ -1829,8 +1848,13 @@ export function PresentContainer({
     }
     previousOutputActiveSlideRef.current = outputActiveSlideId;
 
-    const hasSlideText = Boolean(outputSlideContent?.text?.trim());
-    if (!hasSlideText || showTextInOutput) {
+    // A slide taken live shows: the words turn the Text layer on, and a
+    // presentation's slide, a page with no words of its own, the Slide layer.
+    const hasSlideContent = isPresentationSlideLive
+      ? Boolean(outputSlideContent?.elements?.length || outputSlideContent?.text?.trim())
+      : Boolean(outputSlideContent?.text?.trim());
+    const layerShowing = isPresentationSlideLive ? showSlideInOutput : showTextInOutput;
+    if (!hasSlideContent || layerShowing) {
       return;
     }
     if (!outputActiveSlideId) {
@@ -1840,12 +1864,20 @@ export function PresentContainer({
       return;
     }
 
-    setShowTextInOutput(true);
+    if (isPresentationSlideLive) {
+      setShowSlideInOutput(true);
+    } else {
+      setShowTextInOutput(true);
+    }
     lastAutoEnabledSlideRef.current = outputActiveSlideId;
   }, [
+    isPresentationSlideLive,
     outputActiveSlideId,
+    outputSlideContent?.elements?.length,
     outputSlideContent?.text,
+    setShowSlideInOutput,
     setShowTextInOutput,
+    showSlideInOutput,
     showTextInOutput,
   ]);
 
@@ -1996,7 +2028,7 @@ export function PresentContainer({
 
   useOutputBroadcast({
     activeMediaItem: effectiveActiveMediaItem,
-    showText: showTextInOutput,
+    showText: slideShowsInOutput,
     showMedia: showMediaInOutput,
     hideBackground: hideBackgroundInOutput,
     textPosition: outputTextPosition,
@@ -2055,6 +2087,7 @@ export function PresentContainer({
     slideElements: outputSlideContent?.elements ?? null,
     slideCanvasSize: outputSlideContent?.canvasSize ?? null,
     slideBackgroundColor: outputSlideContent?.backgroundColor ?? null,
+    presentationSlide: isPresentationSlideLive,
   });
 
   useAppNavigation({
@@ -2487,6 +2520,9 @@ export function PresentContainer({
           onToggleFreeze: () => setIsOutputFrozen((prev) => !prev),
           showTextInOutput,
           setShowTextInOutput,
+          showSlideInOutput,
+          setShowSlideInOutput,
+          isPresentationSlideLive,
           hideBackgroundInOutput,
           setHideBackgroundInOutput,
           outputTextPosition,
