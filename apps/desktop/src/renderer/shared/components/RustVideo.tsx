@@ -30,6 +30,7 @@ export function RustVideo({
   className,
   style,
   fit = "contain",
+  largest,
   label,
   onClick,
 }: {
@@ -38,6 +39,8 @@ export function RustVideo({
   className?: string;
   style?: CSSProperties;
   fit?: "contain" | "cover" | "fill";
+  /** The longest side to decode at (`FrameCanvas`). */
+  largest?: number;
   label?: string;
   onClick?: () => void;
 }) {
@@ -73,6 +76,7 @@ export function RustVideo({
     <FrameCanvas
       frameUrl={frameUrl}
       fit={fit}
+      largest={largest}
       className={className}
       style={style}
       label={label}

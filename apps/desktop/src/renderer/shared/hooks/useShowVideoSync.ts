@@ -90,6 +90,7 @@ export function useShowVideoSync(params: {
     positionSeconds: videoCurrentTime,
     durationSeconds: null,
     positionSampledAtMs: null,
+    rate: 1,
   });
 
   const effectiveIsVideoPlaying = forcePlay || transport.playing;
@@ -165,6 +166,14 @@ export function useShowVideoSync(params: {
     transport.pause();
   }, [currentVideoItem?.type, transport]);
 
+  const setRateLive = useCallback(
+    (rate: number) => {
+      if (currentVideoItem?.type !== "video" || !Number.isFinite(rate)) return;
+      transport.setRate(rate);
+    },
+    [currentVideoItem?.type, transport],
+  );
+
   const seekLive = useCallback(
     (position: number) => {
       if (currentVideoItem?.type !== "video" || !Number.isFinite(position)) return;
@@ -180,6 +189,9 @@ export function useShowVideoSync(params: {
     playLive,
     pauseLive,
     seekLive,
+    setRateLive,
+    /** How fast the live video plays: 1 as recorded. */
+    videoRate: transport.rate,
     isVideoPlaying: effectiveIsVideoPlaying,
     // The beginning, until Rust confirms this item — so the audience screen,
     // the preview and the stream never seek to where a different video was.

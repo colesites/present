@@ -34,6 +34,92 @@ pub struct AudioDecoder {
     skip_until: Option<f64>,
     /// The file has given everything it has to the decoder.
     drained: bool,
+    /// Faster or slower than recorded, at the sound's own pitch.
+    tempo: Option<Tempo>,
+    /// The tempo asked for: 1 as recorded.
+    speed: f64,
+}
+
+/// FFmpeg's `atempo`: the sound faster or slower without its pitch moving, as
+/// a player's speed control does.
+struct Tempo {
+    graph: ff::filter::Graph,
+    channels: usize,
+    rate: u32,
+    pts: i64,
+}
+
+impl Tempo {
+    fn new(rate: u32, channels: u16, speed: f64) -> Result<Self, String> {
+        let error = |error: ff::Error| format!("the sound's speed cannot be changed: {error}");
+        let mut graph = ff::filter::Graph::new();
+        let layout = if channels == 1 { "mono" } else { "stereo" };
+        let args =
+            format!("time_base=1/{rate}:sample_rate={rate}:sample_fmt=flt:channel_layout={layout}");
+        let source = ff::filter::find("abuffer").ok_or("FFmpeg has no abuffer")?;
+        let sink = ff::filter::find("abuffersink").ok_or("FFmpeg has no abuffersink")?;
+        graph.add(&source, "in", &args).map_err(error)?;
+        graph.add(&sink, "out", "").map_err(error)?;
+        graph
+            .output("in", 0)
+            .and_then(|parser| parser.input("out", 0))
+            .and_then(|parser| parser.parse(&format!("atempo={speed:.4}")))
+            .map_err(error)?;
+        graph.validate().map_err(error)?;
+        Ok(Self {
+            graph,
+            channels: usize::from(channels.max(1)),
+            rate,
+            pts: 0,
+        })
+    }
+
+    /// `samples` at the tempo: fewer when faster, more when slower.
+    fn run(&mut self, samples: &[f32]) -> Result<Vec<f32>, String> {
+        let error = |error: ff::Error| format!("the sound's speed cannot be changed: {error}");
+        let frames = samples.len() / self.channels;
+        let mut frame = ff::frame::Audio::new(
+            ff::format::Sample::F32(ff::format::sample::Type::Packed),
+            frames,
+            ff::ChannelLayout::default(self.channels as i32),
+        );
+        frame.set_rate(self.rate);
+        frame.set_pts(Some(self.pts));
+        self.pts += frames as i64;
+        let bytes: &[u8] =
+            // SAFETY: plain floats, read as the bytes they are.
+            unsafe { std::slice::from_raw_parts(samples.as_ptr().cast::<u8>(), frames * self.channels * 4) };
+        frame.data_mut(0)[..bytes.len()].copy_from_slice(bytes);
+        self.graph
+            .get("in")
+            .ok_or("the tempo filter has no input")?
+            .source()
+            .add(&frame)
+            .map_err(error)?;
+        let mut out = Vec::new();
+        let mut got = ff::frame::Audio::empty();
+        loop {
+            let mut sink = self
+                .graph
+                .get("out")
+                .ok_or("the tempo filter has no output")?;
+            match sink.sink().frame(&mut got) {
+                Ok(()) => {
+                    let count = got.samples() * self.channels;
+                    let data = got.data(0);
+                    out.extend(
+                        data[..count * 4].chunks_exact(4).map(|bytes| {
+                            f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+                        }),
+                    );
+                }
+                Err(ff::Error::Other { errno }) if errno == ff::ffi::EAGAIN => break,
+                Err(ff::Error::Eof) => break,
+                Err(other) => return Err(error(other)),
+            }
+        }
+        Ok(out)
+    }
 }
 
 struct Resampler {
@@ -81,7 +167,20 @@ impl AudioDecoder {
             next_seconds: None,
             skip_until: None,
             drained: false,
+            tempo: None,
+            speed: 1.0,
         }))
+    }
+
+    /// Play the sound `speed` times as fast as recorded, at its own pitch.
+    pub fn set_speed(&mut self, speed: f64) -> Result<(), String> {
+        self.speed = speed;
+        self.tempo = if (speed - 1.0).abs() < 1e-3 {
+            None
+        } else {
+            Some(Tempo::new(self.rate, self.channels, speed)?)
+        };
+        Ok(())
     }
 
     /// The whole file's length, when the container says.
@@ -124,6 +223,9 @@ impl AudioDecoder {
         self.decoder.flush();
         // What it still held belongs to where it was.
         self.resampler = None;
+        if self.tempo.is_some() {
+            self.set_speed(self.speed)?;
+        }
         self.drained = false;
         self.next_seconds = None;
         self.skip_until = Some(seconds);
@@ -244,6 +346,12 @@ impl AudioDecoder {
         if out.is_empty() {
             return Ok(None);
         }
+        if let Some(tempo) = &mut self.tempo {
+            out = tempo.run(&out)?;
+            if out.is_empty() {
+                return Ok(None);
+            }
+        }
         // NaN marks a seek in the ring (`output.rs`), so none may come from
         // the file.
         for sample in &mut out {
@@ -315,6 +423,20 @@ pub(crate) mod tests {
         assert!(
             (frames as i64 - 96_000).abs() < 600,
             "{frames} frames for two seconds"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn at_twice_the_speed_the_sound_takes_half_the_time() {
+        let path = tone(2.0);
+        let mut decoder = AudioDecoder::open(&path, 48_000, 2).unwrap().unwrap();
+        decoder.set_speed(2.0).unwrap();
+        let (_, samples) = decode_all(&mut decoder);
+        let seconds = samples as f64 / 2.0 / 48_000.0;
+        assert!(
+            (seconds - 1.0).abs() < 0.1,
+            "{seconds} seconds of sound at twice the speed"
         );
         let _ = std::fs::remove_file(path);
     }

@@ -11,7 +11,7 @@ export type FrameSize = { width: number; height: number };
  */
 export type FrameUrl = (size: FrameSize, leadMs: number, after: number | null) => string | null;
 
-/** The longest side asked for. */
+/** The longest side asked for, unless a panel asks for less. */
 const LARGEST = 1920;
 
 /** One display refresh: a frame drawn in this callback is seen at the next. */
@@ -36,6 +36,7 @@ const ONE_REFRESH_MS = 1000 / 60;
 export function FrameCanvas({
   frameUrl,
   fit = "contain",
+  largest = LARGEST,
   className,
   style,
   label,
@@ -43,6 +44,8 @@ export function FrameCanvas({
 }: {
   frameUrl: FrameUrl;
   fit?: "contain" | "cover" | "fill";
+  /** The longest side to ask for: smaller frames reach the screen sooner. */
+  largest?: number;
   className?: string;
   style?: CSSProperties;
   label?: string;
@@ -67,7 +70,7 @@ export function FrameCanvas({
     const measure = () => {
       const { width, height } = box.getBoundingClientRect();
       if (width <= 0 || height <= 0) return;
-      const scale = Math.min(window.devicePixelRatio || 1, LARGEST / width, LARGEST / height);
+      const scale = Math.min(window.devicePixelRatio || 1, largest / width, largest / height);
       const next = { width: Math.round(width * scale), height: Math.round(height * scale) };
       setSize((previous) =>
         previous && previous.width === next.width && previous.height === next.height ? previous : next,
@@ -77,7 +80,7 @@ export function FrameCanvas({
     const observer = new ResizeObserver(measure);
     observer.observe(box);
     return () => observer.disconnect();
-  }, []);
+  }, [largest]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

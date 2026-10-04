@@ -296,7 +296,12 @@ pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
         spec.italic,
         font_size,
     );
-    let mut attrs = Attrs::new().weight(spec.weight);
+    let mut attrs = Attrs::new().weight(super::font_fallback::weight_in(
+        system,
+        family.as_deref(),
+        spec.weight,
+        spec.italic,
+    ));
     if spec.italic {
         attrs = attrs.style(Style::Italic);
     }
@@ -445,7 +450,12 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     buffer.set_size(Some(content_width), Some(content_height));
     buffer.set_wrap(Wrap::Word);
 
-    let mut attrs = Attrs::new().weight(weight);
+    let mut attrs = Attrs::new().weight(super::font_fallback::weight_in(
+        system,
+        family.as_deref(),
+        weight,
+        italic,
+    ));
     if italic {
         attrs = attrs.style(Style::Italic);
     }
@@ -1332,8 +1342,8 @@ pub(super) fn resolve_family(
     )
 }
 
-fn attrs_for<'a>(style: &TextStyle, family: Option<&'a str>) -> Attrs<'a> {
-    let mut attrs = Attrs::new().weight(style.weight);
+fn attrs_for<'a>(style: &TextStyle, family: Option<&'a str>, weight: Weight) -> Attrs<'a> {
+    let mut attrs = Attrs::new().weight(weight);
     if style.italic {
         attrs = attrs.style(Style::Italic);
     }
@@ -1378,7 +1388,11 @@ fn lay_out(
     });
     buffer.set_text(
         text,
-        &attrs_for(style, family.as_deref()),
+        &attrs_for(
+            style,
+            family.as_deref(),
+            super::font_fallback::weight_in(system, family.as_deref(), style.weight, style.italic),
+        ),
         Shaping::Advanced,
         Some(style.align),
     );

@@ -11,8 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 export type MediaFramesClock =
   /** With the scene: the video on screen, where every screen has it. */
   | { mode: "scene" }
-  /** Its own: the operator previewing a video. Was at `positionSeconds` when set. */
-  | { mode: "local"; playing: boolean; positionSeconds: number; loop?: boolean }
+  /** Its own: the operator previewing a video. Was at `positionSeconds` when set, at `rate`. */
+  | { mode: "local"; playing: boolean; positionSeconds: number; loop?: boolean; rate?: number }
   /** Round and round from the start: a prop. */
   | { mode: "loop" };
 

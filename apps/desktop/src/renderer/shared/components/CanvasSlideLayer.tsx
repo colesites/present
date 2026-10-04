@@ -254,10 +254,14 @@ function measureTextWidth(
 ): number {
   ctx.font = toCanvasFont(style);
   const base = ctx.measureText(text).width;
-  if (style.letterSpacing === 0 || text.length <= 1) {
+  if (style.letterSpacing === 0) {
     return base;
   }
-  return base + (Array.from(text).length - 1) * style.letterSpacing;
+  // After every character, spaces and the last letter included, as
+  // PowerPoint spaces them and as `drawSpacedText` draws them. Counted only
+  // between letters, each word ran a step past its measure and covered the
+  // space after it, so "THE CONTINUITY LAYER" was drawn run together.
+  return base + Array.from(text).length * style.letterSpacing;
 }
 
 /**
@@ -889,6 +893,14 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
       if (element.type === "image") {
         if (element.content) {
           const cached = imageCacheRef.current.get(element.content);
+          // `complete` is true of a picture that failed to load as well as
+          // one that loaded, and drawing a failed one throws — which took
+          // the whole window's drawing with it. A picture the webview cannot
+          // read (an EMF from Windows, a TIFF) is left out of the slide.
+          if (cached && cached.complete && cached.naturalWidth === 0) {
+            ctx.restore();
+            continue;
+          }
           if (cached && cached.complete) {
             applyShadow(ctx, parsedShadow, scaleX, scaleY);
             if (element.geometry?.paths?.length) {
@@ -904,22 +916,27 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
               ? croppedImageRect(cached, w, h, crop)
               : fitImageRect(cached, w, h, styleData.objectFit ?? "cover");
             if (fit) {
-              ctx.drawImage(
-                cached,
-                fit.sx,
-                fit.sy,
-                fit.sw,
-                fit.sh,
-                fit.dx,
-                fit.dy,
-                fit.dw,
-                fit.dh
-              );
+              try {
+                ctx.drawImage(
+                  cached,
+                  fit.sx,
+                  fit.sy,
+                  fit.sw,
+                  fit.sh,
+                  fit.dx,
+                  fit.dy,
+                  fit.dw,
+                  fit.dh
+                );
+              } catch {
+                // One picture that will not draw leaves the rest of the slide.
+              }
             }
             applyShadow(ctx, null, scaleX, scaleY);
           } else {
             const image = new Image();
             image.onload = () => setImageTick((value) => value + 1);
+            image.onerror = () => setImageTick((value) => value + 1);
             image.src = element.content;
             imageCacheRef.current.set(element.content, image);
           }

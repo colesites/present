@@ -22,9 +22,15 @@ pub enum ClockArg {
         position_seconds: f64,
         #[serde(default)]
         r#loop: bool,
+        #[serde(default = "normal_rate")]
+        rate: f64,
     },
     /// Round and round from the start: a prop.
     Loop,
+}
+
+fn normal_rate() -> f64 {
+    1.0
 }
 
 impl From<ClockArg> for Clock {
@@ -35,6 +41,7 @@ impl From<ClockArg> for Clock {
                 playing,
                 position_seconds,
                 r#loop,
+                rate,
             } => Self::Local {
                 playing,
                 position: if position_seconds.is_finite() {
@@ -44,6 +51,11 @@ impl From<ClockArg> for Clock {
                 },
                 at: Instant::now(),
                 looping: r#loop,
+                rate: if rate.is_finite() {
+                    rate.clamp(0.25, 4.0)
+                } else {
+                    1.0
+                },
             },
             ClockArg::Loop => Self::Loop,
         }

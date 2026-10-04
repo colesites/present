@@ -112,7 +112,7 @@ getrandom = "0.2"
 # Builds against an installed FFmpeg, 5.0 or later, found through `FFMPEG_DIR`,
 # vcpkg on Windows, or pkg-config. What ships inside the app must be an
 # LGPL-only build of shared libraries — never Homebrew's, which is GPL.
-ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling", "software-resampling"] }
+ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling", "software-resampling", "filter"] }
 # A video's sound, played by the app itself (`services/sound`): FFmpeg decodes
 # it, cpal hands it to the system's audio device (Core Audio, WASAPI, ALSA),
 # and an rtrb ring carries it between them without a lock on the audio thread.

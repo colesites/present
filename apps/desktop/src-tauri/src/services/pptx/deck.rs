@@ -91,8 +91,10 @@ pub fn sniff_extension(bytes: &[u8]) -> &'static str {
         [b'I', b'I', 0x2A, 0x00, ..] | [b'M', b'M', 0x00, 0x2A, ..] => "tiff",
         [0x01, 0x00, 0x00, 0x00, ..] => "emf",
         [0xD7, 0xCD, 0xC6, 0x9A, ..] => "wmf",
+        // An SVG can open with a long prolog — an editor's comments, a
+        // doctype — before its `<svg`.
         _ if bytes.iter().take(256).any(|&b| b == b'<')
-            && String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).contains("<svg") =>
+            && String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).contains("<svg") =>
         {
             "svg"
         }
@@ -268,9 +270,8 @@ fn read_slide(
         .ok_or_else(|| missing("master XML"))?;
     let master = parse_xml(&master_text, &master_part)?;
 
-    let theme_text = package
-        .related_by_type(&master_part, package::RT_THEME)?
-        .and_then(|part| package.text(&part));
+    let theme_part = package.related_by_type(&master_part, package::RT_THEME)?;
+    let theme_text = theme_part.as_deref().and_then(|part| package.text(part));
     let theme_doc = match &theme_text {
         Some(text) => Document::parse(text).ok(),
         None => None,
@@ -315,6 +316,7 @@ fn read_slide(
         table_styles,
         elements: &mut elements,
         next_id: 0,
+        theme_part: theme_part.clone(),
     };
 
     // The background, from the first of slide, layout and master to have one.
@@ -554,6 +556,9 @@ struct Builder<'b, 'a, 'i> {
     table_styles: Option<&'b Document<'b>>,
     elements: &'b mut Vec<Value>,
     next_id: usize,
+    /// The theme's own part: a picture in one of its fill or background
+    /// styles is named by the theme's relationships, not the slide's.
+    theme_part: Option<String>,
 }
 
 /// What a placeholder on a slide inherits from: the layout's and master's
@@ -737,6 +742,7 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
 
         // The fill.
         let is_picture = shape.tag_name().name() == "pic";
+        let mut fill_from_theme = false;
         let fill = if is_picture {
             xml::child(shape, P, "blipFill")
                 .and_then(|blip_fill| fill::picture(blip_fill, &self.theme.palette))
@@ -761,11 +767,17 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
                 let node = self.theme.fill_style(idx)?;
                 Some(fill::read(node, &palette))
             };
-            match own_fill
-                .or_else(inherited_fill)
-                .or_else(style_fill)
-                .unwrap_or(Paint::None)
-            {
+            let fill = match own_fill.or_else(inherited_fill) {
+                Some(fill) => fill,
+                None => match style_fill() {
+                    Some(fill) => {
+                        fill_from_theme = true;
+                        fill
+                    }
+                    None => Paint::None,
+                },
+            };
+            match fill {
                 Paint::Group => group_fill.cloned().unwrap_or(Paint::None),
                 other => other,
             }
@@ -791,7 +803,13 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
 
         match &fill {
             Paint::Picture(picture) => {
-                self.picture(picture, part, &placed, (!is_rectangle).then_some(&paths));
+                let named_in = self.picture_part(fill_from_theme, part);
+                self.picture(
+                    picture,
+                    &named_in,
+                    &placed,
+                    (!is_rectangle).then_some(&paths),
+                );
                 if let Some(line) = &line {
                     self.shape_element(&placed, &paths, None, Some(line));
                 }
@@ -914,6 +932,12 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
             }
         }
         let extension = sniff_extension(bytes);
+        // Not a picture at all — a part a wrong relationship led to — is left
+        // out rather than kept as one nothing can show.
+        if extension == "png" && !bytes.starts_with(b"\x89PNG") {
+            tracing::info!(target, "a picture's part is not a picture; it is left out");
+            return None;
+        }
         self.sink.store(&target, bytes, extension)
     }
 
@@ -1044,12 +1068,25 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
         self.elements.push(Value::Object(element));
     }
 
+    /// The part whose relationships name a picture: the theme's, for one
+    /// from its styles, or else the part it was read from.
+    fn picture_part(&self, from_theme: bool, part: &str) -> String {
+        match (&self.theme_part, from_theme) {
+            (Some(theme), true) => theme.clone(),
+            _ => part.to_owned(),
+        }
+    }
+
     // --- Backgrounds ---------------------------------------------------------
 
     /// The background a part sets, drawn as elements where it is more than a
     /// colour. `None` when the part sets none; `Some(colour)` otherwise.
     fn background(&mut self, root: Node, part: &str) -> Option<Option<Rgba>> {
         let bg = xml::path(root, P, &["cSld", "bg"])?;
+        // A background from the theme's styles (`bgRef`) names its picture by
+        // the theme's relationships. Read by the slide's, the same id could
+        // be the slide's layout, which was imported as a picture.
+        let from_theme = xml::child(bg, P, "bgPr").is_none();
         let paint = if let Some(bg_pr) = xml::child(bg, P, "bgPr") {
             fill::fill_child(bg_pr).map(|node| fill::read(node, &self.theme.palette))?
         } else {
@@ -1075,7 +1112,8 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
         match &paint {
             Paint::Solid(color) => Some(Some(*color)),
             Paint::Picture(picture) => {
-                self.picture(picture, part, &whole, None);
+                let named_in = self.picture_part(from_theme, part);
+                self.picture(picture, &named_in, &whole, None);
                 Some(None)
             }
             Paint::Linear { .. } | Paint::Radial { .. } => {

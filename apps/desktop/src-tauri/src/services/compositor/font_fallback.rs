@@ -173,6 +173,99 @@ pub fn resolve(system: &FontSystem, family: &str) -> String {
     resolved
 }
 
+/// The weight of `family` nearest `weight`, chosen as a browser chooses one
+/// (CSS Fonts, "font-weight" matching): from 400 to 500, the next heavier up
+/// to 500, then lighter, then heavier; below 400, lighter then heavier; above
+/// 500, heavier then lighter.
+///
+/// cosmic-text keeps a family only for a weight it has. Futura, which a
+/// Windows deck's Tw Cen MT is drawn in, starts at Medium: asked for regular,
+/// the slide was drawn in the system's own font instead, while the operator's
+/// canvas — a browser — drew it in Futura Medium.
+pub fn weight_in(
+    system: &FontSystem,
+    family: Option<&str>,
+    weight: cosmic_text::Weight,
+    italic: bool,
+) -> cosmic_text::Weight {
+    let Some(family) = family else {
+        return weight;
+    };
+    let key = (family.to_owned(), weight.0, italic);
+    if let Some(found) = weight_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&key).copied())
+    {
+        return cosmic_text::Weight(found);
+    }
+    let faces: Vec<(u16, bool, bool)> = system
+        .db()
+        .faces()
+        .filter(|face| {
+            face.families
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(family))
+        })
+        .map(|face| {
+            (
+                face.weight.0,
+                face.style != cosmic_text::fontdb::Style::Normal,
+                face.stretch == cosmic_text::fontdb::Stretch::Normal,
+            )
+        })
+        .collect();
+    // Its own style and width first; any face of the family after that.
+    let pick = |filter: &dyn Fn(&(u16, bool, bool)) -> bool| -> Vec<u16> {
+        faces
+            .iter()
+            .filter(|face| filter(face))
+            .map(|face| face.0)
+            .collect()
+    };
+    let mut weights = pick(&|face| face.1 == italic && face.2);
+    if weights.is_empty() {
+        weights = pick(&|face| face.1 == italic);
+    }
+    if weights.is_empty() {
+        weights = pick(&|_| true);
+    }
+    let chosen = nearest(&weights, weight.0).unwrap_or(weight.0);
+    if let Ok(mut cache) = weight_cache().lock() {
+        cache.insert(key, chosen);
+    }
+    cosmic_text::Weight(chosen)
+}
+
+fn nearest(weights: &[u16], wanted: u16) -> Option<u16> {
+    if weights.contains(&wanted) {
+        return Some(wanted);
+    }
+    let lighter = || weights.iter().copied().filter(|w| *w < wanted).max();
+    let heavier = || weights.iter().copied().filter(|w| *w > wanted).min();
+    if (400..=500).contains(&wanted) {
+        weights
+            .iter()
+            .copied()
+            .filter(|w| *w > wanted && *w <= 500)
+            .min()
+            .or_else(lighter)
+            .or_else(heavier)
+    } else if wanted < 400 {
+        lighter().or_else(heavier)
+    } else {
+        heavier().or_else(lighter)
+    }
+}
+
+/// The weight chosen for each family, weight asked for and italic.
+type WeightCache = Mutex<HashMap<(String, u16, bool), u16>>;
+
+fn weight_cache() -> &'static WeightCache {
+    static CACHE: OnceLock<WeightCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +277,25 @@ mod tests {
         assert_eq!(fonts.first().map(String::as_str), Some("Carlito"));
         assert_eq!(fallback("Century Schoolbook").1, "serif");
         assert_eq!(fallback("Bradley Hand ITC").1, "cursive");
+    }
+
+    #[test]
+    fn a_weight_a_family_lacks_is_its_nearest_as_a_browser_picks_it() {
+        let futura = [500, 700, 800];
+        assert_eq!(nearest(&futura, 400), Some(500), "regular is Medium");
+        assert_eq!(nearest(&futura, 700), Some(700));
+        assert_eq!(
+            nearest(&futura, 600),
+            Some(700),
+            "semibold is the next heavier"
+        );
+        assert_eq!(
+            nearest(&[300, 700], 400),
+            Some(300),
+            "lighter before heavier from 400"
+        );
+        assert_eq!(nearest(&[300, 700], 200), Some(300));
+        assert_eq!(nearest(&[], 400), None);
     }
 
     #[test]

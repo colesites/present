@@ -100,6 +100,61 @@ async function importPptxFile(
   return convertParsedPptxToPresentation(parsedPresentation);
 }
 
+/**
+ * PowerPoint as Images: every slide drawn by the compositor — the renderer
+ * that draws the screens, so each picture is the slide exactly as the
+ * congregation would see it — and kept as one picture per slide, as a PDF's
+ * pages are. For a deck that should look as it is and never be edited.
+ */
+async function importPptxAsImages(
+  file: PresentationImportSource,
+  onProgress?: (progress: PresentationImportProgress) => void,
+): Promise<ServicePresentation> {
+  if (!file.path || !window.pptxAPI?.renderImages) {
+    throw new Error("PowerPoint as Images needs the desktop app.");
+  }
+  onProgress?.({
+    phase: "rendering",
+    percent: null,
+    detail: "Drawing each slide",
+  });
+  const rendered = await window.pptxAPI.renderImages(file.path);
+  // As the compositor drew them: 1920 by 1080, the default canvas.
+  const width = 1920;
+  const height = 1080;
+  const slides = rendered.slides.map((slide, index) =>
+    normalizeLibrarySlide(
+      {
+        text: slide.title,
+        label: slide.title,
+        elements: [
+          {
+            id: `pptx_slide_${index + 1}_image`,
+            type: "image",
+            x: 0,
+            y: 0,
+            width,
+            height,
+            content: slide.url,
+            style: {
+              opacity: 1,
+              borderRadius: 0,
+              objectFit: "contain",
+            },
+          },
+        ],
+      },
+      DEFAULT_CANVAS_SIZE,
+    ),
+  );
+  onProgress?.({
+    phase: "finalizing",
+    percent: 95,
+    detail: "Building presentation",
+  });
+  return createServicePresentation(rendered.title || getFileStem(file.name), "pptx", slides);
+}
+
 async function importPdfFile(
   file: PresentationImportSource,
   onProgress?: (progress: PresentationImportProgress) => void,
@@ -224,13 +279,7 @@ export async function importServicePresentationFile(
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
 
   if (extension === "pptx") {
-    if (mode === "images") {
-      throw new Error(
-        "PPTX image mode is disabled. Use normal PPTX import with native canvas renderer.",
-      );
-    }
-
-    return importPptxFile(file, onProgress);
+    return mode === "images" ? importPptxAsImages(file, onProgress) : importPptxFile(file, onProgress);
   }
 
   if (extension === "pdf") {

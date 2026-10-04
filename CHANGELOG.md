@@ -13,6 +13,13 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   Present plays. The microphone the agents listen through is chosen there.
 - A new PowerPoint importer. Slides keep their shapes, fills, outlines,
   tables, groups, theme colours and fonts, and the fonts a deck carries.
+- PowerPoint as Images is back (File ▸ Import ▸ PowerPoint or PDF as
+  Images…). Each slide is drawn by the same renderer as the screens and kept
+  as a picture, for a deck that should look exactly as it is.
+- The video controls in the center pane are back in full, on a panel you can
+  see: back and forward 10 seconds, play and pause, a scrubber, the time,
+  loop, speed from 0.5× to 2×, mute and volume. Speed changes the sound at
+  its own pitch, and every screen with it.
 
 ### Changed
 
@@ -30,13 +37,24 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 - A video's sound and picture stay together. The sound could drift from the
   screens and stop part-way through, while the screens played on.
 - The center pane, the preview and the screens show the same frame at the
-  same moment, in time with the sound. The center pane trailed the output.
+  same moment, in time with the sound. The center pane trailed the output;
+  play, pause and seek now change every screen and the sound on the same
+  frame, a moment after the click.
 - One tap on a video in a service shows it in the center pane, held and
   silent. It no longer starts playing; a double tap sends it out and plays.
 - Settings lists the audio devices. It showed none until a page had opened
   the microphone.
 - Voice search no longer reports "microphone access denied" without asking.
   Signed out, it says to sign in.
+- An imported PowerPoint whose background comes from its theme shows that
+  background. Its slide layout was imported as a picture instead, and the
+  slides would not draw.
+- Letter-spaced text in an imported PowerPoint keeps the spaces between its
+  words in the operator's view.
+- Text in a font a deck names but this computer lacks is drawn in its
+  nearest weight of the stand-in font, as the operator's view draws it,
+  rather than in the system font.
+- A picture that cannot be read leaves the rest of the slide drawn.
 
 ## [0.4.10] - 2026-10-03
 

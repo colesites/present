@@ -1693,6 +1693,8 @@ export function PresentContainer({
     playLive,
     pauseLive,
     seekLive,
+    setRateLive,
+    videoRate,
     isVideoPlaying,
     videoCurrentTime,
     videoTimeSampledAtMs,
@@ -1708,8 +1710,14 @@ export function PresentContainer({
   });
 
   const liveVideoControls = useMemo(
-    () => ({ id: liveVideoItem?.id ?? null, play: playLive, pause: pauseLive, seek: seekLive }),
-    [liveVideoItem?.id, pauseLive, playLive, seekLive],
+    () => ({
+      id: liveVideoItem?.id ?? null,
+      play: playLive,
+      pause: pauseLive,
+      seek: seekLive,
+      setRate: setRateLive,
+    }),
+    [liveVideoItem?.id, pauseLive, playLive, seekLive, setRateLive],
   );
 
   // Offer, but never automatically force, a newly connected audio output.
@@ -2409,6 +2417,7 @@ export function PresentContainer({
           videoSettings,
           handleOutputPreviewMedia,
           liveVideoControls,
+          videoRate,
           onToggleVideoPlayback: toggleVideoPlayback,
           handleMediaPanelSelect,
           handleAddMediaToService,

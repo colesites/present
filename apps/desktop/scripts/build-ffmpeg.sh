@@ -8,8 +8,8 @@
 #
 # Only what the app uses is built: every decoder and demuxer, the platform's GPU
 # decoder, swscale, swresample (a video's sound, in the format and rate of the
-# device it plays on: `services/sound`), and on macOS the filters `scale_vt`
-# needs. A few encoders
+# device it plays on: `services/sound`), atempo (its speed), and on macOS the
+# filter `scale_vt` needs. A few encoders
 # and one muxer stay for the decoder's tests, which write their own clips.
 #
 #   scripts/build-ffmpeg.sh            # build if the pinned build is not there
@@ -61,7 +61,10 @@ FLAGS=(
   --disable-encoders --enable-encoder=ffv1,mpeg4
   --disable-muxers --enable-muxer=matroska
   --disable-protocols --enable-protocol=file
-  --disable-filters
+  # Filters: only atempo, everywhere — a video's sound faster or slower at
+  # its own pitch (`services/sound/decoder.rs`). The graph's buffer source and
+  # sink are always built.
+  --disable-filters --enable-filter=atempo
 )
 
 case "${OS}" in
@@ -81,14 +84,12 @@ case "${OS}" in
   linux)
     FLAGS+=(
       --enable-vaapi --enable-zlib
-      --disable-avfilter
     )
     ;;
   windows)
     FLAGS+=(
       --toolchain=msvc
       --enable-d3d11va --enable-dxva2
-      --disable-avfilter
     )
     ;;
 esac
@@ -150,6 +151,7 @@ for switch in CONFIG_GPL CONFIG_NONFREE CONFIG_VERSION3; do
 done
 LICENSE="$(sed -n 's/^#define FFMPEG_LICENSE "\(.*\)"$/\1/p' "${CONFIG}")"
 [[ "${LICENSE}" == "LGPL version 2.1 or later" ]] || fail "unexpected licence: ${LICENSE}"
+grep -q "^#define CONFIG_ATEMPO_FILTER 1$" "${COMPONENTS}" || fail "atempo is missing"
 if [[ "${OS}" == macos ]]; then
   grep -q "^#define CONFIG_SCALE_VT_FILTER 1$" "${COMPONENTS}" || fail "scale_vt is missing"
   grep -q "^#define CONFIG_VIDEOTOOLBOX 1$" "${CONFIG}" || fail "VideoToolbox is missing"
@@ -168,7 +170,7 @@ if [[ "${OS}" == windows ]]; then
   # link then fails with LNK1181 "cannot open input file 'avcodec.lib'", after
   # the whole of FFmpeg and the whole of the Rust build. A copy goes where it
   # looks; the DLLs stay in bin/, where staging takes them from.
-  for library in avcodec avformat avutil swscale swresample; do
+  for library in avcodec avformat avutil swscale swresample avfilter; do
     [[ -f "${PREFIX}/bin/${library}.lib" ]] || fail "${library}.lib is missing from ${PREFIX}/bin"
     cp "${PREFIX}/bin/${library}.lib" "${PREFIX}/lib/${library}.lib"
   done

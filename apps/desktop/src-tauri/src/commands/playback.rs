@@ -120,6 +120,18 @@ pub async fn stop_playback(
     steer(&app, &state, &engine, changed, None)
 }
 
+/// Play faster or slower. The sound and every picture follow.
+#[tauri::command]
+pub async fn set_playback_rate(
+    app: AppHandle,
+    state: State<'_, PlaybackState>,
+    engine: State<'_, SoundEngine>,
+    rate: f64,
+) -> AppResult<MediaPlayback> {
+    let changed = state.update(|playback| playback.set_rate(rate));
+    steer(&app, &state, &engine, changed, None)
+}
+
 #[tauri::command]
 pub async fn seek_playback(
     app: AppHandle,

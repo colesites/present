@@ -219,6 +219,45 @@ mod tests {
         }
     }
 
+    /// Every deck in `PPTX_CORPUS` as the importer makes it, pictures inline,
+    /// into `PPTX_EXPORT_OUT`: for a page that draws them with the canvas
+    /// renderer beside the compositor's pictures (`render_corpus`).
+    #[test]
+    #[ignore = "reads decks from PPTX_CORPUS and writes JSON to PPTX_EXPORT_OUT"]
+    fn export_corpus() {
+        let (Ok(directory), Ok(out)) = (
+            std::env::var("PPTX_CORPUS"),
+            std::env::var("PPTX_EXPORT_OUT"),
+        ) else {
+            return;
+        };
+        let only = std::env::var("PPTX_ONLY").ok();
+        std::fs::create_dir_all(&out).unwrap();
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("pptx") {
+                continue;
+            }
+            let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+            if only
+                .as_deref()
+                .is_some_and(|only| !only.split('|').any(|one| stem.contains(one)))
+            {
+                continue;
+            }
+            let deck = import(&path).unwrap();
+            let name = stem.replace(' ', "_");
+            std::fs::write(format!("{out}/{name}.json"), deck.to_string()).unwrap();
+            names.push(serde_json::json!({ "name": name, "slides": deck["slides"].as_array().unwrap().len() }));
+        }
+        std::fs::write(
+            format!("{out}/index.json"),
+            serde_json::Value::Array(names).to_string(),
+        )
+        .unwrap();
+    }
+
     /// Every slide of every deck in `PPTX_CORPUS` drawn by the compositor, as
     /// the screens draw it, into `PPTX_RENDER_OUT`: for looking at.
     #[test]
@@ -244,7 +283,10 @@ mod tests {
                 continue;
             }
             let stem = path.file_stem().unwrap().to_string_lossy().to_string();
-            if only.as_deref().is_some_and(|only| !stem.contains(only)) {
+            if only
+                .as_deref()
+                .is_some_and(|only| !only.split('|').any(|one| stem.contains(one)))
+            {
                 continue;
             }
             let deck = import(&path).unwrap();
@@ -272,6 +314,48 @@ mod tests {
                 image.save(&name).unwrap();
             }
             println!("rendered {stem}");
+        }
+    }
+
+    /// Every picture a deck imports is one: a background from the theme's
+    /// styles once brought the slide's layout in as a picture.
+    #[test]
+    #[ignore = "reads decks from PPTX_CORPUS"]
+    fn every_picture_imported_is_a_picture() {
+        use base64::Engine;
+        let Ok(directory) = std::env::var("PPTX_CORPUS") else {
+            return;
+        };
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("pptx") {
+                continue;
+            }
+            let deck = import(&path).unwrap();
+            for slide in deck["slides"].as_array().unwrap() {
+                for element in slide["elements"].as_array().unwrap() {
+                    let Some(url) = element["content"]
+                        .as_str()
+                        .filter(|_| element["type"] == "image")
+                    else {
+                        continue;
+                    };
+                    let Some((_, data)) = url.split_once(";base64,") else {
+                        continue;
+                    };
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(data)
+                        .unwrap();
+                    assert!(
+                        !bytes.starts_with(b"<?xml")
+                            || String::from_utf8_lossy(&bytes[..bytes.len().min(4096)])
+                                .contains("<svg"),
+                        "{}: {} is a part of the deck, not a picture",
+                        path.display(),
+                        element["id"]
+                    );
+                }
+            }
         }
     }
 

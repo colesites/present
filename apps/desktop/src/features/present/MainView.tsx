@@ -106,7 +106,9 @@ export interface MainViewMediaState {
   videoSettings: VideoSettings;
   handleOutputPreviewMedia: () => void;
   /** The live video and the controls that move it (`useShowVideoSync`). */
-  liveVideoControls: Pick<LiveVideo, "id" | "play" | "pause" | "seek">;
+  liveVideoControls: Pick<LiveVideo, "id" | "play" | "pause" | "seek" | "setRate">;
+  /** How fast the live video plays. */
+  videoRate: number;
   onToggleVideoPlayback: () => void;
   handleMediaPanelSelect: (item: MediaItem | null) => void;
   handleAddMediaToService: (
@@ -430,6 +432,7 @@ export function MainView({
     isVideoPlaying,
     videoCurrentTime,
     videoTimeSampledAtMs,
+    videoRate,
   } = mediaState;
 
   // The live video for the center pane's preview of it to follow and control.
@@ -439,8 +442,9 @@ export function MainView({
       playing: isVideoPlaying,
       positionSeconds: videoCurrentTime,
       sampledAtMs: videoTimeSampledAtMs,
+      rate: videoRate,
     }),
-    [isVideoPlaying, liveVideoControls, videoCurrentTime, videoTimeSampledAtMs],
+    [isVideoPlaying, liveVideoControls, videoCurrentTime, videoTimeSampledAtMs, videoRate],
   );
 
   const {
@@ -982,6 +986,7 @@ export function MainView({
                   videoSettings={videoSettings}
                   onOutputPreviewMedia={handleOutputPreviewMediaClick}
                   liveVideo={liveVideo}
+                  onVideoSettingsChange={updateVideoSettings}
                   showsPanelRef={showsPanelRef}
                   scripturePanelRef={scripturePanelRef}
                   showsPanelProps={showsPanelProps}
@@ -1096,6 +1101,7 @@ export function MainView({
         videoSettings={videoSettings}
         onOutputPreviewMedia={handleOutputPreviewMediaClick}
         liveVideo={liveVideo}
+                  onVideoSettingsChange={updateVideoSettings}
         showsPanelRef={showsPanelRef}
         scripturePanelRef={scripturePanelRef}
         showsPanelProps={showsPanelProps}

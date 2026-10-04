@@ -25,6 +25,7 @@ pub(crate) mod decoder;
 pub mod input;
 pub mod output;
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -207,6 +208,8 @@ struct Track {
     /// For a file without sound, timed by the wall clock: when it last
     /// started running.
     running_since: Option<Instant>,
+    /// How fast it plays: 1 as recorded.
+    rate: f64,
 }
 
 impl Track {
@@ -236,7 +239,36 @@ impl Track {
             finished: false,
             playing: false,
             running_since: None,
+            rate: 1.0,
         }
+    }
+
+    /// Find `seconds` in the file and decode the first of the sound from
+    /// there, ahead of the moment it is to be heard.
+    fn prepare(&mut self, seconds: f64, rate: f64) {
+        self.base_seconds = seconds.max(0.0);
+        self.rate = rate;
+        if let Some(decoder) = &mut self.decoder {
+            if let Err(error) = decoder.set_speed(rate) {
+                tracing::warn!(%error, rate, "the sound's speed could not be changed");
+            }
+            if let Err(error) = decoder.seek(self.base_seconds) {
+                tracing::warn!(%error, seconds, "the sound could not seek");
+            }
+            match decoder.next_chunk() {
+                Ok(Some(chunk)) => self.pending = chunk.samples,
+                Ok(None) => self.finished = true,
+                Err(error) => tracing::warn!(%error, "the sound could not be decoded"),
+            }
+        }
+    }
+
+    /// Put a prepared track on `voice`: what it held before is dropped, and
+    /// this one's sound follows. False when the device would not take it.
+    fn begin(&mut self, output: &mut Output, voice: usize) -> bool {
+        self.written = 0;
+        self.running_since = None;
+        self.decoder.is_none() || output.flush(voice)
     }
 
     /// Where it is, as heard.
@@ -245,7 +277,7 @@ impl Track {
             let running = self
                 .running_since
                 .map_or(0.0, |since| since.elapsed().as_secs_f64());
-            return self.base_seconds + running;
+            return self.base_seconds + running * self.rate;
         }
         let Some(output) = output else {
             return self.base_seconds;
@@ -255,7 +287,25 @@ impl Track {
             return self.base_seconds;
         };
         let heard = consumed.saturating_sub(output.in_flight_frames());
-        self.base_seconds + heard as f64 / f64::from(output.rate)
+        // Each frame heard is `rate` frames of the file: the tempo filter
+        // made fewer of them, or more.
+        self.base_seconds + heard as f64 / f64::from(output.rate) * self.rate
+    }
+
+    /// Play at `rate`, from where it is: the sound is found again there at
+    /// the new tempo.
+    fn set_rate(&mut self, rate: f64, output: Option<&mut Output>, voice: usize) {
+        if (self.rate - rate).abs() < 1e-6 {
+            return;
+        }
+        let position = self.position(output.as_deref(), voice);
+        self.rate = rate;
+        if let Some(decoder) = &mut self.decoder {
+            if let Err(error) = decoder.set_speed(rate) {
+                tracing::warn!(%error, rate, "the sound's speed could not be changed");
+            }
+        }
+        self.seek(position, output, voice);
     }
 
     /// Move to `seconds`. False when the device would not take the mark.
@@ -282,7 +332,7 @@ impl Track {
         if self.decoder.is_none() {
             // The wall clock: what ran so far becomes the base.
             if let Some(since) = self.running_since.take() {
-                self.base_seconds += since.elapsed().as_secs_f64();
+                self.base_seconds += since.elapsed().as_secs_f64() * self.rate;
             }
             if playing {
                 self.running_since = Some(Instant::now());
@@ -368,6 +418,31 @@ struct Engine<T: Transport> {
     default_output: Option<String>,
     /// The live video's clock as last published (`clock.rs`).
     published: Option<clock::HeardClock>,
+    /// The operator's changes, each waiting for its moment (`clock::GO_DELAY`).
+    scheduled: VecDeque<Scheduled>,
+}
+
+/// An operator's change to the live video, made at its moment.
+struct Scheduled {
+    change: Change,
+    /// The live video from then on, as every picture is told ahead of time.
+    segment: clock::Segment,
+    /// Which video it is from then on.
+    media_id: Option<String>,
+}
+
+enum Change {
+    /// No live video.
+    Unload,
+    /// Another video, opened and found its place in already, so that at its
+    /// moment it only has to start.
+    Load { track: Box<Track>, playing: bool },
+    /// The same video, moved, started or held.
+    Same {
+        seek_to: Option<f64>,
+        playing: bool,
+        rate: f64,
+    },
 }
 
 impl<T: Transport> Engine<T> {
@@ -385,6 +460,7 @@ impl<T: Transport> Engine<T> {
             last_default_check: Instant::now(),
             default_output: None,
             published: None,
+            scheduled: VecDeque::new(),
         }
     }
 
@@ -443,28 +519,228 @@ impl<T: Transport> Engine<T> {
         }
     }
 
+    /// The operator changed the live video: make the change at its moment,
+    /// [`clock::GO_DELAY`] from now, and tell every picture now so that each
+    /// shows it on that same frame.
     fn follow(&mut self, playback: &MediaPlayback, source: Option<(String, Option<PathBuf>)>) {
         if source.is_some() {
             self.source = source;
         }
-        let Some(media_id) = playback.media_id.clone() else {
-            self.unload_video();
-            return;
+        let now = Instant::now();
+        let at = self
+            .scheduled
+            .back()
+            .map_or(now, |last| last.segment.at + Duration::from_millis(1))
+            .max(now + clock::GO_DELAY);
+
+        // What the change starts from: the last change waiting, or what is
+        // live now.
+        let (before_id, before) = match self.scheduled.back() {
+            Some(last) => (last.media_id.clone(), Some(last.segment.clone())),
+            None => (
+                self.video.as_ref().map(|video| video.id.clone()),
+                self.video.as_ref().map(|video| clock::Segment {
+                    path: video.path.clone(),
+                    seconds: video.position(self.output.as_ref(), VIDEO),
+                    playing: video.playing,
+                    at: now,
+                    rate: video.rate,
+                }),
+            ),
         };
-        let target = expected_position(playback);
-        if self.video.as_ref().is_none_or(|video| video.id != media_id) {
-            self.load_video(media_id, target);
-        } else if let Some(position) = self.video_position() {
-            if (target - position).abs() > SEEK_TOLERANCE {
-                self.seek_video(target);
+
+        let scheduled = match playback.media_id.clone() {
+            None if before_id.is_none() => return,
+            None => Scheduled {
+                change: Change::Unload,
+                segment: clock::Segment {
+                    path: None,
+                    seconds: 0.0,
+                    playing: false,
+                    at,
+                    rate: playback.rate,
+                },
+                media_id: None,
+            },
+            Some(media_id) if before_id.as_deref() != Some(media_id.as_str()) => {
+                let path = self
+                    .source
+                    .as_ref()
+                    .filter(|(id, _)| *id == media_id)
+                    .and_then(|(_, path)| path.clone());
+                if path.is_some() {
+                    self.ensure_output();
+                }
+                let seconds = playback.position_seconds.max(0.0);
+                let mut track =
+                    Track::open(media_id.clone(), path.as_deref(), self.output.as_ref());
+                track.prepare(seconds, playback.rate);
+                if track.duration_seconds.is_some() {
+                    self.transport.set_duration(track.duration_seconds);
+                }
+                Scheduled {
+                    segment: clock::Segment {
+                        path,
+                        seconds,
+                        playing: playback.playing,
+                        at,
+                        rate: playback.rate,
+                    },
+                    change: Change::Load {
+                        track: Box::new(track),
+                        playing: playback.playing,
+                    },
+                    media_id: Some(media_id),
+                }
+            }
+            Some(media_id) => {
+                let Some(before) = before else {
+                    return;
+                };
+                let target = expected_position(playback);
+                let seek_to =
+                    ((target - before.seconds_at(now)).abs() > SEEK_TOLERANCE).then_some(target);
+                let same_rate = (before.rate - playback.rate).abs() < 1e-6;
+                if seek_to.is_none() && before.playing == playback.playing && same_rate {
+                    return;
+                }
+                Scheduled {
+                    segment: clock::Segment {
+                        path: before.path.clone(),
+                        seconds: seek_to.unwrap_or_else(|| before.seconds_at(at)),
+                        playing: playback.playing,
+                        at,
+                        rate: playback.rate,
+                    },
+                    change: Change::Same {
+                        seek_to,
+                        playing: playback.playing,
+                        rate: playback.rate,
+                    },
+                    media_id: Some(media_id),
+                }
+            }
+        };
+        // The device running before the moment, so the sound starts on it.
+        if scheduled.segment.playing {
+            if let Some(output) = &mut self.output {
+                output.resume();
+            }
+            self.idle_since = None;
+        }
+        self.scheduled.push_back(scheduled);
+        self.publish_scheduled();
+    }
+
+    /// Make the changes whose moment has come — ahead of it by as long as the
+    /// device takes to sound, so they are heard on the frame they are seen.
+    fn apply_due(&mut self, now: Instant) {
+        let sounding = self.output.as_ref().map_or(Duration::ZERO, |output| {
+            Duration::from_secs_f64(output.in_flight_frames() as f64 / f64::from(output.rate))
+        });
+        while self
+            .scheduled
+            .front()
+            .is_some_and(|next| next.segment.at <= now + sounding)
+        {
+            let Some(next) = self.scheduled.pop_front() else {
+                break;
+            };
+            self.apply(next.change);
+            // The moment as it was scheduled, not the instant it was made:
+            // the sound only starts being heard then.
+            self.published = Some(clock::HeardClock {
+                now: next.segment,
+                scheduled: self
+                    .scheduled
+                    .iter()
+                    .map(|later| later.segment.clone())
+                    .collect(),
+            });
+            clock::publish(self.published.clone());
+        }
+    }
+
+    fn apply(&mut self, change: Change) {
+        match change {
+            Change::Unload => self.unload_video(),
+            Change::Load { track, playing } => {
+                self.unload_video();
+                let mut track = *track;
+                if let Some(output) = &mut self.output {
+                    if !track.begin(output, VIDEO) {
+                        self.video = Some(track);
+                        self.reopen_output();
+                        return;
+                    }
+                }
+                self.video = Some(track);
+                self.set_video_playing(playing);
+            }
+            Change::Same {
+                seek_to,
+                playing,
+                rate,
+            } => {
+                if let Some(video) = &mut self.video {
+                    video.set_rate(rate, self.output.as_mut(), VIDEO);
+                }
+                if let Some(seconds) = seek_to {
+                    self.seek_video(seconds);
+                }
+                self.set_video_playing(playing);
             }
         }
+    }
+
+    fn set_video_playing(&mut self, playing: bool) {
         if let Some(video) = &mut self.video {
-            video.set_playing(playback.playing, self.output.as_mut(), VIDEO);
-            if playback.playing {
+            video.set_playing(playing, self.output.as_mut(), VIDEO);
+            if playing {
                 self.idle_since = None;
                 self.last_report = Instant::now();
             }
+        }
+    }
+
+    /// Tell every picture about the changes waiting, as soon as they are made.
+    fn publish_scheduled(&mut self) {
+        let now = self
+            .published
+            .as_ref()
+            .map(|published| published.now.clone())
+            .or_else(|| {
+                self.video.as_ref().map(|video| clock::Segment {
+                    path: video.path.clone(),
+                    seconds: video.position(self.output.as_ref(), VIDEO),
+                    playing: video.playing,
+                    at: Instant::now(),
+                    rate: video.rate,
+                })
+            });
+        let now = now.unwrap_or(clock::Segment {
+            path: None,
+            seconds: 0.0,
+            playing: false,
+            at: Instant::now(),
+            rate: 1.0,
+        });
+        self.published = Some(clock::HeardClock {
+            now,
+            scheduled: self
+                .scheduled
+                .iter()
+                .map(|change| change.segment.clone())
+                .collect(),
+        });
+        clock::publish(self.published.clone());
+    }
+
+    /// Make every change waiting now. For tests, which do not wait.
+    #[cfg(test)]
+    fn settle(&mut self) {
+        while let Some(next) = self.scheduled.pop_front() {
+            self.apply(next.change);
         }
     }
 
@@ -569,6 +845,7 @@ impl<T: Transport> Engine<T> {
     }
 
     fn tick(&mut self) {
+        self.apply_due(Instant::now());
         if self.output.as_ref().is_some_and(Output::is_broken) {
             tracing::info!("the audio output went away; reopening");
             self.reopen_output();
@@ -597,27 +874,54 @@ impl<T: Transport> Engine<T> {
     fn publish_clock(&mut self) {
         let now = Instant::now();
         let heard = self.video.as_ref().and_then(|video| {
-            let path = video.path.clone()?;
-            Some(clock::HeardClock {
-                path,
+            Some(clock::Segment {
+                path: Some(video.path.clone()?),
                 seconds: video.position(self.output.as_ref(), VIDEO),
                 playing: video.playing,
                 at: now,
+                rate: video.rate,
             })
         });
-        let keep = match (&self.published, &heard) {
+        let keep = match (
+            self.published.as_ref().map(|published| &published.now),
+            &heard,
+        ) {
             (Some(published), Some(heard)) => {
                 published.path == heard.path
                     && published.playing == heard.playing
+                    && (published.rate - heard.rate).abs() < 1e-6
                     && (published.seconds_at(now) - heard.seconds).abs() <= CLOCK_SLACK
             }
+            (Some(published), None) => published.path.is_none(),
             (None, None) => true,
-            _ => false,
+            (None, Some(_)) => false,
         };
-        if !keep {
-            clock::publish(heard.clone());
-            self.published = heard;
+        if keep {
+            return;
         }
+        let scheduled: Vec<clock::Segment> = self
+            .scheduled
+            .iter()
+            .map(|change| change.segment.clone())
+            .collect();
+        self.published = match heard {
+            Some(heard) => Some(clock::HeardClock {
+                now: heard,
+                scheduled,
+            }),
+            None if scheduled.is_empty() => None,
+            None => Some(clock::HeardClock {
+                now: clock::Segment {
+                    path: None,
+                    seconds: 0.0,
+                    playing: false,
+                    at: now,
+                    rate: 1.0,
+                },
+                scheduled,
+            }),
+        };
+        clock::publish(self.published.clone());
     }
 
     fn report(&mut self) {
@@ -693,6 +997,7 @@ impl<T: Transport> Engine<T> {
                 video.id.clone(),
                 video.playing,
                 video.position(self.output.as_ref(), VIDEO),
+                video.rate,
             )
         });
         let backing = self.backing.as_ref().map(|track| {
@@ -708,9 +1013,10 @@ impl<T: Transport> Engine<T> {
         if !self.ensure_output() {
             return;
         }
-        if let Some((media_id, playing, position)) = video {
+        if let Some((media_id, playing, position, rate)) = video {
             self.load_video(media_id, position);
             if let Some(video) = &mut self.video {
+                video.set_rate(rate, self.output.as_mut(), VIDEO);
                 video.set_playing(playing, self.output.as_mut(), VIDEO);
             }
         }
@@ -856,6 +1162,7 @@ mod tests {
         let recorded = Recorded::default();
         let mut engine = Engine::new(recorded.clone(), Routing::default());
         engine.follow(&playing("clip", 0.0), None);
+        engine.settle();
         let video = engine.video.as_mut().expect("loaded");
         assert!(video.decoder.is_none());
         video.duration_seconds = Some(0.05);
@@ -872,14 +1179,17 @@ mod tests {
     fn the_operator_moving_the_video_moves_the_clock() {
         let mut engine = Engine::new(Recorded::default(), Routing::default());
         engine.follow(&playing("clip", 0.0), None);
+        engine.settle();
         let mut moved = playing("clip", 42.0);
         moved.position_sampled_at_ms = None;
         engine.follow(&moved, None);
+        engine.settle();
         assert!((engine.video_position().unwrap() - 42.0).abs() < 0.05);
         // Its own report coming back is not a reason to move.
         let mut report = playing("clip", engine.video_position().unwrap());
         report.position_sampled_at_ms = None;
         engine.follow(&report, None);
+        engine.settle();
         assert!((engine.video_position().unwrap() - 42.0).abs() < 0.05);
     }
 
@@ -887,11 +1197,42 @@ mod tests {
     fn another_video_starts_where_the_transport_puts_it() {
         let mut engine = Engine::new(Recorded::default(), Routing::default());
         engine.follow(&playing("one", 30.0), None);
+        engine.settle();
         engine.follow(&playing("two", 0.0), None);
+        engine.settle();
         assert_eq!(engine.video.as_ref().unwrap().id, "two");
         assert!(engine.video_position().unwrap() < 0.05);
         engine.follow(&MediaPlayback::default(), None);
+        engine.settle();
         assert!(engine.video.is_none());
+    }
+
+    #[test]
+    fn the_operators_change_waits_for_its_moment_and_is_told_at_once() {
+        let mut engine = Engine::new(Recorded::default(), Routing::default());
+        let clicked = Instant::now();
+        engine.follow(&playing("clip", 0.0), None);
+        assert!(engine.video.is_none(), "not before its moment");
+        let told = engine.published.as_ref().expect("told at once");
+        assert_eq!(told.scheduled.len(), 1);
+        assert!(told.scheduled[0].at >= clicked + clock::GO_DELAY);
+        engine.apply_due(clicked + clock::GO_DELAY / 2);
+        assert!(engine.video.is_none());
+        engine.apply_due(clicked + clock::GO_DELAY + Duration::from_millis(5));
+        assert_eq!(
+            engine.video.as_ref().map(|video| video.id.as_str()),
+            Some("clip")
+        );
+        assert!(engine.scheduled.is_empty());
+    }
+
+    #[test]
+    fn a_click_that_changes_nothing_schedules_nothing() {
+        let mut engine = Engine::new(Recorded::default(), Routing::default());
+        engine.follow(&playing("clip", 0.0), None);
+        engine.settle();
+        engine.follow(&playing("clip", 0.0), None);
+        assert!(engine.scheduled.is_empty());
     }
 
     #[test]
@@ -939,6 +1280,7 @@ mod tests {
             &playing("tone", 0.0),
             Some(("tone".into(), Some(path.clone()))),
         );
+        engine.settle();
         assert!(
             engine.video.as_ref().unwrap().decoder.is_some(),
             "the WAV has sound"

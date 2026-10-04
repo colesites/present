@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 import type { ComponentProps } from "react";
-import { Loader2, Pause, Play, Presentation } from "lucide-react";
+import { Gauge, Loader2, Pause, Play, Presentation, Repeat, RotateCcw, RotateCw, Volume2, VolumeX } from "lucide-react";
 import type { BottomTab, ViewMode } from "../../shared/types";
 import type { SlideData } from "../../features/slides";
 
@@ -82,6 +82,8 @@ type Props = {
   onOutputPreviewMedia: () => void;
   /** The live video, which the preview of it follows and controls. */
   liveVideo: LiveVideo;
+  /** The video's loop, mute and level (`useMediaFolders`). */
+  onVideoSettingsChange?: (settings: Partial<VideoSettings>) => void | Promise<void>;
 
   // top panels
   showsPanelRef: React.RefObject<LibrariesPanelRef | null>;
@@ -102,9 +104,12 @@ export type LiveVideo = {
   playing: boolean;
   positionSeconds: number;
   sampledAtMs: number | null;
+  /** How fast it plays: 1 as recorded. */
+  rate: number;
   play: () => void;
   pause: () => void;
   seek: (seconds: number) => void;
+  setRate: (rate: number) => void;
 };
 
 const formatTime = (seconds: number): string => {
@@ -113,28 +118,103 @@ const formatTime = (seconds: number): string => {
   return `${minutes}:${String(whole % 60).padStart(2, "0")}`;
 };
 
+/** The speeds a video can play at. */
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+/** A slider whose track shows how far along it is. */
+function TrackSlider({
+  value,
+  max,
+  onChange,
+  label,
+  disabled,
+  className,
+}: {
+  value: number;
+  max: number;
+  onChange: (value: number) => void;
+  label: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const percent = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
+  return (
+    <input
+      type="range"
+      min={0}
+      max={max > 0 ? max : 1}
+      step={max > 10 ? 0.1 : 0.01}
+      value={Math.min(value, max > 0 ? max : 1)}
+      disabled={disabled}
+      aria-label={label}
+      onChange={(event) => onChange(Number(event.target.value))}
+      style={{
+        background: `linear-gradient(to right, var(--primary) ${percent}%, color-mix(in oklab, var(--foreground) 22%, transparent) ${percent}%)`,
+      }}
+      className={cn(
+        "h-1.5 cursor-pointer appearance-none rounded-full outline-none disabled:cursor-default disabled:opacity-40",
+        "[&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-[0_0_0_2px_var(--primary)]",
+        className,
+      )}
+    />
+  );
+}
+
+function ControlButton({
+  onClick,
+  label,
+  active,
+  children,
+}: {
+  onClick: () => void;
+  label: string;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "inline-flex h-8 w-8 items-center justify-center rounded-md transition",
+        active
+          ? "bg-primary/15 text-primary"
+          : "text-foreground/85 hover:bg-foreground/10 hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 /**
  * A video in the center pane, decoded by Rust (`RustVideo`). While it is the
- * live video it shows where the screens have it and its controls move the
- * live video, whose sound Rust plays; any other video plays here on its own,
- * silently, for the operator to look at, and clicking it sends it to the
- * screens.
+ * live video it shows what the screens show at the same moment, and its
+ * controls move the live video — its sound and every screen; any other video
+ * plays here on its own, silently, for the operator to look at, and clicking
+ * it sends it to the screens.
  */
 function PreviewVideo({
   item,
-  loop,
+  videoSettings,
+  onVideoSettingsChange,
   liveVideo,
   onSend,
 }: {
   item: MediaItem;
-  loop: boolean;
+  videoSettings: VideoSettings;
+  onVideoSettingsChange?: (settings: Partial<VideoSettings>) => void | Promise<void>;
   liveVideo: LiveVideo;
   onSend?: () => void;
 }) {
   const isLive = liveVideo.id === item.id;
+  const loop = videoSettings.loop;
   const [duration, setDuration] = useState<number | null>(null);
-  // A video that is not live keeps its own time: where it was, and since when.
-  const [local, setLocal] = useState({ playing: false, position: 0, at: 0 });
+  // A video that is not live keeps its own time: where it was, since when,
+  // and how fast.
+  const [local, setLocal] = useState({ playing: false, position: 0, at: 0, rate: 1 });
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -152,10 +232,11 @@ function PreviewVideo({
   }, [item.url]);
 
   const playing = isLive ? liveVideo.playing : local.playing;
+  const rate = isLive ? liveVideo.rate : local.rate;
   // The time shown moves while the video runs.
   useEffect(() => {
     if (!playing) return;
-    const intervalId = window.setInterval(() => setTick((tick) => tick + 1), 250);
+    const intervalId = window.setInterval(() => setTick((tick) => tick + 1), 200);
     return () => window.clearInterval(intervalId);
   }, [playing]);
 
@@ -165,9 +246,9 @@ function PreviewVideo({
     isLive
       ? liveVideo.positionSeconds +
           (liveVideo.playing && liveVideo.sampledAtMs !== null
-            ? Math.max(0, Date.now() - liveVideo.sampledAtMs) / 1000
+            ? (Math.max(0, Date.now() - liveVideo.sampledAtMs) / 1000) * liveVideo.rate
             : 0)
-      : local.position + (local.playing ? Math.max(0, Date.now() - local.at) / 1000 : 0),
+      : local.position + (local.playing ? (Math.max(0, Date.now() - local.at) / 1000) * local.rate : 0),
   );
 
   const togglePlaying = () => {
@@ -176,50 +257,104 @@ function PreviewVideo({
       else liveVideo.play();
       return;
     }
-    setLocal({ playing: !local.playing, position, at: Date.now() });
+    setLocal({ ...local, playing: !local.playing, position, at: Date.now() });
   };
   const seek = (seconds: number) => {
-    if (isLive) liveVideo.seek(seconds);
-    else setLocal({ playing: local.playing, position: seconds, at: Date.now() });
+    const target = Math.max(0, duration ? Math.min(seconds, duration) : seconds);
+    if (isLive) liveVideo.seek(target);
+    else setLocal({ ...local, position: target, at: Date.now() });
   };
+  const changeRate = (next: number) => {
+    if (isLive) liveVideo.setRate(next);
+    else setLocal({ ...local, position, at: Date.now(), rate: next });
+  };
+  const volume = Number.isFinite(videoSettings.volume) ? videoSettings.volume : 1;
 
   return (
-    <div className="w-full">
+    <div className="w-full overflow-hidden rounded-lg border border-border bg-card shadow-sm">
       <RustVideo
         url={item.url}
         clock={
           isLive
             ? { mode: "scene" }
-            : { mode: "local", playing: local.playing, positionSeconds: local.position, loop }
+            : { mode: "local", playing: local.playing, positionSeconds: local.position, loop, rate: local.rate }
         }
         label={`${item.name} service preview`}
+        // The operator's preview's size: sharp in a panel, and each frame
+        // small enough to reach the screen as soon as the projector's.
+        largest={1280}
         className="aspect-video w-full cursor-pointer bg-black"
         onClick={() => {
           if (!isLive) onSend?.();
         }}
       />
-      <div className="mt-1.5 flex items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
-        <button
-          type="button"
-          onClick={togglePlaying}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-foreground hover:bg-muted"
-          aria-label={playing ? "Pause" : "Play"}
-        >
-          {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-        </button>
-        <span>{formatTime(position)}</span>
-        <input
-          type="range"
-          min={0}
-          max={duration ?? 1}
-          step={0.1}
-          value={Math.min(position, duration ?? position)}
+      <div className="space-y-2 border-t border-border bg-card px-3 pb-2.5 pt-3">
+        <TrackSlider
+          value={position}
+          max={duration ?? 0}
           disabled={!duration}
-          onChange={(event) => seek(Number(event.target.value))}
-          aria-label="Position"
-          className="h-1 min-w-0 flex-1 accent-primary"
+          onChange={seek}
+          label="Position"
+          className="w-full"
         />
-        <span>{duration ? formatTime(duration) : "--:--"}</span>
+        <div className="flex items-center gap-1 text-foreground">
+          <ControlButton onClick={() => seek(position - 10)} label="Back 10 seconds">
+            <RotateCcw className="h-4 w-4" />
+          </ControlButton>
+          <ControlButton onClick={togglePlaying} label={playing ? "Pause" : "Play"}>
+            {playing ? <Pause className="h-[18px] w-[18px]" /> : <Play className="h-[18px] w-[18px]" />}
+          </ControlButton>
+          <ControlButton onClick={() => seek(position + 10)} label="Forward 10 seconds">
+            <RotateCw className="h-4 w-4" />
+          </ControlButton>
+          <span className="ml-1.5 text-[12px] font-medium tabular-nums text-foreground/90">
+            {formatTime(position)}
+            <span className="text-muted-foreground"> / {duration ? formatTime(duration) : "--:--"}</span>
+          </span>
+          {isLive ? (
+            <span className="ml-2 rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-400">
+              Live
+            </span>
+          ) : null}
+          <div className="ml-auto flex items-center gap-1">
+            <ControlButton
+              onClick={() => void onVideoSettingsChange?.({ loop: !loop })}
+              label={loop ? "Loop on" : "Loop off"}
+              active={loop}
+            >
+              <Repeat className="h-4 w-4" />
+            </ControlButton>
+            <label className="flex h-8 items-center gap-1 rounded-md px-1.5 text-[12px] text-foreground/85 hover:bg-foreground/10">
+              <Gauge className="h-4 w-4" aria-hidden />
+              <select
+                aria-label="Speed"
+                value={String(rate)}
+                onChange={(event) => changeRate(Number(event.target.value))}
+                className="cursor-pointer bg-transparent text-[12px] font-medium tabular-nums text-foreground outline-none"
+              >
+                {SPEEDS.map((speed) => (
+                  <option key={speed} value={String(speed)}>
+                    {speed}×
+                  </option>
+                ))}
+              </select>
+            </label>
+            <ControlButton
+              onClick={() => void onVideoSettingsChange?.({ muted: !videoSettings.muted })}
+              label={videoSettings.muted ? "Unmute" : "Mute"}
+              active={videoSettings.muted}
+            >
+              {videoSettings.muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+            </ControlButton>
+            <TrackSlider
+              value={videoSettings.muted ? 0 : volume}
+              max={1}
+              onChange={(next) => void onVideoSettingsChange?.({ volume: next, muted: next === 0 })}
+              label="Volume"
+              className="w-20"
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -268,6 +403,7 @@ export function PresentCenterArea({
   videoSettings,
   onOutputPreviewMedia,
   liveVideo,
+  onVideoSettingsChange,
   showsPanelRef,
   scripturePanelRef,
   showsPanelProps,
@@ -340,7 +476,8 @@ export function PresentCenterArea({
             <div className="overflow-hidden rounded-lg bg-black">
               <PreviewVideo
                 item={showViewMedia}
-                loop={videoSettings.loop}
+                videoSettings={videoSettings}
+                onVideoSettingsChange={onVideoSettingsChange}
                 liveVideo={liveVideo}
                 onSend={isPreviewOutputting ? undefined : onOutputPreviewMedia}
               />

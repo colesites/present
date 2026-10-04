@@ -373,7 +373,12 @@ fn lay_out(
         let size = size_of(run);
         let run_color = ink(run.color.as_deref()).map(|c| color::with_opacity(c, opacity));
         let mut attrs = Attrs::new()
-            .weight(weight(run))
+            .weight(super::font_fallback::weight_in(
+                system,
+                families[index].as_deref(),
+                weight(run),
+                run.font_style.as_deref() == Some("italic"),
+            ))
             .metrics(metrics_for(size))
             .metadata(index);
         if run.font_style.as_deref() == Some("italic") {

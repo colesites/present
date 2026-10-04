@@ -34,6 +34,8 @@ pub enum Clock {
         position: f64,
         at: Instant,
         looping: bool,
+        /// How fast it plays: 1 as recorded.
+        rate: f64,
     },
     /// From the start, round and round: a prop.
     Loop,
@@ -52,12 +54,11 @@ impl Player {
         Self { url, clock, feed }
     }
 
-    /// Keep time a new way. A video that moves between following the
-    /// screens and keeping its own time gets a decoder that does the same.
+    /// Keep time a new way: following the screens, or its own.
     pub fn set_clock(&mut self, clock: Clock) {
-        if matches!(clock, Clock::Scene) != matches!(self.clock, Clock::Scene) {
-            self.feed = feed_for(&clock);
-        }
+        // The decoder it has open stays: a preview going live carries on from
+        // it rather than opening the file again.
+        self.feed.set_own_clock(!matches!(clock, Clock::Scene));
         self.clock = clock;
     }
 
@@ -77,9 +78,10 @@ impl Player {
                 position,
                 at,
                 looping,
+                rate,
             } => {
                 let elapsed = if *playing {
-                    now.saturating_duration_since(*at).as_secs_f64()
+                    now.saturating_duration_since(*at).as_secs_f64() * rate
                 } else {
                     0.0
                 };
@@ -114,6 +116,11 @@ impl Player {
         open: &Opener,
     ) -> Option<&VideoFrame> {
         let scene = self.scene(live, now);
+        // Its own time, followed exactly, at whatever speed it plays.
+        if matches!(self.clock, Clock::Local { .. }) {
+            self.feed
+                .set_exact(Some((scene.video_current_time, scene.is_video_playing)));
+        }
         self.feed.frame_for(&scene, now, size, open)
     }
 }
@@ -213,6 +220,7 @@ mod tests {
                 position: 10.0,
                 at,
                 looping: false,
+                rate: 1.0,
             },
         );
         let scene = player.scene(&OutputScene::default(), at + Duration::from_secs(3));

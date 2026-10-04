@@ -177,6 +177,9 @@ pub struct VideoFeed {
     /// than the sound's (`sound::clock`): the operator previewing a video on
     /// a clock of their own.
     own_clock: bool,
+    /// Where the video is for the next frame, told by a caller that keeps its
+    /// own time exactly (`media_frames`): followed as the sound's clock is.
+    exact: Option<(f64, bool)>,
     playing: Option<Playing>,
     /// Being opened on another thread; there is no frame until it arrives.
     opening: Option<Opening>,
@@ -193,6 +196,17 @@ impl VideoFeed {
     pub fn with_own_clock(mut self) -> Self {
         self.own_clock = true;
         self
+    }
+
+    /// Start or stop keeping its own time, keeping the video it has open: a
+    /// preview that goes live carries on from the decoder it already has.
+    pub fn set_own_clock(&mut self, own: bool) {
+        self.own_clock = own;
+    }
+
+    /// Where the video is for the next frame, and whether it runs.
+    pub fn set_exact(&mut self, exact: Option<(f64, bool)>) {
+        self.exact = exact;
     }
 
     /// Whether a video is being opened: there is no frame yet, and that is
@@ -333,16 +347,16 @@ impl VideoFeed {
         // The live video keeps the sound's time, exactly, as every other
         // picture of it does (`sound::clock`): no report to wait for and no
         // tolerance to drift within.
-        let heard = if self.own_clock {
-            None
-        } else {
-            crate::services::sound::clock::for_url(url)
+        let heard = match self.exact.take() {
+            Some(exact) => Some(exact),
+            None if self.own_clock => None,
+            None => crate::services::sound::clock::position_for(url, now),
         };
-        if let Some(heard) = &heard {
+        if let Some((seconds, running)) = heard {
             playing.anchor = Anchor {
-                seconds: heard.seconds,
-                playing: heard.playing,
-                at: heard.at,
+                seconds,
+                playing: running,
+                at: now,
             };
             playing.last_reported = scene.video_current_time;
         } else if scene.video_current_time != playing.last_reported
@@ -915,10 +929,14 @@ mod tests {
         let url = "local-media://media/heard-clock-test.mp4";
         let start = Instant::now();
         crate::services::sound::clock::publish(Some(crate::services::sound::clock::HeardClock {
-            path: "/heard-clock-test.mp4".into(),
-            seconds: 2.0,
-            playing: true,
-            at: start,
+            now: crate::services::sound::clock::Segment {
+                path: Some("/heard-clock-test.mp4".into()),
+                seconds: 2.0,
+                playing: true,
+                at: start,
+                rate: 1.0,
+            },
+            scheduled: Vec::new(),
         }));
         let scene = |reported: f64| OutputScene {
             media_url: Some(url.to_owned()),
@@ -943,10 +961,14 @@ mod tests {
         let url = "local-media://media/own-clock-test.mp4";
         let start = Instant::now();
         crate::services::sound::clock::publish(Some(crate::services::sound::clock::HeardClock {
-            path: "/own-clock-test.mp4".into(),
-            seconds: 5.0,
-            playing: true,
-            at: start,
+            now: crate::services::sound::clock::Segment {
+                path: Some("/own-clock-test.mp4".into()),
+                seconds: 5.0,
+                playing: true,
+                at: start,
+                rate: 1.0,
+            },
+            scheduled: Vec::new(),
         }));
         let mut preview = Harness::new(300);
         preview.feed = VideoFeed::new().with_own_clock();
