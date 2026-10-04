@@ -161,6 +161,33 @@ fn draw_element_into_mut(
 
             let (width, height) = viewport.element_size(element);
             let style = element.style.as_ref();
+            let crop = images::Crop::of(style);
+            let clip = super::paths::of(element);
+            if crop.is_some() || clip.is_some() {
+                // An imported picture: cropped, and clipped to its shape. The
+                // clip's paths are in canvas pixels; the box here is the frame's.
+                let to_frame = tiny_skia::Transform::from_scale(
+                    viewport.scale_x() as f32,
+                    viewport.scale_y() as f32,
+                );
+                let clip: Option<Vec<tiny_skia::Path>> = clip.map(|paths| {
+                    paths
+                        .into_iter()
+                        .filter_map(|shape_path| shape_path.path.transform(to_frame))
+                        .collect()
+                });
+                images::draw_cropped(
+                    pixmap,
+                    &decoded,
+                    viewport.element_transform(element),
+                    width,
+                    height,
+                    crop.unwrap_or_default(),
+                    clip.as_deref(),
+                    style.and_then(|s| s.opacity),
+                );
+                return true;
+            }
             images::draw(
                 pixmap,
                 &decoded,

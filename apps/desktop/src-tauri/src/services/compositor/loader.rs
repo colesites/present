@@ -18,7 +18,7 @@
 //!
 //! **A `data:` URL is the one exception, because it is not a path.** A PDF's
 //! pages and a PowerPoint's pictures are imported as them
-//! (`import-documents.ts`, `pptx::convert`), so those slides are images with no
+//! (`import-documents.ts`, `pptx::deck`), so those slides are images with no
 //! file behind them. Until this read them, a PDF was in the slide grid and
 //! nowhere else: black on the screens, the preview and the stream. The bytes
 //! are in the URL itself, so nothing is opened and there is no scope to check;

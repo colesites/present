@@ -540,6 +540,8 @@ const fontApi = {
 const pptxApi = {
   openFile: () => invoke<string | null>("open_pptx"),
   parseFile: (filePath: string) => invoke("parse_pptx", { filePath }),
+  saveMedia: (data: string, extension: string) =>
+    invoke<string>("save_imported_media", { data, extension }),
 };
 
 /**

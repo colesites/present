@@ -221,6 +221,26 @@ pub fn run() {
                 responder.respond(response);
             });
         })
+        // `media-frame://frame/<id>?w=&h=&t=` — a video file's pictures,
+        // decoded by FFmpeg for a panel in the webview: the operator's center
+        // pane, the stage displays, video props, and the audience window
+        // before its native view has a frame. No `<video>` decodes anything.
+        .register_asynchronous_uri_scheme_protocol("media-frame", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let uri = request.uri().to_string();
+            tauri::async_runtime::spawn_blocking(move || {
+                let Some(state) = app.try_state::<state::MediaFramesState>() else {
+                    responder.respond(
+                        tauri::http::Response::builder()
+                            .status(204)
+                            .body(Vec::new())
+                            .unwrap_or_default(),
+                    );
+                    return;
+                };
+                responder.respond(state::media_frames_state::respond(&state, &app, &uri));
+            });
+        })
         // `transition-sample://frame/<id>?p=&w=&h=` — one moment of a
         // transition, drawn by the engine that will run it in front of the
         // congregation. The picker's tiles are not an imitation in CSS.
@@ -243,6 +263,7 @@ pub fn run() {
         // The operator's preview, drawn on demand. Made on first use, so a
         // machine whose operator never opens it carries nothing.
         .manage(state::PreviewState::new())
+        .manage(state::MediaFramesState::new())
         // The NDI runtime and the stream while it runs. In memory: whether NDI
         // is on is a setting React re-applies on launch.
         .manage(state::NdiState::new())
@@ -335,6 +356,18 @@ pub fn run() {
             commands::playback::report_playback_position,
             commands::playback::set_playback_duration,
             commands::playback::playback_ended,
+            commands::sound::list_audio_devices,
+            commands::sound::play_test_sound,
+            commands::sound::get_backing_track,
+            commands::media_frames::set_media_frames,
+            commands::media_frames::remove_media_frames,
+            commands::media_frames::media_duration,
+            commands::sound::start_microphone,
+            commands::sound::stop_microphone,
+            commands::sound::backing_track_play,
+            commands::sound::backing_track_pause,
+            commands::sound::backing_track_seek,
+            commands::sound::backing_track_stop,
             commands::compositor::render_output_frame,
             commands::media::check_video_support,
             commands::looks::get_looks_config,
@@ -393,6 +426,7 @@ pub fn run() {
             commands::offline::offline_new_id,
             commands::pptx::open_pptx,
             commands::pptx::parse_pptx,
+            commands::pptx::save_imported_media,
             commands::fonts::get_system_fonts,
             commands::fonts::get_system_font_faces,
             commands::fonts::pick_font_file,
@@ -456,6 +490,39 @@ pub fn run() {
             // window's first media request already has a scope to check.
             app.manage(state::FileState::load(&config_dir));
             {
+                // Imported decks' pictures and PDF pages, readable by every
+                // screen for as long as the app runs, as a media folder is.
+                let imported = data_dir.join(services::pptx::media::FOLDER);
+                if let Err(error) = std::fs::create_dir_all(&imported) {
+                    tracing::warn!(%error, "the imported-media folder could not be made");
+                }
+                if let Err(error) = app.state::<state::FileState>().grant_picked_dir(&imported) {
+                    tracing::warn!(%error, "the imported-media folder could not be granted");
+                }
+                app.manage(services::pptx::media::ImportedMedia(imported));
+            }
+            {
+                // The fonts installed in the app — picked in Settings, or
+                // embedded in an imported deck — drawn on the screens too.
+                let custom = app
+                    .path()
+                    .app_data_dir()
+                    .map(|data| data.join(services::fonts::CUSTOM_FONT_DIRECTORY));
+                if let Ok(custom) = custom {
+                    std::thread::spawn(move || {
+                        let paths: Vec<std::path::PathBuf> = std::fs::read_dir(&custom)
+                            .map(|entries| {
+                                entries
+                                    .filter_map(Result::ok)
+                                    .map(|entry| entry.path())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        services::compositor::text::load_font_files(&paths);
+                    });
+                }
+            }
+            {
                 // Media folders that update live.
                 let watch = services::media_watch::MediaWatch::start(app.handle().clone());
                 watch.sync_with(&app.state::<state::FileState>());
@@ -514,6 +581,18 @@ pub fn run() {
             // Persisted because the device choice is wired up once when the
             // desk is, and because localStorage partitions it per origin.
             app.manage(state::AudioState::load(&config_dir));
+            // The video's sound and the backing track, decoded by FFmpeg and
+            // played on the device the graph names; the video's sound is the
+            // transport's clock.
+            let routing = commands::sound::routing(&app.state::<state::AudioState>().snapshot());
+            app.manage(commands::sound::BackingTrackNow::default());
+            app.manage(commands::sound::MicrophoneState::default());
+            app.manage(services::sound::SoundEngine::start(
+                commands::sound::AppTransport {
+                    app: app.handle().clone(),
+                },
+                routing,
+            ));
             // The view the audience window is drawn on. Not a setting: the
             // compositor draws the audience output wherever it can.
             app.manage(std::sync::Arc::new(state::OutputSurfaceState::new()));

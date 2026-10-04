@@ -128,7 +128,11 @@ export type SlideElementStyle = {
   /** Line height as a multiple of the font size; 1.2 when unset. */
   lineHeight?: number;
   /** A shape's paint: a colour, gradient or mix. Wins over `backgroundColor`. */
-  fill?: SlideFill;
+  fill?: SlidePaint;
+  /** The line along a shape's `geometry` paths, in canvas pixels. */
+  line?: SlideLine;
+  /** How much of a picture is cut from each side, as fractions of it. */
+  crop?: { left: number; top: number; right: number; bottom: number };
   capitalization?:
   | "none"
   | "allCaps"
@@ -155,6 +159,39 @@ export type SlideFill =
       spots: Array<{ color: string; x: number; y: number; size: number }>;
     };
 
+/**
+ * An imported shape's gradient, with as many stops as its deck gave it:
+ * `linear` along the same line as `gradient`, `radial` from `cx`, `cy`
+ * (fractions of the shape) out to its farthest corner. Drawn, not edited:
+ * the editors offer the fills above.
+ */
+export type SlideStopsFill =
+  | { kind: "linear"; angle: number; stops: SlideGradientStop[] }
+  | { kind: "radial"; cx: number; cy: number; stops: SlideGradientStop[] };
+
+/** Whatever a shape is painted with. */
+export type SlidePaint = SlideFill | SlideStopsFill;
+
+export type SlideGradientStop = { offset: number; color: string };
+
+/** A shape's outline: a dash pattern and the ends and joins of its lines. */
+export type SlideLine = {
+  color: string;
+  width: number;
+  dash?: number[];
+  cap?: "butt" | "round" | "square";
+  join?: "miter" | "round" | "bevel";
+};
+
+/**
+ * A shape's outline as paths: SVG path data (absolute `M L C Q Z`) in the
+ * element's own canvas pixels from its top-left. What an imported PowerPoint
+ * shape is drawn with; without it a shape is its (rounded) rectangle.
+ */
+export type SlideGeometry = {
+  paths: Array<{ d: string; fill?: boolean; stroke?: boolean }>;
+};
+
 export type SlideTextRun = {
   text: string;
   fontFamily?: string;
@@ -163,14 +200,24 @@ export type SlideTextRun = {
   fontStyle?: string;
   color?: string;
   underline?: boolean;
+  strike?: boolean;
   letterSpacing?: number;
+  /** A colour behind the words. */
+  highlight?: string;
 };
 
 export type SlideTextParagraph = {
   alignment?: "left" | "center" | "right" | "justify";
+  /** A multiple of the size up to 4; above that, pixels. */
   lineHeight?: number;
   spaceBefore?: number;
   spaceAfter?: number;
+  /** Where wrapped lines start, from the box's inset, in canvas pixels. */
+  marginLeft?: number;
+  /** The first line's start from the margin; negative hangs a bullet. */
+  indent?: number;
+  level?: number;
+  bullet?: { text: string; fontFamily?: string; color?: string; fontSize?: number };
   runs: SlideTextRun[];
 };
 
@@ -198,6 +245,7 @@ export type SlideElement = {
   isPlaceholder?: boolean;
   contentRole?: "scriptureVerse" | "scriptureFooter";
   style?: SlideElementStyle;
+  geometry?: SlideGeometry;
   isLocked?: boolean;
   isVisible?: boolean;
 };

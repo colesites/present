@@ -861,7 +861,7 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // header's own button does; the ones that belong to a panel bring the panel
   // on screen and hand over to it.
   useMenuCommandListener(!isSettingsWindow);
-  // Screens ▸ Configure Screens…: Settings, open at Screens & sound.
+  // Screens ▸ Configure Screens…: Settings, open at Screens.
   useMenuCommand("screens.configure", () => {
     try {
       window.localStorage.setItem("present-settings-section", "screens");

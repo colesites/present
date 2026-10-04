@@ -127,6 +127,8 @@ interface FontAPI {
 interface PptxAPI {
   openFile: () => Promise<string | null>;
   parseFile: (filePath: string) => Promise<ParsedPptxPresentation>;
+  /** Save a picture an import made (base64) beside imported decks'; its URL. */
+  saveMedia?: (data: string, extension: string) => Promise<string>;
 }
 
 interface ElectronAPI {

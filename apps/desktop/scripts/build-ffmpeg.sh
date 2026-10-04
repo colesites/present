@@ -7,7 +7,9 @@
 # otherwise.
 #
 # Only what the app uses is built: every decoder and demuxer, the platform's GPU
-# decoder, swscale, and on macOS the filters `scale_vt` needs. A few encoders
+# decoder, swscale, swresample (a video's sound, in the format and rate of the
+# device it plays on: `services/sound`), and on macOS the filters `scale_vt`
+# needs. A few encoders
 # and one muxer stay for the decoder's tests, which write their own clips.
 #
 #   scripts/build-ffmpeg.sh            # build if the pinned build is not there
@@ -54,7 +56,7 @@ FLAGS=(
   --disable-gpl --disable-nonfree --disable-version3
   --enable-shared --disable-static --enable-pic
   --disable-programs --disable-doc --disable-debug
-  --disable-network --disable-devices --disable-avdevice --disable-swresample
+  --disable-network --disable-devices --disable-avdevice
   # Every decoder, demuxer and parser; encoders and muxers only for the tests.
   --disable-encoders --enable-encoder=ffv1,mpeg4
   --disable-muxers --enable-muxer=matroska
@@ -166,7 +168,7 @@ if [[ "${OS}" == windows ]]; then
   # link then fails with LNK1181 "cannot open input file 'avcodec.lib'", after
   # the whole of FFmpeg and the whole of the Rust build. A copy goes where it
   # looks; the DLLs stay in bin/, where staging takes them from.
-  for library in avcodec avformat avutil swscale; do
+  for library in avcodec avformat avutil swscale swresample; do
     [[ -f "${PREFIX}/bin/${library}.lib" ]] || fail "${library}.lib is missing from ${PREFIX}/bin"
     cp "${PREFIX}/bin/${library}.lib" "${PREFIX}/lib/${library}.lib"
   done

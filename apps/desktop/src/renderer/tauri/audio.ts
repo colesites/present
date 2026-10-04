@@ -6,10 +6,9 @@
  * `output.ts`.
  *
  * Mirrors `src-tauri/src/services/audio.rs`. Transport only: `invoke` and
- * `listen`, with no rules of its own. A surface does not decide whether it is
- * audible, it asks — and applies the answer through `applyAudioRouting` in
- * `shared/hooks/useAudioRouting.ts`, which is the one place in the renderer
- * that touches `muted`, `volume` or `setSinkId` and works on both shells.
+ * `listen`, with no rules of its own. The sound itself is played by Rust
+ * (`services/sound`), which follows this graph for the device and the levels;
+ * no element in the webview makes a sound.
  */
 
 import { invoke } from "@tauri-apps/api/core";

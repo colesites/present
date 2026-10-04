@@ -32,10 +32,12 @@ export type MediaPlayback = {
 
 export const getPlayback = (): Promise<MediaPlayback> => invoke("get_playback");
 
+/** `mediaUrl` is the item's file: Rust plays its sound (`services/sound`). */
 export const selectPlaybackMedia = (
   mediaId: string | null,
+  mediaUrl: string | null,
   autoPlay: boolean,
-): Promise<MediaPlayback> => invoke("select_playback_media", { mediaId, autoPlay });
+): Promise<MediaPlayback> => invoke("select_playback_media", { mediaId, mediaUrl, autoPlay });
 
 export const play = (): Promise<MediaPlayback> => invoke("play_playback");
 export const pause = (): Promise<MediaPlayback> => invoke("pause_playback");

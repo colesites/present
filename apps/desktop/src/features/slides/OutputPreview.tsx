@@ -10,6 +10,7 @@ import {
 } from "react";
 import { cn } from "../../renderer/shared/lib/utils";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
+import { RustVideo } from "../../renderer/shared/components/RustVideo";
 import { ScriptureTextLayer } from "../../renderer/shared/components/ScriptureTextLayer";
 import {
   Camera,
@@ -49,7 +50,6 @@ import type {
   ScriptureTextAlign,
   ScriptureVerticalAlign,
 } from "../../shared/types/output-window";
-import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
 import { youtubeEmbedUrl } from "../../shared/lib/youtube-embed.mjs";
 import { CompositorPreviewLayer } from "./components/CompositorPreviewLayer";
 import { StageScreenPreview } from "../stage/StageScreenPreview";
@@ -221,8 +221,6 @@ export const OutputPreview = memo(function OutputPreview({
   onMediaFiltersChange,
   onResetFilters,
   isVideoPlaying,
-  videoCurrentTime,
-  videoTimeSampledAtMs,
   isFrozen,
   onToggleFreeze,
   isTimerLayerEnabled,
@@ -245,7 +243,6 @@ export const OutputPreview = memo(function OutputPreview({
     adjustTimerSeconds,
   } = timers;
   const activeTimerId = activeTimer?.id ?? null;
-  const videoRef = useRef<HTMLVideoElement>(null);
 
   const outputFrameRef = useRef<HTMLDivElement>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -327,39 +324,6 @@ export const OutputPreview = memo(function OutputPreview({
   // The previous `onOutputReady` + `timer-update` broadcast effects lived
   // here. Both moved to PresentContainer alongside the `useTimers` hook so
   // the audience output and the new sidebar-rail Timer panel share state.
-
-  useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.loop = videoSettings.loop;
-    }
-  }, [videoSettings]);
-
-  useEffect(() => {
-    if (videoRef.current && activeMediaItem?.type === "video") {
-      if (isVideoPlaying) {
-        videoRef.current.play().catch(() => {
-          // Autoplay may be blocked in development.
-        });
-      } else {
-        videoRef.current.pause();
-      }
-    }
-  }, [isVideoPlaying, activeMediaItem, showMedia]);
-
-  useEffect(() => {
-    if (videoRef.current && activeMediaItem?.type === "video") {
-      syncMirrorVideo(videoRef.current, {
-        positionSeconds: videoCurrentTime,
-        sampledAtMs: videoTimeSampledAtMs,
-        playing: isVideoPlaying,
-      });
-      // A mirror WebKit paused while the window was hidden runs again.
-      if (isVideoPlaying && videoRef.current.paused) {
-        videoRef.current.play().catch((): void => undefined);
-      }
-    }
-  }, [videoCurrentTime, videoTimeSampledAtMs, isVideoPlaying, activeMediaItem, showMedia]);
-
 
   const filterStyle = filtersToCSS(mediaFilters);
   const previewTextScale = useMemo(
@@ -1041,16 +1005,13 @@ function PreviewPropsOverlay({ items }: { items: PropsOverlayItem[] }) {
         // webview is drawn here.
         if (item.kind === "video" && item.mediaUrl) {
           return (
-            <video
+            <RustVideo
               key={item.id}
-              aria-label="Video prop preview"
-              src={item.mediaUrl}
-              className="pointer-events-none absolute z-30 h-auto object-contain"
+              label="Video prop preview"
+              url={item.mediaUrl}
+              clock={{ mode: "loop" }}
+              className="pointer-events-none absolute z-30 aspect-video"
               style={style}
-              autoPlay
-              loop
-              muted
-              playsInline
             />
           );
         }

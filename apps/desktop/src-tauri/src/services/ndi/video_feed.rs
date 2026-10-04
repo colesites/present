@@ -173,6 +173,10 @@ const SEEK_PATIENCE: Duration = Duration::from_millis(1500);
 /// One background video, followed across frames.
 #[derive(Default)]
 pub struct VideoFeed {
+    /// Keeps the scene's time even when the video is the live one, rather
+    /// than the sound's (`sound::clock`): the operator previewing a video on
+    /// a clock of their own.
+    own_clock: bool,
     playing: Option<Playing>,
     /// Being opened on another thread; there is no frame until it arrives.
     opening: Option<Opening>,
@@ -183,6 +187,12 @@ pub struct VideoFeed {
 impl VideoFeed {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Keep the scene's time even for the live video (see `own_clock`).
+    pub fn with_own_clock(mut self) -> Self {
+        self.own_clock = true;
+        self
     }
 
     /// Whether a video is being opened: there is no frame yet, and that is
@@ -320,9 +330,22 @@ impl VideoFeed {
         let looping = scene.video_settings.loop_;
         let duration = playing.decoder.duration_seconds();
 
-        // A fresh report moves the anchor only if it says the video is
-        // somewhere this clock does not already have it.
-        if scene.video_current_time != playing.last_reported
+        // The live video keeps the sound's time, exactly, as every other
+        // picture of it does (`sound::clock`): no report to wait for and no
+        // tolerance to drift within.
+        let heard = if self.own_clock {
+            None
+        } else {
+            crate::services::sound::clock::for_url(url)
+        };
+        if let Some(heard) = &heard {
+            playing.anchor = Anchor {
+                seconds: heard.seconds,
+                playing: heard.playing,
+                at: heard.at,
+            };
+            playing.last_reported = scene.video_current_time;
+        } else if scene.video_current_time != playing.last_reported
             || scene.is_video_playing != playing.anchor.playing
         {
             let predicted = target_seconds(&playing.anchor, now, looping, duration);
@@ -357,6 +380,9 @@ impl VideoFeed {
             None => {
                 let target = target_seconds(&playing.anchor, now, looping, duration);
                 match advance(playing, now, target) {
+                    // The sound decides when the live video starts again; the
+                    // last frame holds until it does.
+                    Ok(Advanced::Ended) if heard.is_some() => {}
                     Ok(Advanced::Ended) if looping => {
                         // A loop whose length is unknown cannot wrap in
                         // `target_seconds`, and one that ends a frame early
@@ -879,6 +905,58 @@ mod tests {
         fn log(&self) -> Vec<String> {
             self.log.lock().unwrap().clone()
         }
+    }
+
+    /// Two pictures of the live video that heard the operator's reports at
+    /// different moments — one late, one early — still show the same frame,
+    /// because both keep the sound's clock rather than their own.
+    #[test]
+    fn every_picture_of_the_live_video_shows_the_frame_the_sound_is_at() {
+        let url = "local-media://media/heard-clock-test.mp4";
+        let start = Instant::now();
+        crate::services::sound::clock::publish(Some(crate::services::sound::clock::HeardClock {
+            path: "/heard-clock-test.mp4".into(),
+            seconds: 2.0,
+            playing: true,
+            at: start,
+        }));
+        let scene = |reported: f64| OutputScene {
+            media_url: Some(url.to_owned()),
+            ..video_scene(reported, true, false)
+        };
+        let mut late = Harness::new(300);
+        let mut early = Harness::new(300);
+        // Asked once a frame, as the screens ask, for half a second.
+        let (mut late_frame, mut early_frame) = (None, None);
+        for step in 0..=15 {
+            let now = start + STREAM_FRAME * step;
+            late_frame = late.shown(&scene(1.9), now);
+            early_frame = early.shown(&scene(2.08), now);
+        }
+        crate::services::sound::clock::publish(None);
+        assert_eq!(late_frame, Some(75), "2.5 s in, at 30 fps");
+        assert_eq!(late_frame, early_frame);
+    }
+
+    #[test]
+    fn a_picture_with_its_own_clock_ignores_the_sound() {
+        let url = "local-media://media/own-clock-test.mp4";
+        let start = Instant::now();
+        crate::services::sound::clock::publish(Some(crate::services::sound::clock::HeardClock {
+            path: "/own-clock-test.mp4".into(),
+            seconds: 5.0,
+            playing: true,
+            at: start,
+        }));
+        let mut preview = Harness::new(300);
+        preview.feed = VideoFeed::new().with_own_clock();
+        let scene = OutputScene {
+            media_url: Some(url.to_owned()),
+            ..video_scene(0.0, false, false)
+        };
+        let shown = preview.shown(&scene, start + Duration::from_millis(500));
+        crate::services::sound::clock::publish(None);
+        assert_eq!(shown, Some(0), "held where the operator put it");
     }
 
     fn video_scene(time: f64, playing: bool, looping: bool) -> OutputScene {

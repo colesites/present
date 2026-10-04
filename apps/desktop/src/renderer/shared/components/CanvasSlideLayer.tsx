@@ -18,6 +18,7 @@ import type {
 import type { LibraryStyle } from "../../../shared/types/output-window";
 import { applyCapitalization } from "../lib/capitalization";
 import { paintFill, readFill } from "../lib/slide-fill";
+import { fontStack } from "../../../shared/lib/font-fallback.mjs";
 
 const DEFAULT_CANVAS_SIZE: CanvasSizePreset = "1920x1080";
 const CANVAS_DIMENSIONS: Record<
@@ -43,6 +44,7 @@ type TextRun = {
     textAlign: "left" | "center" | "right" | "justify";
     lineHeight: number;
     letterSpacing: number;
+    highlight?: string;
   };
 };
 
@@ -52,6 +54,12 @@ type TextParagraph = {
   lineHeight: number;
   spaceBefore: number;
   spaceAfter: number;
+  /** An imported paragraph's margin and first-line indent, in canvas pixels. */
+  marginLeft?: number;
+  indent?: number;
+  bullet?: { text: string; fontFamily?: string; color?: string; fontSize?: number };
+  /** Where its words start from the content's left, worked out when drawn. */
+  textLeft?: number;
 };
 
 type ParsedShadow = {
@@ -146,43 +154,62 @@ function resolveVerticalAlign(
   return "middle";
 }
 
+/**
+ * An imported text body as paragraphs to lay out. Its sizes are in the
+ * slide's canvas pixels, so `scale` takes them to this canvas's, as the
+ * compositor does (`rich_text.rs`).
+ */
 function parseStructuredTextBody(
   textBody: SlideTextBody,
-  defaultStyle: TextRun["style"]
+  defaultStyle: TextRun["style"],
+  scale: number
 ): TextParagraph[] {
   const paragraphs = (textBody.paragraphs ?? []).map((paragraph) => {
     const paragraphAlign = paragraph.alignment ?? defaultStyle.textAlign;
-    const paragraphLineHeight =
-      paragraph.lineHeight !== undefined && paragraph.lineHeight > 0
-        ? paragraph.lineHeight > 4
-          ? paragraph.lineHeight
-          : Math.max(1, defaultStyle.fontSize * paragraph.lineHeight)
-        : defaultStyle.lineHeight;
+    const given = paragraph.lineHeight !== undefined && paragraph.lineHeight > 0 ? paragraph.lineHeight : null;
+    // A multiple of each run's size, or pixels when it is more than four.
+    const lineHeightFor = (size: number) =>
+      given === null ? Math.max(1, size * 1.2) : given > 4 ? Math.max(1, given * scale) : Math.max(1, size * given);
     const runs = (paragraph.runs ?? []).map((run) => {
+      const fontSize =
+        typeof run.fontSize === "number" && Number.isFinite(run.fontSize)
+          ? Math.max(1, run.fontSize * scale)
+          : defaultStyle.fontSize;
       const style: TextRun["style"] = {
         fontFamily: run.fontFamily ?? defaultStyle.fontFamily,
-        fontSize: Math.max(1, run.fontSize ?? defaultStyle.fontSize),
+        fontSize,
         fontWeight: run.fontWeight ?? defaultStyle.fontWeight,
         fontStyle: run.fontStyle ?? defaultStyle.fontStyle,
         color: run.color ?? defaultStyle.color,
         underline: run.underline ?? defaultStyle.underline,
-        strike: defaultStyle.strike,
+        strike: run.strike ?? defaultStyle.strike,
         textAlign: paragraphAlign,
-        lineHeight: paragraphLineHeight,
-        letterSpacing: run.letterSpacing ?? defaultStyle.letterSpacing,
+        lineHeight: lineHeightFor(fontSize),
+        letterSpacing:
+          typeof run.letterSpacing === "number" ? run.letterSpacing * scale : defaultStyle.letterSpacing,
+        highlight: run.highlight,
       };
       return {
         text: run.text ?? "",
         style,
       };
     });
+    const firstSize = runs[0]?.style.fontSize ?? defaultStyle.fontSize;
 
     return {
       runs: runs.length > 0 ? runs : [{ text: "", style: defaultStyle }],
       textAlign: paragraphAlign,
-      lineHeight: paragraphLineHeight,
-      spaceBefore: Math.max(0, paragraph.spaceBefore ?? 0),
-      spaceAfter: Math.max(0, paragraph.spaceAfter ?? 0),
+      lineHeight: lineHeightFor(firstSize),
+      spaceBefore: Math.max(0, (paragraph.spaceBefore ?? 0) * scale),
+      spaceAfter: Math.max(0, (paragraph.spaceAfter ?? 0) * scale),
+      marginLeft: (paragraph.marginLeft ?? 0) * scale,
+      indent: (paragraph.indent ?? 0) * scale,
+      bullet: paragraph.bullet
+        ? {
+            ...paragraph.bullet,
+            fontSize: (paragraph.bullet.fontSize ?? firstSize / scale) * scale,
+          }
+        : undefined,
     };
   });
 
@@ -210,8 +237,9 @@ type MeasuredLine = {
   lineHeight: number;
 };
 
+/** A run's font, with what to draw it in when it is not installed. */
 function toCanvasFont(style: TextRun["style"]) {
-  return `${style.fontStyle} ${style.fontWeight} ${Math.max(1, style.fontSize)}px "${style.fontFamily}"`;
+  return `${style.fontStyle} ${style.fontWeight} ${Math.max(1, style.fontSize)}px ${fontStack(style.fontFamily)}`;
 }
 
 /** Whether this webview's canvas spaces letters itself (Safari 18, Chrome 99). */
@@ -345,7 +373,7 @@ function measureTextBlock(
   maxWidth: number
 ) {
   const laidOut = paragraphs.map((paragraph) =>
-    layoutParagraph(ctx, paragraph, maxWidth)
+    layoutParagraph(ctx, paragraph, Math.max(1, maxWidth - (paragraph.textLeft ?? 0)))
   );
   const paragraphHeights = laidOut.map((lines, paragraphIndex) => {
     const paragraph = paragraphs[paragraphIndex];
@@ -450,6 +478,38 @@ function buildRoundedRectPath(
   ctx.quadraticCurveTo(x, y + height, x, y + height - clampedRadius);
   ctx.lineTo(x, y + clampedRadius);
   ctx.quadraticCurveTo(x, y, x + clampedRadius, y);
+}
+
+/** Each of a geometry's paths, parsed once for each string. */
+const pathCache = new Map<string, Path2D>();
+function pathOf(d: string): Path2D {
+  let path = pathCache.get(d);
+  if (!path) {
+    path = new Path2D(d);
+    if (pathCache.size > 4000) pathCache.clear();
+    pathCache.set(d, path);
+  }
+  return path;
+}
+
+/**
+ * Where a paragraph's words start, and its bullet: the bullet hangs at the
+ * margin plus the indent, and the words start at the margin or after the
+ * bullet if it reaches further. `rich_text.rs` places them the same way.
+ */
+function placeBullet(ctx: CanvasRenderingContext2D, paragraph: TextParagraph) {
+  const margin = paragraph.marginLeft ?? 0;
+  const indent = paragraph.indent ?? 0;
+  if (!paragraph.bullet) {
+    paragraph.textLeft = Math.max(0, margin + Math.min(indent, 0));
+    return;
+  }
+  const first = paragraph.runs[0]?.style;
+  const size = paragraph.bullet.fontSize ?? first?.fontSize ?? 16;
+  ctx.font = `normal 400 ${Math.max(1, size)}px ${fontStack(paragraph.bullet.fontFamily ?? first?.fontFamily ?? "sans-serif")}`;
+  const bulletLeft = Math.max(0, margin + indent);
+  const width = ctx.measureText(paragraph.bullet.text).width;
+  paragraph.textLeft = Math.max(margin, bulletLeft + width + (first?.fontSize ?? size) * 0.25);
 }
 
 function parseShadow(shadowValue: string | undefined): ParsedShadow | null {
@@ -557,6 +617,43 @@ function fitImageRect(
     dy: (boxHeight - drawHeight) / 2,
     dw: drawWidth,
     dh: drawHeight,
+  };
+}
+
+/**
+ * A picture's crop stretched over its box: the part of it left after cutting
+ * each side by a fraction, where a negative fraction is space added. The
+ * compositor's `draw_cropped`.
+ */
+function croppedImageRect(
+  image: HTMLImageElement,
+  boxWidth: number,
+  boxHeight: number,
+  crop: { left: number; top: number; right: number; bottom: number },
+) {
+  const imageWidth = Math.max(1, image.naturalWidth || image.width || 1);
+  const imageHeight = Math.max(1, image.naturalHeight || image.height || 1);
+  const shownWidth = imageWidth * (1 - crop.left - crop.right);
+  const shownHeight = imageHeight * (1 - crop.top - crop.bottom);
+  if (shownWidth <= 0 || shownHeight <= 0) return null;
+  const scaleX = boxWidth / shownWidth;
+  const scaleY = boxHeight / shownHeight;
+  const fromX = crop.left * imageWidth;
+  const fromY = crop.top * imageHeight;
+  const sx = Math.max(0, fromX);
+  const sy = Math.max(0, fromY);
+  const ex = Math.min(imageWidth, fromX + shownWidth);
+  const ey = Math.min(imageHeight, fromY + shownHeight);
+  if (ex <= sx || ey <= sy) return null;
+  return {
+    sx,
+    sy,
+    sw: ex - sx,
+    sh: ey - sy,
+    dx: (sx - fromX) * scaleX,
+    dy: (sy - fromY) * scaleY,
+    dw: (ex - sx) * scaleX,
+    dh: (ey - sy) * scaleY,
   };
 }
 
@@ -716,6 +813,41 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
         ctx.clip();
       }
 
+      if (element.type === "shape" && element.geometry?.paths?.length) {
+        // An imported shape: its own paths, in the slide's canvas pixels.
+        ctx.scale(scaleX, scaleY);
+        const paths = element.geometry.paths.map((entry) => ({
+          path: pathOf(entry.d),
+          fill: entry.fill !== false,
+          stroke: entry.stroke !== false,
+        }));
+        applyShadow(ctx, parsedShadow, 1, 1);
+        const fill = readFill(styleData.fill);
+        for (const entry of paths) {
+          if (!entry.fill) continue;
+          if (fill) {
+            paintFill(ctx, fill, element.width, element.height, entry.path);
+          } else if (styleData.backgroundColor && styleData.backgroundColor !== "transparent") {
+            ctx.fillStyle = styleData.backgroundColor;
+            ctx.fill(entry.path);
+          }
+        }
+        applyShadow(ctx, null, 1, 1);
+        const line = styleData.line;
+        if (line && line.width > 0) {
+          ctx.strokeStyle = line.color;
+          ctx.lineWidth = line.width;
+          ctx.setLineDash(line.dash ?? []);
+          ctx.lineCap = line.cap ?? "butt";
+          ctx.lineJoin = line.join ?? "miter";
+          for (const entry of paths) {
+            if (entry.stroke) ctx.stroke(entry.path);
+          }
+        }
+        ctx.restore();
+        continue;
+      }
+
       if (element.type === "shape") {
         const borderWidth =
           (styleData.borderWidth ?? 0) * Math.min(scaleX, scaleY);
@@ -759,23 +891,31 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
           const cached = imageCacheRef.current.get(element.content);
           if (cached && cached.complete) {
             applyShadow(ctx, parsedShadow, scaleX, scaleY);
-            const fit = fitImageRect(
-              cached,
-              w,
-              h,
-              styleData.objectFit ?? "cover"
-            );
-            ctx.drawImage(
-              cached,
-              fit.sx,
-              fit.sy,
-              fit.sw,
-              fit.sh,
-              fit.dx,
-              fit.dy,
-              fit.dw,
-              fit.dh
-            );
+            if (element.geometry?.paths?.length) {
+              // Kept inside its shape: a photo in a circle.
+              const clip = new Path2D();
+              for (const entry of element.geometry.paths) clip.addPath(pathOf(entry.d));
+              ctx.scale(scaleX, scaleY);
+              ctx.clip(clip);
+              ctx.scale(1 / scaleX, 1 / scaleY);
+            }
+            const crop = styleData.crop;
+            const fit = crop
+              ? croppedImageRect(cached, w, h, crop)
+              : fitImageRect(cached, w, h, styleData.objectFit ?? "cover");
+            if (fit) {
+              ctx.drawImage(
+                cached,
+                fit.sx,
+                fit.sy,
+                fit.sw,
+                fit.sh,
+                fit.dx,
+                fit.dy,
+                fit.dw,
+                fit.dh
+              );
+            }
             applyShadow(ctx, null, scaleX, scaleY);
           } else {
             const image = new Image();
@@ -829,8 +969,9 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
         const gradientFill = createTextGradient(ctx, w, h, styleData);
         applyShadow(ctx, parsedShadow, scaleX, scaleY);
 
-        const paragraphs = element.textBody
-          ? parseStructuredTextBody(element.textBody, defaultStyle)
+        const imported = Boolean(element.textBody);
+        const paragraphs: TextParagraph[] = element.textBody
+          ? parseStructuredTextBody(element.textBody, defaultStyle, Math.min(scaleX, scaleY))
           : (element.content ?? "").split("\n").map((line) => ({
               runs: [{ text: line, style: defaultStyle }],
               textAlign: defaultStyle.textAlign,
@@ -871,40 +1012,66 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
             )
           : casedParagraphs;
 
+        for (const paragraph of scaledParagraphs) placeBullet(ctx, paragraph);
         const measurement = measureTextBlock(ctx, scaledParagraphs, contentWidth);
         const laidOut = measurement.laidOut;
         const totalTextHeight = measurement.totalHeight;
 
-        const verticalAlign = resolveVerticalAlign(styleData);
+        // An imported box's words overflow it as PowerPoint draws them:
+        // both ways from the middle, upwards from the bottom.
+        const verticalAlign = imported
+          ? (element.textBody?.verticalAlign ?? resolveVerticalAlign(styleData))
+          : resolveVerticalAlign(styleData);
+        const slack = imported
+          ? contentHeight - totalTextHeight
+          : Math.max(0, contentHeight - totalTextHeight);
         let cursorY = contentY;
         if (verticalAlign === "middle") {
-          cursorY =
-            contentY + Math.max(0, (contentHeight - totalTextHeight) / 2);
+          cursorY = contentY + slack / 2;
         } else if (verticalAlign === "bottom") {
-          cursorY = contentY + Math.max(0, contentHeight - totalTextHeight);
+          cursorY = contentY + slack;
         }
 
         scaledParagraphs.forEach((paragraph, paragraphIndex) => {
           const lines = laidOut[paragraphIndex] ?? [];
           cursorY += paragraph.spaceBefore;
-          for (const line of lines) {
-            if (cursorY > contentY + contentHeight) {
-              break;
+          const textLeft = paragraph.textLeft ?? 0;
+          const lineWidth = Math.max(1, contentWidth - textLeft);
+          lines.forEach((line, lineIndex) => {
+            if (!imported && cursorY > contentY + contentHeight) {
+              return;
             }
 
-            let lineStartX = contentX;
+            let lineStartX = contentX + textLeft;
             const textAlign = paragraph.textAlign;
             if (textAlign === "center") {
-              lineStartX = contentX + (contentWidth - line.width) / 2;
+              lineStartX = contentX + textLeft + (lineWidth - line.width) / 2;
             } else if (textAlign === "right") {
-              lineStartX = contentX + (contentWidth - line.width);
+              lineStartX = contentX + textLeft + (lineWidth - line.width);
             }
 
             let cursorX = lineStartX;
             const baselineY = cursorY + line.lineHeight * 0.82;
+            if (lineIndex === 0 && paragraph.bullet) {
+              const first = paragraph.runs[0]?.style;
+              const size = paragraph.bullet.fontSize ?? first?.fontSize ?? 16;
+              ctx.font = `normal 400 ${Math.max(1, size)}px ${fontStack(paragraph.bullet.fontFamily ?? first?.fontFamily ?? "sans-serif")}`;
+              ctx.fillStyle = paragraph.bullet.color ?? first?.color ?? "#000000";
+              ctx.textAlign = "left";
+              ctx.textBaseline = "alphabetic";
+              ctx.fillText(
+                paragraph.bullet.text,
+                contentX + Math.max(0, (paragraph.marginLeft ?? 0) + (paragraph.indent ?? 0)),
+                baselineY,
+              );
+            }
             for (const measured of line.runs) {
               const run = measured.run;
               const runStyle = run.style;
+              if (runStyle.highlight && run.text) {
+                ctx.fillStyle = runStyle.highlight;
+                ctx.fillRect(cursorX, cursorY, measured.width, line.lineHeight);
+              }
               ctx.font = toCanvasFont(runStyle);
               ctx.fillStyle = gradientFill ?? runStyle.color;
               ctx.textAlign = "left";
@@ -938,7 +1105,7 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
             }
 
             cursorY += line.lineHeight;
-          }
+          });
           cursorY += paragraph.spaceAfter;
         });
         applyShadow(ctx, null, scaleX, scaleY);

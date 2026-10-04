@@ -11,10 +11,11 @@
 //! invariant and starts obeying it — which is what makes forgetting a `muted`
 //! attribute stop being a way to put audio on the congregation's speakers.
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::errors::AppResult;
 use crate::services::audio::{AudioGraph, AudioSource, AudioSurface, SourceRouting};
+use crate::services::sound::SoundEngine;
 use crate::state::AudioState;
 
 /// Emitted to every window when the graph changes.
@@ -33,6 +34,10 @@ fn broadcast(
         return Ok(state.snapshot());
     };
 
+    // The sound the app plays itself follows the graph directly.
+    if let Some(engine) = app.try_state::<SoundEngine>() {
+        engine.set_routing(super::sound::routing(&graph));
+    }
     if let Err(error) = app.emit(AUDIO_CHANGED_EVENT, &graph) {
         // The change is already saved; a failed broadcast leaves a window
         // stale, it does not lose the setting.

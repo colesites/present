@@ -696,7 +696,20 @@ pub fn unique_file_name(original: &str, exists: impl Fn(&str) -> bool) -> String
 
 /// An installed font as the pickers list it.
 pub fn custom_face(file_name: &str, file_path: &str, bytes: &[u8]) -> FontFace {
-    let inferred = infer_from_file_name(file_name);
+    let mut inferred = infer_from_file_name(file_name);
+    // What the font says it is wins over what its file name suggests: a
+    // deck's embedded font is saved as `Raleway-700-1a2b3c4d.ttf`.
+    if let Some((family, weight, italic)) = crate::services::pptx::fonts::describe(bytes) {
+        let (weight, weight_label) = normalize_weight(Some(&weight.to_string()));
+        let (style, style_label) = normalize_style(Some(if italic { "italic" } else { "normal" }));
+        inferred = InferredMeta {
+            family_name: family,
+            weight,
+            weight_label,
+            style,
+            style_label,
+        };
+    }
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
     FontFace {
         family_name: inferred.family_name,

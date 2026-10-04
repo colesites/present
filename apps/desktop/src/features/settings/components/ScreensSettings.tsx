@@ -1634,16 +1634,8 @@ function ScreenDetail({
 
 export function ScreensSettings({
   onScreenDisplayChange,
-  audioOutputDeviceId,
-  audioOutputDeviceLabel,
-  audioOutputs,
-  onAudioOutputChange,
 }: {
   onScreenDisplayChange: (role: ScreenRole, displayId: number | null) => void;
-  audioOutputDeviceId: string | null;
-  audioOutputDeviceLabel: string;
-  audioOutputs: Array<{ deviceId: string; label: string }>;
-  onAudioOutputChange: (deviceId: string) => void;
 }) {
   const displays = useDisplays();
   const { screens, refresh } = useScreens();
@@ -1740,8 +1732,8 @@ export function ScreensSettings({
   return (
     <SettingsPage
       wide
-      title="Screens & sound"
-      description="The screens the audience and the stage see, the outputs each goes to, and where the sound of videos plays."
+      title="Screens"
+      description="The screens the audience and the stage see, and the outputs each goes to. Sound is in Audio."
     >
       <div>
         <SettingsGroup
@@ -1833,22 +1825,6 @@ export function ScreensSettings({
         </SettingsNote>
       </div>
 
-      <SettingsGroup title="Sound">
-        <SettingsRow label="Video sound" description="Plays once, from this computer, whether or not a screen is open.">
-          <SettingsSelect
-            label="Video sound output"
-            value={audioOutputDeviceId ?? "__system_default__"}
-            onChange={onAudioOutputChange}
-            options={[
-              { value: "__system_default__", label: "System default" },
-              ...audioOutputs.map((device) => ({ value: device.deviceId, label: device.label })),
-              ...(audioOutputDeviceId && !audioOutputs.some((device) => device.deviceId === audioOutputDeviceId)
-                ? [{ value: audioOutputDeviceId, label: audioOutputDeviceLabel || "A device not connected" }]
-                : []),
-            ]}
-          />
-        </SettingsRow>
-      </SettingsGroup>
     </SettingsPage>
   );
 }

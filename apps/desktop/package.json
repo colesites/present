@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "node scripts/tauri-dev.mjs",
     "tauri:build": "node scripts/tauri-build.mjs",
     "tauri:ffmpeg": "bash scripts/build-ffmpeg.sh && node scripts/stage-tauri-ffmpeg.mjs",
     "tauri:vite:dev": "vite",

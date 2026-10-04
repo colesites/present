@@ -57,6 +57,10 @@ pub fn rounded_rect_path(
 
 /// Draw one `shape` element.
 pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geometry::Viewport) {
+    if let Some(paths) = super::paths::of(element) {
+        draw_paths(pixmap, element, viewport, &paths);
+        return;
+    }
     let (width, height) = viewport.element_size(element);
     if width <= 0.0 || height <= 0.0 {
         return;
@@ -132,6 +136,59 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
         ..Stroke::default()
     };
     pixmap.stroke_path(&path, &paint, &stroke, transform, None);
+}
+
+/// A shape with its own geometry (an imported PowerPoint shape): each path
+/// filled and outlined as it says, in the element's canvas pixels.
+fn draw_paths(
+    pixmap: &mut PixmapMut<'_>,
+    element: &SlideElement,
+    viewport: &geometry::Viewport,
+    paths: &[super::paths::ShapePath],
+) {
+    let style = element.style.as_ref();
+    let opacity = style.and_then(|s| s.opacity);
+    let transform = viewport
+        .element_transform(element)
+        .pre_scale(viewport.scale_x() as f32, viewport.scale_y() as f32);
+    let size = (element.width() as f32, element.height() as f32);
+
+    let fill = Fill::of(style);
+    let background = style
+        .and_then(|s| s.background_color.as_deref())
+        .filter(|value| !value.trim().eq_ignore_ascii_case("transparent"))
+        .and_then(color::parse);
+    for shape_path in paths.iter().filter(|shape_path| shape_path.fill) {
+        let painted = fill.as_ref().is_some_and(|fill| {
+            fill::paint(pixmap, &shape_path.path, fill, size, opacity, transform)
+        });
+        if !painted {
+            if let Some(background) = background {
+                let mut paint = Paint {
+                    anti_alias: true,
+                    ..Paint::default()
+                };
+                paint.set_color(color::with_opacity(background, opacity));
+                pixmap.fill_path(&shape_path.path, &paint, FillRule::Winding, transform, None);
+            }
+        }
+    }
+
+    let Some(line) = super::paths::Line::of(style) else {
+        return;
+    };
+    let Some(line_color) = color::parse(&line.color) else {
+        return;
+    };
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Paint::default()
+    };
+    paint.set_color(color::with_opacity(line_color, opacity));
+    let stroke = line.stroke();
+    for shape_path in paths.iter().filter(|shape_path| shape_path.stroke) {
+        pixmap.stroke_path(&shape_path.path, &paint, &stroke, transform, None);
+    }
 }
 
 /// Fill the whole frame with a colour, for the slide background.

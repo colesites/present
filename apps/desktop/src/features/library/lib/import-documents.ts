@@ -87,6 +87,11 @@ async function importPptxFile(
     detail: "Parsing PowerPoint slides",
   });
   const parsedPresentation = await window.pptxAPI.parseFile(file.path);
+  // The fonts it embeds were installed as it was read: load them here too,
+  // so the slides are drawn in them.
+  await import("../../../renderer/shared/hooks/useFontCatalog")
+    .then(({ ensureFontCatalogLoaded }) => ensureFontCatalogLoaded(document, { force: true }))
+    .catch((): undefined => undefined);
   onProgress?.({
     phase: "finalizing",
     percent: 95,
@@ -168,6 +173,14 @@ async function importPdfFile(
       Math.round(renderViewport.height),
     );
 
+    // Saved as a file beside imported decks' pictures where the app can,
+    // rather than kept in the service as megabytes of base64.
+    const dataUrl = slideCanvas.toDataURL("image/png");
+    const pageUrl = window.pptxAPI?.saveMedia
+      ? await window.pptxAPI
+          .saveMedia(dataUrl.slice(dataUrl.indexOf(",") + 1), "png")
+          .catch(() => dataUrl)
+      : dataUrl;
     slides.push(
       normalizeLibrarySlide(
         {
@@ -181,7 +194,7 @@ async function importPdfFile(
               y: 0,
               width,
               height,
-              content: slideCanvas.toDataURL("image/png"),
+              content: pageUrl,
               style: {
                 opacity: 1,
                 borderRadius: 0,

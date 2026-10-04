@@ -9,6 +9,7 @@
         "ffmpeg/runtime/libavfilter.12.dylib",
         "ffmpeg/runtime/libavformat.63.dylib",
         "ffmpeg/runtime/libavutil.61.dylib",
+        "ffmpeg/runtime/libswresample.7.dylib",
         "ffmpeg/runtime/libswscale.10.dylib",
         "syphon/Syphon.framework"
       ]

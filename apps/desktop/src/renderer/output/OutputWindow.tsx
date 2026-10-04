@@ -13,8 +13,8 @@ import { ownScreenId, useOwnScreen } from "../tauri/screens";
 import { lookTargetForScreen } from "../../shared/types/looks";
 import { ScreenCanvas } from "../shared/components/ScreenCanvas";
 import { CanvasSlideLayer } from "../shared/components/CanvasSlideLayer";
+import { RustVideo } from "../shared/components/RustVideo";
 import { ScriptureTextLayer } from "../shared/components/ScriptureTextLayer";
-import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
 import { youtubeEmbedUrl } from "../../shared/lib/youtube-embed.mjs";
 import {
   FULL_BOX,
@@ -23,6 +23,10 @@ import {
   screenIntoBoxTransform,
   wordsOfSlide,
 } from "../../shared/lib/screen-layout.mjs";
+
+/** A region's fit, as a decoded video is fitted: scaled down is contained. */
+const regionFit = (fit: string | undefined): "contain" | "cover" | "fill" =>
+  fit === "contain" || fit === "scale-down" ? "contain" : fit === "fill" ? "fill" : "cover";
 
 const DEFAULT_SCREEN_LAYOUT: ScreenComposerLayout = {
   id: "live-default",
@@ -147,15 +151,20 @@ export function OutputWindow() {
       const label = ownColumn
         ? (await import("@tauri-apps/api/webviewWindow")).getCurrentWebviewWindow().label
         : undefined;
-      // Only the newest answer is shown: an older one arriving late is
-      // a scene already replaced.
+      // An answer older than one already shown is a scene already replaced.
+      // Any newer one is shown, even with a later question still out: during
+      // a video the scene changes several times a second, and waiting for the
+      // answer to the latest question could leave the screen showing none.
       let asked = 0;
+      let shown = 0;
       const refresh = () => {
         const ask = ++asked;
         core
           .getOutputScene(label)
           .then((scene) => {
-            if (!cancelled && ask === asked) setState((prev) => core.mergeScene(prev, scene));
+            if (cancelled || ask < shown) return;
+            shown = ask;
+            setState((prev) => core.mergeScene(prev, scene));
           })
           .catch((error: unknown) => console.error("[Output] could not read the scene", error));
       };
@@ -251,46 +260,6 @@ export function OutputWindow() {
     void ensureFontCatalogLoaded(document, { force: true });
   }, [state.libraryStyle.fontFamily, state.scriptureStyle.fontFamily]);
 
-  const legacyVideoRef = useRef<HTMLVideoElement | null>(null);
-
-  const followOperator = (video: HTMLVideoElement) => {
-    syncMirrorVideo(video, {
-      positionSeconds: state.videoCurrentTime,
-      sampledAtMs: state.videoTimeSampledAtMs,
-      playing: state.isVideoPlaying,
-    });
-
-    if (state.isVideoPlaying) {
-      const playPromise = video.play();
-      if (playPromise && typeof playPromise.catch === "function") {
-        playPromise.catch((): void => undefined);
-      }
-    } else {
-      video.pause();
-    }
-  };
-
-  // The element exists only while media is shown, and a new or remounted one
-  // starts paused, so showing media again is part of what this follows; a
-  // newly loaded video also catches up in `onLoadedData` (the worship stage
-  // stayed on a still frame for want of both).
-  useEffect(() => {
-    const video = legacyVideoRef.current;
-    if (!video || state.mediaType !== "video") {
-      return;
-    }
-    followOperator(video);
-    // `followOperator` reads the same state listed here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    state.hideBackground,
-    state.mediaType,
-    state.mediaUrl,
-    state.showMedia,
-    state.videoCurrentTime,
-    state.videoTimeSampledAtMs,
-    state.isVideoPlaying,
-  ]);
 
   const regions = useMemo(() => {
     return state.screenComposerLayout?.regions?.length
@@ -357,27 +326,14 @@ export function OutputWindow() {
         <div className="relative h-full w-full">
           {region.backgroundMediaUrl ? (
             region.backgroundMediaType === "video" ? (
-              <video
-                aria-label="Region background video"
-                src={region.backgroundMediaUrl}
-                className={cn(
-                  "absolute inset-0 h-full w-full",
-                  region.fitMode === "contain"
-                    ? "object-contain"
-                    : region.fitMode === "fill"
-                      ? "object-fill"
-                      : region.fitMode === "scale-down"
-                        ? "object-scale-down"
-                        : "object-cover"
-                )}
-                loop
-                muted
-                autoPlay
-                playsInline
+              <RustVideo
+                label="Region background video"
+                url={region.backgroundMediaUrl}
+                clock={{ mode: "loop" }}
+                fit={regionFit(region.fitMode)}
+                className="absolute inset-0 h-full w-full"
                 style={{ filter: state.mediaFilterCSS }}
-              >
-                <track kind="captions" />
-              </video>
+              />
             ) : (
               <OutputImageLayer
                 url={region.backgroundMediaUrl}
@@ -440,27 +396,14 @@ export function OutputWindow() {
       <div className="relative h-full w-full">
         {region.mediaUrl ? (
           region.mediaType === "video" ? (
-            <video
-              aria-label="Region media video"
-              src={region.mediaUrl}
-              className={cn(
-                "h-full w-full",
-                region.fitMode === "contain"
-                  ? "object-contain"
-                  : region.fitMode === "fill"
-                    ? "object-fill"
-                    : region.fitMode === "scale-down"
-                      ? "object-scale-down"
-                      : "object-cover"
-              )}
-              loop
-              muted
-              autoPlay
-              playsInline
+            <RustVideo
+              label="Region media video"
+              url={region.mediaUrl}
+              clock={{ mode: "loop" }}
+              fit={regionFit(region.fitMode)}
+              className="h-full w-full"
               style={{ filter: state.mediaFilterCSS }}
-            >
-              <track kind="captions" />
-            </video>
+            />
           ) : (
             <OutputImageLayer
               url={region.mediaUrl}
@@ -548,22 +491,17 @@ export function OutputWindow() {
               style={boxStyle(state.screenLayout?.mediaBox ?? FULL_BOX)}
             >
               {state.mediaType === "video" ? (
-                <video
-                  ref={legacyVideoRef}
-                  aria-label="Output media video"
-                  src={state.mediaUrl}
-                  className={cn(
-                    "absolute inset-0 h-full w-full",
-                    state.screenLayout?.mediaFill ? "object-cover" : "object-contain",
-                  )}
-                  loop={state.videoSettings.loop}
-                  muted
-                  playsInline
-                  onLoadedData={(event) => followOperator(event.currentTarget)}
+                // Decoded by Rust, on the scene's clock: what this window
+                // shows until its native view has a frame, and on a platform
+                // without one.
+                <RustVideo
+                  label="Output media video"
+                  url={state.mediaUrl}
+                  clock={{ mode: "scene" }}
+                  fit={state.screenLayout?.mediaFill ? "cover" : "contain"}
+                  className="absolute inset-0 h-full w-full"
                   style={{ filter: state.mediaFilterCSS }}
-                >
-                  <track kind="captions" />
-                </video>
+                />
               ) : (
                 <OutputImageLayer
                   url={state.mediaUrl}
@@ -1104,16 +1042,13 @@ function PropsOverlayLayer({
         }
         if (item.kind === "video" && item.mediaUrl) {
           return (
-            <video
+            <RustVideo
               key={item.id}
-              src={item.mediaUrl}
-              className="pointer-events-none absolute z-40 h-auto object-contain"
+              url={item.mediaUrl}
+              clock={{ mode: "loop" }}
+              className="pointer-events-none absolute z-40 aspect-video"
               style={baseStyle}
-              aria-label="Video prop"
-              autoPlay
-              loop
-              muted
-              playsInline
+              label="Video prop"
             />
           );
         }

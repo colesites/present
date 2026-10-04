@@ -7,7 +7,7 @@ import {
   ResizablePanelGroup,
 } from "../../renderer/shared/components/ui/resizable";
 import { PresentServicesSidebar } from "./PresentServicesSidebar";
-import { PresentCenterArea } from "./PresentCenterArea";
+import { PresentCenterArea, type LiveVideo } from "./PresentCenterArea";
 import { PresentOutputSidebar } from "./PresentOutputSidebar";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { SlideData } from "../../features/slides";
@@ -103,14 +103,10 @@ export interface MainViewMediaState {
   showViewMedia: MediaItem | null;
   isPreviewOutputting: boolean;
   effectiveActiveMediaItem: MediaItem | null;
-  showVideoRef: React.RefObject<HTMLVideoElement | null>;
   videoSettings: VideoSettings;
   handleOutputPreviewMedia: () => void;
-  handleVideoPlay: () => void;
-  handleVideoPause: () => void;
-  handleVideoEnded: () => void;
-  handleVideoSeeked: (e: React.SyntheticEvent<HTMLVideoElement, Event>) => void;
-  handleVideoTimeUpdate: (e: React.SyntheticEvent<HTMLVideoElement, Event>) => void;
+  /** The live video and the controls that move it (`useShowVideoSync`). */
+  liveVideoControls: Pick<LiveVideo, "id" | "play" | "pause" | "seek">;
   onToggleVideoPlayback: () => void;
   handleMediaPanelSelect: (item: MediaItem | null) => void;
   handleAddMediaToService: (
@@ -416,14 +412,9 @@ export function MainView({
     showViewMedia,
     isPreviewOutputting,
     effectiveActiveMediaItem,
-    showVideoRef,
     videoSettings,
     handleOutputPreviewMedia,
-    handleVideoPlay,
-    handleVideoPause,
-    handleVideoEnded,
-    handleVideoSeeked,
-    handleVideoTimeUpdate,
+    liveVideoControls,
     onToggleVideoPlayback,
     handleMediaPanelSelect,
     handleAddMediaToService,
@@ -440,6 +431,17 @@ export function MainView({
     videoCurrentTime,
     videoTimeSampledAtMs,
   } = mediaState;
+
+  // The live video for the center pane's preview of it to follow and control.
+  const liveVideo = React.useMemo<LiveVideo>(
+    () => ({
+      ...liveVideoControls,
+      playing: isVideoPlaying,
+      positionSeconds: videoCurrentTime,
+      sampledAtMs: videoTimeSampledAtMs,
+    }),
+    [isVideoPlaying, liveVideoControls, videoCurrentTime, videoTimeSampledAtMs],
+  );
 
   const {
     slidesForGrid,
@@ -977,14 +979,9 @@ export function MainView({
                   }
                   showViewMedia={showViewMedia}
                   isPreviewOutputting={isPreviewOutputting}
-                  showVideoRef={showVideoRef}
                   videoSettings={videoSettings}
                   onOutputPreviewMedia={handleOutputPreviewMediaClick}
-                  onVideoPlay={handleVideoPlay}
-                  onVideoPause={handleVideoPause}
-                  onVideoEnded={handleVideoEnded}
-                  onVideoSeeked={handleVideoSeeked}
-                  onVideoTimeUpdate={handleVideoTimeUpdate}
+                  liveVideo={liveVideo}
                   showsPanelRef={showsPanelRef}
                   scripturePanelRef={scripturePanelRef}
                   showsPanelProps={showsPanelProps}
@@ -1096,14 +1093,9 @@ export function MainView({
         }
         showViewMedia={showViewMedia}
         isPreviewOutputting={isPreviewOutputting}
-        showVideoRef={showVideoRef}
         videoSettings={videoSettings}
         onOutputPreviewMedia={handleOutputPreviewMediaClick}
-        onVideoPlay={handleVideoPlay}
-        onVideoPause={handleVideoPause}
-        onVideoEnded={handleVideoEnded}
-        onVideoSeeked={handleVideoSeeked}
-        onVideoTimeUpdate={handleVideoTimeUpdate}
+        liveVideo={liveVideo}
         showsPanelRef={showsPanelRef}
         scripturePanelRef={scripturePanelRef}
         showsPanelProps={showsPanelProps}

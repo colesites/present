@@ -158,6 +158,86 @@ pub fn draw(
     pixmap.fill_rect(rect, &paint, transform, None);
 }
 
+/// How much of a picture is cut from each side, as fractions of it: an
+/// imported PowerPoint picture's crop (`style.crop`). Negative is space added.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Deserialize)]
+pub struct Crop {
+    #[serde(default)]
+    pub left: f32,
+    #[serde(default)]
+    pub top: f32,
+    #[serde(default)]
+    pub right: f32,
+    #[serde(default)]
+    pub bottom: f32,
+}
+
+impl Crop {
+    pub fn of(style: Option<&crate::services::slide::SlideElementStyle>) -> Option<Self> {
+        serde_json::from_value(style?.extra.get("crop")?.clone()).ok()
+    }
+}
+
+/// A picture stretched over its box after cropping, and kept inside `clip`
+/// (paths in the box's own space) when it has one — a photo in a circle.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_cropped(
+    pixmap: &mut PixmapMut<'_>,
+    source: &Pixmap,
+    transform: Transform,
+    box_width: f32,
+    box_height: f32,
+    crop: Crop,
+    clip: Option<&[tiny_skia::Path]>,
+    opacity: Option<f64>,
+) {
+    let (width, height) = (source.width() as f32, source.height() as f32);
+    let shown_width = width * (1.0 - crop.left - crop.right);
+    let shown_height = height * (1.0 - crop.top - crop.bottom);
+    if shown_width <= 0.0 || shown_height <= 0.0 || box_width <= 0.0 || box_height <= 0.0 {
+        return;
+    }
+    let scale_x = box_width / shown_width;
+    let scale_y = box_height / shown_height;
+    let pattern_transform = Transform::from_scale(scale_x, scale_y)
+        .pre_translate(-crop.left * width, -crop.top * height);
+    // Where the picture is, inside the box: all of it unless space was added.
+    let left = (-crop.left * width * scale_x).max(0.0);
+    let top = (-crop.top * height * scale_y).max(0.0);
+    let right = (box_width + crop.right.min(0.0) * width * scale_x).min(box_width);
+    let bottom = (box_height + crop.bottom.min(0.0) * height * scale_y).min(box_height);
+    let Some(rect) = Rect::from_ltrb(left, top, right, bottom) else {
+        return;
+    };
+    let mut paint = tiny_skia::Paint {
+        shader: Pattern::new(
+            source.as_ref(),
+            SpreadMode::Pad,
+            FilterQuality::Bilinear,
+            opacity
+                .filter(|value| value.is_finite())
+                .map(|value| value.clamp(0.0, 1.0) as f32)
+                .unwrap_or(1.0),
+            pattern_transform,
+        ),
+        ..tiny_skia::Paint::default()
+    };
+    paint.anti_alias = true;
+
+    match clip {
+        Some(paths) if !paths.is_empty() => {
+            let Some(mut mask) = tiny_skia::Mask::new(pixmap.width(), pixmap.height()) else {
+                return;
+            };
+            for path in paths {
+                mask.fill_path(path, tiny_skia::FillRule::Winding, true, transform);
+            }
+            pixmap.fill_rect(rect, &paint, transform, Some(&mask));
+        }
+        _ => pixmap.fill_rect(rect, &paint, transform, None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

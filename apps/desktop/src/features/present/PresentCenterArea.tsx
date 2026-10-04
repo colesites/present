@@ -1,8 +1,8 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { ComponentProps } from "react";
-import { Loader2, Presentation } from "lucide-react";
+import { Loader2, Pause, Play, Presentation } from "lucide-react";
 import type { BottomTab, ViewMode } from "../../shared/types";
 import type { SlideData } from "../../features/slides";
 
@@ -13,6 +13,7 @@ import { ScripturePanel, type ScripturePanelRef } from "../../features/scripture
 import type { ScriptureSlide } from "../../features/scripture/lib/slides";
 import { MediaItem, VideoSettings } from "../media/hooks/useMediaFolders";
 import { cn } from "../../renderer/shared/lib/utils";
+import { RustVideo } from "../../renderer/shared/components/RustVideo";
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
 import { SongAgentControl } from "../song-agent/SongAgentControl";
 import type { BibleAgentSettings } from "../scripture/components/ScripturePanel";
@@ -77,14 +78,10 @@ type Props = {
   // media preview
   showViewMedia: MediaItem | null;
   isPreviewOutputting: boolean;
-  showVideoRef: React.RefObject<HTMLVideoElement | null>;
   videoSettings: VideoSettings;
   onOutputPreviewMedia: () => void;
-  onVideoPlay: () => void;
-  onVideoPause: () => void;
-  onVideoEnded: () => void;
-  onVideoSeeked: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
-  onVideoTimeUpdate: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
+  /** The live video, which the preview of it follows and controls. */
+  liveVideo: LiveVideo;
 
   // top panels
   showsPanelRef: React.RefObject<LibrariesPanelRef | null>;
@@ -98,6 +95,135 @@ type Props = {
   selectedServiceId: ScriptureProps["selectedServiceId"];
   onAddScriptureToService: ScriptureProps["onAddScriptureToService"];
 };
+
+/** The live video: where it is, and the controls that move it. */
+export type LiveVideo = {
+  id: string | null;
+  playing: boolean;
+  positionSeconds: number;
+  sampledAtMs: number | null;
+  play: () => void;
+  pause: () => void;
+  seek: (seconds: number) => void;
+};
+
+const formatTime = (seconds: number): string => {
+  const whole = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const minutes = Math.floor(whole / 60);
+  return `${minutes}:${String(whole % 60).padStart(2, "0")}`;
+};
+
+/**
+ * A video in the center pane, decoded by Rust (`RustVideo`). While it is the
+ * live video it shows where the screens have it and its controls move the
+ * live video, whose sound Rust plays; any other video plays here on its own,
+ * silently, for the operator to look at, and clicking it sends it to the
+ * screens.
+ */
+function PreviewVideo({
+  item,
+  loop,
+  liveVideo,
+  onSend,
+}: {
+  item: MediaItem;
+  loop: boolean;
+  liveVideo: LiveVideo;
+  onSend?: () => void;
+}) {
+  const isLive = liveVideo.id === item.id;
+  const [duration, setDuration] = useState<number | null>(null);
+  // A video that is not live keeps its own time: where it was, and since when.
+  const [local, setLocal] = useState({ playing: false, position: 0, at: 0 });
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDuration(null);
+    void import("../../renderer/tauri/media-frames")
+      .then((core) => core.mediaDuration(item.url))
+      .then((seconds) => {
+        if (!cancelled) setDuration(seconds);
+      })
+      .catch((): void => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [item.url]);
+
+  const playing = isLive ? liveVideo.playing : local.playing;
+  // The time shown moves while the video runs.
+  useEffect(() => {
+    if (!playing) return;
+    const intervalId = window.setInterval(() => setTick((tick) => tick + 1), 250);
+    return () => window.clearInterval(intervalId);
+  }, [playing]);
+
+  const wrap = (seconds: number) =>
+    duration && duration > 0 ? (loop ? seconds % duration : Math.min(seconds, duration)) : seconds;
+  const position = wrap(
+    isLive
+      ? liveVideo.positionSeconds +
+          (liveVideo.playing && liveVideo.sampledAtMs !== null
+            ? Math.max(0, Date.now() - liveVideo.sampledAtMs) / 1000
+            : 0)
+      : local.position + (local.playing ? Math.max(0, Date.now() - local.at) / 1000 : 0),
+  );
+
+  const togglePlaying = () => {
+    if (isLive) {
+      if (liveVideo.playing) liveVideo.pause();
+      else liveVideo.play();
+      return;
+    }
+    setLocal({ playing: !local.playing, position, at: Date.now() });
+  };
+  const seek = (seconds: number) => {
+    if (isLive) liveVideo.seek(seconds);
+    else setLocal({ playing: local.playing, position: seconds, at: Date.now() });
+  };
+
+  return (
+    <div className="w-full">
+      <RustVideo
+        url={item.url}
+        clock={
+          isLive
+            ? { mode: "scene" }
+            : { mode: "local", playing: local.playing, positionSeconds: local.position, loop }
+        }
+        label={`${item.name} service preview`}
+        className="aspect-video w-full cursor-pointer bg-black"
+        onClick={() => {
+          if (!isLive) onSend?.();
+        }}
+      />
+      <div className="mt-1.5 flex items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
+        <button
+          type="button"
+          onClick={togglePlaying}
+          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-foreground hover:bg-muted"
+          aria-label={playing ? "Pause" : "Play"}
+        >
+          {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+        </button>
+        <span>{formatTime(position)}</span>
+        <input
+          type="range"
+          min={0}
+          max={duration ?? 1}
+          step={0.1}
+          value={Math.min(position, duration ?? position)}
+          disabled={!duration}
+          onChange={(event) => seek(Number(event.target.value))}
+          aria-label="Position"
+          className="h-1 min-w-0 flex-1 accent-primary"
+        />
+        <span>{duration ? formatTime(duration) : "--:--"}</span>
+      </div>
+    </div>
+  );
+}
 
 // Keep tabs mounted but freeze hidden tab renders to avoid UI switch lag.
 const Activity = memo(function Activity({
@@ -139,14 +265,9 @@ export function PresentCenterArea({
   onUpdateScriptureEditorOutput,
   showViewMedia,
   isPreviewOutputting,
-  showVideoRef,
   videoSettings,
   onOutputPreviewMedia,
-  onVideoPlay,
-  onVideoPause,
-  onVideoEnded,
-  onVideoSeeked,
-  onVideoTimeUpdate,
+  liveVideo,
   showsPanelRef,
   scripturePanelRef,
   showsPanelProps,
@@ -164,73 +285,23 @@ export function PresentCenterArea({
   const effectiveScale = lockSingleSlideView ? 100 : scale;
   const effectiveIsGridView = lockSingleSlideView ? true : isGridView;
 
-  const mediaPane = useMemo(
+  // The slides, memoised on their own: the media preview beside them follows
+  // the live video ten times a second, and the grid must not redraw with it.
+  const slidesGrid = useMemo(
     () => (
-      <div className="absolute inset-0 overflow-auto p-4" data-slides-scroll>
-        {showViewMedia && !selectedLibraryId ? (
-          <div className="mx-auto max-w-4xl">
-            {showViewMedia.type === "image" ? (
-              <button
-                type="button"
-                onClick={onOutputPreviewMedia}
-                aria-label={`Send ${showViewMedia.name} to output`}
-                className="block aspect-video w-full overflow-hidden rounded-lg bg-black"
-              >
-                <img
-                  src={showViewMedia.url}
-                  alt=""
-                  className="h-full w-full object-contain"
-                />
-              </button>
-            ) : (
-              <div className="overflow-hidden rounded-lg bg-black">
-                <video
-                  ref={showVideoRef}
-                  src={showViewMedia.url}
-                  aria-label={`${showViewMedia.name} service preview`}
-                  className="aspect-video w-full object-contain"
-                  controls
-                  loop={videoSettings.loop}
-                  muted={videoSettings.muted}
-                  onClick={(event) => {
-                    if (isPreviewOutputting) {
-                      return;
-                    }
-                    onOutputPreviewMedia();
-                    void event.currentTarget.play();
-                  }}
-                  onPlay={onVideoPlay}
-                  onPause={onVideoPause}
-                  onEnded={onVideoEnded}
-                  onSeeked={onVideoSeeked}
-                  onTimeUpdate={onVideoTimeUpdate}
-                >
-                  <track kind="captions" />
-                </video>
-              </div>
-            )}
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <p className="min-w-0 truncate text-sm font-medium text-foreground">
-                {showViewMedia.name}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <SlidesGrid
-            slides={slidesForGrid}
-            activeSlideId={activeSlideId}
-            selectedIndex={selectedIndex}
-            onSelectSlide={onSelectSlide}
-            onEditSlide={onEditSlide}
-            onOpenMiniEditor={onOpenMiniEditor}
-            onReorderSlides={selectedLibraryItem ? onReorderSlides : undefined}
-            externalScale={effectiveScale}
-            isGridView={effectiveIsGridView}
-            forceSingleColumn={lockSingleSlideView}
-            {...editorProps}
-          />
-        )}
-      </div>
+      <SlidesGrid
+        slides={slidesForGrid}
+        activeSlideId={activeSlideId}
+        selectedIndex={selectedIndex}
+        onSelectSlide={onSelectSlide}
+        onEditSlide={onEditSlide}
+        onOpenMiniEditor={onOpenMiniEditor}
+        onReorderSlides={selectedLibraryItem ? onReorderSlides : undefined}
+        externalScale={effectiveScale}
+        isGridView={effectiveIsGridView}
+        forceSingleColumn={lockSingleSlideView}
+        {...editorProps}
+      />
     ),
     [
       activeSlideId,
@@ -240,23 +311,51 @@ export function PresentCenterArea({
       lockSingleSlideView,
       onEditSlide,
       onOpenMiniEditor,
-      onOutputPreviewMedia,
-      isPreviewOutputting,
       onReorderSlides,
       onSelectSlide,
-      onVideoEnded,
-      onVideoPause,
-      onVideoPlay,
-      onVideoSeeked,
-      onVideoTimeUpdate,
       selectedIndex,
-      selectedLibraryId,
       selectedLibraryItem,
-      showVideoRef,
-      showViewMedia,
       slidesForGrid,
-      videoSettings.loop,
     ],
+  );
+
+  const mediaPane = (
+    <div className="absolute inset-0 overflow-auto p-4" data-slides-scroll>
+      {showViewMedia && !selectedLibraryId ? (
+        <div className="mx-auto max-w-4xl">
+          {showViewMedia.type === "image" ? (
+            <button
+              type="button"
+              onClick={onOutputPreviewMedia}
+              aria-label={`Send ${showViewMedia.name} to output`}
+              className="block aspect-video w-full overflow-hidden rounded-lg bg-black"
+            >
+              <img
+                src={showViewMedia.url}
+                alt=""
+                className="h-full w-full object-contain"
+              />
+            </button>
+          ) : (
+            <div className="overflow-hidden rounded-lg bg-black">
+              <PreviewVideo
+                item={showViewMedia}
+                loop={videoSettings.loop}
+                liveVideo={liveVideo}
+                onSend={isPreviewOutputting ? undefined : onOutputPreviewMedia}
+              />
+            </div>
+          )}
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <p className="min-w-0 truncate text-sm font-medium text-foreground">
+              {showViewMedia.name}
+            </p>
+          </div>
+        </div>
+      ) : (
+        slidesGrid
+      )}
+    </div>
   );
 
   const showsPane = useMemo(

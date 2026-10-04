@@ -27,9 +27,9 @@ const LICENSES = path.join(FFMPEG_DIR, "licenses");
 // The libraries the Rust crate links, per platform (`Cargo.toml`: avfilter is
 // macOS only, for `scale_vt`).
 const LIBRARIES = {
-  darwin: ["avcodec", "avformat", "avutil", "swscale", "avfilter"],
-  linux: ["avcodec", "avformat", "avutil", "swscale"],
-  win32: ["avcodec", "avformat", "avutil", "swscale"],
+  darwin: ["avcodec", "avformat", "avutil", "swscale", "swresample", "avfilter"],
+  linux: ["avcodec", "avformat", "avutil", "swscale", "swresample"],
+  win32: ["avcodec", "avformat", "avutil", "swscale", "swresample"],
 }[process.platform];
 
 const fail = (message) => {

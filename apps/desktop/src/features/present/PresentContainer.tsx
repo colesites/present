@@ -395,7 +395,6 @@ export function PresentContainer({
     settingsLang,
     settingsSpeechInputDeviceId,
     settingsAgent,
-    settingsAudioOutputDeviceId,
     setSettingsAudioOutputDeviceId,
     setSettingsAudioOutputDeviceLabel,
   } = settings;
@@ -1690,27 +1689,28 @@ export function PresentContainer({
   });
 
   const {
-    showVideoRef,
+    liveVideoItem,
+    playLive,
+    pauseLive,
+    seekLive,
     isVideoPlaying,
     videoCurrentTime,
     videoTimeSampledAtMs,
-    handleVideoPlay,
-    handleVideoPause,
-    handleVideoEnded,
-    handleVideoSeeked,
-    handleVideoTimeUpdate,
     toggleVideoPlayback,
   } = useShowVideoSync({
-    showViewMedia,
     activeMediaItem: effectiveActiveMediaItem,
     videoSettings,
-    audioOutputDeviceId: settingsAudioOutputDeviceId,
     shouldAutoPlay,
     onAutoPlayConsumed: () => setShouldAutoPlay(false),
     forcePlay:
       (isScriptureActive || Boolean(slideBackgroundMediaItem)) &&
       effectiveActiveMediaItem?.type === "video",
   });
+
+  const liveVideoControls = useMemo(
+    () => ({ id: liveVideoItem?.id ?? null, play: playLive, pause: pauseLive, seek: seekLive }),
+    [liveVideoItem?.id, pauseLive, playLive, seekLive],
+  );
 
   // Offer, but never automatically force, a newly connected audio output.
   // This runs in the presenter window only, so the settings window cannot
@@ -1721,39 +1721,36 @@ export function PresentContainer({
     label: string;
   } | null>(null);
   useEffect(() => {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
-
     let disposed = false;
     const refreshAudioOutputs = async () => {
-      const devices = await navigator.mediaDevices.enumerateDevices();
+      const { listAudioDevices } = await import("../../renderer/tauri/sound");
+      const { outputs } = await listAudioDevices();
       if (disposed) return;
-      const outputs = devices.filter(
-        (device) =>
-          device.kind === "audiooutput" &&
-          device.deviceId !== "default" &&
-          device.deviceId !== "communications",
-      );
       const previous = knownAudioOutputIdsRef.current;
-      knownAudioOutputIdsRef.current = new Set(outputs.map((device) => device.deviceId));
+      knownAudioOutputIdsRef.current = new Set(outputs.map((device) => device.id));
       if (!previous) return;
-      const connected = outputs.find((device) => !previous.has(device.deviceId));
+      const connected = outputs.find((device) => !previous.has(device.id));
       if (!connected) return;
       setPendingAudioOutput({
-        deviceId: connected.deviceId,
+        deviceId: connected.id,
         label: connected.label.trim() || "New audio output",
       });
     };
 
-    void refreshAudioOutputs();
-    const handleDeviceChange = (): void => {
-      void refreshAudioOutputs();
+    // The system's own list, which has no change event here: looked at again
+    // every few seconds, which costs Core Audio a few milliseconds.
+    const check = (): void => {
+      refreshAudioOutputs().catch((error: unknown) =>
+        console.error("[Audio] could not list the audio outputs", error),
+      );
     };
-    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    check();
+    const intervalId = window.setInterval(check, 3000);
     return () => {
       disposed = true;
-      navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+      window.clearInterval(intervalId);
     };
-  }, [setSettingsAudioOutputDeviceId, setSettingsAudioOutputDeviceLabel]);
+  }, []);
 
   usePresentAiToolProvider({
     libraryItems,
@@ -2409,14 +2406,9 @@ export function PresentContainer({
           showViewMedia,
           isPreviewOutputting,
           effectiveActiveMediaItem,
-          showVideoRef,
           videoSettings,
           handleOutputPreviewMedia,
-          handleVideoPlay,
-          handleVideoPause,
-          handleVideoEnded,
-          handleVideoSeeked,
-          handleVideoTimeUpdate,
+          liveVideoControls,
           onToggleVideoPlayback: toggleVideoPlayback,
           handleMediaPanelSelect,
           handleAddMediaToService,

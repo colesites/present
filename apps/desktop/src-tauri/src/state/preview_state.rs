@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use tauri::http;
 use tauri::AppHandle;
 
+use crate::services::frame_delivery::{self, Latest};
 use crate::services::preview::{self, PreviewSource};
 use crate::services::screens;
 
@@ -58,7 +59,10 @@ struct Loop {
 #[derive(Default)]
 struct Shared {
     /// The newest frame, as JPEG. `Arc` so a request clones a pointer.
-    latest: Mutex<Option<Arc<Vec<u8>>>>,
+    latest: Mutex<Option<Latest>>,
+    /// How far ahead to draw the video, in milliseconds: how late the
+    /// preview's frames reach its screen (`frame_delivery`).
+    lead_ms: AtomicU64,
     /// The size to draw at, packed as two `u32`s so the loop can read it
     /// without waiting for a lock a request might be holding.
     ///
@@ -114,7 +118,13 @@ impl PreviewState {
 
     /// The newest frame of the audience screen `screen`, and a promise to
     /// keep drawing it.
-    pub fn frame(&self, app: &AppHandle, screen: &str, size: (u32, u32)) -> Option<Arc<Vec<u8>>> {
+    pub fn frame(
+        &self,
+        app: &AppHandle,
+        screen: &str,
+        size: (u32, u32),
+        lead: Duration,
+    ) -> Option<Latest> {
         let drawing = self
             .loops
             .lock()
@@ -122,7 +132,7 @@ impl PreviewState {
             .entry(screen.to_owned())
             .or_default()
             .clone();
-        drawing.frame(app, screen, size)
+        drawing.frame(app, screen, size, lead)
     }
 
     /// Let go of the compositors, any video they have open, and the loops.
@@ -148,8 +158,17 @@ impl PreviewState {
 }
 
 impl Loop {
-    fn frame(&self, app: &AppHandle, screen: &str, size: (u32, u32)) -> Option<Arc<Vec<u8>>> {
+    fn frame(
+        &self,
+        app: &AppHandle,
+        screen: &str,
+        size: (u32, u32),
+        lead: Duration,
+    ) -> Option<Latest> {
         self.shared.want(size);
+        self.shared
+            .lead_ms
+            .store(lead.as_millis() as u64, Ordering::Relaxed);
         *self
             .shared
             .asked_at
@@ -237,13 +256,20 @@ fn draw_until_idle(app: &AppHandle, screen: &str, shared: &Shared) {
 
         let size = shared.wanted_size();
         if size.0 > 0 && size.1 > 0 {
-            match source.frame(size) {
-                Ok(picture) => {
-                    let frame = Arc::new(picture.to_vec());
-                    *shared
+            let lead = Duration::from_millis(shared.lead_ms.load(Ordering::Relaxed));
+            match source.frame(size, lead) {
+                Ok((picture, changed)) => {
+                    let mut latest = shared
                         .latest
                         .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(frame);
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    if changed || latest.is_none() {
+                        *latest = Some(Latest {
+                            jpeg: Arc::new(picture.to_vec()),
+                            at: Instant::now(),
+                            seq: frame_delivery::next_seq(),
+                        });
+                    }
                 }
                 Err(error) => {
                     tracing::debug!(%error, "no preview frame this time");
@@ -295,20 +321,13 @@ pub fn screen_from_uri(uri: &str) -> &str {
 /// preview is a picture of what is already on screen elsewhere, so the honest
 /// answer to "not yet" is to show nothing and let the next request try again.
 pub fn respond(state: &PreviewState, app: &AppHandle, uri: &str) -> http::Response<Vec<u8>> {
-    // Same origin rules as the media protocol: a preview frame is a picture
-    // this app drew for itself, and a canvas that reads it — a test, a
-    // thumbnail — should not be tainted by it.
-    let builder = http::Response::builder()
-        .header("Cache-Control", "no-store")
-        .header("Access-Control-Allow-Origin", "*");
-    match state.frame(app, screen_from_uri(uri), size_from_uri(uri)) {
-        Some(picture) => builder
-            .status(200)
-            .header("Content-Type", "image/jpeg")
-            .body(picture.as_ref().clone()),
-        None => builder.status(204).body(Vec::new()),
-    }
-    .unwrap_or_else(|_| http::Response::new(Vec::new()))
+    let latest = state.frame(
+        app,
+        screen_from_uri(uri),
+        size_from_uri(uri),
+        frame_delivery::lead_from_uri(uri),
+    );
+    frame_delivery::respond(latest, uri)
 }
 
 #[cfg(test)]

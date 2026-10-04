@@ -45,7 +45,7 @@ import {
   useFontCatalog,
 } from "../../../renderer/shared/hooks/useFontCatalog";
 import { normalizeCapitalizationMode } from "../../../renderer/shared/lib/capitalization";
-import { readFill } from "../../../renderer/shared/lib/slide-fill";
+import { editableFill, readFill } from "../../../renderer/shared/lib/slide-fill";
 import { BackgroundEditor, type Background } from "../../../renderer/shared/components/BackgroundEditor";
 import { useMediaLibraryStore } from "../../../renderer/shared/store/mediaLibrary";
 import type { MediaItem } from "../../media/hooks/useMediaFolders";
@@ -168,7 +168,7 @@ function getObjectInspectorTab(type: SlideElement["type"] | undefined): ObjectIn
  */
 function slideBackground(slide: LibrarySlide, mediaItems: MediaItem[]): Background | null {
   const shape = slide.elements?.find((element) => element.id.endsWith("__theme-bg"));
-  const fill = shape ? readFill(shape.style?.fill) : null;
+  const fill = shape ? editableFill(readFill(shape.style?.fill)) : null;
   if (fill) return fill;
   if (slide.backgroundId) {
     const item = findBackgroundMedia(slide.backgroundId, mediaItems);
@@ -463,7 +463,7 @@ export const EditorInspector = memo(function EditorInspector({
               <FillEditor
                 label="Shape fill"
                 value={
-                  readFill(selectedElement.style?.fill) ??
+                  editableFill(readFill(selectedElement.style?.fill)) ??
                   (selectedElement.style?.backgroundColor && selectedElement.style.backgroundColor !== "transparent"
                     ? { kind: "color", color: selectedElement.style.backgroundColor }
                     : null)
