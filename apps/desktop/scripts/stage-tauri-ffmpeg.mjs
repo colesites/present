@@ -24,12 +24,12 @@ const PREFIX = path.join(FFMPEG_DIR, "prefix");
 const RUNTIME = path.join(FFMPEG_DIR, "runtime");
 const LICENSES = path.join(FFMPEG_DIR, "licenses");
 
-// The libraries the Rust crate links, per platform (`Cargo.toml`: avfilter is
-// macOS only, for `scale_vt`).
+// The libraries the Rust crate links, per platform: avfilter everywhere, for
+// a video's speed (`atempo`), and on macOS `scale_vt` too.
 const LIBRARIES = {
-  darwin: ["avcodec", "avformat", "avutil", "swscale", "avfilter"],
-  linux: ["avcodec", "avformat", "avutil", "swscale"],
-  win32: ["avcodec", "avformat", "avutil", "swscale"],
+  darwin: ["avcodec", "avformat", "avutil", "swscale", "swresample", "avfilter"],
+  linux: ["avcodec", "avformat", "avutil", "swscale", "swresample", "avfilter"],
+  win32: ["avcodec", "avformat", "avutil", "swscale", "swresample", "avfilter"],
 }[process.platform];
 
 const fail = (message) => {

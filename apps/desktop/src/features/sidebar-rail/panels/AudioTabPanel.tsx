@@ -14,12 +14,7 @@ import {
 } from "lucide-react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { cn } from "../../../renderer/shared/lib/utils";
-import { createLocalMediaUrl } from "../../../shared/lib/local-media-url.mjs";
-import {
-  applyAudioRouting,
-  setBackingTrackGain,
-  useAudioRouting,
-} from "../../../renderer/shared/hooks/useAudioRouting";
+import { setBackingTrackGain, useAudioRouting } from "../../../renderer/shared/hooks/useAudioRouting";
 import type { SourceRouting } from "../../../renderer/tauri/audio";
 
 interface AudioTabPanelProps {
@@ -86,7 +81,7 @@ const formatDuration = (seconds: number | undefined): string => {
   return `${m}:${String(s % 60).padStart(2, "0")}`;
 };
 
-const pathToFileUrl = (path: string): string => createLocalMediaUrl(path);
+const sound = () => import("../../../renderer/tauri/sound");
 
 export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
   const [audioState, setAudioState] = useState<LocalAudioState>(() =>
@@ -135,60 +130,82 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
   const [volume, setVolume] = useState(0.85);
   const [isShuffle, setIsShuffle] = useState(false);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  if (audioRef.current === null && typeof window !== "undefined") {
-    audioRef.current = new Audio();
-  }
-  const audio = audioRef.current;
+  /** How long the playing track is, once Rust has read its file. */
+  const [trackDuration, setTrackDuration] = useState<number | null>(null);
 
   const currentTrack = useMemo(
     () => sortedTracks.find((t) => t._id === currentTrackId) ?? null,
     [currentTrackId, sortedTracks],
   );
 
-  // The backing track is the application's second audible source, and until
-  // Stage 5 it was the one nothing routed: it set `.volume` and never called
-  // `setSinkId`, so the audio-output-device setting reached the presentation
-  // video and left this playing out of the laptop (known-issues §1).
-  //
-  // It now reads the same Rust sink the video does, so one device choice moves
-  // both. The value below stands in until the sink answers.
+  // The level the sink holds for the backing track, shown on the slider.
   const initialRouting = useMemo<SourceRouting>(
     () => ({ audible: true, muted: false, volume, deviceId: null }),
     [volume],
   );
   const routing = useAudioRouting("backing-track", "operator", initialRouting);
 
+  // The backing track is played by Rust (`services/sound`), on the device the
+  // Audio settings name, beside the video's sound. It used to be a WebKit
+  // `Audio` here, which played on whatever device WebKit chose and stopped
+  // when this panel went away.
+  //
+  // It outlives this panel, so a panel opened while it plays picks it up.
+  const tracksRef = useRef(audioState.tracks);
+  tracksRef.current = audioState.tracks;
+  const [hydrated, setHydrated] = useState(false);
+  const playNextRef = useRef<() => void>(() => undefined);
   useEffect(() => {
-    applyAudioRouting(audio, routing);
-  }, [audio, routing]);
-
-  useEffect(() => {
-    if (!audio || !currentTrack) return;
-    const src = pathToFileUrl(currentTrack.localPath);
-    if (audio.src !== src) {
-      audio.src = src;
-    }
-    if (isPlaying) {
-      audio.play().catch(() => setIsPlaying(false));
-    } else {
-      audio.pause();
-    }
-  }, [audio, currentTrack, isPlaying]);
-
-  useEffect(() => {
-    if (!audio) return;
-    const onTime = () => setProgress(audio.currentTime);
-    const onEnd = () => playNext();
-    audio.addEventListener("timeupdate", onTime);
-    audio.addEventListener("ended", onEnd);
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+    void (async () => {
+      const core = await sound();
+      const unlisten = await core.onBackingTrackChanged((track) => {
+        if (cancelled) return;
+        setProgress(track.positionSeconds);
+        setTrackDuration(track.durationSeconds);
+        if (track.ended) playNextRef.current();
+      });
+      if (cancelled) {
+        unlisten();
+        return;
+      }
+      detach = unlisten;
+      const now = await core.getBackingTrack();
+      if (cancelled) return;
+      const playing = now.path ? tracksRef.current.find((track) => track.localPath === now.path) : undefined;
+      if (playing) {
+        setCurrentTrackId(playing._id);
+        setIsPlaying(now.playing);
+        setProgress(now.positionSeconds);
+        setTrackDuration(now.durationSeconds);
+      }
+      setHydrated(true);
+    })().catch((error: unknown) => {
+      console.error("[Audio] could not reach the sound engine", error);
+      setHydrated(true);
+    });
     return () => {
-      audio.removeEventListener("timeupdate", onTime);
-      audio.removeEventListener("ended", onEnd);
+      cancelled = true;
+      detach?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audio, sortedTracks, currentTrackId, isShuffle]);
+  }, []);
 
+  const currentPath = currentTrack?.localPath ?? null;
+  useEffect(() => {
+    if (!hydrated) return;
+    void sound()
+      .then((core) => {
+        if (!currentPath) return core.backingTrackStop();
+        return isPlaying ? core.backingTrackPlay(currentPath) : core.backingTrackPause();
+      })
+      .catch((error: unknown) => {
+        console.error("[Audio] the backing track could not play", error);
+        setIsPlaying(false);
+      });
+  }, [currentPath, hydrated, isPlaying]);
+
+  playNextRef.current = () => playNext();
   const playNext = () => {
     if (sortedTracks.length === 0) return;
     if (isShuffle) {
@@ -275,9 +292,7 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortedPlaylists.length]);
 
-  const duration = audio?.duration && Number.isFinite(audio.duration)
-    ? audio.duration
-    : currentTrack?.durationSeconds ?? 0;
+  const duration = trackDuration ?? currentTrack?.durationSeconds ?? 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -405,7 +420,9 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
           onChange={(event) => {
             const next = Number(event.target.value);
             setProgress(next);
-            if (audio) audio.currentTime = next;
+            void sound()
+              .then((core) => core.backingTrackSeek(next))
+              .catch((error: unknown) => console.error("[Audio] could not seek the backing track", error));
           }}
           className="mb-1 w-full accent-primary"
         />

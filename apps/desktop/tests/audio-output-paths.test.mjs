@@ -14,10 +14,10 @@ import {
 /**
  * The complete inventory of ways this application can make a sound.
  *
- * `single-audible-video.test.mjs` guards one class of audio source: the fifteen
- * `<video>` elements. That guard is real and it holds, but it scans for
- * `<video>` and nothing else, so three other routes to a speaker are invisible
- * to it — and the live bug in known-issues §1 lives in one of them.
+ * `single-audible-video.test.mjs` guards one class of audio source: the
+ * `<video>` elements. It scans for `<video>` and nothing else, so the other
+ * routes to a speaker are invisible to it — and known-issues §1 lived in one
+ * of them.
  *
  * Stage 5's gate is an audio regression suite, and a suite that can only see
  * one source class is not one. This file is the other half: every remaining way
@@ -34,41 +34,34 @@ import {
 const readSource = (relative) => readFileSync(path.join(packageRoot, relative), "utf8");
 
 /**
- * The two paths that are meant to be heard.
- *
- * Everything else in the application is either a muted mirror or a capture
- * graph. These two are the mixer inputs Stage 5 has to unify.
+ * The two sources that are meant to be heard — the live video's sound and the
+ * backing track — are both played by Rust since 0.4.11 (`services/sound`),
+ * on the device the audio graph names. The webview makes no sound at all.
  */
-const AUDIBLE_PLAYBACK_PATHS = {
+const PLAYED_BY_RUST = {
   presentationVideo: {
-    file: "src/features/present/PresentCenterArea.tsx",
     owner: "src/renderer/shared/hooks/useShowVideoSync.ts",
-    element: "<video>",
-    reason: "the presenter Show View, driven by useShowVideoSync",
+    call: "selectPlaybackMedia(",
   },
   backingTrack: {
-    file: "src/features/sidebar-rail/panels/AudioTabPanel.tsx",
     owner: "src/features/sidebar-rail/panels/AudioTabPanel.tsx",
-    element: "new Audio()",
-    reason: "the backing-track playlist player — known-issues §1",
+    call: "backingTrackPlay(",
   },
 };
 
-test("the application constructs exactly one bare Audio element", () => {
-  // `new Audio()` is invisible to a `<video>` scanner, which is why the backing
-  // track player could drift out of the audio architecture unnoticed for as
-  // long as it has. A second one appearing is a second unrouted audio path.
+test("the application constructs no bare Audio element", () => {
+  // `new Audio()` is invisible to a `<video>` scanner. The backing track was
+  // one until it moved to Rust; another would be a source the device choice
+  // and the levels do not reach.
   const constructed = findInSources("new Audio(");
 
   const described = constructed.map((hit) => `${hit.file}:${hit.line}`).join("\n  ");
   assert.equal(
     constructed.length,
-    1,
-    `Expected exactly one \`new Audio()\`. Found ${constructed.length}:\n  ${described}\n\n` +
-      "Every audio element outside the mixer is a path that ignores the " +
-      "audio-output-device setting.",
+    0,
+    `Expected no \`new Audio()\`. Found ${constructed.length}:\n  ${described}\n\n` +
+      "Sound is played by Rust (services/sound), on the device Audio settings name.",
   );
-  assert.equal(constructed[0].file, AUDIBLE_PLAYBACK_PATHS.backingTrack.file);
 });
 
 test("no <audio> elements exist, so the inventory above is complete", () => {
@@ -85,52 +78,32 @@ test("no <audio> elements exist, so the inventory above is complete", () => {
   );
 });
 
-test("device routing has exactly one application point", () => {
-  // known-issues §1, fixed on the Tauri side.
-  //
-  // `setSinkId` is the only way a web media element can be pointed at a chosen
-  // output device, and the defect was that it is a *per-element* call: the
-  // audio-output-device setting reached whichever elements somebody remembered
-  // to call it on, which across the whole repository was one. The backing
-  // track played through an element nobody had.
-  //
-  // There is now one call site for both shells and both sources —
-  // `applyAudioRouting` — so a source cannot be left unrouted by omission.
-  // Under Tauri it receives the sink's device, so one choice moves both. Under
-  // Electron it receives what each caller passed, which is what those callers
-  // set inline before, so the shipping shell is unchanged.
+test("no element in the webview is pointed at an output device", () => {
+  // known-issues §1 was a `setSinkId` that reached one element and not the
+  // other. Nothing in the webview plays sound now, so nothing is routed there:
+  // the device is Rust's, for both sources at once.
   // The call form, not the identifier: prose and type annotations mention
-  // `setSinkId` and must not read as a second place that routes audio.
+  // `setSinkId` and must not read as a place that routes audio.
   const callSites = [
     ...findInSources("setSinkId(", ".ts"),
     ...findInSources("setSinkId(", ".tsx"),
   ];
-
-  const files = [...new Set(callSites.map((hit) => hit.file))].sort();
   assert.deepEqual(
-    files,
-    ["src/renderer/shared/hooks/useAudioRouting.ts"],
-    "Device routing must have exactly one application point. A second call " +
-      "site is how a source gets left behind on the default device again.",
+    callSites.map((hit) => `${hit.file}:${hit.line}`),
+    [],
+    "A webview element is being routed to a device, so it is making a sound Rust does not.",
   );
 });
 
-test("both audible sources get their routing from the graph", () => {
-  // The other half of the same fix. One application point is only worth having
-  // if every audible source actually goes through it — a surface that sets
-  // `.volume` or `.muted` itself has quietly opted out of the sink.
-  for (const [name, entry] of Object.entries(AUDIBLE_PLAYBACK_PATHS)) {
-    const source = readSource(entry.owner);
+test("both audible sources are played by Rust", () => {
+  for (const [name, entry] of Object.entries(PLAYED_BY_RUST)) {
     assert.ok(
-      source.includes("useAudioRouting("),
-      `${name} (${entry.owner}) does not read its routing from the audio graph.`,
-    );
-    assert.ok(
-      source.includes("applyAudioRouting("),
-      `${name} (${entry.owner}) does not apply its routing through the one ` +
-        "application point.",
+      readSource(entry.owner).includes(entry.call),
+      `${name} (${entry.owner}) no longer hands its sound to Rust.`,
     );
   }
+  const engine = readSource("src-tauri/src/services/sound/mod.rs");
+  assert.ok(engine.includes("BACKING_TRACK") && engine.includes("VIDEO"), "the engine lost a voice");
 });
 
 test("the audience YouTube embed is muted by its URL", () => {
@@ -160,25 +133,17 @@ test("the audience YouTube embed is muted by its URL", () => {
   }
 });
 
-test("the speech capture graph reaches the speakers only through a zero gain", () => {
-  // Speech-to-search connects the microphone to `audioContext.destination`.
-  // That is deliberate — a ScriptProcessorNode does not fire unless it reaches
-  // a destination — and it is made safe by a single gain node pinned to zero.
-  //
-  // Raise that gain and the operator's microphone feeds back through the house
-  // system mid-service. It is one line, and nothing else guards it.
+test("the microphone is captured by Rust, not the webview", () => {
+  // Speech-to-search used to open the microphone in the webview and route it
+  // through a WebKit audio graph whose only guard against feeding the house
+  // system was one gain node pinned to zero. Since 0.4.11 Rust opens the
+  // device (`services/sound/input.rs`) and hands the samples over; there is
+  // no graph in the webview to misconnect.
   const speech = readSource("src/features/scripture/hooks/useSpeechRecognition.ts");
-
-  assert.ok(
-    speech.includes("silenceSink.gain.value = 0"),
-    "The speech capture graph's silence gain changed. The microphone now " +
-      "reaches the audio destination at non-zero gain.",
-  );
-  assert.ok(
-    /silenceSink\.connect\(audioContext\.destination\)/.test(speech),
-    "The speech graph's connection to the destination changed shape; " +
-      "re-check what the zero gain is still protecting.",
-  );
+  assert.ok(speech.includes("startMicrophone("), "speech no longer listens through Rust");
+  for (const webkit of ["getUserMedia(", "createMediaStreamSource(", "audioContext.destination"]) {
+    assert.ok(!speech.includes(webkit), `speech capture uses the webview again: ${webkit}`);
+  }
 });
 
 test("captured HDMI streams are attached only to muted elements", () => {

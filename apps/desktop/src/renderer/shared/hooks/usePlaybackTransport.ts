@@ -11,8 +11,8 @@
  *
  * - `seek` is the operator saying where the video *should be*. Authoritative,
  *   and rare.
- * - `reportPosition` is the element saying where it *is*. About ten times a
- *   second, and not authoritative.
+ * - `reportPosition` is something saying where it *is*. Not authoritative. The
+ *   video's sound reports for itself, in Rust (`services/sound`).
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -33,6 +33,8 @@ export type PlaybackView = {
   durationSeconds: number | null;
   /** When the element was at `positionSeconds`, epoch ms; `null` when unknown. */
   positionSampledAtMs: number | null;
+  /** How fast it plays: 1 as recorded. */
+  rate: number;
 };
 
 export type PlaybackTransport = PlaybackView & {
@@ -42,11 +44,16 @@ export type PlaybackTransport = PlaybackView & {
   pause: () => void;
   toggle: () => void;
   seek: (positionSeconds: number) => void;
+  /** Play faster or slower. */
+  setRate: (rate: number) => void;
   reportPosition: (positionSeconds: number) => void;
   setDuration: (durationSeconds: number | null) => void;
   ended: (looping: boolean) => void;
-  /** Move to a media item: a different one starts from its beginning. */
-  selectMedia: (mediaId: string | null, autoPlay: boolean) => void;
+  /**
+   * Move to a media item: a different one starts from its beginning.
+   * `mediaUrl` is its file, whose sound Rust plays.
+   */
+  selectMedia: (mediaId: string | null, mediaUrl: string | null, autoPlay: boolean) => void;
 };
 
 /**
@@ -69,6 +76,7 @@ export function usePlaybackTransport(initialView: PlaybackView): PlaybackTranspo
         positionSeconds: number;
         durationSeconds: number | null;
         positionSampledAtMs?: number | null;
+        rate?: number;
       }) => {
         if (cancelled) return;
         setRustView({
@@ -77,6 +85,7 @@ export function usePlaybackTransport(initialView: PlaybackView): PlaybackTranspo
           positionSeconds: playback.positionSeconds,
           durationSeconds: playback.durationSeconds,
           positionSampledAtMs: playback.positionSampledAtMs ?? null,
+          rate: playback.rate ?? 1,
         });
       };
 
@@ -127,6 +136,7 @@ export function usePlaybackTransport(initialView: PlaybackView): PlaybackTranspo
       },
       [call]
     ),
+    setRate: useCallback((rate: number) => call((core) => core.setRate(rate)), [call]),
     reportPosition: useCallback(
       (positionSeconds: number) => {
         // Stamped here, where the element was read, not where Rust receives it.
@@ -141,8 +151,8 @@ export function usePlaybackTransport(initialView: PlaybackView): PlaybackTranspo
     ),
     ended: useCallback((looping: boolean) => call((core) => core.ended(looping)), [call]),
     selectMedia: useCallback(
-      (mediaId: string | null, autoPlay: boolean) =>
-        call((core) => core.selectPlaybackMedia(mediaId, autoPlay)),
+      (mediaId: string | null, mediaUrl: string | null, autoPlay: boolean) =>
+        call((core) => core.selectPlaybackMedia(mediaId, mediaUrl, autoPlay)),
       [call]
     ),
   };

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ComponentType } from "react";
-import { Cable, MonitorSpeaker, Sparkles, Timer, Type } from "lucide-react";
+import { AudioLines, Cable, Monitor, Sparkles, Timer, Type } from "lucide-react";
 import type { AgentSettings as AgentSettingsValue } from "../lib/constants";
 import { cn } from "../../../renderer/shared/lib/utils";
 import { MediaItem, MediaFolder } from "../../media/hooks/useMediaFolders";
@@ -12,12 +12,14 @@ import type {
 } from "../../../shared/types/output-window";
 import { NDI_FRAME_RATES } from "../../../renderer/shared/hooks/useAppSettings";
 import { AgentSettings } from "./AgentSettings";
+import { AudioSettings } from "./AudioSettings";
 import { ControlSurfacesSettings } from "./ControlSurfacesSettings";
 import { PhoneRemoteSettings } from "./PhoneRemoteSettings";
 import { ScreensSettings, type ScreenRole } from "./ScreensSettings";
 import { SlidesSettings } from "./SlidesSettings";
 import { TimerSettings } from "./TimerSettings";
 import { DEFAULT_TIME_UP, type TimeUpSettings } from "../../../renderer/shared/hooks/useTimers";
+import type { AudioDevice, AudioDevices } from "../../../renderer/tauri/sound";
 import {
   SETTINGS_FIELD,
   SettingsGroup,
@@ -28,12 +30,7 @@ import {
   SettingsSwitch,
 } from "./settings-ui";
 
-type AudioDevice = {
-  deviceId: string;
-  label: string;
-};
-
-type SectionKey = "screens" | "agent" | "slides" | "timer" | "connections";
+type SectionKey = "screens" | "audio" | "agent" | "slides" | "timer" | "connections";
 
 /** What NDI can be sent at. */
 const NDI_SIZES = ["3840x2160", "2560x1440", "1920x1080", "1600x900", "1280x720", "1024x768", "800x600"];
@@ -44,7 +41,8 @@ const SECTIONS: Array<{
   icon: ComponentType<{ className?: string }>;
   tile: string;
 }> = [
-  { key: "screens", label: "Screens & sound", icon: MonitorSpeaker, tile: "bg-sky-500" },
+  { key: "screens", label: "Screens", icon: Monitor, tile: "bg-sky-500" },
+  { key: "audio", label: "Audio", icon: AudioLines, tile: "bg-rose-500" },
   { key: "agent", label: "Agent", icon: Sparkles, tile: "bg-violet-500" },
   { key: "slides", label: "Slides", icon: Type, tile: "bg-amber-500" },
   { key: "timer", label: "Timer", icon: Timer, tile: "bg-emerald-500" },
@@ -64,82 +62,54 @@ const readSection = (): SectionKey => {
 };
 
 /**
- * The microphones and speakers this computer has, as the webview names them.
+ * The microphones and outputs this computer has, as the system lists them
+ * (`services/sound`). Not the webview's list: WebKit shows no devices at all
+ * until a page has opened the microphone, and names none of them, which left
+ * Settings with nothing to choose from.
  *
- * Until microphone permission is granted, `enumerateDevices` answers with one
- * placeholder per kind whose id and label are both empty. It is not a device
- * anyone can pick, and the picker throws on an empty value, which takes the
- * whole Settings window with it; so those, and the aliases for the default,
- * are left out.
+ * Looked at again every few seconds while Settings is open, so a device
+ * plugged in appears.
  */
 function useAudioDevices() {
-  const [inputs, setInputs] = useState<AudioDevice[]>([]);
-  const [outputs, setOutputs] = useState<AudioDevice[]>([]);
+  const [devices, setDevices] = useState<AudioDevices>({ outputs: [], inputs: [] });
   const [loading, setLoading] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  /** The list has been read at least once, so a device missing from it is gone. */
+  /** The list has been read at least once. */
   const [read, setRead] = useState(false);
 
-  const refresh = useCallback(async () => {
-    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
-      setInputs([]);
-      setProblem("Choosing a microphone isn't available here.");
-      return;
-    }
-    setLoading(true);
-    setProblem(null);
+  const look = useCallback(async (shown: boolean) => {
+    if (shown) setLoading(true);
     try {
-      const permission = await window.electronAPI?.requestMicrophoneAccess?.();
-      if (permission && !permission.granted) {
-        setInputs([]);
-        setProblem("Present isn't allowed to use the microphone. Allow it in System Settings, Privacy.");
-        return;
-      }
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const named = (kind: MediaDeviceKind, fallback: string) =>
-        devices
-          .filter(
-            (device) =>
-              device.kind === kind &&
-              device.deviceId !== "" &&
-              device.deviceId !== "default" &&
-              device.deviceId !== "communications",
-          )
-          .map((device, index) => ({
-            deviceId: device.deviceId,
-            label: device.label.trim() || `${fallback} ${index + 1}`,
-          }));
-      const microphones = named("audioinput", "Microphone");
-      setInputs(microphones);
-      setOutputs(named("audiooutput", "Audio output"));
+      const { listAudioDevices } = await import("../../../renderer/tauri/sound");
+      const next = await listAudioDevices();
+      setDevices((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next));
       setRead(true);
-      setProblem(microphones.length === 0 ? "No microphones found." : null);
-    } catch {
-      setInputs([]);
-      setProblem("Unable to read the microphones on this computer.");
+      setProblem(next.outputs.length === 0 ? "This computer has no audio outputs." : null);
+    } catch (error) {
+      console.error("[Settings] could not list the audio devices", error);
+      setProblem("Unable to read the audio devices on this computer.");
     } finally {
-      setLoading(false);
+      if (shown) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void refresh();
-    }, 0);
-    if (!navigator.mediaDevices?.addEventListener) {
-      return () => window.clearTimeout(timeoutId);
-    }
-    const onChange = () => {
-      void refresh();
-    };
-    navigator.mediaDevices.addEventListener("devicechange", onChange);
+    const timeoutId = window.setTimeout((): void => void look(true), 0);
+    const intervalId = window.setInterval((): void => void look(false), 3000);
     return () => {
       window.clearTimeout(timeoutId);
-      navigator.mediaDevices.removeEventListener("devicechange", onChange);
+      window.clearInterval(intervalId);
     };
-  }, [refresh]);
+  }, [look]);
 
-  return { inputs, outputs, loading, problem, read, refresh };
+  return {
+    inputs: devices.inputs,
+    outputs: devices.outputs,
+    loading,
+    problem,
+    read,
+    refresh: () => look(true),
+  };
 }
 
 /** Text that is saved when it is left, not on every key. */
@@ -375,39 +345,32 @@ export function SettingsScreen({
 
   const audio = useAudioDevices();
 
-  // A microphone that has gone is not still the choice. Only once the list
-  // has been read: before then it is empty, and every choice looked gone,
-  // so opening Settings forgot the microphone.
+  // A device chosen before 0.4.11 was saved by the webview's id, which the
+  // system does not know. The name is the same in both, so it is found by
+  // its name and saved by the system's id.
   useEffect(() => {
-    if (!settingsSpeechInputDeviceId || !audio.read || audio.loading) return;
-    if (!audio.inputs.some((device) => device.deviceId === settingsSpeechInputDeviceId)) {
-      setSettingsSpeechInputDeviceId(null);
+    if (!audio.read) return;
+    if (
+      settingsAudioOutputDeviceId &&
+      !audio.outputs.some((device) => device.id === settingsAudioOutputDeviceId)
+    ) {
+      const same = audio.outputs.find((device) => device.label === settingsAudioOutputDeviceLabel.trim());
+      if (same) setSettingsAudioOutputDeviceId(same.id);
     }
-  }, [audio.inputs, audio.loading, audio.read, settingsSpeechInputDeviceId, setSettingsSpeechInputDeviceId]);
+  }, [
+    audio.outputs,
+    audio.read,
+    settingsAudioOutputDeviceId,
+    settingsAudioOutputDeviceLabel,
+    setSettingsAudioOutputDeviceId,
+  ]);
 
   const handleAudioOutputChange = useCallback(
-    async (value: string) => {
-      if (value === "__system_default__") {
-        setSettingsAudioOutputDeviceId(null);
-        setSettingsAudioOutputDeviceLabel("System Default");
-        return;
-      }
-      const requested = audio.outputs.find((device) => device.deviceId === value);
-      const selector = navigator.mediaDevices as MediaDevices & {
-        selectAudioOutput?: (options?: { deviceId?: string }) => Promise<MediaDeviceInfo>;
-      };
-      try {
-        const selected = selector.selectAudioOutput
-          ? await selector.selectAudioOutput({ deviceId: value })
-          : requested;
-        if (!selected) return;
-        setSettingsAudioOutputDeviceId(selected.deviceId);
-        setSettingsAudioOutputDeviceLabel(selected.label.trim() || requested?.label || "Audio output");
-      } catch {
-        // The system device picker was cancelled; the sound stays where it was.
-      }
+    (device: AudioDevice | null) => {
+      setSettingsAudioOutputDeviceId(device?.id ?? null);
+      setSettingsAudioOutputDeviceLabel(device?.label ?? "System Default");
     },
-    [audio.outputs, setSettingsAudioOutputDeviceId, setSettingsAudioOutputDeviceLabel],
+    [setSettingsAudioOutputDeviceId, setSettingsAudioOutputDeviceLabel],
   );
 
   const handleScreenDisplayChange = (role: ScreenRole, displayId: number | null) => {
@@ -432,12 +395,21 @@ export function SettingsScreen({
     switch (section) {
       case "screens":
         return (
-          <ScreensSettings
-            onScreenDisplayChange={handleScreenDisplayChange}
-            audioOutputDeviceId={settingsAudioOutputDeviceId}
-            audioOutputDeviceLabel={settingsAudioOutputDeviceLabel}
-            audioOutputs={audio.outputs}
-            onAudioOutputChange={(value) => void handleAudioOutputChange(value)}
+          <ScreensSettings onScreenDisplayChange={handleScreenDisplayChange} />
+        );
+      case "audio":
+        return (
+          <AudioSettings
+            outputs={audio.outputs}
+            inputs={audio.inputs}
+            loading={audio.loading}
+            problem={audio.problem}
+            onRefresh={() => void audio.refresh()}
+            outputDeviceId={settingsAudioOutputDeviceId}
+            outputDeviceLabel={settingsAudioOutputDeviceLabel}
+            onOutputChange={handleAudioOutputChange}
+            inputDeviceId={settingsSpeechInputDeviceId}
+            onInputChange={(device) => setSettingsSpeechInputDeviceId(device?.id ?? null)}
           />
         );
       case "agent":
@@ -445,12 +417,11 @@ export function SettingsScreen({
           <AgentSettings
             lang={settingsLang}
             onLangChange={setSettingsLang}
-            inputDeviceId={settingsSpeechInputDeviceId}
-            onInputDeviceChange={setSettingsSpeechInputDeviceId}
-            microphones={audio.inputs}
-            microphonesStatus={audio.problem}
-            loadingMicrophones={audio.loading}
-            onRefreshMicrophones={() => void audio.refresh()}
+            microphoneLabel={
+              audio.inputs.find((device) => device.id === settingsSpeechInputDeviceId)?.label ??
+              "System default"
+            }
+            onChooseMicrophone={() => choose("audio")}
             agent={settingsAgent}
             onAgentChange={setSettingsAgent}
           />

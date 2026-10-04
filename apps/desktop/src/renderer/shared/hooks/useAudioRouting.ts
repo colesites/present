@@ -6,8 +6,10 @@ import * as core from "../../tauri/audio";
 import type { AudioSource, AudioSurface, SourceRouting } from "../../tauri/audio";
 
 /**
- * What one surface should apply to one audio source.
+ * What the audio graph holds for one source: its level, after the master's.
  *
+ * Nothing in the webview plays sound any more — Rust does (`services/sound`),
+ * on the sink's device — so this is for showing a level, not applying one.
  * The answer comes from `services/audio.rs`, which owns the single sink and its
  * device. The routing rule is **not** reimplemented here: asking Rust costs one
  * `invoke` per mounted surface per change, and graph changes are an operator
@@ -56,31 +58,6 @@ export function useAudioRouting(
 
   return rustRouting ?? initialRouting;
 }
-
-/** Apply a routing to a media element. */
-export const applyAudioRouting = (
-  element: (HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> }) | null,
-  routing: SourceRouting,
-): void => {
-  if (!element) return;
-
-  element.muted = routing.muted || !routing.audible;
-  element.volume = routing.audible ? clampVolume(routing.volume) : 0;
-
-  // `null` is the system default, which reaches `setSinkId` as `""`.
-  if (!routing.audible || typeof element.setSinkId !== "function") return;
-  void element.setSinkId(routing.deviceId ?? "").catch((): void => undefined);
-};
-
-/**
- * `HTMLMediaElement.volume` throws on NaN or a value outside 0..1, and a throw
- * would abort the caller's effect and leave the *previous* level applied.
- * Audio that ignores the operator is worse than audio that goes quiet.
- */
-const clampVolume = (volume: number): number => {
-  if (!Number.isFinite(volume)) return 0;
-  return Math.min(1, Math.max(0, volume));
-};
 
 /** Set the backing track's level on the Rust sink. */
 export const setBackingTrackGain = async (gain: number): Promise<void> => {

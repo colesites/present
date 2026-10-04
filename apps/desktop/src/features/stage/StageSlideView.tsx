@@ -1,67 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
 import { ScriptureTextLayer } from "../../renderer/shared/components/ScriptureTextLayer";
-import { syncMirrorVideo } from "../../shared/lib/mirror-video-sync.mjs";
+import { RustVideo } from "../../renderer/shared/components/RustVideo";
 import { appendInlineInstruction, appendInlineInstructionToElements, type StageSlideState } from "./useStageFeed";
 
 /**
- * The slide as the room sees it, over its media, following the operator's
- * video: what the worship stage always showed, now a stage layout's Current
- * Slide object.
+ * The slide as the room sees it, over its media — the operator's video,
+ * decoded by Rust where the screens have it: what the worship stage always
+ * showed, now a stage layout's Current Slide object.
  */
 export function StageSlideView({ slide: state, showSections = true }: { slide: StageSlideState; showSections?: boolean }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  // Where the operator's video is, and whether it is running, for the
-  // mirror to follow. A ref as well as state, so the element can catch up
-  // from its own events with the latest values.
-  const playbackRef = useRef({
-    positionSeconds: state.videoCurrentTime,
-    sampledAtMs: state.videoTimeSampledAtMs,
-    playing: state.isVideoPlaying,
-  });
-  useEffect(() => {
-    playbackRef.current = {
-      positionSeconds: state.videoCurrentTime,
-      sampledAtMs: state.videoTimeSampledAtMs,
-      playing: state.isVideoPlaying,
-    };
-  }, [state.isVideoPlaying, state.videoCurrentTime, state.videoTimeSampledAtMs]);
-
-  const followOperator = useCallback((video: HTMLVideoElement) => {
-    const playback = playbackRef.current;
-    syncMirrorVideo(video, playback);
-    if (playback.playing) {
-      void video.play().catch((): void => undefined);
-    } else {
-      video.pause();
-    }
-  }, []);
-
-  // Loading a new source leaves a video element paused, and so does mounting
-  // one: switching from one video to another, or showing media again, used
-  // to leave the stage on a still frame, because nothing here had changed
-  // but the URL. The URL and what is shown are part of what this follows,
-  // and a newly loaded video catches up in `onLoadedData` below.
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || state.mediaType !== "video") {
-      return;
-    }
-    followOperator(video);
-  }, [
-    followOperator,
-    state.hideBackground,
-    state.isVideoPlaying,
-    state.mediaType,
-    state.mediaUrl,
-    state.showMedia,
-    state.videoCurrentTime,
-    state.videoTimeSampledAtMs,
-  ]);
-
   const renderableElements =
     Array.isArray(state.slideElements) && state.slideElements.length > 0
       ? state.slideElements
@@ -90,19 +40,14 @@ export function StageSlideView({ slide: state, showSections = true }: { slide: S
     >
       {state.showMedia && state.mediaUrl && !state.hideBackground ? (
         state.mediaType === "video" ? (
-          <video
-            ref={videoRef}
-            aria-label="Worship stage media"
-            src={state.mediaUrl}
-            className="absolute inset-0 h-full w-full object-contain"
-            loop={state.videoSettings.loop}
-            muted
-            playsInline
-            onLoadedData={(event) => followOperator(event.currentTarget)}
+          // Decoded by Rust, where the operator has the video.
+          <RustVideo
+            label="Worship stage media"
+            url={state.mediaUrl}
+            clock={{ mode: "scene" }}
+            className="absolute inset-0 h-full w-full"
             style={{ filter: state.mediaFilterCSS }}
-          >
-            <track kind="captions" />
-          </video>
+          />
         ) : (
           <img
             src={state.mediaUrl}

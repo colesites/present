@@ -1,9 +1,8 @@
 "use client";
 
-import { BookOpen, Music2, RefreshCw } from "lucide-react";
+import { BookOpen, Music2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Segmented } from "../../../renderer/shared/components/style-controls";
-import { cn } from "../../../renderer/shared/lib/utils";
 import { SETTINGS_LANGUAGE_OPTIONS, type AgentSettings as AgentSettingsValue } from "../lib/constants";
 import {
   SettingsButton,
@@ -27,31 +26,19 @@ function AgentTitle({ icon, children }: { icon: ReactNode; children: ReactNode }
 export function AgentSettings({
   lang,
   onLangChange,
-  inputDeviceId,
-  onInputDeviceChange,
-  microphones,
-  microphonesStatus,
-  loadingMicrophones,
-  onRefreshMicrophones,
+  microphoneLabel,
+  onChooseMicrophone,
   agent,
   onAgentChange,
 }: {
   lang: string;
   onLangChange: (lang: string) => void;
-  inputDeviceId: string | null;
-  onInputDeviceChange: (deviceId: string | null) => void;
-  microphones: Array<{ deviceId: string; label: string }>;
-  microphonesStatus: string | null;
-  loadingMicrophones: boolean;
-  onRefreshMicrophones: () => void;
+  /** The microphone chosen in Audio. */
+  microphoneLabel: string;
+  onChooseMicrophone: () => void;
   agent: AgentSettingsValue;
   onAgentChange: (patch: Partial<AgentSettingsValue>) => void;
 }) {
-  const microphoneNote = loadingMicrophones
-    ? "Looking for microphones…"
-    : microphonesStatus ??
-      (microphones.length === 1 ? "1 microphone found." : `${microphones.length} microphones found.`);
-
   return (
     <SettingsPage
       title="Agent"
@@ -66,26 +53,8 @@ export function AgentSettings({
             options={SETTINGS_LANGUAGE_OPTIONS}
           />
         </SettingsRow>
-        <SettingsRow label="Microphone" description={microphoneNote}>
-          <SettingsButton
-            variant="ghost"
-            onClick={onRefreshMicrophones}
-            disabled={loadingMicrophones}
-            title="Look again"
-            className="w-8 px-0"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", loadingMicrophones && "animate-spin")} aria-hidden />
-            <span className="sr-only">Look for microphones again</span>
-          </SettingsButton>
-          <SettingsSelect
-            label="Microphone"
-            value={inputDeviceId ?? "__default__"}
-            onChange={(value) => onInputDeviceChange(value === "__default__" ? null : value)}
-            options={[
-              { value: "__default__", label: "System default" },
-              ...microphones.map((device) => ({ value: device.deviceId, label: device.label })),
-            ]}
-          />
+        <SettingsRow label="Microphone" description={`${microphoneLabel}. Chosen in Audio, with the outputs.`}>
+          <SettingsButton onClick={onChooseMicrophone}>Choose…</SettingsButton>
         </SettingsRow>
       </SettingsGroup>
 

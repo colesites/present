@@ -9,7 +9,11 @@
 //!   as a CSS `linear-gradient` does;
 //! * a mix is a base colour with soft spots of colour on it, each fading from
 //!   its colour at `x`, `y` (fractions of the box) to nothing at `size` times
-//!   the box's longer side.
+//!   the box's longer side;
+//! * `linear` and `radial` carry any number of stops, as an imported
+//!   PowerPoint shape's gradient does: `linear` along the same line as
+//!   `gradient`, `radial` from `cx`, `cy` (fractions of the box) out to its
+//!   farthest corner.
 //!
 //! The fill arrives in the style's `extra` map and is read leniently: one this
 //! build cannot read is no fill, and the shape's `backgroundColor` is drawn
@@ -45,6 +49,28 @@ pub enum Fill {
         #[serde(default)]
         spots: Vec<Spot>,
     },
+    Linear {
+        #[serde(default)]
+        angle: f64,
+        stops: Vec<Stop>,
+    },
+    Radial {
+        #[serde(default = "half")]
+        cx: f64,
+        #[serde(default = "half")]
+        cy: f64,
+        stops: Vec<Stop>,
+    },
+}
+
+fn half() -> f64 {
+    0.5
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Stop {
+    pub offset: f64,
+    pub color: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -60,6 +86,26 @@ impl Fill {
     pub fn of(style: Option<&SlideElementStyle>) -> Option<Self> {
         let value = style?.extra.get("fill")?;
         serde_json::from_value(value.clone()).ok()
+    }
+}
+
+/// Stops as tiny-skia takes them: in order, readable, at least two.
+fn gradient_stops(stops: &[Stop], opacity: Option<f64>) -> Option<Vec<GradientStop>> {
+    let mut read: Vec<GradientStop> = stops
+        .iter()
+        .filter_map(|stop| {
+            let color = color::with_opacity(color::parse(&stop.color)?, opacity);
+            Some(GradientStop::new(stop.offset.clamp(0.0, 1.0) as f32, color))
+        })
+        .collect();
+    match read.len() {
+        0 => None,
+        1 => {
+            let only = read[0];
+            read.push(only);
+            Some(read)
+        }
+        _ => Some(read),
     }
 }
 
@@ -108,6 +154,44 @@ pub fn paint(
             pixmap.fill_path(path, &paint, FillRule::Winding, transform, None);
             true
         }
+        Fill::Linear { angle, stops } => {
+            let Some(gradient) = gradient_stops(stops, opacity) else {
+                return false;
+            };
+            let (start, end) = gradient_line(*angle, width, height);
+            match LinearGradient::new(start, end, gradient, SpreadMode::Pad, Transform::identity())
+            {
+                Some(shader) => paint.shader = shader,
+                None => paint.set_color(first_color(stops, opacity)),
+            }
+            pixmap.fill_path(path, &paint, FillRule::Winding, transform, None);
+            true
+        }
+        Fill::Radial { cx, cy, stops } => {
+            let Some(gradient) = gradient_stops(stops, opacity) else {
+                return false;
+            };
+            let centre = Point::from_xy(*cx as f32 * width, *cy as f32 * height);
+            // Out to the farthest corner, so the last stop reaches every corner.
+            let radius = [(0.0, 0.0), (width, 0.0), (0.0, height), (width, height)]
+                .iter()
+                .map(|(x, y)| ((x - centre.x).powi(2) + (y - centre.y).powi(2)).sqrt())
+                .fold(1.0_f32, f32::max);
+            match RadialGradient::new(
+                centre,
+                0.0,
+                centre,
+                radius,
+                gradient,
+                SpreadMode::Pad,
+                Transform::identity(),
+            ) {
+                Some(shader) => paint.shader = shader,
+                None => paint.set_color(first_color(stops, opacity)),
+            }
+            pixmap.fill_path(path, &paint, FillRule::Winding, transform, None);
+            true
+        }
         Fill::Mix { base, spots } => {
             let Some(base) = parse(base) else {
                 return false;
@@ -149,6 +233,16 @@ pub fn paint(
     }
 }
 
+/// The first stop's colour: what a gradient with no length shows.
+fn first_color(stops: &[Stop], opacity: Option<f64>) -> Color {
+    stops
+        .iter()
+        .find_map(|stop| color::parse(&stop.color))
+        .map_or(Color::TRANSPARENT, |color| {
+            color::with_opacity(color, opacity)
+        })
+}
+
 /// Where a gradient at `angle` degrees starts and ends across a box: through
 /// its middle, as long as the box is along that direction.
 pub fn gradient_line(angle: f64, width: f32, height: f32) -> (Point, Point) {
@@ -168,6 +262,9 @@ pub fn plain_color(fill: &Fill) -> Option<Color> {
         Fill::Color { color } => color::parse(color),
         Fill::Gradient { from, .. } => color::parse(from),
         Fill::Mix { base, .. } => color::parse(base),
+        Fill::Linear { stops, .. } | Fill::Radial { stops, .. } => {
+            stops.first().and_then(|stop| color::parse(&stop.color))
+        }
     }
 }
 

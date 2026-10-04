@@ -35,8 +35,13 @@ pub const OPERATOR_DRIFT_TOLERANCE: f64 = 0.5;
 /// How far a mirror may drift. `OutputWindow.tsx:437`.
 pub const MIRROR_DRIFT_TOLERANCE: f64 = 0.12;
 
+/// The slowest and fastest a video plays: what the sound's tempo keeps its
+/// pitch through (`sound/decoder.rs`).
+pub const SLOWEST: f64 = 0.5;
+pub const FASTEST: f64 = 2.0;
+
 /// The transport.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaPlayback {
     /// The item the operator is on, if it is a video.
@@ -53,6 +58,26 @@ pub struct MediaPlayback {
     /// set rather than observed (a new item, a stop, play or pause).
     #[serde(default)]
     pub position_sampled_at_ms: Option<f64>,
+    /// How fast it plays: 1 as recorded. The sound and every picture keep it.
+    #[serde(default = "normal_rate")]
+    pub rate: f64,
+}
+
+fn normal_rate() -> f64 {
+    1.0
+}
+
+impl Default for MediaPlayback {
+    fn default() -> Self {
+        Self {
+            media_id: None,
+            playing: false,
+            position_seconds: 0.0,
+            duration_seconds: None,
+            position_sampled_at_ms: None,
+            rate: 1.0,
+        }
+    }
 }
 
 impl MediaPlayback {
@@ -82,6 +107,23 @@ impl MediaPlayback {
 
     pub fn play(&mut self) -> bool {
         self.set_playing(true)
+    }
+
+    /// Play faster or slower, within [`SLOWEST`] and [`FASTEST`]. It stays
+    /// at that rate from video to video, as a player's speed does.
+    pub fn set_rate(&mut self, rate: f64) -> bool {
+        let rate = if rate.is_finite() {
+            rate.clamp(SLOWEST, FASTEST)
+        } else {
+            1.0
+        };
+        if (self.rate - rate).abs() < 1e-6 {
+            return false;
+        }
+        self.rate = rate;
+        // A sample taken at the old rate would be extrapolated at the new one.
+        self.position_sampled_at_ms = None;
+        true
     }
 
     pub fn pause(&mut self) -> bool {

@@ -28,7 +28,7 @@ use ffmpeg_next as ff;
 
 use super::{VideoDecoder, VideoError, VideoFrame};
 
-fn init() {
+pub(crate) fn init() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         let _ = ff::init();

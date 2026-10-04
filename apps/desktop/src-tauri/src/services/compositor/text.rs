@@ -48,14 +48,14 @@ const DEFAULT_COLOR: &str = "#ffffff";
 ///
 /// A `Mutex` rather than a thread-local: the scan is the expensive part and one
 /// process should pay it once, not once per thread that happens to draw.
-struct Fonts {
-    system: FontSystem,
-    cache: SwashCache,
+pub(super) struct Fonts {
+    pub(super) system: FontSystem,
+    pub(super) cache: SwashCache,
     /// Variable fonts instanced at the optical size they are drawn at.
-    optical: OpticalSizes,
+    pub(super) optical: OpticalSizes,
 }
 
-fn fonts() -> &'static Mutex<Fonts> {
+pub(super) fn fonts() -> &'static Mutex<Fonts> {
     static FONTS: OnceLock<Mutex<Fonts>> = OnceLock::new();
     FONTS.get_or_init(|| {
         Mutex::new(Fonts {
@@ -296,7 +296,12 @@ pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
         spec.italic,
         font_size,
     );
-    let mut attrs = Attrs::new().weight(spec.weight);
+    let mut attrs = Attrs::new().weight(super::font_fallback::weight_in(
+        system,
+        family.as_deref(),
+        spec.weight,
+        spec.italic,
+    ));
     if spec.italic {
         attrs = attrs.style(Style::Italic);
     }
@@ -366,6 +371,11 @@ pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
 }
 
 pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geometry::Viewport) {
+    // An imported deck's words, each run in its own style.
+    if super::rich_text::applies(element) {
+        super::rich_text::draw(pixmap, element, viewport);
+        return;
+    }
     let (width, height) = viewport.element_size(element);
     if width <= 0.0 || height <= 0.0 {
         return;
@@ -440,7 +450,12 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
     buffer.set_size(Some(content_width), Some(content_height));
     buffer.set_wrap(Wrap::Word);
 
-    let mut attrs = Attrs::new().weight(weight);
+    let mut attrs = Attrs::new().weight(super::font_fallback::weight_in(
+        system,
+        family.as_deref(),
+        weight,
+        italic,
+    ));
     if italic {
         attrs = attrs.style(Style::Italic);
     }
@@ -1161,12 +1176,12 @@ fn shadow_under(scratch: &mut tiny_skia::Pixmap, ink: &mut InkBounds, shadow: &S
 
 /// The rectangle of a scratch pixmap that holds any ink, inclusive.
 #[derive(Debug, Clone, Copy, Default)]
-struct InkBounds {
+pub(super) struct InkBounds {
     area: Option<(i32, i32, i32, i32)>,
 }
 
 impl InkBounds {
-    fn include(&mut self, x: i32, y: i32) {
+    pub(super) fn include(&mut self, x: i32, y: i32) {
         self.area = Some(match self.area {
             None => (x, y, x, y),
             Some((left, top, right, bottom)) => {
@@ -1187,7 +1202,7 @@ impl InkBounds {
 ///
 /// Anything rotated or mirrored still goes through `draw_pixmap`, which is
 /// what interpolates it; without that the text crawls.
-fn composite(
+pub(super) fn composite(
     pixmap: &mut PixmapMut<'_>,
     scratch: &tiny_skia::Pixmap,
     ink: InkBounds,
@@ -1309,7 +1324,7 @@ pub struct Shadow {
 /// The family name to hand cosmic-text: the one asked for, or an instance of it
 /// at the optical size `font_size` is drawn at when it is a variable font with
 /// that axis. `None` for the default family.
-fn resolve_family(
+pub(super) fn resolve_family(
     system: &mut FontSystem,
     optical: &mut OpticalSizes,
     family: Option<&str>,
@@ -1318,15 +1333,17 @@ fn resolve_family(
     font_size: f32,
 ) -> Option<String> {
     let family = family.map(str::trim).filter(|name| !name.is_empty())?;
+    // A font this computer does not have is drawn in the closest one it does.
+    let family = super::font_fallback::resolve(system, family);
     Some(
         optical
-            .family_for(system, family, weight, italic, font_size)
-            .unwrap_or_else(|| family.to_owned()),
+            .family_for(system, &family, weight, italic, font_size)
+            .unwrap_or(family),
     )
 }
 
-fn attrs_for<'a>(style: &TextStyle, family: Option<&'a str>) -> Attrs<'a> {
-    let mut attrs = Attrs::new().weight(style.weight);
+fn attrs_for<'a>(style: &TextStyle, family: Option<&'a str>, weight: Weight) -> Attrs<'a> {
+    let mut attrs = Attrs::new().weight(weight);
     if style.italic {
         attrs = attrs.style(Style::Italic);
     }
@@ -1371,7 +1388,11 @@ fn lay_out(
     });
     buffer.set_text(
         text,
-        &attrs_for(style, family.as_deref()),
+        &attrs_for(
+            style,
+            family.as_deref(),
+            super::font_fallback::weight_in(system, family.as_deref(), style.weight, style.italic),
+        ),
         Shaping::Advanced,
         Some(style.align),
     );
@@ -1539,7 +1560,14 @@ fn draw_shadow(
 ///
 /// tiny-skia stores premultiplied pixels, so the source is multiplied by its
 /// own coverage before being added to what the destination keeps.
-fn blend(scratch: &mut tiny_skia::Pixmap, index: usize, r: u8, g: u8, b: u8, alpha: f32) {
+pub(super) fn blend(
+    scratch: &mut tiny_skia::Pixmap,
+    index: usize,
+    r: u8,
+    g: u8,
+    b: u8,
+    alpha: f32,
+) {
     let pixels = scratch.pixels_mut();
     let Some(slot) = pixels.get_mut(index) else {
         return;
@@ -1575,6 +1603,21 @@ fn blend(scratch: &mut tiny_skia::Pixmap, index: usize, r: u8, g: u8, b: u8, alp
         (out_a * 255.0).round() as u8,
     );
     *slot = out.premultiply();
+}
+
+/// Add font files to the font stack: the fonts installed in the app, and a
+/// deck's embedded fonts as it is imported. A file already loaded is loaded
+/// again harmlessly; one that is not a font is skipped.
+pub fn load_font_files(paths: &[std::path::PathBuf]) {
+    let Ok(mut fonts) = fonts().lock() else {
+        return;
+    };
+    for path in paths {
+        if let Err(error) = fonts.system.db_mut().load_font_file(path) {
+            tracing::warn!(%error, path = %path.display(), "a font could not be loaded for the screens");
+        }
+    }
+    super::font_fallback::forget();
 }
 
 /// Warm the font stack.

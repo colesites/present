@@ -10,6 +10,7 @@ import {
   type DesktopBillingSnapshot,
 } from "../../../renderer/shared/store/desktopSession";
 import { useSpeechUsageStore } from "../../../renderer/shared/store/speechUsage";
+import type { ListeningMicrophone } from "../../../renderer/tauri/sound";
 
 interface ScriptRecognitionResult {
   transcript: string;
@@ -120,11 +121,8 @@ interface AssemblyAiUsageResponse {
 interface StreamingSession {
   billingSessionId: string | null;
   socket: WebSocket;
-  mediaStream: MediaStream;
-  audioContext: AudioContext;
-  source: MediaStreamAudioSourceNode;
-  processor: ScriptProcessorNode;
-  silenceSink: GainNode;
+  /** The microphone, listened to by Rust (`services/sound/input.rs`). */
+  microphone: ListeningMicrophone;
   startedAtMs: number;
   maxDurationSeconds: number;
 }
@@ -183,15 +181,6 @@ const shouldEmitTranscriptForLanguage = (transcript: string, lang: string): bool
   return latinLetters.length / letters.length >= 0.7;
 };
 
-const float32ToPcm16 = (input: Float32Array): ArrayBuffer => {
-  const output = new Int16Array(input.length);
-  for (let index = 0; index < input.length; index += 1) {
-    const sample = Math.max(-1, Math.min(1, input[index] ?? 0));
-    output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-  }
-  return output.buffer;
-};
-
 /** A Convex refusal's own words, rather than its request id and stack. */
 const convexMessage = (error: unknown): unknown =>
   error instanceof ConvexError && typeof error.data === "string" ? error.data : error;
@@ -227,46 +216,6 @@ const computeBoundedSessionUsageSeconds = (input: {
   );
 
   return Math.min(input.maxDurationSeconds, elapsedSeconds);
-};
-
-const resolveInputDeviceConstraint = async (
-  preferredInputDeviceId: string | null,
-): Promise<MediaTrackConstraints> => {
-  const baseConstraints: MediaTrackConstraints = {
-    channelCount: 1,
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-  };
-
-  const normalizedDeviceId = preferredInputDeviceId?.trim();
-  if (
-    !normalizedDeviceId ||
-    normalizedDeviceId === "default" ||
-    normalizedDeviceId === "communications" ||
-    !navigator.mediaDevices?.enumerateDevices
-  ) {
-    return baseConstraints;
-  }
-
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const matchingDevice = devices.find(
-      (device) =>
-        device.kind === "audioinput" && device.deviceId === normalizedDeviceId,
-    );
-
-    if (!matchingDevice) {
-      return baseConstraints;
-    }
-
-    return {
-      ...baseConstraints,
-      deviceId: { exact: normalizedDeviceId },
-    };
-  } catch {
-    return baseConstraints;
-  }
 };
 
 const mapRecognitionError = (error: string): string => {
@@ -327,19 +276,23 @@ export function useSpeechRecognition(
   const isElectronRuntime =
     typeof window !== "undefined" && Boolean(window.electronAPI);
 
-  const hasBrowserSpeechRecognition =
-    typeof window !== "undefined" &&
-    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
-
+  // The microphone is Rust's (`services/sound/input.rs`); the webview only
+  // needs to reach the transcription service.
   const hasStreamingSupport =
     typeof window !== "undefined" &&
     typeof WebSocket !== "undefined" &&
-    Boolean(navigator.mediaDevices?.getUserMedia) &&
-    Boolean(window.AudioContext || window.webkitAudioContext);
+    "__TAURI_INTERNALS__" in window;
 
-  const isSupported =
-    hasBrowserSpeechRecognition ||
-    (hasStreamingSupport && Boolean(sessionToken));
+  // WebKit's own recognizer, outside the app only. In the app it can never
+  // listen: it needs a speech-recognition grant the app does not ask for, so
+  // macOS refused it without a prompt and the operator was told the
+  // microphone was denied.
+  const hasBrowserSpeechRecognition =
+    !hasStreamingSupport &&
+    typeof window !== "undefined" &&
+    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+
+  const isSupported = hasBrowserSpeechRecognition || hasStreamingSupport;
 
   // Use refs for callbacks to avoid re-initializing recognition when they change
   const onResultRef = useRef(onResult);
@@ -458,7 +411,7 @@ export function useSpeechRecognition(
       return;
     }
 
-    session.processor.onaudioprocess = null;
+    session.microphone.stop();
     const endedAtMs = Date.now();
     const localUsedSeconds = computeBoundedSessionUsageSeconds({
       startedAtMs: session.startedAtMs,
@@ -506,26 +459,6 @@ export function useSpeechRecognition(
       // Ignore close errors.
     }
 
-    try {
-      session.source.disconnect();
-    } catch {
-      // Ignore disconnect errors.
-    }
-
-    try {
-      session.processor.disconnect();
-    } catch {
-      // Ignore disconnect errors.
-    }
-
-    try {
-      session.silenceSink.disconnect();
-    } catch {
-      // Ignore disconnect errors.
-    }
-
-    session.mediaStream.getTracks().forEach((track) => track.stop());
-    void session.audioContext.close().catch((): void => undefined);
   }, [
     completeUsageSession,
     setPendingCommittedUsageSeconds,
@@ -588,73 +521,54 @@ export function useSpeechRecognition(
       console.warn("[Speech] OS reports microphone access is not granted:", osPermission);
     }
 
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Audio capture is unavailable in this desktop session.");
-    }
-
-    const audioConstraints = await resolveInputDeviceConstraint(inputDeviceId);
-
-    const [mediaStreamResult, tokenResult] = await Promise.allSettled([
-      navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints,
-      }),
+    // The socket the samples go to, once it is open: until then they are
+    // dropped, as the webview's capture dropped them.
+    let socket: WebSocket | null = null;
+    const [microphoneResult, tokenResult] = await Promise.allSettled([
+      import("../../../renderer/tauri/sound").then(({ startMicrophone }) =>
+        startMicrophone(inputDeviceId?.trim() || null, (pcm) => {
+          if (socket?.readyState === WebSocket.OPEN) socket.send(pcm);
+        }),
+      ),
       fetchAssemblyAiToken(),
     ]);
 
-    if (mediaStreamResult.status === "rejected") {
+    if (microphoneResult.status === "rejected") {
       if (!osPermission.granted) {
         throw new Error(
           "Microphone access is blocked by macOS. Enable Present in System Settings > Privacy & Security > Microphone. If no prompt appears, run `tccutil reset Microphone` and fully restart Present.",
         );
       }
-      throw mediaStreamResult.reason;
+      throw microphoneResult.reason instanceof Error
+        ? microphoneResult.reason
+        : new Error(String(microphoneResult.reason));
     }
 
-    const mediaStream = mediaStreamResult.value;
+    const microphone = microphoneResult.value;
 
     if (tokenResult.status === "rejected") {
-      mediaStream.getTracks().forEach((track) => track.stop());
+      microphone.stop();
       throw tokenResult.reason;
     }
 
     const { token } = tokenResult.value;
 
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextCtor) {
-      mediaStream.getTracks().forEach((track) => track.stop());
-      throw new Error("Audio capture is unavailable in this desktop session.");
-    }
-
-    const audioContext = new AudioContextCtor();
-    const source = audioContext.createMediaStreamSource(mediaStream);
-    const processor = audioContext.createScriptProcessor(4096, 1, 1);
-    const silenceSink = audioContext.createGain();
-    silenceSink.gain.value = 0;
-
-    source.connect(processor);
-    processor.connect(silenceSink);
-    silenceSink.connect(audioContext.destination);
-
     try {
-      await audioContext.resume();
       const socketUrl = buildAssemblyAiSocketUrl({
         token,
-        sampleRate: audioContext.sampleRate,
+        sampleRate: microphone.sampleRate,
         lang,
         keyterms: sanitizeKeyterms(keyterms),
       });
 
-      const socket = new WebSocket(socketUrl);
-      socket.binaryType = "arraybuffer";
+      const openedSocket = new WebSocket(socketUrl);
+      openedSocket.binaryType = "arraybuffer";
+      socket = openedSocket;
 
       const session: StreamingSession = {
         billingSessionId: tokenResult.value.sessionId ?? null,
-        socket,
-        mediaStream,
-        audioContext,
-        source,
-        processor,
-        silenceSink,
+        socket: openedSocket,
+        microphone,
         startedAtMs: Date.now(),
         maxDurationSeconds:
           tokenResult.value.allowedDurationSeconds ?? Number.MAX_SAFE_INTEGER,
@@ -667,36 +581,22 @@ export function useSpeechRecognition(
 
       await new Promise<void>((resolve, reject) => {
         const handleOpen = () => {
-          socket.removeEventListener("open", handleOpen);
-          socket.removeEventListener("error", handleSocketOpenError);
+          openedSocket.removeEventListener("open", handleOpen);
+          openedSocket.removeEventListener("error", handleSocketOpenError);
           resolve();
         };
 
         const handleSocketOpenError = () => {
-          socket.removeEventListener("open", handleOpen);
-          socket.removeEventListener("error", handleSocketOpenError);
+          openedSocket.removeEventListener("open", handleOpen);
+          openedSocket.removeEventListener("error", handleSocketOpenError);
           reject(new Error("AssemblyAI connection failed."));
         };
 
-        socket.addEventListener("open", handleOpen, { once: true });
-        socket.addEventListener("error", handleSocketOpenError, { once: true });
+        openedSocket.addEventListener("open", handleOpen, { once: true });
+        openedSocket.addEventListener("error", handleSocketOpenError, { once: true });
       });
 
-      processor.onaudioprocess = (event) => {
-        if (socket.readyState !== WebSocket.OPEN) {
-          return;
-        }
-
-        const inputData = event.inputBuffer.getChannelData(0);
-        if (!inputData?.length) {
-          return;
-        }
-
-        const pcmChunk = float32ToPcm16(inputData);
-        socket.send(pcmChunk);
-      };
-
-      socket.onmessage = (event) => {
+      openedSocket.onmessage = (event) => {
         let payload: AssemblyAiMessage;
 
         try {
@@ -759,7 +659,7 @@ export function useSpeechRecognition(
         }
       };
 
-      socket.onerror = (event) => {
+      openedSocket.onerror = (event) => {
         console.error("[AssemblyAI] websocket error", event);
         setIsStarting(false);
         setError("Live transcription connection failed.");
@@ -768,7 +668,7 @@ export function useSpeechRecognition(
         setPendingCommittedUsageSeconds(0);
       };
 
-      socket.onclose = (event) => {
+      openedSocket.onclose = (event) => {
         if (!isStoppingRef.current && !(event.wasClean && event.code === 1005)) {
           console.error("[AssemblyAI] websocket closed", {
             code: event.code,
@@ -800,9 +700,7 @@ export function useSpeechRecognition(
       if (partialSession) {
         stopStreamingSession();
       } else {
-        processor.onaudioprocess = null;
-        mediaStream.getTracks().forEach((track) => track.stop());
-        void audioContext.close().catch((): void => undefined);
+        microphone.stop();
       }
       throw error;
     }
@@ -853,7 +751,9 @@ export function useSpeechRecognition(
     }
 
     if (!recognitionRef.current) {
-      const message = "Voice input is unavailable in this runtime.";
+      const message = hasStreamingSupport
+        ? "Sign in to Present to use voice. Listening is part of your plan."
+        : "Voice input is unavailable in this runtime.";
       setIsStarting(false);
       setError(message);
       setSharedActiveSessionStartedAtMs(null);

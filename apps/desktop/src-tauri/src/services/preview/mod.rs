@@ -84,8 +84,16 @@ impl PreviewSource {
     ///
     /// The same bytes come back while nothing has changed: the `<img>` asks on
     /// a timer whether or not anything moved, and a still slide should not be
-    /// redrawn and re-encoded thirty times a second.
-    pub fn frame(&mut self, size: (u32, u32)) -> Result<&[u8], String> {
+    /// redrawn and re-encoded thirty times a second. The flag says whether
+    /// they are new.
+    ///
+    /// The video is drawn `lead` ahead: the frame due when this picture will
+    /// be on the operator's screen (`frame_delivery`).
+    pub fn frame(
+        &mut self,
+        size: (u32, u32),
+        lead: std::time::Duration,
+    ) -> Result<(&[u8], bool), String> {
         let (Some(output), Some(files)) = (
             self.app.try_state::<OutputState>(),
             self.app.try_state::<FileState>(),
@@ -110,7 +118,7 @@ impl PreviewSource {
             Some(looks) => looks.scene_for_screen(output.on_screen(), &self.screen),
             None => output.on_screen(),
         };
-        let now = Instant::now();
+        let now = Instant::now() + lead;
         let frame = self.video.frame_for(&scene, now, size, &self.open);
         let shown = frame.map(|frame| frame.presentation_seconds);
         let region_frames = self.regions.frames_for(&scene, now, size, &self.open);
@@ -121,7 +129,7 @@ impl PreviewSource {
                 .compositor
                 .needs_drawing(self.last.as_ref(), &scene, shown, &region_frames, size);
         if unchanged && !self.picture.is_empty() {
-            return Ok(&self.picture);
+            return Ok((&self.picture, false));
         }
 
         self.compositor.resize(size.0, size.1);
@@ -136,7 +144,7 @@ impl PreviewSource {
         self.picture =
             thumbnails::encode_jpeg(size.0, size.1, &bgra).map_err(|error| error.to_string())?;
         self.last = Some((scene, shown, size));
-        Ok(&self.picture)
+        Ok((&self.picture, true))
     }
 }
 
@@ -145,7 +153,7 @@ impl PreviewSource {
 /// The same shape as `surface/stream.rs`: it holds an `AppHandle` and looks
 /// the state up inside, because a `State<'_, T>` cannot cross to the thread
 /// the video is opened on.
-fn scoped_opener(app: AppHandle) -> Opener {
+pub(crate) fn scoped_opener(app: AppHandle) -> Opener {
     Arc::new(move |url: &str, size: (u32, u32)| {
         let files = app
             .try_state::<FileState>()

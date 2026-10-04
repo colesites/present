@@ -1,12 +1,12 @@
 {
   "name": "@present/desktop",
   "productName": "Present",
-  "version": "0.4.10",
+  "version": "0.4.11",
   "description": "Presentation software for churches, conferences and live events",
   "private": true,
   "scripts": {
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "node scripts/tauri-dev.mjs",
     "tauri:build": "node scripts/tauri-build.mjs",
     "tauri:ffmpeg": "bash scripts/build-ffmpeg.sh && node scripts/stage-tauri-ffmpeg.mjs",
     "tauri:vite:dev": "vite",

@@ -127,6 +127,16 @@ interface FontAPI {
 interface PptxAPI {
   openFile: () => Promise<string | null>;
   parseFile: (filePath: string) => Promise<ParsedPptxPresentation>;
+  /** Save a picture an import made (base64) beside imported decks'; its URL. */
+  saveMedia?: (data: string, extension: string) => Promise<string>;
+  /**
+   * The deck as pictures: each slide drawn by the compositor, the renderer
+   * that draws the screens, and saved as a file.
+   */
+  renderImages?: (filePath: string) => Promise<{
+    title: string;
+    slides: Array<{ title: string; url: string }>;
+  }>;
 }
 
 interface ElectronAPI {

@@ -28,19 +28,26 @@ export type MediaPlayback = {
   durationSeconds: number | null;
   /** When the element was at `positionSeconds`, epoch ms. `null` when set, not observed. */
   positionSampledAtMs: number | null;
+  /** How fast it plays: 1 as recorded. */
+  rate?: number;
 };
 
 export const getPlayback = (): Promise<MediaPlayback> => invoke("get_playback");
 
+/** `mediaUrl` is the item's file: Rust plays its sound (`services/sound`). */
 export const selectPlaybackMedia = (
   mediaId: string | null,
+  mediaUrl: string | null,
   autoPlay: boolean,
-): Promise<MediaPlayback> => invoke("select_playback_media", { mediaId, autoPlay });
+): Promise<MediaPlayback> => invoke("select_playback_media", { mediaId, mediaUrl, autoPlay });
 
 export const play = (): Promise<MediaPlayback> => invoke("play_playback");
 export const pause = (): Promise<MediaPlayback> => invoke("pause_playback");
 export const toggle = (): Promise<MediaPlayback> => invoke("toggle_playback");
 export const stop = (): Promise<MediaPlayback> => invoke("stop_playback");
+
+/** Play faster or slower (0.5 to 2). The sound and every picture follow. */
+export const setRate = (rate: number): Promise<MediaPlayback> => invoke("set_playback_rate", { rate });
 
 export const seek = (positionSeconds: number, sampledAtMs: number): Promise<MediaPlayback> =>
   invoke("seek_playback", { positionSeconds, sampledAtMs });
