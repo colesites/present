@@ -5,6 +5,10 @@ import { LayoutGrid, List } from "lucide-react";
 import { cn } from "../lib/utils";
 import { TransitionPicker } from "../../../features/transitions/TransitionPicker";
 
+/** The slide grid's scale: smallest, and largest — one slide to a row. */
+export const SLIDE_SCALE_MIN = 30;
+export const SLIDE_SCALE_MAX = 110;
+
 interface WorkspaceFooterProps {
   isGridView: boolean;
   onViewModeChange: (val: boolean) => void;
@@ -93,8 +97,8 @@ export function WorkspaceFooter({
           <div className="flex items-center group">
             <input
               type="range"
-              min={30}
-              max={110}
+              min={SLIDE_SCALE_MIN}
+              max={SLIDE_SCALE_MAX}
               value={scale}
               disabled={disableScaleControl}
               onChange={(event) => onScaleChange(Number.parseInt(event.target.value, 10))}

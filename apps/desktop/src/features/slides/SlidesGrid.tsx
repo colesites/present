@@ -24,6 +24,7 @@ import {
 import { ArrowRight, GripVertical, NotebookPen, Pencil } from "lucide-react";
 import { getSlideBackgroundColor } from "../library/lib/library-items";
 import { SlideMediaBackdrop } from "../../renderer/shared/components/SlideMediaBackdrop";
+import { SLIDE_SCALE_MAX } from "../../renderer/shared/components/WorkspaceFooter";
 
 // Fixed slide box height
 const BASE_SLIDE_HEIGHT = 160;
@@ -117,7 +118,6 @@ interface SlidesGridProps {
   fontUnderline?: boolean;
   externalScale?: number;
   isGridView?: boolean;
-  forceSingleColumn?: boolean;
 }
 
 export const SlidesGrid = memo(function SlidesGrid({
@@ -135,7 +135,6 @@ export const SlidesGrid = memo(function SlidesGrid({
   fontUnderline,
   externalScale = 60,
   isGridView = true,
-  forceSingleColumn = false,
 }: SlidesGridProps) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
@@ -143,9 +142,12 @@ export const SlidesGrid = memo(function SlidesGrid({
   const previousFocusedSlideIndexRef = useRef<number | null>(null);
   const smartScrollAnimationRef = useRef<number | null>(null);
   const scaleFactor = externalScale / 60;
+  // The largest scale is one slide to a row, however wide the pane: at the
+  // widths in between it fitted two, or three on a wide screen.
+  const singleColumn = externalScale >= SLIDE_SCALE_MAX;
   const slideHeight = useMemo(
-    () => Math.round((forceSingleColumn ? BASE_SLIDE_HEIGHT * 2 : BASE_SLIDE_HEIGHT) * scaleFactor),
-    [forceSingleColumn, scaleFactor]
+    () => Math.round((singleColumn ? BASE_SLIDE_HEIGHT * 2 : BASE_SLIDE_HEIGHT) * scaleFactor),
+    [singleColumn, scaleFactor]
   );
   const minSlideWidth = useMemo(
     () => Math.round(BASE_MIN_SLIDE_WIDTH * scaleFactor),
@@ -263,7 +265,7 @@ export const SlidesGrid = memo(function SlidesGrid({
         style={{
           gap: `${gridGap}px`,
           gridTemplateColumns: isGridView
-            ? forceSingleColumn
+            ? singleColumn
               ? "minmax(0, 1fr)"
               : `repeat(auto-fill, minmax(${minSlideWidth}px, 1fr))`
             : undefined,
