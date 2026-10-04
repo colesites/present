@@ -4,6 +4,40 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-10-04
+
+### Added
+
+- Settings has an Audio page: the outputs and microphones this computer has,
+  as macOS lists them, a test sound, and a volume and mute for everything
+  Present plays. The microphone the agents listen through is chosen there.
+- A new PowerPoint importer. Slides keep their shapes, fills, outlines,
+  tables, groups, theme colours and fonts, and the fonts a deck carries.
+
+### Changed
+
+- Present plays its own sound. A video's sound and the backing track are
+  decoded by FFmpeg and played on the output chosen in Settings, rather than
+  by the webview.
+- Every picture of a video is decoded the same way: the center pane, the
+  preview, stage displays, video props and screen-composer regions. Formats
+  that only played on the screens now play everywhere.
+- The microphone is opened by Present itself, which asks macOS for access
+  the first time.
+
+### Fixed
+
+- A video's sound and picture stay together. The sound could drift from the
+  screens and stop part-way through, while the screens played on.
+- The center pane, the preview and the screens show the same frame at the
+  same moment, in time with the sound. The center pane trailed the output.
+- One tap on a video in a service shows it in the center pane, held and
+  silent. It no longer starts playing; a double tap sends it out and plays.
+- Settings lists the audio devices. It showed none until a page had opened
+  the microphone.
+- Voice search no longer reports "microphone access denied" without asking.
+  Signed out, it says to sign in.
+
 ## [0.4.10] - 2026-10-03
 
 ### Added
