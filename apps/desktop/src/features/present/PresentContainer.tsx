@@ -659,8 +659,6 @@ export function PresentContainer({
     (shouldUseServiceLibraryFallback
       ? String(selectedServiceLibraryItem?._id ?? "") || null
       : null);
-  const selectedPresentationSourceType =
-    selectedServicePresentationItem?.presentation?.sourceType ?? null;
   const handleSetSelectedDeckLibraryId = useCallback(
     (id: string | null) => {
       if (id && id.startsWith("presentation_")) {
@@ -2542,7 +2540,6 @@ export function PresentContainer({
             voiceCommands: settingsAgent.bibleVoiceCommands,
           },
         }}
-        isPptxSelection={selectedPresentationSourceType === "pptx"}
         panelRefs={{
           showsPanelRef,
           mediaPanelRef,

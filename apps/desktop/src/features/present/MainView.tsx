@@ -364,7 +364,6 @@ interface MainViewProps {
   panelRefs: MainViewPanelRefs;
   outputState: MainViewOutputState;
   contentSource: ContentSource;
-  isPptxSelection?: boolean;
 }
 
 export function MainView({
@@ -382,7 +381,6 @@ export function MainView({
   panelRefs,
   outputState,
   contentSource,
-  isPptxSelection = false,
 }: MainViewProps) {
   const {
     isFrozen: isOutputFrozen,
@@ -996,7 +994,6 @@ export function MainView({
                   onSendScripture={handleScriptureOutput}
                   selectedServiceId={selectedServiceId}
                   onAddScriptureToService={onAddScriptureToService}
-                  lockSingleSlideView={isPptxSelection}
                   importOverlay={presentationImportState}
                 />
               </ResizablePanel>
@@ -1111,7 +1108,6 @@ export function MainView({
         onSendScripture={handleScriptureOutput}
         selectedServiceId={selectedServiceId}
         onAddScriptureToService={onAddScriptureToService}
-        lockSingleSlideView={isPptxSelection}
       />
     </div>
   );

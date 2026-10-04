@@ -27,7 +27,6 @@ type ScriptureProps = ComponentProps<typeof ScripturePanel>;
 type Props = {
   viewMode: ViewMode;
   bottomTab: BottomTab;
-  lockSingleSlideView?: boolean;
   importOverlay?: {
     isVisible: boolean;
     title: string;
@@ -413,13 +412,10 @@ export function PresentCenterArea({
   onSendScripture,
   selectedServiceId,
   onAddScriptureToService,
-  lockSingleSlideView = false,
   importOverlay,
 }: Props) {
   // Footer state
   const [scale, setScale] = useState(60);
-  const effectiveScale = lockSingleSlideView ? 100 : scale;
-  const effectiveIsGridView = lockSingleSlideView ? true : isGridView;
 
   // The slides, memoised on their own: the media preview beside them follows
   // the live video ten times a second, and the grid must not redraw with it.
@@ -433,18 +429,16 @@ export function PresentCenterArea({
         onEditSlide={onEditSlide}
         onOpenMiniEditor={onOpenMiniEditor}
         onReorderSlides={selectedLibraryItem ? onReorderSlides : undefined}
-        externalScale={effectiveScale}
-        isGridView={effectiveIsGridView}
-        forceSingleColumn={lockSingleSlideView}
+        externalScale={scale}
+        isGridView={isGridView}
         {...editorProps}
       />
     ),
     [
       activeSlideId,
       editorProps,
-      effectiveIsGridView,
-      effectiveScale,
-      lockSingleSlideView,
+      isGridView,
+      scale,
       onEditSlide,
       onOpenMiniEditor,
       onReorderSlides,
@@ -631,12 +625,10 @@ export function PresentCenterArea({
         <WorkspaceFooter
           leftContent={<SongAgentControl />}
           showTransitionPicker
-          isGridView={effectiveIsGridView}
+          isGridView={isGridView}
           onViewModeChange={onGridViewChange}
-          scale={effectiveScale}
+          scale={scale}
           onScaleChange={setScale}
-          disableViewModeToggle={lockSingleSlideView}
-          disableScaleControl={lockSingleSlideView}
         />
       )}
     </div>
