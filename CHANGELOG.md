@@ -4,6 +4,16 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-10-04
+
+### Changed
+
+- A PowerPoint deck sits in the slide grid like a PDF or a song, and the
+  scale and grid/list controls work on it. It was shown one large slide at a
+  time with both controls switched off.
+- The largest scale shows one slide to a row, whatever the width of the
+  pane. It could still fit two, or three on a wide screen.
+
 ## [0.4.11] - 2026-10-04
 
 ### Added
