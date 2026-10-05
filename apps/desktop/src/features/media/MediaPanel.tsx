@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "../../renderer/shared/lib/user-error";
 import {
   memo,
   useEffect,
@@ -391,7 +392,7 @@ export const MediaPanel = memo(
         }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to add folder"
+          userMessage(error, "That folder couldn't be added. Try again.", "Media")
         );
       }
     };
@@ -461,7 +462,7 @@ export const MediaPanel = memo(
         setRenameMediaName("");
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to rename media",
+          userMessage(error, "That file couldn't be renamed. Try again.", "Media"),
         );
       }
     };
@@ -479,7 +480,7 @@ export const MediaPanel = memo(
         setMediaToRemove(null);
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to remove media",
+          userMessage(error, "That file couldn't be removed. Try again.", "Media"),
         );
       }
     };

@@ -392,9 +392,13 @@ pub(crate) mod tests {
             let value = (f64::from(frame) / f64::from(rate) * 440.0 * std::f64::consts::TAU).sin();
             wav.extend_from_slice(&((value * 12_000.0) as i16).to_le_bytes());
         }
+        // Its own file: tests run side by side, and two sharing a name
+        // deleted each other's tone mid-read.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let path = std::env::temp_dir().join(format!(
-            "present-sound-tone-{}-{seconds}.wav",
-            std::process::id()
+            "present-sound-tone-{}-{}.wav",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::write(&path, wav).unwrap();
         path

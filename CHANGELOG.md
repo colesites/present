@@ -4,6 +4,96 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-10-05
+
+### Changed
+
+- The Bible agent reads what the preacher says as it is said, not once a
+  sentence is finished. The voice service sends the words at every short
+  pause and ends a turn after half a second of quiet (it waited about one
+  and a half). A passage said plainly ("Romans 8:28", "chapter 3 verse 16",
+  "verse 18" in the passage just named) goes up at once, with no model; the
+  model is asked about anything else that could name one ("the book of John
+  chapter 3 in the 3rd verse", a misheard book) as soon as those words
+  arrive, and not again for the words read after it. A chapter on its own
+  waits for the verse that may follow it.
+- The Bible agent recognises a story told in the preacher's own words —
+  "David took five smooth stones from the brook" is 1 Samuel 17:40, "his
+  father saw him a great way off and ran" is Luke 15:20 — and finds it or
+  shows it like a passage named. The model hears what is being said every
+  dozen words or so, told which words are new; a story that goes on being
+  told is shown once, not verse by verse.
+- The Bible agent asks Groq first, with OpenAI's gpt-oss-120b, and the
+  Vercel AI Gateway with the same model when Groq cannot answer — no key in
+  the build, too many requests, slow, down. Measured against Gemini 2.5
+  Flash-Lite, Llama 4 Maverick, gpt-oss-20b and Qwen 3.8 27B, it was the
+  only model right about every story and sure of nothing that was not
+  scripture. Builds take the key from `GROQ_API_KEY`.
+- The Bible the preacher uses is the one shown. Named ("in the New
+  International Version", "the KJV") or read from — the verse's own words
+  are matched against every Bible installed, and the one they follow
+  furthest wins — the Bible tab switches to it, Find it puts the passage in
+  the box in it, and Show it shows it in it. Showing the same verses again
+  in another Bible does not add them to the service a second time.
+- Asking for a Bible on its own ("give me KJV") changes the passage already
+  in the box, or on screen, to that Bible. It only changed the Bible menu,
+  so nothing seemed to happen. Common Bibles are known by their full names
+  too ("the King James", "the New International Version"), though the
+  catalog installs them under their codes, and the voice service is told
+  the installed Bibles' names to listen for, as it is told the books'. A
+  Bible asked for that is not installed is downloaded from the catalog, as
+  choosing it in the Bible menu does, and the passage goes into it when it
+  arrives.
+- The Bible agent reads along with the passage on screen. Read straight on
+  from one verse into the next, it moves to the next within two words ("…the
+  face of the waters. And God" is Genesis 1:3), or one that is not a common
+  opening; after a pause, within three. It stays on the verse while that is
+  being read, and talk about it moves nothing. It needed five words in a
+  row of any verse in the Bible before. The verses read on into are not
+  added to the service again.
+- A chapter said alone ("Revelation chapter 1") waits in the box. It was put
+  on screen whole, which shows its first verse, which nobody asked for; now
+  it goes up at the verse that is said, or read.
+- A verse is found from its first words: four in a row that no other verse
+  has, said as a sentence ("Let there be light", "I am the way", "Be still
+  and know"); it needed five. Fewer — "In the beginning", "God so loved",
+  which open more than one verse — are asked of the model as soon as the
+  preacher pauses, from two words up. Measured on the whole King James with
+  fifty things a preacher says that quote nothing, none put a verse up.
+- What the Bible agent hears, finds and shows is written to the app's log.
+
+### Fixed
+
+- The Bible agent starts listening. The voice service refused every session
+  ("Invalid 'keyterms_prompt': Invalid JSON array"): the Bible's book names,
+  sent to help it hear them, went as one setting each instead of the one
+  list it asks for. Then the microphone's sound reached it in pieces of
+  46 ms, under the 50 ms it takes, and it ended every session at once; the
+  sound now goes in pieces of 100 ms. Both were checked against the voice
+  service itself.
+- When something goes wrong, Present says so in plain words, in a toast.
+  The words of whatever failed — a service's validation message, an error
+  from the code — are written to the app's log and no longer shown. This
+  covers voice search, imports, exports, lyrics, themes, media folders,
+  fonts, Bible downloads, capture inputs and the AI Operator.
+- A toast stays long enough to read: five seconds, eight for a problem with
+  voice search. Every toast was gone after half a second.
+- When an AI service refuses the Bible agent for asking too often, the
+  agent leaves it alone for as long as it asks and asks the other one,
+  rather than sending every question anyway; plain references are still
+  read meanwhile. A model
+  answer that only repeats the passage already open is ignored: words that
+  named no passage ("John said one thing to the crowd") came back as the
+  open passage, sure. A late answer about words since heard again ("those
+  who die", on the way to "those who doubt") no longer replaces a newer
+  one, and an answer the model calls a guess is not put in the box.
+- A verse read aloud goes up once. Genesis 1:1, read with the KJV in use,
+  went up in the KJV, then the ESV, then the KJV again: the verse's words
+  moved it to the ESV on a single word ("heavens", where the KJV has
+  "heaven"), and the model's answer, arriving late, put it back. Another
+  Bible now takes over only when the words follow it by two words or more,
+  and a late answer about the verse on screen leaves it be.
+
 ## [0.4.12] - 2026-10-04
 
 ### Changed

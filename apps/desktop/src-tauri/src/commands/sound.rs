@@ -171,18 +171,24 @@ pub async fn start_microphone(
         use crate::services::permissions::{self, MediaKind};
         let access = permissions::request(MediaKind::Microphone);
         if !access.granted {
-            return Err(match access.status.as_str() {
-                "restricted" => "This Mac does not allow apps to use the microphone (Screen Time or a device profile).".to_owned(),
-                _ => "Present is not allowed to use the microphone. Turn it on in System Settings > Privacy & Security > Microphone, then try again.".to_owned(),
-            });
+            return Err(crate::errors::AppError::User(match access.status.as_str() {
+                "restricted" => "This Mac doesn't allow apps to use the microphone (Screen Time or a device profile).".to_owned(),
+                _ => "Present isn't allowed to use the microphone. Turn it on in System Settings > Privacy & Security > Microphone, then try again.".to_owned(),
+            }));
         }
         sound::input::Microphone::open(device_id.as_deref(), move |bytes| {
             let _ = on_audio.send(tauri::ipc::InvokeResponseBody::Raw(bytes));
         })
+        .map_err(|error| {
+            tracing::warn!(%error, "the microphone could not be opened");
+            crate::errors::AppError::User(
+                "The microphone couldn't be opened. Check it's connected, or choose another in Settings > Audio."
+                    .to_owned(),
+            )
+        })
     })
     .await
-    .map_err(|error| crate::errors::AppError::Invalid(error.to_string()))?
-    .map_err(crate::errors::AppError::Invalid)?;
+    .map_err(|error| crate::errors::AppError::Invalid(error.to_string()))??;
     let session = NEXT_MICROPHONE_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let label = microphone.label.clone();
     let replaced = state

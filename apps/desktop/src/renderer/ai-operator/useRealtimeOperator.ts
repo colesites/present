@@ -1,3 +1,4 @@
+import { userMessage } from "../shared/lib/user-error";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type AiOperatorSessionMemory,
@@ -295,9 +296,7 @@ export function useRealtimeOperator({
       setVisualState("listening");
       console.info("[AI Operator] AssemblyAI stream listening");
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "AI Operator voice failed to start.";
-      console.error("[AI Operator] AssemblyAI start failed:", err);
+      const message = userMessage(err, "The AI Operator couldn't start listening. Try again.", "AI Operator");
       setIsActive(false);
       setError(message);
       setVisualState("error");

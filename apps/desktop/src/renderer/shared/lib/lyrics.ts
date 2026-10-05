@@ -1,3 +1,4 @@
+import { userMessage } from "./user-error";
 import { ConvexHttpClient } from "convex/browser";
 import { ConvexError } from "convex/values";
 import { api } from "@present/backend/convex/_generated/api";
@@ -44,7 +45,7 @@ export async function fixLyrics(lyrics: string): Promise<string> {
     // otherwise the operator thinks the AI ran when it did not.
     if (error instanceof ConvexError) {
       const { toast } = await import("sonner");
-      toast.error(String(error.data));
+      toast.error(userMessage(error, "The lyrics couldn't be tidied by AI just now.", "Lyrics"));
     }
     return locallyCleaned;
   }

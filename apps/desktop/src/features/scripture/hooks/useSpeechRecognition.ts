@@ -2,14 +2,15 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useMutation } from "convex/react";
-import { ConvexError } from "convex/values";
 import { api } from "@present/backend/convex/_generated/api";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import {
   updateDesktopBillingSnapshot,
   type DesktopBillingSnapshot,
 } from "../../../renderer/shared/store/desktopSession";
+import { toast } from "sonner";
 import { useSpeechUsageStore } from "../../../renderer/shared/store/speechUsage";
+import { logFault, rawText, userMessage, UserFacingError } from "../../../renderer/shared/lib/user-error";
 import type { ListeningMicrophone } from "../../../renderer/tauri/sound";
 
 interface ScriptRecognitionResult {
@@ -128,6 +129,10 @@ interface StreamingSession {
 }
 
 const ASSEMBLYAI_STREAM_URL = "wss://streaming.assemblyai.com/v3/ws";
+/** The quiet that ends a turn. */
+const TURN_SILENCE_MS = 500;
+/** The least quiet after which a turn that sounds finished may end. */
+const SHORTEST_TURN_SILENCE_MS = 160;
 const SPEECH_QUOTA_EXHAUSTED_MESSAGE =
   "You've used all of your speech-to-search time for this billing period. Upgrade your plan or wait for the next billing period to continue using voice search.";
 
@@ -136,7 +141,9 @@ const sanitizeKeyterms = (value: string[] | undefined): string[] =>
     new Set(
       (value ?? [])
         .map((item) => item.trim())
-        .filter((item) => item.length > 0 && item.length <= 64),
+        // AssemblyAI ignores a term over 50 characters, and refuses a
+        // session with more than 100.
+        .filter((item) => item.length > 0 && item.length <= 50),
     ),
   ).slice(0, 100);
 
@@ -152,16 +159,31 @@ const buildAssemblyAiSocketUrl = (input: {
   url.searchParams.set("encoding", "pcm_s16le");
   url.searchParams.set("format_turns", "false");
 
+  // Preachers do not stop for long. A turn ends after half a second of
+  // quiet (AssemblyAI's default is about 1.5s), and the words heard so far
+  // are sent at every short pause rather than held back for a longer one
+  // (`interruption_delay`, Universal-3.5 Pro only). The Bible tab reads them
+  // as they come either way (`useHeardScripture`); this is how often they come.
+  url.searchParams.set("max_turn_silence", String(TURN_SILENCE_MS));
   if (input.lang.toLowerCase().startsWith("en")) {
     url.searchParams.set("speech_model", "universal-3-5-pro");
     url.searchParams.set("language_code", "en");
+    url.searchParams.set("min_turn_silence", String(SHORTEST_TURN_SILENCE_MS));
+    url.searchParams.set("interruption_delay", "0");
   } else {
     url.searchParams.set("speech_model", "universal-streaming-multilingual");
     url.searchParams.set("language_detection", "true");
+    url.searchParams.set(
+      "min_end_of_turn_silence_when_confident",
+      String(SHORTEST_TURN_SILENCE_MS),
+    );
   }
 
-  for (const keyterm of input.keyterms) {
-    url.searchParams.append("keyterms_prompt", keyterm);
+  // One JSON array, not a parameter per term: sent one by one, AssemblyAI
+  // refused the whole session ("Invalid 'keyterms_prompt': Invalid JSON
+  // array") and the Bible agent never started.
+  if (input.keyterms.length > 0) {
+    url.searchParams.set("keyterms_prompt", JSON.stringify(input.keyterms));
   }
 
   return url.toString();
@@ -181,28 +203,22 @@ const shouldEmitTranscriptForLanguage = (transcript: string, lang: string): bool
   return latinLetters.length / letters.length >= 0.7;
 };
 
-/** A Convex refusal's own words, rather than its request id and stack. */
-const convexMessage = (error: unknown): unknown =>
-  error instanceof ConvexError && typeof error.data === "string" ? error.data : error;
+/** What anyone is told when voice search fails for a reason that is ours. */
+const VOICE_FAILED = "Voice search couldn't start. Try again in a moment.";
+const VOICE_DISCONNECTED = "Voice search couldn't connect. Check the internet connection and try again.";
+const VOICE_STOPPED = "Voice search stopped. Click the microphone to listen again.";
 
-const formatSpeechError = (error: unknown): string => {
-  if (typeof error === "string" && error.trim()) {
-    if (/speech-to-search quota exhausted|quota exhausted/i.test(error)) {
-      return SPEECH_QUOTA_EXHAUSTED_MESSAGE;
-    }
-
-    return error;
+/**
+ * What to tell the operator about `error`: the plan's own words when its
+ * speech time is spent, words written for people (`user-error.ts`), and
+ * otherwise a plain sentence — the error itself goes to the log, never the
+ * screen.
+ */
+const speechMessage = (error: unknown, fallback = VOICE_FAILED): string => {
+  if (/speech-to-search quota exhausted|quota exhausted/i.test(rawText(error))) {
+    return SPEECH_QUOTA_EXHAUSTED_MESSAGE;
   }
-
-  if (error instanceof Error && error.message.trim()) {
-    if (/speech-to-search quota exhausted|quota exhausted/i.test(error.message)) {
-      return SPEECH_QUOTA_EXHAUSTED_MESSAGE;
-    }
-
-    return error.message;
-  }
-
-  return "Voice input failed to start.";
+  return userMessage(error, fallback, "Speech");
 };
 
 const computeBoundedSessionUsageSeconds = (input: {
@@ -260,6 +276,12 @@ export function useSpeechRecognition(
   const [transcript, setTranscript] = useState("");
   const [interimTranscript, setInterimTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Said where the operator will see it, once: a toast, replaced rather than
+  // stacked if it comes again. Every message here is written for people
+  // (`speechMessage`); the fault behind it is in the log.
+  useEffect(() => {
+    if (error) toast.error(error, { id: "voice-search", duration: 8000 });
+  }, [error]);
   const [activeSessionStartedAtMs, setActiveSessionStartedAtMs] = useState<number | null>(null);
   const setSharedActiveSessionStartedAtMs = useSpeechUsageStore(
     (state) => state.setActiveSessionStartedAtMs,
@@ -468,7 +490,7 @@ export function useSpeechRecognition(
 
   const fetchAssemblyAiToken = useCallback(async (): Promise<AssemblyAiTokenResponse> => {
     if (!sessionToken) {
-      throw new Error("Sign in to use voice search.");
+      throw new UserFacingError("Sign in to Present to use voice search.");
     }
 
     // Straight from the desktop, with nothing through the website: the usage
@@ -483,7 +505,9 @@ export function useSpeechRecognition(
     try {
       usage = await startUsageSession({ source: usageSource, requestedMaxDurationSeconds: 15 * 60 });
     } catch (error) {
-      throw new Error(formatSpeechError(convexMessage(error)));
+      // The plan's own refusal (a ConvexError) is said as it is; anything
+      // else is a fault.
+      throw new UserFacingError(speechMessage(error));
     }
 
     try {
@@ -506,8 +530,7 @@ export function useSpeechRecognition(
       void completeUsageSession({ sessionId: usage.sessionId, endedAtMs: Date.now() }).catch(
         (): void => undefined,
       );
-      const appError = error as { message?: string } | null;
-      throw new Error(formatSpeechError(appError?.message ?? "Live transcription could not start."));
+      throw new UserFacingError(speechMessage(error));
     }
   }, [completeUsageSession, sessionToken, startUsageSession, usageSource]);
 
@@ -535,8 +558,8 @@ export function useSpeechRecognition(
 
     if (microphoneResult.status === "rejected") {
       if (!osPermission.granted) {
-        throw new Error(
-          "Microphone access is blocked by macOS. Enable Present in System Settings > Privacy & Security > Microphone. If no prompt appears, run `tccutil reset Microphone` and fully restart Present.",
+        throw new UserFacingError(
+          "Present isn't allowed to use the microphone. Turn it on in System Settings > Privacy & Security > Microphone, then try again.",
         );
       }
       throw microphoneResult.reason instanceof Error
@@ -616,8 +639,10 @@ export function useSpeechRecognition(
         }
 
         if (payload.type === "Error" || payload.error || payload.message) {
+          // The service's own words are for us, not the operator.
+          logFault(payload, "Speech: AssemblyAI");
           setIsStarting(false);
-          setError(payload.error ?? payload.message ?? "Live transcription failed.");
+          setError(VOICE_FAILED);
           setActiveSessionStartedAtMs(null);
           setSharedActiveSessionStartedAtMs(null);
           setPendingCommittedUsageSeconds(0);
@@ -662,7 +687,7 @@ export function useSpeechRecognition(
       openedSocket.onerror = (event) => {
         console.error("[AssemblyAI] websocket error", event);
         setIsStarting(false);
-        setError("Live transcription connection failed.");
+        setError(VOICE_DISCONNECTED);
         setActiveSessionStartedAtMs(null);
         setSharedActiveSessionStartedAtMs(null);
         setPendingCommittedUsageSeconds(0);
@@ -688,10 +713,11 @@ export function useSpeechRecognition(
         setPendingCommittedUsageSeconds(0);
 
         if (!isStoppingRef.current) {
-          const closeMessage = event.reason
-            ? `Live transcription closed (${event.code}): ${event.reason}`
-            : `Live transcription closed (${event.code}).`;
-
+          // The close code and reason are logged above; the operator is told
+          // what to do.
+          const closeMessage = /quota|limit|duration/i.test(event.reason)
+            ? SPEECH_QUOTA_EXHAUSTED_MESSAGE
+            : VOICE_STOPPED;
           setError((currentError) => currentError ?? closeMessage);
         }
       };
@@ -737,7 +763,7 @@ export function useSpeechRecognition(
         stopStreamingSession();
         activeModeRef.current = null;
         if (isElectronRuntime || !hasBrowserSpeechRecognition) {
-          const message = formatSpeechError(error);
+          const message = speechMessage(error);
           setIsStarting(false);
           setError(message);
           setSharedActiveSessionStartedAtMs(null);
@@ -773,7 +799,7 @@ export function useSpeechRecognition(
         recognitionRef.current?.start();
       })
       .catch((e: unknown) => {
-        const message = formatSpeechError(e);
+        const message = speechMessage(e);
         setIsStarting(false);
         setError(message);
         setActiveSessionStartedAtMs(null);

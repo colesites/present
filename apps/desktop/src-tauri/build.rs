@@ -5,8 +5,8 @@ fn main() {
     tauri_build::build();
 }
 
-/// The keys the listening agents call AssemblyAI and the AI Gateway with
-/// (`src/services/service_keys.rs`), from the build's environment.
+/// The keys the listening agents call AssemblyAI, Groq and the AI Gateway
+/// with (`src/services/service_keys.rs`), from the build's environment.
 ///
 /// Each is kept scrambled against a mask made fresh for every build, so
 /// neither is in the app as readable text: `strings` on the binary does not
@@ -32,6 +32,7 @@ fn service_keys() {
     for (constant, variable) in [
         ("ASSEMBLYAI", "ASSEMBLYAI_API_KEY"),
         ("AI_GATEWAY", "AI_GATEWAY_API_KEY"),
+        ("GROQ", "GROQ_API_KEY"),
     ] {
         println!("cargo:rerun-if-env-changed={variable}");
         let key = std::env::var(variable).unwrap_or_default();

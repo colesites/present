@@ -11,13 +11,7 @@ import {
   useImperativeHandle,
   type ChangeEvent,
 } from "react";
-import {
-  findReferenceInSentence,
-  findRelativeReference,
-  parseReference,
-  type ParsedReference,
-} from "../lib/parser";
-import { understandSpokenScripture } from "../../../renderer/tauri/scripture";
+import { parseReference, type ParsedReference } from "../lib/parser";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
 import { cn } from "../../../renderer/shared/lib/utils";
@@ -29,6 +23,8 @@ import {
   type ScriptureSlide,
 } from "../lib/slides";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
+import { useHeardScripture } from "../hooks/useHeardScripture";
+import { versionKeyterms } from "../lib/listening";
 import { useScripturePanelStore } from "../lib/panel-state";
 import {
   Mic,
@@ -73,18 +69,6 @@ interface ScripturePanelProps {
 }
 
 
-/** A reference as the Bible tab's own box reads one: "John 3:16-18". */
-const asLookup = ({ book, chapter, verseStart, verseEnd }: ParsedReference): string => {
-  let spoken = `${book?.name ?? ""} ${chapter ?? 1}`;
-  if (verseStart) {
-    spoken += `:${verseStart}`;
-    if (verseEnd) {
-      spoken += `-${verseEnd}`;
-    }
-  }
-  return spoken;
-};
-
 export interface BibleAgentSettings {
   /** A heard passage goes on screen, or waits here to be shown. */
   onHeard: "show" | "find";
@@ -125,22 +109,9 @@ export const ScripturePanel = memo(
     const { onHeard, addToService: addHeardToService, voiceCommands } = bibleAgent;
     const inputRef = useRef<ScriptureInputRef>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
-    const identifyTimeoutRef = useRef<number | null>(null);
     const textSearchRequestRef = useRef(0);
     const [downloadingHostedId, setDownloadingHostedId] = useState<string | null>(null);
     const [removingVersionId, setRemovingVersionId] = useState<string | null>(null);
-    /**
-     * The last sentence the speaker actually finished.
-     *
-     * Speech arrives as a stream of guesses that are revised until the speaker
-     * stops, and asking the model about each one asks it about half a
-     * sentence, several times over, with the answers racing each other back.
-     * On a metered plan it is also the difference between one request per
-     * reference and a dozen — enough to be rate-limited part way through a
-     * service, which looks from the operator's seat exactly like the agent
-     * not working.
-     */
-    const [heardSentence, setHeardSentence] = useState("");
 
     useImperativeHandle(ref, () => ({
       focusSearch: () => {
@@ -400,49 +371,55 @@ export const ScripturePanel = memo(
       ],
     );
 
-    // Find it: what AssemblyAI heard, read here with no model, while it is
-    // still being said. A reference named in the sentence, a verse or chapter
-    // said on its own within the passage already open, or a verse quoted
-    // word for word; whichever reads first is put in the box. Nothing goes on
-    // screen until the operator shows it.
+    // The passage in the box, for "verse eighteen" said on its own.
     const openPassageRef = useRef(parsedRef);
     useEffect(() => {
       openPassageRef.current = parsedRef;
     }, [parsedRef]);
-    const findRequestRef = useRef(0);
-    const findFromSpeech = useCallback(
-      (heard: string, finished: boolean) => {
-        const text = heard.trim();
-        if (!text) return;
-        const request = ++findRequestRef.current;
-        const fill = (spoken: string) => {
-          // An answer to words since added to is not the newest; one already
-          // in the box is not put there again.
-          if (request !== findRequestRef.current) return;
-          if (useScripturePanelStore.getState().lookupValue === spoken) return;
-          setLookupValue(spoken);
-        };
-        const named =
-          findReferenceInSentence(text, availableBooks) ??
-          findRelativeReference(text, openPassageRef.current);
-        if (named?.book) {
-          fill(asLookup(named));
-          return;
-        }
-        void findQuotedVerseInText({
-          query: text,
-          versionCode: effectiveSelectedVersionCode,
-          // Every installed version once the sentence is finished; the one
-          // chosen while it is still being said.
-          everyVersion: finished,
-        })
-          .then((verse) => {
-            if (verse) fill(`${verse.bookName} ${verse.chapter}:${verse.verse}`);
-          })
-          .catch((): void => undefined);
+    // Show it puts a passage on screen as the box's own Enter would.
+    const showRef = useRef<
+      ((value?: string, options?: { addToService?: boolean }) => Promise<void>) | null
+    >(null);
+
+    const { hear, forget: forgetHeard } = useHeardScripture({
+      enabled: isActive,
+      onHeard,
+      addToService: addHeardToService,
+      sessionToken,
+      books: availableBooks,
+      versions: availableVersions,
+      catalog: installableVersions,
+      install: async (code) => {
+        const version = installableVersions.find((candidate) => candidate.code === code);
+        if (!version) return false;
+        await handleDownloadHostedVersion(version);
+        return (await db.versions.toArray()).some((installed) => installed.code === code);
       },
-      [availableBooks, effectiveSelectedVersionCode, findQuotedVerseInText, setLookupValue],
-    );
+      chosenVersionCode: effectiveSelectedVersionCode,
+      openPassage: () => openPassageRef.current,
+      fill: (lookup) => {
+        if (useScripturePanelStore.getState().lookupValue !== lookup) {
+          setLookupValue(lookup);
+        }
+      },
+      show: (lookup, options) => {
+        void showRef.current?.(lookup, options);
+      },
+      chooseVersion: setSelectedVersionCode,
+      findQuotedVerse: findQuotedVerseInText,
+      versionCodeOf: resolveVersionCode,
+      readChapter: async (book, chapter, versionCode) =>
+        (
+          await lookupRef({
+            book,
+            chapter,
+            verseStart: null,
+            verseEnd: null,
+            versionCode,
+            errors: [],
+          })
+        ).map(({ verse, text }) => ({ verse, text })),
+    });
 
     const onSpeechResult = useCallback(
       (result: { transcript: string; isFinal: boolean }) => {
@@ -461,29 +438,25 @@ export const ScripturePanel = memo(
 
         handleAiQueryChange(result.transcript);
 
-        if (onHeard === "find") {
-          findFromSpeech(transcript, result.isFinal);
-        }
-
-        if (!result.isFinal) {
-          return;
-        }
-
-        // Finished, so it is worth asking about.
-        setHeardSentence(transcript);
-
-        // What happens next is the transcript effect's, which asks the model
-        // about everything that was heard. Asking here as well would ask
-        // twice about the same sentence and race its own answer.
+        // Every time the words come, not once a sentence is finished.
+        hear(transcript, result.isFinal);
       },
-      [findFromSpeech, handleAiQueryChange, onHeard, showAdjacentLiveVerse, voiceCommands],
+      [handleAiQueryChange, hear, showAdjacentLiveVerse, voiceCommands],
     );
 
-    // The installed books' names, for AssemblyAI to listen for: "Habakkuk"
-    // and "Philemon" are heard as names, not as sounds near them.
+    // The installed books' and Bibles' names, for AssemblyAI to listen for:
+    // "Habakkuk" and "Philemon" are heard as names, not as sounds near them,
+    // and "KJV" as the Bible.
     const bookKeyterms = useMemo(
-      () => Array.from(new Set(availableBooks.map((book) => book.name))),
-      [availableBooks],
+      () =>
+        Array.from(
+          new Set([
+            ...availableBooks.map((book) => book.name),
+            ...versionKeyterms(availableVersions),
+            ...versionKeyterms(installableVersions),
+          ]),
+        ),
+      [availableBooks, availableVersions, installableVersions],
     );
 
     const {
@@ -492,7 +465,6 @@ export const ScripturePanel = memo(
       isSupported,
       startListening,
       stopListening,
-      error: speechError,
     } =
       useSpeechRecognition({
         onResult: onSpeechResult,
@@ -503,12 +475,15 @@ export const ScripturePanel = memo(
         usageSource: "bible",
       });
 
-    // Find it looks for a quote in every installed version once a sentence is
-    // finished. Each version's words are indexed once, a few hundred
-    // milliseconds apiece, so it is done as listening starts, one at a time
-    // with a pause between, rather than in front of the first quote.
+    // A verse read aloud is looked for in every installed Bible, to find the
+    // one it is being read from. Each Bible's words are indexed once, a few
+    // hundred milliseconds apiece, so it is done as listening starts, one at
+    // a time with a pause between, rather than in front of the first quote.
     useEffect(() => {
-      if (!isListening || onHeard !== "find") return;
+      if (!isListening) {
+        forgetHeard();
+        return;
+      }
       let cancelled = false;
       void (async () => {
         for (const version of availableVersions) {
@@ -520,7 +495,7 @@ export const ScripturePanel = memo(
       return () => {
         cancelled = true;
       };
-    }, [availableVersions, isListening, onHeard, prewarmSearchPool]);
+    }, [availableVersions, forgetHeard, isListening, prewarmSearchPool]);
 
     useEffect(() => {
       if (isActive) {
@@ -533,11 +508,6 @@ export const ScripturePanel = memo(
       }
 
       // Cancel any in-flight async requests so stale results don't land later
-      if (identifyTimeoutRef.current !== null) {
-        window.clearTimeout(identifyTimeoutRef.current);
-        identifyTimeoutRef.current = null;
-      }
-
       textSearchRequestRef.current += 1;
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsTextSearching(false);
@@ -621,76 +591,8 @@ export const ScripturePanel = memo(
     );
 
     useEffect(() => {
-      if (!isActive) {
-        return;
-      }
-
-      if (identifyTimeoutRef.current !== null) {
-        window.clearTimeout(identifyTimeoutRef.current);
-        identifyTimeoutRef.current = null;
-      }
-
-      const text = heardSentence.trim();
-      // Find it reads what is heard as it is said (`findFromSpeech`); this
-      // is Show it's, which asks the model about each finished sentence.
-      if (!text || onHeard === "find") {
-        return;
-      }
-
-      identifyTimeoutRef.current = window.setTimeout(() => {
-        // Show it: everything that was heard goes to the model. AssemblyAI
-        // turns sound into a sentence and the model decides what the
-        // sentence meant. It answers `null` for anything it is unsure of,
-        // and for everything when nobody is signed in or it cannot be
-        // reached — in which case this behaves exactly as it did before.
-        // With the passage in the box, so "now look at verse eighteen" is
-        // read within it.
-        const open = openPassageRef.current;
-        void understandSpokenScripture(
-          sessionToken ?? "",
-          text,
-          availableBooks,
-          open.book ? asLookup(open) : null,
-        )
-          .then((understood) => {
-            // Anything it could not read is left alone: there is no list of
-            // maybes to pick from, because nobody running a service has a
-            // hand free to pick from one.
-            if (!understood?.reference.book) {
-              return;
-            }
-            // Found either way; on screen only when the model is sure
-            // (`scripture_agent::PROJECT_AT`). "God is good all the time"
-            // named a Psalm, less sure, and waits here instead.
-            const spoken = asLookup(understood.reference);
-            setLookupValue(spoken);
-            if (understood.mayProject) {
-              void handleEnter(spoken, { addToService: addHeardToService });
-            }
-          })
-          .catch(() => {
-            // Offline, signed out, or the model could not be reached. The
-            // operator types it, exactly as before.
-          });
-      }, isListening ? 100 : 260);
-
-      return () => {
-        if (identifyTimeoutRef.current !== null) {
-          window.clearTimeout(identifyTimeoutRef.current);
-          identifyTimeoutRef.current = null;
-        }
-      };
-    }, [
-      isActive,
-      heardSentence,
-      availableBooks,
-      isListening,
-      sessionToken,
-      handleEnter,
-      setLookupValue,
-      onHeard,
-      addHeardToService,
-    ]);
+      showRef.current = handleEnter;
+    }, [handleEnter]);
 
     useEffect(() => {
       if (!isActive) {
@@ -958,10 +860,9 @@ export const ScripturePanel = memo(
               disabled={isStarting}
               aria-busy={isStarting}
               aria-pressed={isListening}
+              // A failure is said in a toast (`useSpeechRecognition`).
               title={
-                speechError
-                  ? speechError
-                  : isListening
+                isListening
                     ? "Listening — click to stop"
                     : isStarting
                       ? "Starting the microphone…"

@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "../lib/user-error";
 import { useEffect, useMemo, useState } from "react";
 import type {
   CustomFontFace,
@@ -164,7 +165,7 @@ export async function ensureFontCatalogLoaded(
       ...fontCatalogState,
       loading: false,
       loaded: true,
-      error: error instanceof Error ? error.message : "Failed to load fonts.",
+      error: userMessage(error, "The fonts couldn't be loaded.", "Fonts"),
     } satisfies FontCatalogState;
     emitFontCatalogState(nextState);
     return nextState;

@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "../shared/lib/user-error";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Camera } from "lucide-react";
@@ -1280,11 +1281,7 @@ function CapturePropLayer({
       })
       .catch((captureError: unknown) => {
         if (cancelled) return;
-        setError(
-          captureError instanceof Error
-            ? captureError.message
-            : "Could not start capture input.",
-        );
+        setError(userMessage(captureError, "The capture input couldn't be started.", "Output: capture"));
       });
 
     return () => {

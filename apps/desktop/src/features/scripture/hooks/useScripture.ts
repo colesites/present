@@ -1,3 +1,4 @@
+import { userMessage } from "../../../renderer/shared/lib/user-error";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type BibleVersion, type BibleVerse } from "../lib/db";
@@ -6,7 +7,8 @@ import { type ParsedReference } from "../lib/parser";
 import { toast } from "sonner";
 import {
   buildVerseSearchIndex,
-  findQuotedVerse,
+  chooseAcrossBibles,
+  quotedVerseMatch,
   normalizeVerseSearchText,
   searchVerseIndex,
 } from "../lib/verse-search-index.mjs";
@@ -229,7 +231,7 @@ export function useScripture() {
           remoteVersions = normalizeHostedCatalog(data);
         } catch (error) {
           // Remote catalog is optional; only surface the error if we couldn't find any bundled versions.
-          remoteError = error instanceof Error ? error.message : "Failed to load hosted versions";
+          remoteError = userMessage(error, "The Bible versions online couldn't be loaded.", "Scripture");
         }
       }
     } finally {
@@ -278,7 +280,7 @@ export function useScripture() {
       clearVerseSearchCache();
     } catch (error) {
       console.error(error);
-      toast.error(error instanceof Error ? error.message : "Import failed");
+      toast.error(userMessage(error, "That Bible couldn't be imported. Try again.", "Scripture"));
     } finally {
       setActiveImport(null);
     }
@@ -299,7 +301,7 @@ export function useScripture() {
       clearVerseSearchCache();
     } catch (error) {
       console.error(error);
-      toast.error(error instanceof Error ? error.message : "Import failed");
+      toast.error(userMessage(error, "That Bible couldn't be imported. Try again.", "Scripture"));
     } finally {
       setActiveImport(null);
     }
@@ -392,36 +394,52 @@ export function useScripture() {
   );
 
   /**
-   * The one verse a sentence quotes, for the listening agent's Find it: "Jesus
-   * wept" said aloud. Looked for in the version chosen, then in the others
-   * installed, since a preacher quoting the KJV is not quoting the NIV the
-   * Bible tab may be showing (`findQuotedVerse` in `verse-search-index.mjs`).
-   * `everyVersion: false` looks in the chosen one only, for words still being
-   * said.
+   * The one verse a preacher is reading aloud, in the Bible they are reading
+   * it from: "Jesus wept" said aloud, or John 3:16 read from the NIV while the
+   * Bible tab shows the NKJV (`quotedVerseMatch` in `verse-search-index.mjs`).
+   *
+   * Every Bible installed is asked, and the one whose words the quote follows
+   * clearly furthest wins (`chooseAcrossBibles`). The first to match at all
+   * would often be the wrong one: the NKJV and the NIV share the first ten
+   * words of John 3:16. One that follows it only a word further than the
+   * chosen one does not displace it.
+   *
+   * `versions`: "chosen" looks in the chosen Bible only; "indexed", in the
+   * others too once their words are indexed (a few hundred milliseconds each,
+   * done as listening starts), for words still being said; "all" in every one.
+   * `endingWithin`: see `findQuotedVerse`.
    */
   const findQuotedVerseInText = useCallback(
     async (input: {
       query: string;
       versionCode?: string | null;
-      everyVersion?: boolean;
+      versions?: "chosen" | "indexed" | "all";
+      endingWithin?: number;
     }): Promise<BibleVerse | null> => {
       if (normalizeVerseSearchText(input.query).length < 3) {
         return null;
       }
       const chosen = resolveVersion(input.versionCode ?? null);
       const others =
-        input.everyVersion === false
+        input.versions === "chosen"
           ? []
-          : (versions ?? []).filter((version) => version.id !== chosen?.id);
-      const order = [chosen, ...others];
-      for (const version of order) {
+          : (versions ?? []).filter(
+              (version) =>
+                version.id !== chosen?.id
+                && (input.versions !== "indexed"
+                  || verseSearchIndexCacheRef.current.has(version.id)),
+            );
+      const matches: { versionId: string; verse: BibleVerse; run: number; shared: number }[] = [];
+      for (const version of [chosen, ...others]) {
         if (!version) continue;
-        const verse = findQuotedVerse(await getSearchIndex(version.id), input.query);
-        if (verse) {
-          return verse as BibleVerse;
+        const match = quotedVerseMatch(await getSearchIndex(version.id), input.query, {
+          endingWithin: input.endingWithin,
+        });
+        if (match) {
+          matches.push({ versionId: version.id, ...match, verse: match.verse as BibleVerse });
         }
       }
-      return null;
+      return chooseAcrossBibles(matches, chosen?.id ?? null)?.verse ?? null;
     },
     [getSearchIndex, resolveVersion, versions],
   );

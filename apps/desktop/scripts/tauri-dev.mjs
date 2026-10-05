@@ -7,7 +7,8 @@
 // through to `tauri dev`.
 //
 // The voice and AI keys are built into the app (`services/service_keys.rs`),
-// from ASSEMBLYAI_API_KEY and AI_GATEWAY_API_KEY in the build's environment.
+// from ASSEMBLYAI_API_KEY, GROQ_API_KEY and AI_GATEWAY_API_KEY in the build's
+// environment.
 // Release builds get them from CI's secrets; a development build takes them
 // from this machine's environment, or else from apps/desktop/.env.local or
 // apps/web/.env.local (both git-ignored). Without them, voice search says it
@@ -27,7 +28,7 @@ function run(command, args, env = process.env) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-const KEYS = ["ASSEMBLYAI_API_KEY", "AI_GATEWAY_API_KEY"];
+const KEYS = ["ASSEMBLYAI_API_KEY", "GROQ_API_KEY", "AI_GATEWAY_API_KEY"];
 
 /** `NAME=value` lines from an env file, quotes and comments aside. */
 function readEnvFile(file) {

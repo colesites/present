@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage, logFault } from "../../renderer/shared/lib/user-error";
 import {
   memo,
   useState,
@@ -371,7 +372,7 @@ export const LibrariesPanel = memo(
         );
         toast.success(`Exported ${result.itemCount} libraries to ${result.path}`);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to export libraries");
+        toast.error(userMessage(error, "The libraries couldn't be exported. Try again.", "Libraries"));
       }
     };
 
@@ -382,7 +383,7 @@ export const LibrariesPanel = memo(
       try {
         files = await invoke<ImportedSongFile[] | null>("import_openlyrics_songs");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not open the songs");
+        toast.error(userMessage(error, "Those songs couldn't be opened.", "Libraries"));
         return;
       }
       if (!files) {
@@ -393,7 +394,9 @@ export const LibrariesPanel = memo(
       const failed: string[] = [];
       for (const file of files) {
         if (!file.song) {
-          failed.push(`${file.fileName}: ${file.error ?? "unreadable"}`);
+          // Why is the log's business; the operator is told which.
+          logFault(file.error ?? "unreadable", `Libraries: OpenLyrics ${file.fileName}`);
+          failed.push(file.fileName);
           continue;
         }
         const credits = file.song.authors.join(", ");
@@ -417,7 +420,9 @@ export const LibrariesPanel = memo(
         toast.success(`Imported ${imported} ${imported === 1 ? "song" : "songs"}`);
       }
       if (failed.length > 0) {
-        toast.error(`Could not import ${failed.length}: ${failed.slice(0, 3).join("; ")}`);
+        toast.error(
+          `${failed.length === 1 ? "This file" : `${failed.length} files`} couldn't be read: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`,
+        );
       }
     };
 
@@ -429,7 +434,7 @@ export const LibrariesPanel = memo(
       try {
         books = await invoke<ImportedSongbook[] | null>("import_videopsalm_songbooks");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not open the songbooks");
+        toast.error(userMessage(error, "Those songbooks couldn't be opened.", "Libraries"));
         return;
       }
       if (!books) {
@@ -442,7 +447,8 @@ export const LibrariesPanel = memo(
       const failed: string[] = [];
       for (const book of books) {
         if (book.error) {
-          failed.push(`${book.fileName}: ${book.error}`);
+          logFault(book.error, `Libraries: VideoPsalm ${book.fileName}`);
+          failed.push(book.fileName);
           continue;
         }
         if (book.songs.length === 0) {
@@ -560,7 +566,7 @@ export const LibrariesPanel = memo(
 
         toast.success(`Imported ${importedCount} libraries from ${selectedFolder.name}`);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to import libraries");
+        toast.error(userMessage(error, "The libraries couldn't be imported. Try again.", "Libraries"));
       }
     };
 
@@ -1567,11 +1573,11 @@ function ComposeLibrariesDialog({
       }
     } catch (createError) {
       setError(
-        createError instanceof Error
-          ? createError.message
-          : editItem
-            ? "Failed to update flow"
-            : "Failed to create flow",
+        userMessage(
+          createError,
+          editItem ? "The flow couldn't be updated. Try again." : "The flow couldn't be created. Try again.",
+          "Libraries: flow",
+        ),
       );
       setIsCreating(false);
       return;

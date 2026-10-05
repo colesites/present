@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "../../renderer/shared/lib/user-error";
 import {
   useCallback,
   useDeferredValue,
@@ -11,7 +12,6 @@ import {
 } from "react";
 import { Check, Lock, Plus, Redo2, RotateCcw, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
-import { ConvexError } from "convex/values";
 import { CanvasSlideLayer } from "../../renderer/shared/components/CanvasSlideLayer";
 import { SlideMediaBackdrop } from "../../renderer/shared/components/SlideMediaBackdrop";
 import { useMediaLibraryStore } from "../../renderer/shared/store/mediaLibrary";
@@ -77,12 +77,11 @@ const SAMPLE_SLIDE: LibrarySlide = {
 
 const planName = (tier: ThemeTier) => (tier === "advanced" ? "Power" : "Pro");
 
-const errorText = (error: unknown, fallback: string) =>
-  error instanceof ConvexError && typeof error.data === "string"
-    ? error.data
-    : error instanceof Error && error.message
-      ? error.message.replace(/^.*ConvexError:\s*/, "").split("\n")[0]
-      : fallback;
+/** The backend's words for a refusal, or `fallback` (`user-error.ts`). */
+const errorText = (error: unknown, fallback: string) => {
+  const convex = error instanceof Error ? error.message.match(/ConvexError: (.*?)(?:\n|$)/)?.[1] : undefined;
+  return convex ?? userMessage(error, fallback, "Themes");
+};
 
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&

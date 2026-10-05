@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "../lib/user-error";
 import { create } from "zustand";
 import { useWorkspaceStore } from "../../../../../../packages/shared/src/store/workspace";
 import { decodeJwtPayload } from "../lib/utils";
@@ -645,9 +646,7 @@ export const ensureFreshDesktopAccessToken = async (options?: {
         // decide to re-auth manually if it persists.
         const currentState = useDesktopSessionStore.getState();
         currentState.setError(
-          error instanceof Error
-            ? error.message
-            : "Session refresh failed."
+          userMessage(error, "Your sign-in couldn't be refreshed. Check the internet connection.", "Session"),
         );
         if (fallbackToken && !isTimestampExpired(fallbackTokenExpiryMs)) {
           return fallbackToken;

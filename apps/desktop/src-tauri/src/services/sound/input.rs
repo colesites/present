@@ -20,8 +20,34 @@ use rtrb::RingBuffer;
 /// What the transcription service takes: 16 kHz, one channel.
 pub const RATE: u32 = 16_000;
 
-/// How often what has been captured is handed on.
+/// How often what has been captured is looked at.
 const CHUNK_EVERY: Duration = Duration::from_millis(50);
+
+/// What is handed on at a time: 100 ms of sound, 1,600 samples.
+///
+/// The transcription service takes between 50 ms and a second per message,
+/// and refuses the session otherwise. Handed on as captured, every 50 ms by
+/// the clock, a message held only what the device had delivered by then —
+/// four of its 512-frame callbacks, 46 ms — and AssemblyAI ended every
+/// session at its first message ("Input Duration Violation: 46.4375 ms").
+pub const CHUNK_BYTES: usize = (RATE as usize / 10) * 2;
+
+/// Converted sound, gathered into whole chunks of [`CHUNK_BYTES`].
+#[derive(Default)]
+struct Chunker {
+    pending: Vec<u8>,
+}
+
+impl Chunker {
+    fn push(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+        self.pending.extend_from_slice(bytes);
+        let mut chunks = Vec::new();
+        while self.pending.len() >= CHUNK_BYTES {
+            chunks.push(self.pending.drain(..CHUNK_BYTES).collect());
+        }
+        chunks
+    }
+}
 
 /// A microphone being listened to. Dropping it stops it.
 pub struct Microphone {
@@ -73,6 +99,7 @@ impl Microphone {
                 };
                 let _ = ready.send(Ok(label));
                 let mut captured = Vec::new();
+                let mut chunker = Chunker::default();
                 while !stopping.load(Ordering::Acquire) {
                     std::thread::sleep(CHUNK_EVERY);
                     captured.clear();
@@ -83,8 +110,11 @@ impl Microphone {
                         continue;
                     }
                     match converter.convert(&captured) {
-                        Ok(bytes) if !bytes.is_empty() => deliver(bytes),
-                        Ok(_) => {}
+                        Ok(bytes) => {
+                            for chunk in chunker.push(&bytes) {
+                                deliver(chunk);
+                            }
+                        }
                         Err(error) => {
                             tracing::warn!(%error, "the microphone's sound could not be converted");
                             break;
@@ -221,6 +251,22 @@ impl Converter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sound_is_handed_on_in_whole_100_ms_chunks() {
+        let mut chunker = Chunker::default();
+        let mut chunks = Vec::new();
+        // What the device delivered between two looks: 46 ms at a time.
+        for _ in 0..20 {
+            chunks.extend(chunker.push(&vec![0u8; 743 * 2]));
+        }
+        assert!(!chunks.is_empty());
+        for chunk in &chunks {
+            assert_eq!(chunk.len(), CHUNK_BYTES, "every message is 100 ms");
+        }
+        let milliseconds = CHUNK_BYTES as f64 / 2.0 / f64::from(RATE) * 1000.0;
+        assert!((50.0..=1000.0).contains(&milliseconds), "{milliseconds} ms");
+    }
 
     #[test]
     fn a_second_at_48_khz_becomes_a_second_at_16() {

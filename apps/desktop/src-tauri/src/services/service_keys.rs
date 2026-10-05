@@ -1,11 +1,11 @@
-//! The AssemblyAI and AI Gateway keys, built into the app.
+//! The AssemblyAI, Groq and AI Gateway keys, built into the app.
 //!
-//! The listening agents call both services from here rather than through the
+//! The listening agents call these services from here rather than through the
 //! website. The keys come from the build's environment (`build.rs`), kept
 //! scrambled so neither is in the app as readable text. That keeps them out
 //! of a casual look, not out of reach: the app puts each back together to use
 //! it, and so can anyone who takes the app apart. The spending limits on the
-//! two accounts are what bound the cost of a key that gets out.
+//! accounts are what bound the cost of a key that gets out.
 
 mod built {
     include!(concat!(env!("OUT_DIR"), "/service_keys.rs"));
@@ -28,6 +28,11 @@ pub fn assemblyai() -> Option<String> {
 /// The Vercel AI Gateway's key, or `None` for a build made without one.
 pub fn ai_gateway() -> Option<String> {
     reveal(built::AI_GATEWAY)
+}
+
+/// Groq's key, or `None` for a build made without one.
+pub fn groq() -> Option<String> {
+    reveal(built::GROQ)
 }
 
 #[cfg(test)]
