@@ -30,6 +30,12 @@ pub enum AppError {
     /// disk. See `services/file_scope.rs`.
     #[error("{0}")]
     Denied(String),
+    /// Written for the person using Present, and shown to them as it is:
+    /// what they can do about it, in their words. Every other kind is a
+    /// fault, logged and replaced by a plain sentence before anyone sees it
+    /// (`src/renderer/shared/lib/user-error.ts`).
+    #[error("{0}")]
+    User(String),
 }
 
 /// Machine-readable discriminant so the UI can branch without string matching.
@@ -41,6 +47,7 @@ pub enum AppErrorKind {
     NotFound,
     Invalid,
     Denied,
+    User,
 }
 
 impl AppError {
@@ -51,6 +58,7 @@ impl AppError {
             Self::NotFound(_) => AppErrorKind::NotFound,
             Self::Invalid(_) => AppErrorKind::Invalid,
             Self::Denied(_) => AppErrorKind::Denied,
+            Self::User(_) => AppErrorKind::User,
         }
     }
 }
@@ -79,6 +87,14 @@ mod tests {
 
         assert_eq!(json["kind"], "not-found");
         assert_eq!(json["message"], "display 42 not found");
+    }
+
+    #[test]
+    fn a_message_for_people_says_so() {
+        let error = AppError::User("Check the internet connection.".to_owned());
+        let json = serde_json::to_value(&error).expect("serializable");
+        assert_eq!(json["kind"], "user");
+        assert_eq!(json["message"], "Check the internet connection.");
     }
 
     #[test]

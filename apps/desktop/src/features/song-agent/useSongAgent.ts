@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
 import type { LibraryItem } from "../../shared/types";
 import { useSpeechRecognition } from "../scripture/hooks/useSpeechRecognition";
 import { useSongAgentStore } from "./songAgentStore";
@@ -219,8 +218,8 @@ export function useSongAgent(options: UseSongAgentOptions) {
     started.current = false;
     setEnabled(false);
     if (speech.error) {
+      // Already said in a toast by `useSpeechRecognition`, in plain words.
       publish({ error: speech.error });
-      toast.error(speech.error);
     }
   }, [enabled, publish, setEnabled, speech.error, speech.isListening, speech.isStarting]);
 

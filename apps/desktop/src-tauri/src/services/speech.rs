@@ -44,11 +44,16 @@ pub fn token_url(seconds: u32) -> String {
     )
 }
 
+/// What the operator is told when the voice service cannot be reached.
+const NO_CONNECTION: &str =
+    "Voice search couldn't connect. Check the internet connection and try again.";
+
 /// Ask AssemblyAI for a streaming token, for a session of at most
 /// `max_session_seconds`.
 pub async fn mint_token(max_session_seconds: u32) -> AppResult<StreamingToken> {
     let key = service_keys::assemblyai().ok_or_else(|| {
-        AppError::Invalid("Voice search isn't set up in this copy of Present.".to_owned())
+        tracing::warn!("this build has no AssemblyAI key");
+        AppError::User("Voice search isn't available in this build of Present.".to_owned())
     })?;
 
     let response = reqwest::Client::builder()
@@ -59,7 +64,10 @@ pub async fn mint_token(max_session_seconds: u32) -> AppResult<StreamingToken> {
         .header(reqwest::header::AUTHORIZATION, key)
         .send()
         .await
-        .map_err(|error| AppError::Invalid(format!("Could not reach AssemblyAI: {error}")))?;
+        .map_err(|error| {
+            tracing::warn!(%error, "could not reach AssemblyAI for a streaming token");
+            AppError::User(NO_CONNECTION.to_owned())
+        })?;
 
     let status = response.status();
     let body: serde_json::Value = response.json().await.unwrap_or(serde_json::Value::Null);
@@ -82,9 +90,9 @@ pub async fn mint_token(max_session_seconds: u32) -> AppResult<StreamingToken> {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("no token in the reply");
             tracing::warn!(%status, reason, "AssemblyAI refused a streaming token");
-            Err(AppError::Invalid(format!(
-                "Live transcription could not start: {reason} ({status})."
-            )))
+            Err(AppError::User(
+                "Voice search couldn't start just now. Try again in a moment.".to_owned(),
+            ))
         }
     }
 }

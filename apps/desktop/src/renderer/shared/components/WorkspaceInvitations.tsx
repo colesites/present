@@ -1,5 +1,6 @@
 "use client";
 
+import { rawText, userMessage } from "../lib/user-error";
 import { useState } from "react";
 import { Check, Copy, Mail, UserPlus } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
@@ -36,8 +37,10 @@ import { Input } from "./ui/input";
 /** What a Convex error says, without the transport's prefix. */
 export const invitationError = (error: unknown): string => {
   if (error instanceof ConvexError && typeof error.data === "string") return error.data;
-  const message = error instanceof Error ? error.message : "";
-  return message.match(/ConvexError: (.*?)(?:\n|$)/)?.[1] ?? "Something went wrong. Try again.";
+  return (
+    rawText(error).match(/ConvexError: (.*?)(?:\n|$)/)?.[1] ??
+    userMessage(error, "Something went wrong. Try again.", "Invitations")
+  );
 };
 
 export type MyInvitation = NonNullable<ReturnType<typeof useMyInvitations>>[number];

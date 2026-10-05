@@ -492,7 +492,6 @@ export const ScripturePanel = memo(
       isSupported,
       startListening,
       stopListening,
-      error: speechError,
     } =
       useSpeechRecognition({
         onResult: onSpeechResult,
@@ -958,10 +957,9 @@ export const ScripturePanel = memo(
               disabled={isStarting}
               aria-busy={isStarting}
               aria-pressed={isListening}
+              // A failure is said in a toast (`useSpeechRecognition`).
               title={
-                speechError
-                  ? speechError
-                  : isListening
+                isListening
                     ? "Listening — click to stop"
                     : isStarting
                       ? "Starting the microphone…"

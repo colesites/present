@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "../../renderer/shared/lib/user-error";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useDebouncedCallback } from "use-debounce";
@@ -975,7 +976,7 @@ export const LyricsEditor = memo(function LyricsEditor({
     try {
       await persistDraft(draft, true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to save");
+      toast.error(userMessage(error, "The lyrics couldn't be saved. Try again.", "Lyrics editor"));
     } finally {
       setIsSaving(false);
     }
@@ -1024,7 +1025,7 @@ export const LyricsEditor = memo(function LyricsEditor({
         );
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to fix lyrics",
+          userMessage(error, "The lyrics couldn't be tidied. Try again.", "Lyrics editor"),
         );
       } finally {
         setIsFixing(false);

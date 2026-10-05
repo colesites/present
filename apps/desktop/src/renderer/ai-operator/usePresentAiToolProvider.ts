@@ -1,3 +1,4 @@
+import { userMessage } from "../shared/lib/user-error";
 import { useEffect } from "react";
 import { toast } from "sonner";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
@@ -709,7 +710,7 @@ export function usePresentAiToolProvider({
           fail(
             call,
             "EXECUTION_ERROR",
-            error instanceof Error ? error.message : "AI Operator tool failed.",
+            userMessage(error, "The AI Operator couldn't do that. Try again.", "AI Operator"),
           ),
         );
       }

@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "../lib/user-error";
 import {
   memo,
   useEffect,
@@ -155,7 +156,7 @@ export const FontFamilySelect = memo(function FontFamilySelect({
       })
       .catch((error) => {
         toast.error(
-          error instanceof Error ? error.message : "Failed to load custom fonts.",
+          userMessage(error, "Your fonts couldn't be loaded. Try again.", "Fonts"),
         );
       });
     setIsInstalling(false);

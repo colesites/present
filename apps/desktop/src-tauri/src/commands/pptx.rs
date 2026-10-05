@@ -93,9 +93,11 @@ fn import_deck(
     let mut sink = FileSink::new(directory);
     let (mut presentation, package, embedded) =
         pptx::import_with(path, &mut sink).map_err(|error| {
-            AppError::Invalid(format!(
-                "[pptx] Could not import this PowerPoint file. {error}"
-            ))
+            tracing::warn!(%error, path = %path.display(), "a PowerPoint file could not be imported");
+            AppError::User(
+                "This PowerPoint file couldn't be opened. It may be damaged, password-protected, or not a .pptx file."
+                    .to_owned(),
+            )
         })?;
     if let Some(font_directory) = font_directory.filter(|_| !embedded.is_empty()) {
         let installed = pptx::fonts::install(&package, &embedded, &font_directory);

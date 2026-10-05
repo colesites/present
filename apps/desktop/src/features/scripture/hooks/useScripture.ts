@@ -1,3 +1,4 @@
+import { userMessage } from "../../../renderer/shared/lib/user-error";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type BibleVersion, type BibleVerse } from "../lib/db";
@@ -229,7 +230,7 @@ export function useScripture() {
           remoteVersions = normalizeHostedCatalog(data);
         } catch (error) {
           // Remote catalog is optional; only surface the error if we couldn't find any bundled versions.
-          remoteError = error instanceof Error ? error.message : "Failed to load hosted versions";
+          remoteError = userMessage(error, "The Bible versions online couldn't be loaded.", "Scripture");
         }
       }
     } finally {
@@ -278,7 +279,7 @@ export function useScripture() {
       clearVerseSearchCache();
     } catch (error) {
       console.error(error);
-      toast.error(error instanceof Error ? error.message : "Import failed");
+      toast.error(userMessage(error, "That Bible couldn't be imported. Try again.", "Scripture"));
     } finally {
       setActiveImport(null);
     }
@@ -299,7 +300,7 @@ export function useScripture() {
       clearVerseSearchCache();
     } catch (error) {
       console.error(error);
-      toast.error(error instanceof Error ? error.message : "Import failed");
+      toast.error(userMessage(error, "That Bible couldn't be imported. Try again.", "Scripture"));
     } finally {
       setActiveImport(null);
     }

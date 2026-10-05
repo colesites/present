@@ -1,3 +1,4 @@
+import { userMessage } from "../../renderer/shared/lib/user-error";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
@@ -1386,7 +1387,7 @@ export function PresentContainer({
         );
       })
       .catch((error: unknown) => {
-        toast.error(error instanceof Error ? error.message : "The theme couldn't be applied.");
+        toast.error(userMessage(error, "The theme couldn't be applied.", "Present"));
       });
   }, [
     consumePendingTheme,
@@ -1446,7 +1447,7 @@ export function PresentContainer({
             requestId: request.requestId,
             ok: false,
             error:
-              error instanceof Error ? error.message : "Failed to save lyrics.",
+              userMessage(error, "The lyrics couldn't be saved. Try again.", "Present"),
           });
         });
     });
@@ -2178,7 +2179,7 @@ export function PresentContainer({
             presentation,
           );
           if (!refId) {
-            toast.error(`Failed to import ${file.name}.`, {
+            toast.error(`${file.name} couldn't be imported.`, {
               duration: IMPORT_ERROR_DURATION_MS,
             });
             continue;
@@ -2193,9 +2194,7 @@ export function PresentContainer({
           setSelected({ libraryId: presentationLibraryId, index: 0 });
         } catch (error) {
           toast.error(
-            error instanceof Error
-              ? error.message
-              : `Failed to import ${file.name}.`,
+            userMessage(error, `${file.name} couldn't be imported.`, "Import"),
             {
               duration: IMPORT_ERROR_DURATION_MS,
             },
@@ -2273,7 +2272,7 @@ export function PresentContainer({
       );
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to open the import dialog.",
+        userMessage(error, "The import couldn't be opened. Try again.", "Present"),
         {
           duration: IMPORT_ERROR_DURATION_MS,
         },

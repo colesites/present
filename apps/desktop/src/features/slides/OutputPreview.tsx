@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "../../renderer/shared/lib/user-error";
 import {
   memo,
   useEffect,
@@ -1191,11 +1192,7 @@ function PreviewCaptureLayer({
       })
       .catch((captureError: unknown) => {
         if (cancelled) return;
-        setError(
-          captureError instanceof Error
-            ? captureError.message
-            : "Could not start capture input.",
-        );
+        setError(userMessage(captureError, "The capture input couldn't be started.", "Preview: capture"));
       });
 
     return () => {
