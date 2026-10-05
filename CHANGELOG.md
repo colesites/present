@@ -11,12 +11,17 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 - The Bible agent starts listening. The voice service refused every session
   ("Invalid 'keyterms_prompt': Invalid JSON array"): the Bible's book names,
   sent to help it hear them, went as one setting each instead of the one
-  list it asks for.
+  list it asks for. Then the microphone's sound reached it in pieces of
+  46 ms, under the 50 ms it takes, and it ended every session at once; the
+  sound now goes in pieces of 100 ms. Both were checked against the voice
+  service itself.
 - When something goes wrong, Present says so in plain words, in a toast.
   The words of whatever failed — a service's validation message, an error
   from the code — are written to the app's log and no longer shown. This
   covers voice search, imports, exports, lyrics, themes, media folders,
   fonts, Bible downloads, capture inputs and the AI Operator.
+- A toast stays long enough to read: five seconds, eight for a problem with
+  voice search. Every toast was gone after half a second.
 
 ## [0.4.12] - 2026-10-04
 

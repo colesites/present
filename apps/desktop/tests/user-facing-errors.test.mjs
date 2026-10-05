@@ -42,7 +42,7 @@ test("a voice failure is said in a toast, not a tooltip", () => {
     path.join(packageRoot, "src/features/scripture/hooks/useSpeechRecognition.ts"),
     "utf8",
   );
-  assert.ok(speech.includes('toast.error(error, { id: "voice-search" })'));
+  assert.ok(speech.includes('toast.error(error, { id: "voice-search", duration: 8000 })'));
   const panel = readFileSync(
     path.join(packageRoot, "src/features/scripture/components/ScripturePanel.tsx"),
     "utf8",

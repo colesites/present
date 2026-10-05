@@ -264,7 +264,7 @@ export function useSpeechRecognition(
   // stacked if it comes again. Every message here is written for people
   // (`speechMessage`); the fault behind it is in the log.
   useEffect(() => {
-    if (error) toast.error(error, { id: "voice-search" });
+    if (error) toast.error(error, { id: "voice-search", duration: 8000 });
   }, [error]);
   const [activeSessionStartedAtMs, setActiveSessionStartedAtMs] = useState<number | null>(null);
   const setSharedActiveSessionStartedAtMs = useSpeechUsageStore(

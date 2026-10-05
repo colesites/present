@@ -19,7 +19,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
       className="toaster group"
       position="top-center"
       richColors
-      duration={500}
+      // Long enough to read. It was half a second, from the first scaffold:
+      // an error was gone before it could be read.
+      duration={5000}
       closeButton
       icons={{
         success: <CircleCheckIcon className="size-4" />,
