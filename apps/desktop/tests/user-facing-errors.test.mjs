@@ -37,6 +37,19 @@ test("the voice service is sent its key terms as one JSON array", () => {
   assert.ok(speech.includes('searchParams.set("keyterms_prompt", JSON.stringify('));
 });
 
+test("a turn ends after half a second of quiet, and words come at every short pause", () => {
+  // Accepted by AssemblyAI, checked live: on Universal-3.5 Pro "Romans 8:28"
+  // arrived 0.2 s after it was said, where the default held it back for a
+  // longer pause and once guessed "John, chapter 10" on the way.
+  const speech = readFileSync(
+    path.join(packageRoot, "src/features/scripture/hooks/useSpeechRecognition.ts"),
+    "utf8",
+  );
+  assert.ok(speech.includes("const TURN_SILENCE_MS = 500;"));
+  assert.ok(speech.includes('url.searchParams.set("max_turn_silence", String(TURN_SILENCE_MS));'));
+  assert.ok(speech.includes('url.searchParams.set("interruption_delay", "0");'));
+});
+
 test("a voice failure is said in a toast, not a tooltip", () => {
   const speech = readFileSync(
     path.join(packageRoot, "src/features/scripture/hooks/useSpeechRecognition.ts"),

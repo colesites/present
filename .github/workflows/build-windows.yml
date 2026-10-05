@@ -135,6 +135,7 @@ jobs:
           # set up.
           ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           # Signs the update packages the app updates itself from. Without
           # these secrets the build still succeeds and makes none.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

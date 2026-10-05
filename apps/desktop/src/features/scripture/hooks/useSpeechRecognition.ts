@@ -129,6 +129,10 @@ interface StreamingSession {
 }
 
 const ASSEMBLYAI_STREAM_URL = "wss://streaming.assemblyai.com/v3/ws";
+/** The quiet that ends a turn. */
+const TURN_SILENCE_MS = 500;
+/** The least quiet after which a turn that sounds finished may end. */
+const SHORTEST_TURN_SILENCE_MS = 160;
 const SPEECH_QUOTA_EXHAUSTED_MESSAGE =
   "You've used all of your speech-to-search time for this billing period. Upgrade your plan or wait for the next billing period to continue using voice search.";
 
@@ -155,12 +159,24 @@ const buildAssemblyAiSocketUrl = (input: {
   url.searchParams.set("encoding", "pcm_s16le");
   url.searchParams.set("format_turns", "false");
 
+  // Preachers do not stop for long. A turn ends after half a second of
+  // quiet (AssemblyAI's default is about 1.5s), and the words heard so far
+  // are sent at every short pause rather than held back for a longer one
+  // (`interruption_delay`, Universal-3.5 Pro only). The Bible tab reads them
+  // as they come either way (`useHeardScripture`); this is how often they come.
+  url.searchParams.set("max_turn_silence", String(TURN_SILENCE_MS));
   if (input.lang.toLowerCase().startsWith("en")) {
     url.searchParams.set("speech_model", "universal-3-5-pro");
     url.searchParams.set("language_code", "en");
+    url.searchParams.set("min_turn_silence", String(SHORTEST_TURN_SILENCE_MS));
+    url.searchParams.set("interruption_delay", "0");
   } else {
     url.searchParams.set("speech_model", "universal-streaming-multilingual");
     url.searchParams.set("language_detection", "true");
+    url.searchParams.set(
+      "min_end_of_turn_silence_when_confident",
+      String(SHORTEST_TURN_SILENCE_MS),
+    );
   }
 
   // One JSON array, not a parameter per term: sent one by one, AssemblyAI

@@ -38,16 +38,24 @@ export async function parseScriptureReference(
   };
 }
 
+/** Write what the Bible agent heard or did to the app's log. */
+export function noteBibleAgent(event: string, detail: string): void {
+  void invoke("note_bible_agent", { event, detail }).catch((): void => undefined);
+}
+
 /** What the listening agent made of a sentence. */
 export type SpokenScripture = {
   reference: ParsedReference;
   confidence: number;
+  /** Recognised from a story told, rather than a passage named. */
+  story: boolean;
   /** Sure enough, and real enough, to go on screen without being asked. */
   mayProject: boolean;
 };
 
 /**
- * Ask what a spoken sentence meant, when the parser could not read it.
+ * Ask what was said meant, when the parser could not read it: a passage named
+ * sideways or misheard, or a story told.
  *
  * `null` when there is nothing to ask about, nobody is signed in, or the model
  * could not be reached — none of which stop the operator doing it by hand. The
@@ -56,18 +64,23 @@ export type SpokenScripture = {
  */
 export async function understandSpokenScripture(
   sessionToken: string,
+  /** The words new since the model was last asked. */
   heard: string,
   books: BibleBookRecord[],
   /** The passage in the Bible tab, for "verse eighteen" said on its own. */
   openPassage: string | null = null,
+  /** What was said before `heard`, to understand it by. */
+  earlier: string | null = null,
 ): Promise<SpokenScripture | null> {
   const answer = await invoke<{
     reference: RustReference;
     confidence: number;
+    story: boolean;
     mayProject: boolean;
   } | null>("understand_spoken_scripture", {
     sessionToken,
     heard,
+    earlier,
     books,
     openPassage,
   });
@@ -84,6 +97,7 @@ export async function understandSpokenScripture(
       errors: answer.reference.errors,
     },
     confidence: answer.confidence,
+    story: answer.story,
     mayProject: answer.mayProject,
   };
 }

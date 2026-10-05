@@ -409,6 +409,7 @@ pub fn run() {
             commands::songs::import_videopsalm_songbooks,
             commands::scripture::parse_scripture_reference,
             commands::scripture::understand_spoken_scripture,
+            commands::scripture::note_bible_agent,
             commands::control::get_control_settings,
             commands::control::set_control_settings,
             commands::control::run_control_action,
