@@ -4,6 +4,20 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-10-05
+
+### Fixed
+
+- The Bible agent starts listening. The voice service refused every session
+  ("Invalid 'keyterms_prompt': Invalid JSON array"): the Bible's book names,
+  sent to help it hear them, went as one setting each instead of the one
+  list it asks for.
+- When something goes wrong, Present says so in plain words, in a toast.
+  The words of whatever failed — a service's validation message, an error
+  from the code — are written to the app's log and no longer shown. This
+  covers voice search, imports, exports, lyrics, themes, media folders,
+  fonts, Bible downloads, capture inputs and the AI Operator.
+
 ## [0.4.12] - 2026-10-04
 
 ### Changed
