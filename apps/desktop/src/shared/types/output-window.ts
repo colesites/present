@@ -88,6 +88,8 @@ export type OutputState = {
   textPosition?: OutputTextPosition | null;
   videoSettings: VideoSettings;
   mediaFilterCSS: string;
+  /** How the media meets a screen of another shape (`MediaFit` in Rust). */
+  mediaFit?: "fit" | "fill" | "stretch";
   isVideoPlaying: boolean;
   videoCurrentTime: number;
   /** When the operator's video was at `videoCurrentTime`, epoch ms. */

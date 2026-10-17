@@ -752,6 +752,8 @@ export function MainView({
       activeMediaItem: effectiveActiveMediaItem,
       videoSettings,
       onVideoSettingsChange: updateVideoSettings,
+      videoRate,
+      onSetVideoRate: liveVideoControls.setRate,
       onToggleVideoPlayback,
       showText: showTextInOutput,
       showSlide: showSlideInOutput,
@@ -834,6 +836,8 @@ export function MainView({
       videoCurrentTime,
       videoTimeSampledAtMs,
       videoSettings,
+      videoRate,
+      liveVideoControls.setRate,
     ],
   );
 
@@ -1020,6 +1024,8 @@ export function MainView({
                   onRenameInServices={handleRenameMediaInServices}
                   onRemoveFromServices={handleRemoveMediaFromServices}
                   orgId={orgId ?? null}
+                  liveVideoRate={videoRate}
+                  onSetVideoRate={liveVideoControls.setRate}
                 />
               </div>
             </div>

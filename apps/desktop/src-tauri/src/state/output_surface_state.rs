@@ -147,7 +147,12 @@ impl OutputSurfaceState {
             emit(&events, label, state.status(label));
         });
         let source = AppSurfaceSource::new(app.clone(), screen);
-        match SurfaceWorker::spawn(source, vec![(label.to_owned(), presenter)], on_presenting) {
+        match SurfaceWorker::spawn_tapped(
+            source,
+            vec![(label.to_owned(), presenter)],
+            on_presenting,
+            Some(screen.to_owned()),
+        ) {
             Ok(worker) => slot.worker = Some(worker),
             Err(error) => {
                 tracing::error!(%error, screen, "could not start drawing a screen natively")

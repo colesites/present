@@ -34,10 +34,12 @@ import {
 import { IoSnow } from "react-icons/io5";
 import type {
   MediaFilters,
+  MediaFit,
   MediaItem,
   VideoSettings,
 } from "../../features/media/hooks";
 import { filtersToCSS } from "../../features/media/hooks";
+import { VIDEO_SPEEDS } from "../../features/media/speeds";
 import type {
   CanvasSizePreset,
   SlideElement,
@@ -91,6 +93,10 @@ interface OutputPreviewProps {
   activeMediaItem: MediaItem | null;
   videoSettings: VideoSettings;
   onVideoSettingsChange: (settings: Partial<VideoSettings>) => void;
+  /** How fast the live video plays: 1 as recorded. */
+  videoRate?: number;
+  /** Play the live video at `rate` — the speed the center pane sets too. */
+  onSetVideoRate?: (rate: number) => void;
   onToggleVideoPlayback: () => void;
   showText: boolean;
   /** The Slide layer: a presentation's slides (PDF, PowerPoint). */
@@ -138,6 +144,51 @@ interface OutputPreviewProps {
   };
   previewTarget?: OutputPreviewTarget;
   onPreviewTargetChange?: (target: OutputPreviewTarget) => void;
+}
+
+/** How media can meet a screen of another shape, as the settings offer it. */
+const FITS: { value: MediaFit; label: string; title: string }[] = [
+  { value: "fit", label: "Fit", title: "All of it, with bars where its shape and the screen's differ" },
+  { value: "fill", label: "Fill", title: "The whole screen, cropping its edges" },
+  { value: "stretch", label: "Stretch", title: "Pulled to the screen's shape" },
+];
+
+function SettingsHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {children}
+    </span>
+  );
+}
+
+/** One choice of a few, shown pressed when it is the one. */
+function Choice({
+  selected,
+  onClick,
+  title,
+  children,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      title={title}
+      className={cn(
+        "h-6 min-w-0 flex-1 rounded px-1 text-[10px] font-medium tabular-nums transition",
+        selected
+          ? "bg-primary/15 text-primary ring-1 ring-primary/40"
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
 }
 
 const FilterSlider = memo(function FilterSlider({
@@ -206,6 +257,8 @@ export const OutputPreview = memo(function OutputPreview({
   activeMediaItem,
   videoSettings,
   onVideoSettingsChange,
+  videoRate = 1,
+  onSetVideoRate,
   onToggleVideoPlayback,
   showText,
   showSlide,
@@ -412,10 +465,13 @@ export const OutputPreview = memo(function OutputPreview({
             {!isStagePreview ? (
               <>
 
+            {/* Under the compositor's picture: hidden while the app draws it
+                under the page (`useNativePanel`), where it would show over it. */}
             {!hideBackground && backgroundColor ? (
               <div
                 className="absolute inset-0"
                 style={{ backgroundColor }}
+                data-under-native=""
               />
             ) : null}
 
@@ -426,6 +482,7 @@ export const OutputPreview = memo(function OutputPreview({
               <div
                 className="absolute z-10 overflow-hidden"
                 style={previewTextPositionStyle}
+                data-under-native=""
               >
                 {shouldUseScriptureTextLayer ? (
                   <ScriptureTextLayer
@@ -495,7 +552,7 @@ export const OutputPreview = memo(function OutputPreview({
               !activeMediaItem &&
               !isTimerLayerEnabled &&
               propsOverlay.length === 0 && (
-              <div className="absolute inset-0 z-0 flex h-full items-center justify-center">
+              <div className="absolute inset-0 z-0 flex h-full items-center justify-center" data-under-native="">
                 <p className="text-xs text-zinc-500">
                   {isPresentationSlide ? "Slide layer is hidden" : "Text layer is hidden"}
                 </p>
@@ -507,7 +564,7 @@ export const OutputPreview = memo(function OutputPreview({
               !isTimerLayerEnabled &&
               propsOverlay.length === 0 &&
               !hasHiddenTextLayerContent && (
-              <div className="absolute inset-0 z-0 flex h-full items-center justify-center">
+              <div className="absolute inset-0 z-0 flex h-full items-center justify-center" data-under-native="">
                 <p className="text-xs text-zinc-600">No content</p>
               </div>
               )}
@@ -626,7 +683,8 @@ export const OutputPreview = memo(function OutputPreview({
                   ? "bg-primary/15 text-primary"
                   : "text-muted-foreground hover:bg-secondary hover:text-foreground"
               )}
-              title="Media filters"
+              title="Media settings"
+              aria-pressed={showFilters}
             >
               <SlidersHorizontal className="h-4 w-4" />
             </button>
@@ -689,87 +747,127 @@ export const OutputPreview = memo(function OutputPreview({
       </div>
 
       {showFilters && (
-        <div className="mx-3 mt-2 shrink-0 space-y-1.5 rounded-lg border border-border bg-card/50 p-2">
+        <div className="mx-3 mt-2 shrink-0 space-y-3 rounded-lg border border-border bg-card/50 p-2">
           {activeMediaItem ? (
             <>
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Filters
-                </span>
-                <button
-                  type="button"
-                  onClick={onResetFilters}
-                  className="flex items-center gap-0.5 text-[9px] text-muted-foreground transition hover:text-foreground"
-                  title="Reset all filters"
-                >
-                  <RotateCcw className="h-2.5 w-2.5" />
-                  Reset
-                </button>
-              </div>
-              <FilterSlider
-                label="Bright"
-                value={mediaFilters.brightness}
-                min={0}
-                max={200}
-                defaultValue={100}
-                onChange={(value) =>
-                  onMediaFiltersChange({ brightness: value })
-                }
-              />
-              <FilterSlider
-                label="Contrast"
-                value={mediaFilters.contrast}
-                min={0}
-                max={200}
-                defaultValue={100}
-                onChange={(value) => onMediaFiltersChange({ contrast: value })}
-              />
-              <FilterSlider
-                label="Saturate"
-                value={mediaFilters.saturation}
-                min={0}
-                max={200}
-                defaultValue={100}
-                onChange={(value) =>
-                  onMediaFiltersChange({ saturation: value })
-                }
-              />
-              <FilterSlider
-                label="Blur"
-                value={mediaFilters.blur}
-                min={0}
-                max={20}
-                defaultValue={0}
-                onChange={(value) => onMediaFiltersChange({ blur: value })}
-              />
-              <FilterSlider
-                label="Gray"
-                value={mediaFilters.grayscale}
-                min={0}
-                max={100}
-                defaultValue={0}
-                onChange={(value) => onMediaFiltersChange({ grayscale: value })}
-              />
-              <FilterSlider
-                label="Sepia"
-                value={mediaFilters.sepia}
-                min={0}
-                max={100}
-                defaultValue={0}
-                onChange={(value) => onMediaFiltersChange({ sepia: value })}
-              />
-              <FilterSlider
-                label="Hue"
-                value={mediaFilters.hueRotate}
-                min={0}
-                max={360}
-                defaultValue={0}
-                onChange={(value) => onMediaFiltersChange({ hueRotate: value })}
-              />
+              {activeMediaItem.type === "video" ? (
+                <section aria-label="Playback" className="space-y-1.5">
+                  <SettingsHeading>Playback</SettingsHeading>
+                  <div className="flex items-center gap-1">
+                    <span className="w-12 shrink-0 text-[9px] text-muted-foreground">Speed</span>
+                    <div className="flex min-w-0 flex-1 gap-0.5">
+                      {VIDEO_SPEEDS.map((speed) => (
+                        <Choice
+                          key={speed}
+                          selected={videoRate === speed}
+                          onClick={() => onSetVideoRate?.(speed)}
+                          title={`Play at ${speed}×`}
+                        >
+                          {speed}×
+                        </Choice>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-1">
+                    <span className="w-12 shrink-0 text-[9px] text-muted-foreground">Loop</span>
+                    <input
+                      type="checkbox"
+                      checked={videoSettings.loop}
+                      onChange={(event) => onVideoSettingsChange({ loop: event.target.checked })}
+                      className="accent-primary"
+                    />
+                  </label>
+                </section>
+              ) : null}
+              <section aria-label="Fit" className="space-y-1.5">
+                <SettingsHeading>Fit</SettingsHeading>
+                <div className="flex gap-0.5">
+                  {FITS.map(({ value, label, title }) => (
+                    <Choice
+                      key={value}
+                      selected={(mediaFilters.fit ?? "fit") === value}
+                      onClick={() => onMediaFiltersChange({ fit: value })}
+                      title={title}
+                    >
+                      {label}
+                    </Choice>
+                  ))}
+                </div>
+              </section>
+              <section aria-label="Filters" className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <SettingsHeading>Filters</SettingsHeading>
+                  <button
+                    type="button"
+                    onClick={onResetFilters}
+                    className="flex items-center gap-0.5 text-[9px] text-muted-foreground transition hover:text-foreground"
+                    title="Reset all filters"
+                  >
+                    <RotateCcw className="h-2.5 w-2.5" />
+                    Reset
+                  </button>
+                </div>
+                <FilterSlider
+                  label="Bright"
+                  value={mediaFilters.brightness}
+                  min={0}
+                  max={200}
+                  defaultValue={100}
+                  onChange={(value) => onMediaFiltersChange({ brightness: value })}
+                />
+                <FilterSlider
+                  label="Contrast"
+                  value={mediaFilters.contrast}
+                  min={0}
+                  max={200}
+                  defaultValue={100}
+                  onChange={(value) => onMediaFiltersChange({ contrast: value })}
+                />
+                <FilterSlider
+                  label="Saturate"
+                  value={mediaFilters.saturation}
+                  min={0}
+                  max={200}
+                  defaultValue={100}
+                  onChange={(value) => onMediaFiltersChange({ saturation: value })}
+                />
+                <FilterSlider
+                  label="Blur"
+                  value={mediaFilters.blur}
+                  min={0}
+                  max={20}
+                  defaultValue={0}
+                  onChange={(value) => onMediaFiltersChange({ blur: value })}
+                />
+                <FilterSlider
+                  label="Gray"
+                  value={mediaFilters.grayscale}
+                  min={0}
+                  max={100}
+                  defaultValue={0}
+                  onChange={(value) => onMediaFiltersChange({ grayscale: value })}
+                />
+                <FilterSlider
+                  label="Sepia"
+                  value={mediaFilters.sepia}
+                  min={0}
+                  max={100}
+                  defaultValue={0}
+                  onChange={(value) => onMediaFiltersChange({ sepia: value })}
+                />
+                <FilterSlider
+                  label="Hue"
+                  value={mediaFilters.hueRotate}
+                  min={0}
+                  max={360}
+                  defaultValue={0}
+                  onChange={(value) => onMediaFiltersChange({ hueRotate: value })}
+                />
+              </section>
             </>
           ) : (
             <p className="text-[10px] text-muted-foreground">
-              Select media to edit brightness and other filters.
+              Select media to change how it plays and looks.
             </p>
           )}
         </div>

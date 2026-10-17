@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::{http, AppHandle, Manager};
@@ -19,6 +19,7 @@ use tauri::{http, AppHandle, Manager};
 use crate::services::frame_delivery::{self, Latest};
 use crate::services::media_frames::{Clock, Player};
 use crate::services::preview::scoped_opener;
+use crate::services::surface::panel::NativePanel;
 use crate::services::thumbnails;
 use crate::state::OutputState;
 
@@ -43,6 +44,8 @@ struct Entry {
     /// The file and clock, as the panel last set them.
     wanted: Mutex<Option<(String, Clock)>>,
     latest: Mutex<Option<Latest>>,
+    /// Told when `latest` changes, for a request waiting on a new frame.
+    fresh: Condvar,
     /// How far ahead of the wall's clock to draw, in milliseconds: how late
     /// the panel's frames reach its screen (`frame_delivery`).
     lead_ms: AtomicU64,
@@ -77,17 +80,24 @@ impl MediaFramesState {
     pub fn remove(&self, id: &str) {
         if let Some(entry) = lock(&self.players).remove(id) {
             entry.stop.store(true, Ordering::Release);
+            entry.fresh.notify_all();
         }
     }
 
     /// The newest frame of player `id`, and a promise to keep decoding, drawn
     /// `lead` ahead from now on.
+    ///
+    /// A panel that already has the newest (`after`) is answered when the
+    /// next one is ready, or after [`frame_delivery::WAIT_FOR_NEW`] — not
+    /// told "nothing new" at once, which had a paused video's panel ask a
+    /// hundred and fifty times a second.
     pub fn frame(
         &self,
         app: &AppHandle,
         id: &str,
         size: (u32, u32),
         lead: Duration,
+        after: Option<u64>,
     ) -> Option<Latest> {
         let entry = lock(&self.players).get(id)?.clone();
         entry
@@ -98,22 +108,27 @@ impl MediaFramesState {
             Ordering::Relaxed,
         );
         *lock(&entry.asked_at) = Some(Instant::now());
-        if !entry.running.swap(true, Ordering::AcqRel) {
-            let app = app.clone();
-            let running = entry.clone();
-            let spawned = std::thread::Builder::new()
-                .name("present-media-frames".to_owned())
-                .spawn(move || {
-                    decode_until_idle(&app, &running);
-                    running.running.store(false, Ordering::Release);
-                });
-            if let Err(error) = spawned {
-                tracing::warn!(%error, "a video player could not start");
-                entry.running.store(false, Ordering::Release);
-            }
-        }
-        let latest = lock(&entry.latest).clone();
-        latest
+        ensure_running(app, &entry);
+        frame_delivery::newer_than(&entry.latest, &entry.fresh, after)
+    }
+}
+
+/// Start `entry`'s player if it is not running.
+fn ensure_running(app: &AppHandle, entry: &Arc<Entry>) {
+    if entry.running.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let app = app.clone();
+    let running = entry.clone();
+    let spawned = std::thread::Builder::new()
+        .name("present-media-frames".to_owned())
+        .spawn(move || {
+            decode_until_idle(&app, &running);
+            running.running.store(false, Ordering::Release);
+        });
+    if let Err(error) = spawned {
+        tracing::warn!(%error, "a video player could not start");
+        entry.running.store(false, Ordering::Release);
     }
 }
 
@@ -142,9 +157,10 @@ fn decode_until_idle(app: &AppHandle, entry: &Entry) {
         }
         let packed = entry.size.load(Ordering::Relaxed);
         let size = ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32);
+        // Shared, not copied: this runs sixty times a second for every panel.
         let live = app
             .try_state::<OutputState>()
-            .map(|output| output.scene())
+            .map(|output| output.scene_shared())
             .unwrap_or_default();
         if let Some(frame) = player.as_mut().and_then(|player| {
             let lead = Duration::from_millis(entry.lead_ms.load(Ordering::Relaxed));
@@ -159,6 +175,7 @@ fn decode_until_idle(app: &AppHandle, entry: &Entry) {
                             at: Instant::now(),
                             seq: frame_delivery::next_seq(),
                         });
+                        entry.fresh.notify_all();
                         last = Some(key);
                     }
                     Err(error) => tracing::debug!(%error, "a video frame could not be encoded"),
@@ -170,6 +187,90 @@ fn decode_until_idle(app: &AppHandle, entry: &Entry) {
         }
     }
     *lock(&entry.latest) = None;
+    entry.fresh.notify_all();
+}
+
+/// A media panel drawn natively over the page (`surface::panel`): a player
+/// of its own, handing the panel each frame as it was decoded, scaled by the
+/// GPU — no JPEG, no fetch, nothing the page's own thread can hold up.
+///
+/// Apart from the players above, which the page fetches from: the two are
+/// started and stopped by different calls, and those can arrive in either
+/// order.
+pub struct NativeMedia {
+    /// The file and clock, as the page last set them.
+    wanted: Mutex<(String, Clock)>,
+    stop: AtomicBool,
+}
+
+impl NativeMedia {
+    /// Start showing `url`, keeping time by `clock`, on `panel`.
+    pub fn start(app: &AppHandle, panel: Arc<NativePanel>, url: String, clock: Clock) -> Arc<Self> {
+        let media = Arc::new(Self {
+            wanted: Mutex::new((url, clock)),
+            stop: AtomicBool::new(false),
+        });
+        let (app, running) = (app.clone(), Arc::clone(&media));
+        let spawned = std::thread::Builder::new()
+            .name("present-media-panel".to_owned())
+            .spawn(move || present_until_stopped(&app, &panel, &running));
+        if let Err(error) = spawned {
+            tracing::warn!(%error, "a native video panel could not start");
+        }
+        media
+    }
+
+    /// Show `url`, keeping time by `clock`, from now on.
+    pub fn set(&self, url: String, clock: Clock) {
+        *lock(&self.wanted) = (url, clock);
+    }
+
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Release);
+    }
+}
+
+fn present_until_stopped(app: &AppHandle, panel: &NativePanel, media: &NativeMedia) {
+    let open = scoped_opener(app.clone());
+    let mut player: Option<Player> = None;
+    // The frame last handed over, to hand each one once.
+    let mut shown: Option<Arc<crate::services::video::VideoFrame>> = None;
+    while !media.stop.load(Ordering::Acquire) {
+        let started = Instant::now();
+        // Out of sight, or its page has stopped saying where it is: nothing
+        // worth decoding for it.
+        if panel.is_current() {
+            let (url, clock) = lock(&media.wanted).clone();
+            let current = match &mut player {
+                Some(current) if current.url == url => {
+                    current.set_clock(clock);
+                    current
+                }
+                _ => player.insert(Player::new(url, clock)),
+            };
+            let live = app
+                .try_state::<OutputState>()
+                .map(|output| output.scene_shared())
+                .unwrap_or_default();
+            // At the same moment the audience view draws, with no lead: the
+            // panel's frames reach the screen as quickly as its do.
+            let frame = current.frame_shared(&live, Instant::now(), panel.pixel_size(), &open);
+            if let Some(frame) = frame {
+                if !shown
+                    .as_ref()
+                    .is_some_and(|shown| Arc::ptr_eq(shown, &frame))
+                {
+                    panel.show_video(&frame);
+                    shown = Some(frame);
+                }
+            }
+        } else {
+            shown = None;
+        }
+        if let Some(rest) = FRAME_EVERY.checked_sub(started.elapsed()) {
+            std::thread::sleep(rest);
+        }
+    }
 }
 
 /// `?w=&h=`, kept within what a player draws.
@@ -204,15 +305,17 @@ fn id_from_uri(uri: &str) -> Option<String> {
 /// The `media-frame://frame/<id>?w=&h=&lead=&after=&t=` response
 /// (`frame_delivery`).
 pub fn respond(state: &MediaFramesState, app: &AppHandle, uri: &str) -> http::Response<Vec<u8>> {
+    let asked = Instant::now();
     let latest = id_from_uri(uri).and_then(|id| {
         state.frame(
             app,
             &id,
             size_from_uri(uri),
             frame_delivery::lead_from_uri(uri),
+            frame_delivery::query_number(uri, "after"),
         )
     });
-    frame_delivery::respond(latest, uri)
+    frame_delivery::respond(latest, uri, asked.elapsed())
 }
 
 #[cfg(test)]

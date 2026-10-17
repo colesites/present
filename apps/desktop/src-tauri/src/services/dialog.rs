@@ -464,6 +464,56 @@ fn modified_ms(metadata: &std::fs::Metadata) -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Where to write one recording. The operator names the file; `.wav` is added
+/// when they do not.
+pub fn select_recording_file(
+    app: &AppHandle,
+    state: &FileState,
+    requester: Option<&WebviewWindow>,
+    suggested_name: &str,
+    extension: &str,
+    label: &str,
+) -> AppResult<Option<PathBuf>> {
+    let Some(destination) = builder(app, requester)
+        .set_title("Export Recording")
+        .set_file_name(suggested_name)
+        .add_filter(label, &[extension])
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = with_extension(to_path(destination)?, extension);
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::Invalid("Choose a folder to export into.".to_owned()))?;
+    state.grant_picked_dir(parent)?;
+    Ok(Some(path))
+}
+
+/// A folder to write one file per track into.
+pub fn select_recording_folder(
+    app: &AppHandle,
+    state: &FileState,
+    requester: Option<&WebviewWindow>,
+) -> AppResult<Option<PathBuf>> {
+    let Some(folder) = builder(app, requester)
+        .set_title("Export tracks")
+        .blocking_pick_folder()
+    else {
+        return Ok(None);
+    };
+    let path = to_path(folder)?;
+    state.grant_picked_dir(&path)?;
+    Ok(Some(path))
+}
+
+fn with_extension(path: PathBuf, extension: &str) -> PathBuf {
+    match path.extension().and_then(|current| current.to_str()) {
+        Some(current) if current.eq_ignore_ascii_case(extension) => path,
+        _ => path.with_extension(extension),
+    }
+}
+
 /// The dialog plugin returns a `FilePath`, which is a real path on desktop and
 /// a content URI on mobile. This app is desktop-only, so a URI is a bug rather
 /// than a case to handle.

@@ -16,6 +16,15 @@ pub struct Chunk {
     pub samples: Vec<f32>,
 }
 
+/// A file opened for its sound: the sound, when it has any, and how long
+/// the file is, when its container says. A silent video is still a video,
+/// timed by its length (`Track`): without it, its clock would run on past
+/// the end and never loop.
+pub struct Opened {
+    pub sound: Option<AudioDecoder>,
+    pub duration_seconds: Option<f64>,
+}
+
 pub struct AudioDecoder {
     input: ff::format::context::Input,
     stream_index: usize,
@@ -25,7 +34,6 @@ pub struct AudioDecoder {
     frame: ff::frame::Audio,
     rate: u32,
     channels: u16,
-    duration_seconds: Option<f64>,
     /// Where the next chunk starts. Counted on from the first frame after a
     /// seek rather than read off every frame, whose timestamps are rounded to
     /// the stream's time base and would make the clock stutter.
@@ -130,23 +138,26 @@ struct Resampler {
 }
 
 impl AudioDecoder {
-    /// The sound of the file at `path`, as `channels` channels at `rate`.
-    /// `Ok(None)` when it has none: a silent video is still a video.
-    pub fn open(path: &Path, rate: u32, channels: u16) -> Result<Option<Self>, String> {
+    /// The sound of the file at `path`, as `channels` channels at `rate`,
+    /// and the file's length.
+    pub fn open(path: &Path, rate: u32, channels: u16) -> Result<Opened, String> {
         crate::services::video::ffmpeg::init();
         let input =
             ff::format::input(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let whole = (input.duration() > 0)
+            .then(|| input.duration() as f64 / f64::from(ff::ffi::AV_TIME_BASE));
         let Some(stream) = input.streams().best(ff::media::Type::Audio) else {
-            return Ok(None);
+            return Ok(Opened {
+                sound: None,
+                duration_seconds: whole,
+            });
         };
         let stream_index = stream.index();
         let time_base = f64::from(stream.time_base());
         let duration_seconds = if stream.duration() > 0 {
             Some(stream.duration() as f64 * time_base)
-        } else if input.duration() > 0 {
-            Some(input.duration() as f64 / f64::from(ff::ffi::AV_TIME_BASE))
         } else {
-            None
+            whole
         };
         let context = ff::codec::context::Context::from_parameters(stream.parameters())
             .map_err(|error| format!("{}: {error}", path.display()))?;
@@ -154,22 +165,24 @@ impl AudioDecoder {
             .decoder()
             .audio()
             .map_err(|error| format!("{}: {error}", path.display()))?;
-        Ok(Some(Self {
-            input,
-            stream_index,
-            time_base,
-            decoder,
-            resampler: None,
-            frame: ff::frame::Audio::empty(),
-            rate,
-            channels: channels.max(1),
+        Ok(Opened {
+            sound: Some(Self {
+                input,
+                stream_index,
+                time_base,
+                decoder,
+                resampler: None,
+                frame: ff::frame::Audio::empty(),
+                rate,
+                channels: channels.max(1),
+                next_seconds: None,
+                skip_until: None,
+                drained: false,
+                tempo: None,
+                speed: 1.0,
+            }),
             duration_seconds,
-            next_seconds: None,
-            skip_until: None,
-            drained: false,
-            tempo: None,
-            speed: 1.0,
-        }))
+        })
     }
 
     /// Play the sound `speed` times as fast as recorded, at its own pitch.
@@ -181,11 +194,6 @@ impl AudioDecoder {
             Some(Tempo::new(self.rate, self.channels, speed)?)
         };
         Ok(())
-    }
-
-    /// The whole file's length, when the container says.
-    pub fn duration_seconds(&self) -> Option<f64> {
-        self.duration_seconds
     }
 
     /// The next stretch of sound, or `None` at the end.
@@ -417,10 +425,9 @@ pub(crate) mod tests {
     #[test]
     fn sound_comes_out_at_the_outputs_rate_and_channels() {
         let path = tone(2.0);
-        let mut decoder = AudioDecoder::open(&path, 48_000, 2)
-            .unwrap()
-            .expect("it has sound");
-        assert!((decoder.duration_seconds().unwrap() - 2.0).abs() < 0.01);
+        let opened = AudioDecoder::open(&path, 48_000, 2).unwrap();
+        assert!((opened.duration_seconds.unwrap() - 2.0).abs() < 0.01);
+        let mut decoder = opened.sound.expect("it has sound");
         let (start, samples) = decode_all(&mut decoder);
         assert!(start.abs() < 0.001, "starts at {start}");
         let frames = samples / 2;
@@ -434,7 +441,7 @@ pub(crate) mod tests {
     #[test]
     fn at_twice_the_speed_the_sound_takes_half_the_time() {
         let path = tone(2.0);
-        let mut decoder = AudioDecoder::open(&path, 48_000, 2).unwrap().unwrap();
+        let mut decoder = AudioDecoder::open(&path, 48_000, 2).unwrap().sound.unwrap();
         decoder.set_speed(2.0).unwrap();
         let (_, samples) = decode_all(&mut decoder);
         let seconds = samples as f64 / 2.0 / 48_000.0;
@@ -448,7 +455,7 @@ pub(crate) mod tests {
     #[test]
     fn a_seek_starts_the_sound_where_it_was_asked_for() {
         let path = tone(3.0);
-        let mut decoder = AudioDecoder::open(&path, 48_000, 2).unwrap().unwrap();
+        let mut decoder = AudioDecoder::open(&path, 48_000, 2).unwrap().sound.unwrap();
         decoder.next_chunk().unwrap();
         decoder.seek(1.25).unwrap();
         let (start, samples) = decode_all(&mut decoder);
@@ -459,6 +466,37 @@ pub(crate) mod tests {
             "{seconds} seconds after the seek"
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    /// Ten frames at ten a second and no sound: a silent background loop.
+    pub(in crate::services::sound) fn silent_clip(
+        name: &str,
+    ) -> Option<crate::services::video::ffmpeg::tests::Clip> {
+        use crate::services::video::ffmpeg::tests::{write_clip, ClipSpec, Codec};
+        write_clip(
+            name,
+            &ClipSpec {
+                codec: Codec::Id(ff::codec::Id::MPEG4),
+                size: (64, 64),
+                frames: 10,
+                fps: 10,
+                gop: 5,
+                space: ff::util::color::Space::BT709,
+                range: ff::util::color::Range::MPEG,
+            },
+            |_| (128, 128, 128),
+        )
+    }
+
+    #[test]
+    fn a_video_without_sound_still_says_how_long_it_is() {
+        let Some(clip) = silent_clip("silent-length") else {
+            return;
+        };
+        let opened = AudioDecoder::open(&clip.0, 48_000, 2).unwrap();
+        assert!(opened.sound.is_none(), "nothing to hear");
+        let length = opened.duration_seconds.expect("its length");
+        assert!((length - 1.0).abs() < 0.15, "{length} seconds");
     }
 
     #[test]

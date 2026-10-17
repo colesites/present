@@ -5,6 +5,7 @@ import {
   ChevronDown,
   GripVertical,
   Pause,
+  Pencil,
   Play,
   Plus,
   Repeat2,
@@ -15,6 +16,8 @@ import { cn } from "../../../renderer/shared/lib/utils";
 import {
   getTimerDisplay,
   getTimerTypeLabel,
+  type TimerCategory,
+  type TimerItem,
   type TimerType,
   type UseTimersResult,
 } from "../../../renderer/shared/hooks";
@@ -35,7 +38,14 @@ export function TimerTabPanel({
   timers,
 }: TimerTabPanelProps) {
   const {
-    timers: items,
+    timers: allTimers,
+    shownTimers: items,
+    categories,
+    shownCategoryId,
+    showCategory,
+    createCategory,
+    renameCategory,
+    removeCategory,
     autoAdvanceEnabled,
     expandedTimerId,
     setExpandedTimerId,
@@ -148,11 +158,24 @@ export function TimerTabPanel({
         </div>
       </header>
 
+      {/* The category shown, as the Audio tab shows a playlist */}
+      <div className="border-b border-border/70 px-3 py-2">
+        <CategorySwitcher
+          categories={categories}
+          shownId={shownCategoryId}
+          timers={allTimers}
+          onShow={showCategory}
+          onCreate={createCategory}
+          onRename={renameCategory}
+          onRemove={removeCategory}
+        />
+      </div>
+
       {/* List */}
       <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2 [scrollbar-gutter:stable]">
         {items.length === 0 ? (
           <p className="px-2 py-6 text-center text-[11px] text-muted-foreground">
-            No timers yet. Click + to add one.
+            No timers in this category yet. Click + to add one.
           </p>
         ) : (
           items.map((timer, index) => {
@@ -259,6 +282,25 @@ export function TimerTabPanel({
                         className="h-7 w-full rounded-sm border border-border/70 bg-background/40 px-2 text-[11px] text-foreground focus:border-primary/60 focus:outline-hidden"
                       />
                     </Field>
+
+                    {categories.length > 1 ? (
+                      <Field label="Category">
+                        <select
+                          aria-label="Timer category"
+                          value={timer.categoryId ?? shownCategoryId}
+                          onChange={(event) =>
+                            updateTimer(timer.id, { categoryId: event.target.value })
+                          }
+                          className="h-7 w-full rounded-sm border border-border/70 bg-background/40 px-1.5 text-[11px] text-foreground focus:border-primary/60 focus:outline-hidden"
+                        >
+                          {categories.map((category) => (
+                            <option key={category.id} value={category.id}>
+                              {category.name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    ) : null}
 
                     <Field label="Type">
                       <select
@@ -403,6 +445,153 @@ export function TimerTabPanel({
           })
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Which category of timers the tab shows, and the categories themselves:
+ * shown, added, renamed, and removed once empty — a category's timers are
+ * never lost with it. The one holding the running timer is marked.
+ */
+function CategorySwitcher({
+  categories,
+  shownId,
+  timers,
+  onShow,
+  onCreate,
+  onRename,
+  onRemove,
+}: {
+  categories: TimerCategory[];
+  shownId: string;
+  timers: TimerItem[];
+  onShow: (id: string) => void;
+  onCreate: () => void;
+  onRename: (id: string, name: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const shown = categories.find((category) => category.id === shownId);
+  const count = (id: string) => timers.filter((timer) => timer.categoryId === id).length;
+  const running = (id: string) =>
+    timers.some((timer) => timer.categoryId === id && timer.isRunning);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setIsOpen((open) => !open)}
+        aria-expanded={isOpen}
+        className="flex w-full items-center gap-1 text-[11px] font-medium text-foreground hover:text-primary"
+      >
+        <span className="truncate">{shown?.name ?? "Timers"}</span>
+        <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={1.8} />
+      </button>
+      {isOpen && (
+        <div
+          className="absolute left-0 right-0 top-full z-20 mt-1 max-h-60 overflow-y-auto rounded-sm border border-border/70 bg-card shadow-lg"
+          onMouseLeave={() => {
+            if (!renaming) setIsOpen(false);
+          }}
+        >
+          {categories.map((category) => {
+            const timersIn = count(category.id);
+            const removable = categories.length > 1 && timersIn === 0;
+            return (
+              <div
+                key={category.id}
+                className={cn(
+                  "group flex items-center gap-1.5 px-2 py-1.5 hover:bg-foreground/5",
+                  category.id === shownId && "bg-primary/10",
+                )}
+              >
+                {renaming === category.id ? (
+                  <input
+                    autoFocus
+                    aria-label="Category name"
+                    defaultValue={category.name}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        onRename(category.id, event.currentTarget.value);
+                        setRenaming(null);
+                      } else if (event.key === "Escape") {
+                        setRenaming(null);
+                      }
+                    }}
+                    onBlur={(event) => {
+                      onRename(category.id, event.target.value);
+                      setRenaming(null);
+                    }}
+                    className="h-6 min-w-0 flex-1 rounded-sm border border-border/60 bg-background/40 px-1 text-[11px] focus:outline-hidden"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onShow(category.id);
+                      setIsOpen(false);
+                    }}
+                    onDoubleClick={() => setRenaming(category.id)}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[11px] text-foreground"
+                  >
+                    {running(category.id) ? (
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                        title="A timer is running in this category"
+                      />
+                    ) : null}
+                    <span className="truncate">{category.name}</span>
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                      {timersIn}
+                    </span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setRenaming(category.id)}
+                  className="rounded-sm p-1 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                  title="Rename category"
+                  aria-label="Rename category"
+                >
+                  <Pencil className="h-3 w-3" strokeWidth={1.6} />
+                </button>
+                <button
+                  type="button"
+                  disabled={!removable}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRemove(category.id);
+                  }}
+                  className="rounded-sm p-1 text-muted-foreground opacity-0 enabled:hover:text-red-400 disabled:cursor-not-allowed group-hover:opacity-100 group-hover:disabled:opacity-40"
+                  title={
+                    removable
+                      ? "Remove category"
+                      : categories.length <= 1
+                        ? "There is always one category"
+                        : "Remove or move its timers first"
+                  }
+                  aria-label="Remove category"
+                >
+                  <Trash2 className="h-3 w-3" strokeWidth={1.6} />
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => {
+              onCreate();
+              setIsOpen(false);
+            }}
+            className="flex w-full items-center gap-1.5 border-t border-border/70 px-2 py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            <Plus className="h-3 w-3" strokeWidth={1.6} />
+            New category
+          </button>
+        </div>
+      )}
     </div>
   );
 }

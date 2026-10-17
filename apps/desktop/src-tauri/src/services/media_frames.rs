@@ -125,6 +125,29 @@ impl Player {
     }
 }
 
+impl Player {
+    /// [`frame`](Self::frame), shared rather than lent, at whatever size the
+    /// live video was decoded: for a panel whose picture the GPU scales
+    /// (`surface::panel`).
+    pub fn frame_shared(
+        &mut self,
+        live: &OutputScene,
+        now: Instant,
+        size: (u32, u32),
+        open: &Opener,
+    ) -> Option<std::sync::Arc<VideoFrame>> {
+        let scene = self.scene(live, now);
+        if matches!(self.clock, Clock::Local { .. }) {
+            self.feed
+                .set_exact(Some((scene.video_current_time, scene.is_video_playing)));
+        }
+        self.feed.set_any_size(true);
+        let frame = self.feed.frame_for_shared(&scene, now, size, open);
+        self.feed.set_any_size(false);
+        frame
+    }
+}
+
 /// The decoder a clock needs: one that follows the sound for the screens'
 /// video, and one that keeps its own time for anything else.
 fn feed_for(clock: &Clock) -> VideoFeed {

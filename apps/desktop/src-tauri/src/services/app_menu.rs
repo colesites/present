@@ -7,11 +7,12 @@
 //!
 //! ```text
 //! Present       About, Settings, Hide, Quit (macOS)
-//! File          new library item, service, library; import; close
+//! File          new library item, service, library, recording; import; close
 //! Edit          the standard text items; search
 //! View          the header's modes, the bottom panels, the sidebar, themes
 //! Presentation  the live controls: slides, items, what is on the output
 //! Screens       the audience output, the stage displays, looks, composer
+//! Share         export a recording
 //! Window        minimize, zoom, close
 //! Help          the website
 //! ```
@@ -204,6 +205,7 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
         )?)
         .item(&item("file.new-service", "New Service…")?)
         .item(&item("file.new-library", "New Library…")?)
+        .item(&item("file.new-recording", "New Recording")?)
         .separator()
         .item(&import)
         .separator();
@@ -315,6 +317,13 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
         .item(&item("screens.composer", "Screen Composer…")?)
         .build()?;
 
+    // --- Share -------------------------------------------------------------
+    // The recording window has no export controls. This is the way out,
+    // the same place GarageBand puts Export Song to Disk.
+    let share = SubmenuBuilder::new(app, "Share")
+        .item(&item("share.export-recording", "Export Recording…")?)
+        .build()?;
+
     // --- Window ------------------------------------------------------------
     // Minimize is an item of its own rather than the predefined one, which
     // brings ⌘M with it: the window has always used ⌘M for the media panel.
@@ -344,6 +353,7 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
         .item(&view)
         .item(&presentation)
         .item(&screens)
+        .item(&share)
         .item(&window)
         .item(&help)
         .build()?)
@@ -364,6 +374,8 @@ pub fn handle(app: &AppHandle, event: MenuEvent) {
     let id = event.id().as_ref();
     match id {
         SETTINGS_ITEM => open_settings(app),
+        "file.new-recording" => open_recorder(app),
+        "share.export-recording" => export_recording(app),
         IMPORT_PRESENTATION_ITEM => send_import(app, "presentation"),
         IMPORT_IMAGES_ITEM => send_import(app, "images"),
         MINIMIZE_ITEM => minimize_focused(app),
@@ -384,6 +396,41 @@ fn open_settings(app: &AppHandle) {
 
     if let Err(error) = crate::services::window::open(app, &spec_for(WindowRole::Settings), None) {
         tracing::error!(%error, "could not open the settings window from the menu");
+    }
+}
+
+/// File ▸ New Recording. Opened here, like Settings, so the operator window
+/// is not pulled in front of it.
+fn open_recorder(app: &AppHandle) {
+    use crate::services::window_spec::spec_for;
+
+    if let Some(recorder) = app.try_state::<crate::services::recorder::Recorder>() {
+        recorder.resume();
+    }
+    if let Err(error) = crate::services::window::open(app, &spec_for(WindowRole::Recorder), None) {
+        tracing::error!(%error, "could not open the recording window from the menu");
+    }
+}
+
+/// Share ▸ Export Recording. Opens the recording window and asks it to show
+/// the export options. Handled here, like New Recording, so the operator
+/// window is not pulled in front of it.
+fn export_recording(app: &AppHandle) {
+    use crate::services::window_spec::spec_for;
+
+    if let Some(recorder) = app.try_state::<crate::services::recorder::Recorder>() {
+        recorder.resume();
+        recorder.request_export();
+    }
+    if let Err(error) = crate::services::window::open(app, &spec_for(WindowRole::Recorder), None) {
+        tracing::error!(%error, "could not open the recording window to export");
+        return;
+    }
+    let Some(window) = app.get_webview_window(WindowRole::Recorder.label()) else {
+        return;
+    };
+    if let Err(error) = window.emit("recorder:export", ()) {
+        tracing::debug!(%error, "the recording window was not ready for export");
     }
 }
 

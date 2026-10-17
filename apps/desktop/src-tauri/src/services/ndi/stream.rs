@@ -16,6 +16,7 @@ use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
 use crate::services::display::ScreenRole;
 use crate::services::media_protocol;
 use crate::services::video::{self, VideoDecoder};
+use crate::state::output_state::SceneCache;
 use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
 use super::output::{FrameSource, FALLBACK_SIZE};
@@ -30,6 +31,8 @@ pub struct AppFrameSource {
     regions: RegionVideos,
     /// Opening a video, on its own thread (`video_feed.rs`).
     open: Opener,
+    /// The scene through the NDI look, worked out again only when it changes.
+    scene: SceneCache,
 }
 
 impl AppFrameSource {
@@ -42,6 +45,7 @@ impl AppFrameSource {
             video: VideoFeed::new(),
             regions: RegionVideos::new(),
             open: scoped_opener(app_for_opening),
+            scene: SceneCache::new(),
         }
     }
 }
@@ -54,6 +58,7 @@ impl FrameSource for AppFrameSource {
             video,
             regions,
             open,
+            scene: scene_cache,
         } = self;
 
         // `try_state`, never `state`: the latter panics when the state is not
@@ -73,8 +78,9 @@ impl FrameSource for AppFrameSource {
         let size = (resolution.width, resolution.height);
         compositor.resize(size.0, size.1);
 
-        let looks = looks.snapshot();
-        let scene = scene_for_look(&output.on_screen(), &looks.live_look().targets.ndi);
+        let scene = scene_cache.through(&output, Some(looks.inner()), |on_screen| {
+            scene_for_look(&on_screen, &looks.snapshot().live_look().targets.ndi)
+        });
 
         let now = Instant::now();
         let frame = video.frame_for(&scene, now, size, open);

@@ -264,6 +264,7 @@ pub fn run() {
         // machine whose operator never opens it carries nothing.
         .manage(state::PreviewState::new())
         .manage(state::MediaFramesState::new())
+        .manage(state::NativePanelsState::new())
         // The NDI runtime and the stream while it runs. In memory: whether NDI
         // is on is a setting React re-applies on launch.
         .manage(state::NdiState::new())
@@ -363,8 +364,23 @@ pub fn run() {
             commands::media_frames::set_media_frames,
             commands::media_frames::remove_media_frames,
             commands::media_frames::media_duration,
+            commands::native_panels::attach_native_panel,
+            commands::native_panels::set_native_panel_geometry,
+            commands::native_panels::set_native_panel_source,
+            commands::native_panels::detach_native_panel,
+            commands::native_panels::reset_native_panels,
             commands::sound::start_microphone,
             commands::sound::stop_microphone,
+            commands::recorder::recorder_snapshot,
+            commands::recorder::recorder_set_input,
+            commands::recorder::recorder_add_track,
+            commands::recorder::recorder_rename_track,
+            commands::recorder::recorder_remove_track,
+            commands::recorder::recorder_start,
+            commands::recorder::recorder_pause,
+            commands::recorder::recorder_stop,
+            commands::recorder::recorder_acknowledge_export,
+            commands::recorder::recorder_export,
             commands::sound::backing_track_play,
             commands::sound::backing_track_pause,
             commands::sound::backing_track_seek,
@@ -590,6 +606,9 @@ pub fn run() {
             let routing = commands::sound::routing(&app.state::<state::AudioState>().snapshot());
             app.manage(commands::sound::BackingTrackNow::default());
             app.manage(commands::sound::MicrophoneState::default());
+            // The recording window's takes. In memory: a recording is of this
+            // sitting, and it is not a library item until it is exported.
+            app.manage(services::recorder::Recorder::new());
             app.manage(services::sound::SoundEngine::start(
                 commands::sound::AppTransport {
                     app: app.handle().clone(),

@@ -28,6 +28,7 @@ import {
   FilePlus,
   FolderPlus as FolderPlusIcon,
   Pencil,
+  Gauge,
 } from "lucide-react";
 import { Input } from "../../renderer/shared/components/ui/input";
 import {
@@ -58,6 +59,11 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "../../renderer/shared/components/ui/context-menu";
 import {
@@ -68,6 +74,7 @@ import {
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
 import { VideoThumbnail } from "./components/VideoThumbnail";
 import { useMenuCommand } from "../../renderer/tauri/menu-commands";
+import { VIDEO_SPEEDS } from "./speeds";
 
 type MediaFilter = "all" | "images" | "videos";
 
@@ -79,6 +86,8 @@ const MediaItemCard = memo(function MediaItemCard({
   onAddToService,
   onRename,
   onDelete,
+  onSpeed,
+  speed,
   isInsideService,
   isGridView,
   unplayableReason,
@@ -89,6 +98,10 @@ const MediaItemCard = memo(function MediaItemCard({
   onAddToService: (item: MediaItem) => void;
   onRename: (item: MediaItem) => void;
   onDelete: (item: MediaItem) => void;
+  /** Play this video at `speed`: on screen already, or put there. */
+  onSpeed?: (item: MediaItem, speed: number) => void;
+  /** How fast the live video plays, when this is it. */
+  speed: number | null;
   isInsideService: boolean;
   isGridView?: boolean;
   /** Set when this file will not play in the app (ADR-003). */
@@ -214,6 +227,28 @@ const MediaItemCard = memo(function MediaItemCard({
             Add to Service
           </ContextMenuItem>
         )}
+        {item.type === "video" && onSpeed ? (
+          // The live video's speed, as the center pane's control sets it;
+          // a video not on screen is put there at the speed chosen.
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <Gauge className="mr-2 h-4 w-4" />
+              {isActive ? "Speed" : "Show at Speed"}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuRadioGroup
+                value={isActive && speed !== null ? String(speed) : ""}
+                onValueChange={(value) => onSpeed(item, Number(value))}
+              >
+                {VIDEO_SPEEDS.map((value) => (
+                  <ContextMenuRadioItem key={value} value={String(value)} className="tabular-nums">
+                    {value}×
+                  </ContextMenuRadioItem>
+                ))}
+              </ContextMenuRadioGroup>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        ) : null}
         <ContextMenuItem onClick={() => onRename(item)}>
           <Pencil className="mr-2 h-4 w-4" />
           Rename
@@ -243,6 +278,10 @@ interface MediaPanelProps {
   ) => Promise<void>;
   onRemoveFromServices: (mediaId: string) => Promise<void>;
   orgId: Id<"organizations"> | null;
+  /** How fast the live video plays: 1 as recorded. */
+  liveVideoRate?: number;
+  /** Play the live video, and the next one, at `rate`: the one speed the center pane's control sets too. */
+  onSetVideoRate?: (rate: number) => void;
 }
 
 export interface MediaPanelRef {
@@ -261,6 +300,8 @@ export const MediaPanel = memo(
       onRenameInServices,
       onRemoveFromServices,
       orgId,
+      liveVideoRate = 1,
+      onSetVideoRate,
     }: MediaPanelProps,
     ref
   ) {
@@ -435,6 +476,14 @@ export const MediaPanel = memo(
       } else {
         onSelectForOutput(item);
       }
+    };
+
+    // One speed, the live video's, kept from video to video as a player's
+    // is (`services/playback.rs`). Set before a video not on screen is put
+    // there, so it starts at that speed rather than changing once running.
+    const handleSpeed = (item: MediaItem, speed: number) => {
+      onSetVideoRate?.(speed);
+      if (outputMediaItem?.id !== item.id) onSelectForOutput(item);
     };
 
     const openRenameMedia = (item: MediaItem) => {
@@ -793,6 +842,8 @@ export const MediaPanel = memo(
                             onAddToService={handleAddToService}
                             onRename={openRenameMedia}
                             onDelete={setMediaToRemove}
+                            onSpeed={onSetVideoRate ? handleSpeed : undefined}
+                            speed={outputMediaItem?.id === item.id ? liveVideoRate : null}
                             isInsideService={isInsideService}
                             isGridView={isGridView}
                             unplayableReason={unplayableMedia.get(item.path)}

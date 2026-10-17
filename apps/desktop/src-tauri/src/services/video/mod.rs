@@ -18,7 +18,9 @@ use std::path::Path;
 pub mod ffmpeg;
 #[cfg(target_os = "macos")]
 mod gpu_scale;
+pub mod live;
 mod read_ahead;
+pub mod resize;
 pub use read_ahead::ReadAhead;
 
 /// One decoded frame, in the compositor's own terms.
@@ -34,6 +36,14 @@ pub struct VideoFrame {
     pub bgra: Vec<u8>,
     /// Where this frame sits in the video, in seconds.
     pub presentation_seconds: f64,
+}
+
+/// Its pixels, for something that shows them as they are: an image wrapped
+/// around a shared frame without copying it (`surface::panel`).
+impl AsRef<[u8]> for VideoFrame {
+    fn as_ref(&self) -> &[u8] {
+        &self.bgra
+    }
 }
 
 impl VideoFrame {
@@ -89,6 +99,14 @@ pub trait VideoDecoder: Send {
     fn duration_seconds(&self) -> Option<f64>;
 
     fn dimensions(&self) -> (u32, u32);
+
+    /// The decoder inside any decoding ahead wrapped around this one, taken
+    /// out before it has started: for a caller that decodes ahead itself
+    /// (`live.rs`), where a second queue would only hold two more frames and a
+    /// thread for nothing. `None` for a decoder that is not wrapped.
+    fn take_unbuffered(&mut self) -> Option<Box<dyn VideoDecoder>> {
+        None
+    }
 
     /// The next frame if it is ready now, without waiting for one.
     ///

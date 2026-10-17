@@ -29,8 +29,12 @@ use serde::Serialize;
 use crate::services::screen_picture::{arrange, Arrangement};
 
 #[cfg(target_os = "macos")]
+mod iosurface;
+#[cfg(target_os = "macos")]
 pub mod macos;
+pub mod panel;
 pub mod stream;
+pub mod tap;
 
 /// What goes on the native view. Frames are premultiplied BGRA, top row first.
 pub trait Presenter: Send {
@@ -93,6 +97,10 @@ pub const HANDOVER_DELAY: Duration = Duration::from_millis(100);
 /// again, so it has repainted before the view under it goes.
 pub const HANDBACK_DELAY: Duration = Duration::from_millis(300);
 
+/// How many frames already handed to the views are kept to be drawn into
+/// again: the one on screen, and the one before while it is let go of.
+const SPARE_FRAMES: usize = 3;
+
 /// A screen's output windows, by label, each with its view.
 pub type Presenters = Vec<(String, Box<dyn Presenter>)>;
 
@@ -140,13 +148,35 @@ struct ViewState {
 /// The picture is drawn once a tick for all of the screen's windows, and
 /// each window shows it whole or its own part of it.
 pub fn run(
+    source: impl SurfaceSource,
+    views: Presenters,
+    changes: &Mutex<Changes>,
+    stop: &AtomicBool,
+    on_presenting: &(dyn Fn(&str, bool) + Send + Sync),
+) {
+    run_tapped(source, views, changes, stop, on_presenting, None);
+}
+
+/// [`run`], offering each frame drawn to the operator's preview of `screen`
+/// as well (`tap`): the same picture, not a second compositor drawing it.
+pub fn run_tapped(
     mut source: impl SurfaceSource,
     mut views: Presenters,
     changes: &Mutex<Changes>,
     stop: &AtomicBool,
     on_presenting: &(dyn Fn(&str, bool) + Send + Sync),
+    screen: Option<&str>,
 ) {
+    // Drawn into, then handed to the views as it is: wrapped in an `Arc`
+    // rather than copied, the view's image holding it until the screen has
+    // moved on (`macos::image_from`). A full 1080p frame copied every frame
+    // was eight megabytes a frame for nothing.
     let mut buffer = Vec::new();
+    // The frame last drawn, as the views were handed it.
+    let mut drawn: Option<Arc<Vec<u8>>> = None;
+    // Frames handed out before it, kept so one the views have let go of is
+    // drawn into again rather than allocated afresh.
+    let mut spare: Vec<Arc<Vec<u8>>> = Vec::new();
     let mut states: HashMap<String, ViewState> = HashMap::new();
     let mut failures = 0u32;
 
@@ -196,11 +226,26 @@ pub fn run(
             })
             .collect();
 
-        match source.render(&sizes, &mut buffer) {
-            Ok(changed) if !buffer.is_empty() => {
+        let rendered = source.render(&sizes, &mut buffer);
+        if matches!(rendered, Ok(true)) && !buffer.is_empty() {
+            if let Some(previous) = drawn.replace(Arc::new(std::mem::take(&mut buffer))) {
+                spare.push(previous);
+            }
+            if let Some(free) = spare.iter().position(|frame| Arc::strong_count(frame) == 1) {
+                buffer = Arc::try_unwrap(spare.swap_remove(free)).unwrap_or_default();
+            }
+            // Any more than this are still on screen somewhere; they go when
+            // the views let go of them.
+            spare.truncate(SPARE_FRAMES);
+            if let (Some(screen), Some(frame)) = (screen, drawn.as_ref()) {
+                tap::publish(screen, Arc::clone(frame), source.canvas_size());
+            }
+        }
+        match rendered {
+            Ok(changed) if drawn.is_some() => {
                 failures = 0;
                 let canvas = source.canvas_size();
-                let mut whole: Option<Arc<Vec<u8>>> = None;
+                let whole = drawn.clone().unwrap_or_default();
                 let mut refused = Vec::new();
                 for (label, presenter) in views.iter_mut() {
                     let state = states.entry(label.clone()).or_default();
@@ -210,15 +255,12 @@ pub fn run(
                     let arrangement = source.arrangement(label).filter(|each| !each.is_identity());
                     let (size, frame) = match (arrangement, presenter.size()) {
                         (Some(arrangement), Some(size)) => {
-                            arrange(&buffer, canvas, &mut state.arranged, size, &arrangement);
-                            (size, Arc::new(state.arranged.clone()))
+                            arrange(&whole, canvas, &mut state.arranged, size, &arrangement);
+                            // Its own part of the picture, handed over as it
+                            // is; the next is arranged into a fresh buffer.
+                            (size, Arc::new(std::mem::take(&mut state.arranged)))
                         }
-                        _ => (
-                            canvas,
-                            whole
-                                .get_or_insert_with(|| Arc::new(buffer.clone()))
-                                .clone(),
-                        ),
+                        _ => (canvas, Arc::clone(&whole)),
                     };
                     match presenter.present(size.0, size.1, frame) {
                         Ok(()) => {
@@ -275,7 +317,10 @@ pub fn run(
     }
 
     // Stopped or given up: nothing put in from now on is drawn, and what was
-    // is let go with the rest.
+    // is let go with the rest. The preview draws for itself again.
+    if let Some(screen) = screen {
+        tap::clear(screen);
+    }
     let stranded = {
         let mut changes = lock(changes);
         changes.closed = true;
@@ -316,13 +361,33 @@ impl SurfaceWorker {
         presenters: Presenters,
         on_presenting: OnPresenting,
     ) -> std::io::Result<Self> {
+        Self::spawn_tapped(source, presenters, on_presenting, None)
+    }
+
+    /// [`spawn`](Self::spawn), offering its frames to the operator's preview
+    /// of `screen` (`tap`).
+    pub fn spawn_tapped(
+        source: impl SurfaceSource + 'static,
+        presenters: Presenters,
+        on_presenting: OnPresenting,
+        screen: Option<String>,
+    ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let changes = Arc::new(Mutex::new(Changes::default()));
         let shared = changes.clone();
         let handle = std::thread::Builder::new()
             .name("audience-surface".to_owned())
-            .spawn(move || run(source, presenters, &shared, &flag, on_presenting.as_ref()))?;
+            .spawn(move || {
+                run_tapped(
+                    source,
+                    presenters,
+                    &shared,
+                    &flag,
+                    on_presenting.as_ref(),
+                    screen.as_deref(),
+                )
+            })?;
         Ok(Self {
             stop,
             handle: Some(handle),

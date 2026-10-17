@@ -29,9 +29,11 @@ const ONE_REFRESH_MS = 1000 / 60;
  * picture here then shows what the audience screen and the sound show at the
  * same moment, rather than a frame or two behind.
  *
- * One request at a time, the next as soon as one is painted. An answer with
- * nothing new (`X-Frame-Same`) costs no JPEG: a still picture is not sent
- * again sixty times a second.
+ * One request at a time, the next as soon as one is painted. A request for a
+ * frame newer than the one shown is held in Rust until it is drawn, so a
+ * running video's frames arrive as they are made, and a still picture is
+ * asked after four times a second rather than polled for: an answer with
+ * nothing new (`X-Frame-Same`) costs no JPEG.
  */
 export function FrameCanvas({
   frameUrl,
@@ -112,9 +114,16 @@ export function FrameCanvas({
           continue;
         }
         const answeredAt = performance.now();
+        // How long Rust held the request for a newer frame: not travel time.
+        const waited = Number(response.headers.get("X-Frame-Waited-Ms")) || 0;
         if (response.status !== 200) {
-          // Nothing newer than what is shown, or nothing yet at all.
-          await wait(response.headers.get("X-Frame-Same") ? 6 : 60);
+          // Nothing newer than what is shown — Rust already waited for one,
+          // so ask again at once — or nothing yet at all.
+          if (response.headers.get("X-Frame-Same")) {
+            await wait(waited >= 100 ? 0 : 16);
+          } else {
+            await wait(60);
+          }
           continue;
         }
         const age = Number(response.headers.get("X-Frame-Age-Ms")) || 0;
@@ -136,9 +145,11 @@ export function FrameCanvas({
         shownSeq = Number.isFinite(seq) ? seq : null;
 
         // How late this frame reached the screen: as old as it was when Rust
-        // answered (about halfway through the round trip), plus the time
-        // since, plus the refresh it is shown at.
-        const late = age + (paintedAt - (askedAt + (answeredAt - askedAt) / 2)) + ONE_REFRESH_MS;
+        // answered, plus the trip back (half the round trip, less the time it
+        // was held waiting for the frame), plus the time since, plus the
+        // refresh it is shown at.
+        const tripBack = Math.max(0, answeredAt - askedAt - waited) / 2;
+        const late = age + tripBack + (paintedAt - answeredAt) + ONE_REFRESH_MS;
         lead = lead === 0 ? late : lead * 0.9 + late * 0.1;
       }
     })();

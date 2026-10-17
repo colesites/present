@@ -4,6 +4,95 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+
+- Recording. File ▸ New Recording opens a window — it is not a tab — to record
+  the microphone into tracks. Pause holds the take and record continues it;
+  stopping finishes it, and recording that track again replaces it. Share ▸
+  Export Recording writes MP3, AIFF or WAVE on every platform, and AAC on a
+  Mac, at low, medium, high or highest quality, each track on its own or mixed
+  into one file. Closing the window stops the microphone and keeps what was
+  recorded.
+
+### Not in this release
+
+- Windows and Linux still draw the audience window, the center pane and the
+  screen preview in the page. The native picture inside the window is a Mac.
+- An NDI stream still sends the first moments of a new video without it. The
+  screens keep the picture they have until that frame is ready; the stream
+  does not.
+
+### Fixed
+
+- Libraries. Choosing a category such as Songs showed an empty list when that
+  name existed twice, once created on this computer and once from the account.
+  All still listed everything, and the counts counted both. The list now
+  follows the name, the way the counts do, and a new item is filed with the
+  songs already there.
+
+## [0.4.14] - 2026-10-13
+
+### Added
+
+- Media settings. The sliders button beside the screen preview opens them for
+  the media on screen: its speed and whether it loops, for a video; whether it
+  fits inside the screen with bars, fills it cropped at the edges, or is
+  stretched to it; and the filters. Fit and the filters are kept for each
+  file, so a background loop can fill the screen while a phone's portrait
+  video stays whole.
+- Speed in the media panel. Right-click a video: Speed changes the speed of
+  the one on screen, and Show at Speed puts another on screen at the speed
+  chosen. It is the same speed as the center pane's control, kept from video
+  to video as a player keeps it.
+- Timer categories, as the Audio tab has playlists: one service's run of
+  timers, another's. Pick one at the top of the Timer tab; a new timer goes in
+  the category shown, a timer can be moved to another, and Auto starts the
+  next timer of the same category. Timers from before are in Service.
+
+### Changed
+
+- A playing video is decoded once, for every picture of it. The audience
+  screen, the screen preview, the center pane, each stage display and NDI
+  each opened it — five decoders of one file. Measured on a 2018 MacBook
+  Pro, fifteen seconds of a 10-bit 4:2:2 file: 34.5 s of processor time
+  instead of 58.7 s, and 268 MB instead of 846 MB.
+- On a Mac, the center pane's video and the screen preview are drawn by the
+  app inside the window, as the audience screen is, not by the page: the
+  same frame as the screen at the same moment. Menus and dialogs still open
+  over them.
+- A video starts on its first frame, with its sound. The screens keep the
+  picture they have until the new video's first frame is decoded, and the
+  sound waits for it too; a file that takes half a second to open no longer
+  shows black for that long, nor is heard before it is seen.
+- Videos decode more than twice as fast: the decoder converts one frame while
+  the next is decoded, where it did one and then the other. 4K at 30 fps came
+  out at 33 to 38 frames a second on a 2018 MacBook Pro, so anything else
+  running made the screens skip; it is 82 to 93 now.
+- Seeking skips, on the way to the place asked for, the frames nothing else
+  is decoded from: a 1080p seek in 340 ms rather than 600.
+- A small video enlarged on a large screen — 480 lines on 1080p — is
+  sharper, enlarged as QuickTime enlarges it.
+- The sound tells the windows where the video is when that changes, not ten
+  times a second, and a position slider moves the video once, when it is let
+  go. Settings and the screen composer are told of a change instead of
+  checking for one several times a second.
+
+### Fixed
+
+- The operator window no longer hangs while a video plays. Every frame shown
+  on a Mac was colour-matched by the processor on the window's main thread,
+  which is the thread that answers the mouse: frames now go to the window
+  server as they are, and it matches their colours on the GPU.
+- A video whose pixels are not square — a DVD-shaped 720×480 meant to be seen
+  at 16:9, which QuickTime shows as 853×480 — was shown squeezed to 3:2. It
+  is shown its true shape, and a phone's video recorded upright is shown
+  upright.
+- The timer no longer flashes on the screen and the preview as the app opens
+  with the timer switched off.
+- The center pane skipped and froze while the audience screen played on, as
+  if the screen had a control of its own; and the preview went blank for a
+  moment on coming back to the app.
+
 ## [0.4.13] - 2026-10-05
 
 ### Changed

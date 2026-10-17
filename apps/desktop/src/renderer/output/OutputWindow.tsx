@@ -499,14 +499,14 @@ export function OutputWindow() {
                   label="Output media video"
                   url={state.mediaUrl}
                   clock={{ mode: "scene" }}
-                  fit={state.screenLayout?.mediaFill ? "cover" : "contain"}
+                  fit={mediaFitOf(state)}
                   className="absolute inset-0 h-full w-full"
                   style={{ filter: state.mediaFilterCSS }}
                 />
               ) : (
                 <OutputImageLayer
                   url={state.mediaUrl}
-                  fitMode={state.screenLayout?.mediaFill ? "cover" : "contain"}
+                  fitMode={mediaFitOf(state)}
                   className="absolute inset-0"
                   filter={state.mediaFilterCSS}
                 />
@@ -828,6 +828,19 @@ function getBackgroundSize(fitMode: ScreenComposerRegion["fitMode"] | "cover") {
   if (fitMode === "fill") return "100% 100%";
   if (fitMode === "contain" || fitMode === "scale-down") return "contain";
   return "cover";
+}
+
+/**
+ * How the background media meets the screen, as the compositor draws it
+ * (`pipeline.rs`): filling a layout's box when the layout says so, otherwise
+ * as the media's own settings say — inside the screen with bars, filling it
+ * cropped, or stretched to it.
+ */
+function mediaFitOf(state: OutputState): "contain" | "cover" | "fill" {
+  if (state.screenLayout?.mediaFill) return "cover";
+  if (state.mediaFit === "fill") return "cover";
+  if (state.mediaFit === "stretch") return "fill";
+  return "contain";
 }
 
 function OutputImageLayer({

@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useId, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, type CSSProperties } from "react";
 
 import type { MediaFramesClock } from "../../tauri/media-frames";
+import { useNativePanel } from "../hooks/useNativePanel";
 import { FrameCanvas, type FrameSize } from "./FrameCanvas";
 
 const frames = () => import("../../tauri/media-frames");
@@ -23,6 +24,11 @@ void frames().then((loaded) => {
  * Drawn by `FrameCanvas`, which asks for each frame drawn as far ahead as the
  * trip to this screen takes, so the picture here and the audience screen are
  * on the same frame at the same moment.
+ *
+ * With `native`, on a Mac, the picture is not drawn by this page at all but by
+ * the app, under it, as the audience screen is (`useNativePanel`): the frame
+ * the screens show, at the moment they show it, and nothing this page is busy
+ * with can make it stutter. Where that cannot be, it is drawn here as above.
  */
 export function RustVideo({
   url,
@@ -33,6 +39,7 @@ export function RustVideo({
   largest,
   label,
   onClick,
+  native = false,
 }: {
   url: string;
   clock: MediaFramesClock;
@@ -43,34 +50,70 @@ export function RustVideo({
   largest?: number;
   label?: string;
   onClick?: () => void;
+  /** Drawn by the app under the page where it can be (`useNativePanel`). */
+  native?: boolean;
 }) {
   const reactId = useId();
   const id = `v${reactId.replace(/[^A-Za-z0-9_-]/g, "")}`;
+  const boxRef = useRef<HTMLDivElement>(null);
 
-  // Which file, and how it keeps time. A running local clock is not sent again
-  // as it runs: Rust moves it on.
   const clockKey = JSON.stringify(clock);
+  // The app fits its picture inside the box, as `contain` does; a picture
+  // that covers or fills its box is the page's to draw.
+  const drawnNatively = native && fit === "contain";
+  const source = useMemo(
+    () =>
+      drawnNatively
+        ? { kind: "media" as const, url, clock: JSON.parse(clockKey) as MediaFramesClock }
+        : null,
+    [clockKey, drawnNatively, url],
+  );
+  const drawing = useNativePanel(boxRef, id, source);
+  const pageDraws = drawing === "page";
+
+  // Which file, and how it keeps time — for the page's own drawing. A running
+  // local clock is not sent again as it runs: Rust moves it on.
   useEffect(() => {
+    if (!pageDraws) return;
     const parsed = JSON.parse(clockKey) as MediaFramesClock;
     void frames()
       .then((loaded) => loaded.setMediaFrames(id, url, parsed))
       .catch((error: unknown) => console.error("[Video] could not set the player", error));
-  }, [clockKey, id, url]);
+  }, [clockKey, id, pageDraws, url]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    if (!pageDraws) return;
+    return () => {
       void frames()
         .then((loaded) => loaded.removeMediaFrames(id))
         .catch((): void => undefined);
-    },
-    [id],
-  );
+    };
+  }, [id, pageDraws]);
 
   const frameUrl = useCallback(
     (size: FrameSize, leadMs: number, after: number | null) =>
       core ? core.mediaFrameUrl(id, size.width, size.height, leadMs, after) : null,
     [id],
   );
+
+  if (drawnNatively) {
+    // The box the app draws under, or — where it cannot — the page's own
+    // canvas inside it.
+    return (
+      <div
+        ref={boxRef}
+        className={className}
+        style={style}
+        role={label ? "img" : undefined}
+        aria-label={label}
+        onClick={onClick}
+      >
+        {pageDraws ? (
+          <FrameCanvas frameUrl={frameUrl} fit={fit} largest={largest} className="h-full w-full" />
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <FrameCanvas

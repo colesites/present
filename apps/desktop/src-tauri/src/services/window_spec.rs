@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use super::display::ScreenRole;
 
-/// Present's eight windows. The serde names match the `?window=` values
-/// `App.tsx:57-72` already branches on.
+/// Present's windows. The serde names match the `?window=` values `App.tsx`
+/// already branches on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WindowRole {
@@ -34,6 +34,9 @@ pub enum WindowRole {
     StageEditor,
     /// Every screen at once, on the media stage's display.
     Multiview,
+    /// Microphone recording. Opened from File ▸ New Recording, and from nowhere
+    /// else: it is not a tab of the operator window.
+    Recorder,
     /// Quick lyric editor. One window per song being edited.
     MiniLyrics,
     /// An audience screen added in Screen Configuration, beside the Output.
@@ -45,7 +48,7 @@ pub enum WindowRole {
 
 impl WindowRole {
     /// Every single-instance role, i.e. everything `open_window` accepts.
-    pub const SINGLETONS: [WindowRole; 9] = [
+    pub const SINGLETONS: [WindowRole; 10] = [
         WindowRole::Main,
         WindowRole::Output,
         WindowRole::MediaStage,
@@ -55,6 +58,7 @@ impl WindowRole {
         WindowRole::ScreenComposer,
         WindowRole::StageEditor,
         WindowRole::Multiview,
+        WindowRole::Recorder,
     ];
 
     /// The Tauri window label. Stable, because capabilities are matched on it.
@@ -69,6 +73,7 @@ impl WindowRole {
             WindowRole::ScreenComposer => "screen-composer",
             WindowRole::StageEditor => "stage-editor",
             WindowRole::Multiview => "multiview",
+            WindowRole::Recorder => "recorder",
             WindowRole::MiniLyrics => "mini-lyrics",
             // Prefixes: each screen's window adds its id.
             WindowRole::AudienceScreen => "audience",
@@ -343,6 +348,23 @@ pub fn spec_for(role: WindowRole) -> WindowSpec {
                 role: ScreenRole::Media,
             },
             background: Rgb::BLACK,
+            crash_policy: CrashPolicy::Ignore,
+            focus_on_show: true,
+            show_watchdog_ms: SHOW_WATCHDOG_MS,
+        },
+
+        WindowRole::Recorder => WindowSpec {
+            role,
+            label: role.label().to_owned(),
+            title: "Recording".to_owned(),
+            url: "index.html?window=recorder".to_owned(),
+            placement: Placement::Windowed {
+                width: 960.0,
+                height: 540.0,
+                min: Some((760.0, 420.0)),
+                max: None,
+            },
+            background: Rgb::APP_CHROME,
             crash_policy: CrashPolicy::Ignore,
             focus_on_show: true,
             show_watchdog_ms: SHOW_WATCHDOG_MS,
@@ -677,9 +699,9 @@ mod tests {
     }
 
     #[test]
-    fn the_six_shared_bundle_windows_carry_the_window_query_parameter() {
-        // Only two HTML entries exist; six windows load the main one and
-        // App.tsx:57-72 branches on `?window=`.
+    fn the_shared_bundle_windows_carry_the_window_query_parameter() {
+        // Only two HTML entries exist. These windows load the main one and
+        // App.tsx branches on `?window=`.
         for (role, expected) in [
             (WindowRole::MediaStage, "stage&screen=media"),
             (WindowRole::WorshipStage, "stage&screen=worship"),
@@ -688,6 +710,7 @@ mod tests {
             (WindowRole::ScreenComposer, "screen-composer"),
             (WindowRole::StageEditor, "stage-editor"),
             (WindowRole::Multiview, "multiview"),
+            (WindowRole::Recorder, "recorder"),
         ] {
             let spec = spec_for(role);
             assert_eq!(spec.url, format!("index.html?window={expected}"));

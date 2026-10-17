@@ -30,16 +30,16 @@ const renderer = walk(path.join(DESKTOP_DIR, "src")).map((file) => fs.readFileSy
 const menuItems = () => {
   const built = menu.slice(0, menu.indexOf("#[cfg(test)]"));
   return new Set(
-    [...built.matchAll(/"((?:file|edit|view|presentation|screens|help|window)\.[a-z.-]+)"/g)].map(
+    [...built.matchAll(/"((?:file|edit|view|presentation|screens|help|window|share)\.[a-z.-]+)"/g)].map(
       (match) => match[1],
     ),
   );
 };
 
-/** The ones Rust carries out itself: the live controls, and Minimize. */
+/** The ones Rust carries out itself: the live controls, Minimize, New Recording, and Export Recording. */
 const handledInRust = () => {
   const controls = [...menu.matchAll(/"(presentation\.[a-z-]+)" => Action::/g)].map((match) => match[1]);
-  return new Set([...controls, "window.minimize"]);
+  return new Set([...controls, "window.minimize", "file.new-recording", "share.export-recording"]);
 };
 
 const registered = new Set(

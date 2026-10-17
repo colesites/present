@@ -31,9 +31,6 @@ impl PlaybackState {
     /// Apply a change, returning the new state only when something moved.
     ///
     /// Same contract as every other slice: a no-op does not wake every window.
-    /// It matters more here than elsewhere, because the element reports its
-    /// position about ten times a second and most of those reports change
-    /// nothing worth broadcasting.
     pub fn update<F>(&self, mutate: F) -> Option<MediaPlayback>
     where
         F: FnOnce(&mut MediaPlayback) -> bool,

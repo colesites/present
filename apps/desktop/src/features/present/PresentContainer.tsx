@@ -2050,6 +2050,7 @@ export function PresentContainer({
     textPosition: outputTextPosition,
     videoSettings,
     mediaFilterCSS: effectiveMediaFilterCSS,
+    mediaFit: effectiveMediaFilters.fit ?? "fit",
     isVideoPlaying:
       isScriptureActive && effectiveActiveMediaItem?.type === "video"
         ? true

@@ -109,6 +109,71 @@ impl MediaPlayback {
         self.set_playing(true)
     }
 
+    /// Bring the position up to `now_ms`: what a running video has played
+    /// since it was last seen is counted in, and the sample is now.
+    ///
+    /// The sound engine tells the transport where it is only when that is
+    /// news (`services::sound`), not ten times a second, so between reports
+    /// the position is where it was and the time since says how far it has
+    /// gone. A change made at `now_ms` — a pause, a new speed — has to start
+    /// from where the video really is, or it would put it back to the last
+    /// report.
+    pub fn anchor(&mut self, now_ms: f64) {
+        if self.media_id.is_none() || !now_ms.is_finite() {
+            return;
+        }
+        if self.playing {
+            if let Some(sampled_at) = self.position_sampled_at_ms {
+                let played = ((now_ms - sampled_at) / 1000.0).max(0.0) * self.rate;
+                self.position_seconds = self.clamp_position(self.position_seconds + played);
+            }
+        }
+        self.position_sampled_at_ms = Some(now_ms);
+    }
+
+    /// Start at `now_ms`, from where it is then.
+    pub fn play_at(&mut self, now_ms: f64) -> bool {
+        self.switch_at(true, now_ms)
+    }
+
+    /// Hold at `now_ms`, where it has got to by then.
+    pub fn pause_at(&mut self, now_ms: f64) -> bool {
+        self.switch_at(false, now_ms)
+    }
+
+    pub fn toggle_at(&mut self, now_ms: f64) -> bool {
+        // Refuses rather than guessing when there is nothing loaded, the same
+        // way slide navigation does (`services::presentation`).
+        if self.media_id.is_none() {
+            return false;
+        }
+        self.switch_at(!self.playing, now_ms)
+    }
+
+    /// Play faster or slower from `now_ms`, from where it is then.
+    pub fn set_rate_at(&mut self, rate: f64, now_ms: f64) -> bool {
+        let rate = if rate.is_finite() {
+            rate.clamp(SLOWEST, FASTEST)
+        } else {
+            1.0
+        };
+        if (self.rate - rate).abs() < 1e-6 {
+            return false;
+        }
+        self.anchor(now_ms);
+        self.rate = rate;
+        true
+    }
+
+    fn switch_at(&mut self, playing: bool, now_ms: f64) -> bool {
+        if self.media_id.is_none() || self.playing == playing {
+            return false;
+        }
+        self.anchor(now_ms);
+        self.playing = playing;
+        true
+    }
+
     /// Play faster or slower, within [`SLOWEST`] and [`FASTEST`]. It stays
     /// at that rate from video to video, as a player's speed does.
     pub fn set_rate(&mut self, rate: f64) -> bool {
@@ -188,11 +253,17 @@ impl MediaPlayback {
             return false;
         }
         let clamped = self.clamp_position(position_seconds);
-        if self.position_seconds == clamped {
+        let sampled_at_ms = sampled_at_ms.filter(|value| value.is_finite());
+        // The same place is news when it comes with a new time. The sound
+        // reports only when something changes, so its report that a new item
+        // has started — at 0, where the item already is — is the time every
+        // window counts the running video from. Dropped, they would all hold
+        // it at 0:00, and no later report need come to put that right.
+        if self.position_seconds == clamped && self.position_sampled_at_ms == sampled_at_ms {
             return false;
         }
         self.position_seconds = clamped;
-        self.position_sampled_at_ms = sampled_at_ms.filter(|value| value.is_finite());
+        self.position_sampled_at_ms = sampled_at_ms;
         true
     }
 
@@ -236,6 +307,14 @@ impl MediaPlayback {
             None => floored,
         }
     }
+}
+
+/// Now, in milliseconds since the Unix epoch: the clock every window shares,
+/// which `MediaPlayback::position_sampled_at_ms` is on.
+pub fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
 }
 
 /// Should a surface at `element_position` seek to `target`?
@@ -350,6 +429,72 @@ mod tests {
 
         playback.select_media(Some("countdown"), false);
         assert_eq!(playback.position_sampled_at_ms, None);
+    }
+
+    /// A new item is at 0 already, and the sound's report that it has
+    /// started there is the first and maybe the only one: kept for its time,
+    /// or every window would show the running video held at 0:00.
+    #[test]
+    fn a_report_where_it_already_is_still_says_when() {
+        let mut playback = MediaPlayback::default();
+        playback.select_media(Some("loop"), true);
+        assert_eq!(playback.position_sampled_at_ms, None);
+
+        assert!(
+            playback.report_position(0.0, Some(1_000.0)),
+            "the time is news"
+        );
+        assert_eq!(playback.position_sampled_at_ms, Some(1_000.0));
+        assert!(
+            !playback.report_position(0.0, Some(1_000.0)),
+            "the same report again is not"
+        );
+
+        playback.anchor(3_000.0);
+        assert_eq!(playback.position_seconds, 2.0, "counted from then");
+    }
+
+    /// The sound reports only when that is news, so a pause or a new speed
+    /// has to count what played since the last report, or it would put the
+    /// video back there — seconds, after a minute of playing.
+    #[test]
+    fn a_change_starts_from_where_the_video_really_is() {
+        let mut playback = on_video("bumper");
+        playback.play();
+        playback.report_position(10.0, Some(1_000.0));
+
+        assert!(playback.pause_at(61_000.0));
+        assert!(!playback.playing);
+        assert_eq!(playback.position_seconds, 70.0, "a minute after 10 s");
+        assert_eq!(playback.position_sampled_at_ms, Some(61_000.0));
+
+        assert!(!playback.pause_at(62_000.0), "already held");
+        assert!(playback.play_at(90_000.0));
+        assert_eq!(playback.position_seconds, 70.0, "a pause does not move it");
+
+        assert!(playback.set_rate_at(2.0, 91_000.0));
+        assert_eq!(playback.position_seconds, 71.0);
+        assert!(playback.toggle_at(92_000.0));
+        assert_eq!(
+            playback.position_seconds, 73.0,
+            "a second at twice the speed"
+        );
+        assert!(!playback.playing);
+        assert!(!playback.set_rate_at(2.0, 93_000.0), "already that fast");
+
+        playback.set_duration(Some(80.0));
+        playback.play_at(93_000.0);
+        playback.anchor(200_000.0);
+        assert_eq!(playback.position_seconds, 80.0, "never past the end");
+    }
+
+    #[test]
+    fn nothing_is_anchored_with_nothing_loaded() {
+        let mut playback = MediaPlayback::default();
+        playback.anchor(1_000.0);
+        assert!(!playback.play_at(1_000.0));
+        assert!(!playback.toggle_at(1_000.0));
+        assert_eq!(playback, MediaPlayback::default());
     }
 
     #[test]

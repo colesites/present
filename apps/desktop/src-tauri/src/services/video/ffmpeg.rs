@@ -17,9 +17,11 @@
 //! refuses — H.264 4:2:2 on most of them, among others — is decoded in software
 //! on every core, found out on the first frame so a service never waits on it.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::ptr;
-use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Once};
 
 use ff::format::Pixel;
 use ff::software::scaling;
@@ -222,8 +224,17 @@ impl Scaler {
                 // Bilinear, which widens to a proper average when shrinking 4K.
                 // Measured against AVFoundation it was the closest match, and
                 // among the fastest; area averaging and full chroma
-                // interpolation were no closer and slower.
-                (c"sws_flags", i64::from(scaling::Flags::BILINEAR.bits())),
+                // interpolation were no closer and slower. Enlarging — a
+                // 480-line video on a 1080p screen — bilinear blurs, and
+                // bicubic keeps the edges, as QuickTime does.
+                (
+                    c"sws_flags",
+                    i64::from(if size.0 > width || size.1 > height {
+                        scaling::Flags::BICUBIC.bits()
+                    } else {
+                        scaling::Flags::BILINEAR.bits()
+                    }),
+                ),
                 // Slices on every core (0) when resizing: a quarter of the time
                 // of one. A conversion at the same size is swscale's fast path,
                 // which slicing made no faster.
@@ -383,16 +394,127 @@ enum GpuScaling {
     Off,
 }
 
-pub struct FfmpegVideoDecoder {
-    input: ff::format::context::Input,
-    stream_index: usize,
-    /// Seconds per timestamp unit.
-    time_base: f64,
-    decoder: ff::decoder::Video,
-    scaler: Option<Scaler>,
+/// How much wider than high a stored pixel is shown: 1 for square pixels. A
+/// DVD-shaped 720x480 meant to be seen at 16:9 says 32:27; shown as stored,
+/// it was squeezed to 3:2. The container's word wins over the stream's, as
+/// players take it.
+///
+/// # Safety
+///
+/// `stream` is a stream of an open input.
+unsafe fn pixel_aspect(stream: *const ff::ffi::AVStream) -> f64 {
+    let ratio = |value: ff::ffi::AVRational| {
+        (value.num > 0 && value.den > 0).then(|| f64::from(value.num) / f64::from(value.den))
+    };
+    // SAFETY: the caller's: a stream, and its parameters, of an open input.
+    let (container, codec) = unsafe {
+        (
+            (*stream).sample_aspect_ratio,
+            (*(*stream).codecpar).sample_aspect_ratio,
+        )
+    };
+    ratio(container)
+        .or_else(|| ratio(codec))
+        .filter(|aspect| (0.1..=10.0).contains(aspect))
+        .unwrap_or(1.0)
+}
+
+/// How many quarter turns clockwise a stream's pictures are shown turned by.
+/// A phone keeps a portrait video lying on its side and says how to stand it
+/// up; ignored, it played on its side.
+///
+/// # Safety
+///
+/// `stream` is a stream of an open input.
+unsafe fn quarter_turns(stream: *const ff::ffi::AVStream) -> u8 {
+    // SAFETY: the caller's; the side data is the stream's own, read only.
+    let degrees = unsafe {
+        let parameters = (*stream).codecpar;
+        let side = ff::ffi::av_packet_side_data_get(
+            (*parameters).coded_side_data,
+            (*parameters).nb_coded_side_data,
+            ff::ffi::AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX,
+        );
+        if side.is_null() || (*side).data.is_null() || (*side).size < 9 * 4 {
+            return 0;
+        }
+        ff::ffi::av_display_rotation_get((*side).data.cast::<i32>())
+    };
+    if !degrees.is_finite() {
+        return 0;
+    }
+    // FFmpeg's angle turns counter-clockwise; standing it up turns it back.
+    ((-degrees / 90.0).round() as i64).rem_euclid(4) as u8
+}
+
+/// The size a stream's pictures are shown at: its pixels made square, then
+/// stood the way it is shown.
+fn shown_size(coded: (u32, u32), aspect: f64, turns: u8) -> (u32, u32) {
+    let width = ((f64::from(coded.0) * aspect).round() as u32).max(1);
+    if turns % 2 == 1 {
+        (coded.1, width)
+    } else {
+        (width, coded.1)
+    }
+}
+
+/// `bgra`, `size` as recorded, turned `turns` quarter turns clockwise: a
+/// quarter or three quarters swaps its width and height. In square tiles, so
+/// a 1080p frame is read and written a cache line at a time rather than a
+/// pixel a row.
+fn turn_bgra(bgra: &[u8], (width, height): (u32, u32), turns: u8) -> Vec<u8> {
+    let (width, height) = (width as usize, height as usize);
+    let mut out = vec![0u8; bgra.len()];
+    if bgra.len() != width * height * 4 {
+        return bgra.to_vec();
+    }
+    const TILE: usize = 32;
+    let turned_width = if turns % 2 == 1 { height } else { width };
+    for tile_y in (0..height).step_by(TILE) {
+        for tile_x in (0..width).step_by(TILE) {
+            for y in tile_y..(tile_y + TILE).min(height) {
+                for x in tile_x..(tile_x + TILE).min(width) {
+                    let (to_x, to_y) = match turns {
+                        1 => (height - 1 - y, x),
+                        2 => (width - 1 - x, height - 1 - y),
+                        _ => (y, width - 1 - x),
+                    };
+                    let from = (y * width + x) * 4;
+                    let to = (to_y * turned_width + to_x) * 4;
+                    out[to..to + 4].copy_from_slice(&bgra[from..from + 4]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// How far short of a seek's target the decoder stops skipping the frames
+/// nothing else is decoded from (`decode_next`): more than any file holds
+/// frames back for reordering, so every frame near the target is decoded.
+const CATCH_UP_MARGIN: f64 = 0.5;
+
+/// What turns a decoded frame into BGRA at the size asked for: shrunk on the
+/// GPU if it is there and larger, copied off it, and converted. It runs on a
+/// thread of its own (`Pipeline`) while the decoder decodes the next frame.
+///
+/// They took turns: the GPU decoder is driven one frame at a time, and while
+/// a 4K frame decoded — some 24 ms on the owner's MacBook Pro — the copy and
+/// the conversion waited, and while they ran the decoder did. A 30 fps 4K
+/// file came out at 21 to 25 frames a second, and the screens skipped to
+/// keep up with the sound. Side by side, a frame costs the longer of the two.
+struct Conversion {
+    /// The size the frame is scaled to, lying as it was recorded.
     size: (u32, u32),
-    duration_seconds: Option<f64>,
-    decoded: ff::frame::Video,
+    /// Quarter turns clockwise it is shown turned by (`quarter_turns`).
+    turns: u8,
+    /// The video stream's time base, which the GPU scaler is built with.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    time_base: ff::Rational,
+    /// For the GPU scaler's warnings.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    path: std::path::PathBuf,
+    scaler: Option<Scaler>,
     /// A GPU frame shrunk on the GPU, before it is copied off.
     gpu_scaled: ff::frame::Video,
     #[cfg(target_os = "macos")]
@@ -402,6 +524,231 @@ pub struct FfmpegVideoDecoder {
     /// `transferred` as planar YUV, when that converts faster.
     planar: ff::frame::Video,
     converted: ff::frame::Video,
+    /// Set once a frame has been shrunk on the GPU.
+    shrunk_on_gpu: Arc<AtomicBool>,
+}
+
+// SAFETY: the FFmpeg objects inside are only ever used by one thread: made on
+// the decoder's, then moved to the conversion thread for good.
+unsafe impl Send for Conversion {}
+
+impl Conversion {
+    fn new(size: (u32, u32), turns: u8, time_base: ff::Rational, path: &Path) -> Self {
+        Self {
+            size,
+            turns,
+            time_base,
+            path: path.to_path_buf(),
+            scaler: None,
+            gpu_scaled: ff::frame::Video::empty(),
+            #[cfg(target_os = "macos")]
+            gpu_scaling: GpuScaling::Unbuilt,
+            transferred: ff::frame::Video::empty(),
+            planar: ff::frame::Video::empty(),
+            converted: ff::frame::Video::empty(),
+            shrunk_on_gpu: Arc::default(),
+        }
+    }
+
+    /// `decoded` as BGRA, copied off the GPU first if it is there, and turned
+    /// the way it is shown.
+    fn deliver(&mut self, decoded: &mut ff::frame::Video) -> Result<Vec<u8>, VideoError> {
+        let bgra = self.lying(decoded)?;
+        Ok(match self.turns {
+            0 => bgra,
+            turns => turn_bgra(&bgra, self.size, turns),
+        })
+    }
+
+    /// `decoded` as BGRA at `size`, as it was recorded.
+    fn lying(&mut self, decoded: &mut ff::frame::Video) -> Result<Vec<u8>, VideoError> {
+        if !is_hardware_frame(decoded) {
+            return convert(
+                &mut self.scaler,
+                self.size,
+                decoded,
+                &mut self.planar,
+                &mut self.converted,
+            );
+        }
+        let shrunk = self.shrink_on_gpu(decoded);
+        // SAFETY: both are valid frames.
+        let source = unsafe {
+            if shrunk {
+                self.gpu_scaled.as_ptr()
+            } else {
+                decoded.as_ptr()
+            }
+        };
+        // SAFETY: both frames are valid; the destination is reset so the
+        // transfer allocates it in the GPU frame's software format.
+        let result = unsafe {
+            ff::ffi::av_frame_unref(self.transferred.as_mut_ptr());
+            let result =
+                ff::ffi::av_hwframe_transfer_data(self.transferred.as_mut_ptr(), source, 0);
+            if result >= 0 {
+                // Timestamps and the colour description.
+                ff::ffi::av_frame_copy_props(self.transferred.as_mut_ptr(), decoded.as_ptr())
+            } else {
+                result
+            }
+        };
+        if result < 0 {
+            return Err(decode_error(ff::Error::from(result)));
+        }
+        convert(
+            &mut self.scaler,
+            self.size,
+            &self.transferred,
+            &mut self.planar,
+            &mut self.converted,
+        )
+    }
+
+    /// Shrink the GPU frame on the GPU when it is larger than wanted; `true`
+    /// when `gpu_scaled` holds the result.
+    #[cfg(target_os = "macos")]
+    fn shrink_on_gpu(&mut self, decoded: &mut ff::frame::Video) -> bool {
+        use super::gpu_scale::{gpu_size, GpuScaler};
+
+        let larger = decoded.width() > self.size.0 || decoded.height() > self.size.1;
+        if !larger || matches!(self.gpu_scaling, GpuScaling::Off) {
+            return false;
+        }
+        let output = gpu_size(self.size);
+        let fits =
+            matches!(&self.gpu_scaling, GpuScaling::Built(scaler) if scaler.fits(decoded, output));
+        if !fits {
+            self.gpu_scaling = match GpuScaler::new(decoded, self.time_base, output) {
+                Ok(scaler) => GpuScaling::Built(scaler),
+                Err(error) => {
+                    tracing::warn!(
+                        path = %self.path.display(),
+                        error,
+                        "could not shrink this video on the GPU; the CPU will"
+                    );
+                    GpuScaling::Off
+                }
+            };
+        }
+        let GpuScaling::Built(scaler) = &mut self.gpu_scaling else {
+            return false;
+        };
+        match scaler.scale(decoded, &mut self.gpu_scaled) {
+            Ok(()) => {
+                self.shrunk_on_gpu.store(true, Ordering::Relaxed);
+                true
+            }
+            Err(error) => {
+                tracing::warn!(
+                    path = %self.path.display(),
+                    error,
+                    "shrinking on the GPU failed; the CPU will from here"
+                );
+                self.gpu_scaling = GpuScaling::Off;
+                false
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn shrink_on_gpu(&mut self, _decoded: &mut ff::frame::Video) -> bool {
+        false
+    }
+}
+
+/// A decoded frame on its way to the conversion thread: moved, never shared.
+struct Handed(ff::frame::Video);
+
+// SAFETY: the frame, and the GPU buffer it holds a reference to, are only
+// touched by whichever thread has it.
+unsafe impl Send for Handed {}
+
+/// The conversion thread: decoded frames in, BGRA out, in the same order.
+struct Pipeline {
+    frames: Option<std::sync::mpsc::SyncSender<Handed>>,
+    converted: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, VideoError>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    /// Whether the conversion has shrunk a frame on the GPU.
+    #[cfg_attr(not(test), allow(dead_code))]
+    shrunk_on_gpu: Arc<AtomicBool>,
+}
+
+impl Pipeline {
+    fn start(mut conversion: Conversion) -> Result<Self, VideoError> {
+        let shrunk_on_gpu = Arc::clone(&conversion.shrunk_on_gpu);
+        // One frame waiting while one converts: the decoder never has more
+        // than two out.
+        let (frames, incoming) = std::sync::mpsc::sync_channel::<Handed>(1);
+        let (done, converted) = std::sync::mpsc::sync_channel(2);
+        let thread = std::thread::Builder::new()
+            .name("present-video-convert".to_owned())
+            .spawn(move || {
+                while let Ok(Handed(mut frame)) = incoming.recv() {
+                    if done.send(conversion.deliver(&mut frame)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| {
+                VideoError::Decode(format!("the conversion thread would not start: {error}"))
+            })?;
+        Ok(Self {
+            frames: Some(frames),
+            converted: Some(converted),
+            thread: Some(thread),
+            shrunk_on_gpu,
+        })
+    }
+
+    fn hand(&self, frame: ff::frame::Video) -> Result<(), VideoError> {
+        self.frames
+            .as_ref()
+            .and_then(|frames| frames.send(Handed(frame)).ok())
+            .ok_or_else(|| VideoError::Decode("the conversion thread stopped".to_owned()))
+    }
+
+    /// The next frame converted, in the order they were handed over.
+    fn take(&self) -> Result<Vec<u8>, VideoError> {
+        self.converted
+            .as_ref()
+            .and_then(|converted| converted.recv().ok())
+            .unwrap_or_else(|| {
+                Err(VideoError::Decode(
+                    "the conversion thread stopped".to_owned(),
+                ))
+            })
+    }
+}
+
+impl Drop for Pipeline {
+    fn drop(&mut self) {
+        // Closed both ways, so the thread ends after the frame it has.
+        self.frames = None;
+        self.converted = None;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+pub struct FfmpegVideoDecoder {
+    input: ff::format::context::Input,
+    stream_index: usize,
+    /// Seconds per timestamp unit.
+    time_base: f64,
+    decoder: ff::decoder::Video,
+    size: (u32, u32),
+    duration_seconds: Option<f64>,
+    decoded: ff::frame::Video,
+    /// Turns decoded frames into BGRA on a thread of its own, while this one
+    /// decodes the next (`Pipeline`).
+    pipeline: Pipeline,
+    /// When the frames handed to it are, in order, not yet taken back.
+    in_flight: VecDeque<f64>,
+    /// A frame has been shown since the last open or seek: from then on the
+    /// next is decoded while the one before it converts.
+    flowing: bool,
     /// The demuxer has run out and the decoder has been told.
     drained: bool,
     finished: bool,
@@ -435,7 +782,8 @@ impl FfmpegVideoDecoder {
             .best(ff::media::Type::Video)
             .ok_or_else(|| VideoError::Unsupported(format!("{} has no video", path.display())))?;
         let stream_index = stream.index();
-        let time_base = f64::from(stream.time_base());
+        let stream_time_base = stream.time_base();
+        let time_base = f64::from(stream_time_base);
         let rate = stream.avg_frame_rate();
         let frame_seconds = if rate.numerator() > 0 && rate.denominator() > 0 {
             f64::from(rate.denominator()) / f64::from(rate.numerator())
@@ -453,31 +801,43 @@ impl FfmpegVideoDecoder {
         let hardware = HardwareDevice::open();
         let decoder = open_decoder(stream.parameters(), hardware.as_ref(), path)?;
 
-        let natural = (decoder.width(), decoder.height());
-        if natural.0 == 0 || natural.1 == 0 {
+        let coded = (decoder.width(), decoder.height());
+        if coded.0 == 0 || coded.1 == 0 {
             return Err(VideoError::Unsupported(format!(
                 "{} reports no picture size",
                 path.display()
             )));
         }
+        // SAFETY: a stream of the input just opened.
+        let (aspect, turns) = unsafe {
+            (
+                pixel_aspect(stream.as_ptr()),
+                quarter_turns(stream.as_ptr()),
+            )
+        };
+        // The size it is meant to be seen at, which is what callers fit.
+        let natural = shown_size(coded, aspect, turns);
         let requested = size(natural).unwrap_or(natural);
         let size = (requested.0.max(1), requested.1.max(1));
+        // Scaled lying as it was recorded, then turned.
+        let lying = if turns % 2 == 1 {
+            (size.1, size.0)
+        } else {
+            size
+        };
+        let pipeline = Pipeline::start(Conversion::new(lying, turns, stream_time_base, path))?;
 
         let mut decoder = Self {
             input,
             stream_index,
             time_base,
             decoder,
-            scaler: None,
             size,
             duration_seconds,
             decoded: ff::frame::Video::empty(),
-            gpu_scaled: ff::frame::Video::empty(),
-            #[cfg(target_os = "macos")]
-            gpu_scaling: GpuScaling::Unbuilt,
-            transferred: ff::frame::Video::empty(),
-            planar: ff::frame::Video::empty(),
-            converted: ff::frame::Video::empty(),
+            pipeline,
+            in_flight: VecDeque::new(),
+            flowing: false,
             drained: false,
             finished: false,
             seek_target: None,
@@ -555,100 +915,78 @@ impl FfmpegVideoDecoder {
         }
     }
 
-    /// The decoded frame as BGRA, copied off the GPU first if it is there.
-    fn deliver(&mut self) -> Result<Vec<u8>, VideoError> {
-        if !is_hardware_frame(&self.decoded) {
-            return convert(
-                &mut self.scaler,
-                self.size,
-                &self.decoded,
-                &mut self.planar,
-                &mut self.converted,
-            );
-        }
-        let shrunk = self.shrink_on_gpu();
-        // SAFETY: both are valid frames owned by `self`.
-        let source = unsafe {
-            if shrunk {
-                self.gpu_scaled.as_ptr()
-            } else {
-                self.decoded.as_ptr()
-            }
-        };
-        // SAFETY: both frames are valid; the destination is reset so the
-        // transfer allocates it in the GPU frame's software format.
-        let result = unsafe {
-            ff::ffi::av_frame_unref(self.transferred.as_mut_ptr());
-            let result =
-                ff::ffi::av_hwframe_transfer_data(self.transferred.as_mut_ptr(), source, 0);
-            if result >= 0 {
-                // Timestamps and the colour description.
-                ff::ffi::av_frame_copy_props(self.transferred.as_mut_ptr(), self.decoded.as_ptr())
-            } else {
-                result
-            }
-        };
-        if result < 0 {
-            return Err(decode_error(ff::Error::from(result)));
-        }
-        convert(
-            &mut self.scaler,
-            self.size,
-            &self.transferred,
-            &mut self.planar,
-            &mut self.converted,
-        )
-    }
-
-    /// Shrink the GPU frame on the GPU when it is larger than wanted; `true`
-    /// when `gpu_scaled` holds the result.
-    #[cfg(target_os = "macos")]
-    fn shrink_on_gpu(&mut self) -> bool {
-        use super::gpu_scale::{gpu_size, GpuScaler};
-
-        let larger = self.decoded.width() > self.size.0 || self.decoded.height() > self.size.1;
-        if !larger || matches!(self.gpu_scaling, GpuScaling::Off) {
-            return false;
-        }
-        let output = gpu_size(self.size);
-        let fits = matches!(&self.gpu_scaling, GpuScaling::Built(scaler) if scaler.fits(&self.decoded, output));
-        if !fits {
-            let time_base = self
-                .input
-                .stream(self.stream_index)
-                .map_or(ff::Rational::new(1, 1_000_000), |stream| stream.time_base());
-            self.gpu_scaling = match GpuScaler::new(&self.decoded, time_base, output) {
-                Ok(scaler) => GpuScaling::Built(scaler),
-                Err(error) => {
-                    tracing::warn!(
-                        path = %self.path.display(),
-                        error,
-                        "could not shrink this video on the GPU; the CPU will"
-                    );
-                    GpuScaling::Off
-                }
+    /// The next frame to show, converted. Once frames are flowing, the one
+    /// after it is decoded and handed over first, so it decodes while this
+    /// one converts; the first after an open or a seek comes as soon as it
+    /// can, with nothing decoded ahead of it.
+    fn next_converted(&mut self) -> Result<Option<VideoFrame>, VideoError> {
+        let ahead = if self.flowing { 2 } else { 1 };
+        while self.in_flight.len() < ahead {
+            let Some(seconds) = self.decode_next()? else {
+                break;
             };
+            let frame = std::mem::replace(&mut self.decoded, ff::frame::Video::empty());
+            self.pipeline.hand(frame)?;
+            self.in_flight.push_back(seconds);
         }
-        let GpuScaling::Built(scaler) = &mut self.gpu_scaling else {
-            return false;
+        let Some(seconds) = self.in_flight.pop_front() else {
+            return Ok(None);
         };
-        match scaler.scale(&mut self.decoded, &mut self.gpu_scaled) {
-            Ok(()) => true,
-            Err(error) => {
-                tracing::warn!(
-                    path = %self.path.display(),
-                    error,
-                    "shrinking on the GPU failed; the CPU will from here"
-                );
-                self.gpu_scaling = GpuScaling::Off;
-                false
+        let bgra = self.pipeline.take()?;
+        self.flowing = true;
+        self.last_seconds = Some(seconds);
+        Ok(Some(VideoFrame {
+            width: self.size.0,
+            height: self.size.1,
+            bgra,
+            presentation_seconds: seconds,
+        }))
+    }
+
+    /// Decode the next frame to show into `decoded`, those before a seek's
+    /// target decoded and dropped, and say when it is. `None` at the end.
+    ///
+    /// On the way to a target more than [`CATCH_UP_MARGIN`] off, the frames
+    /// no other frame is decoded from are not decoded at all — most of a file
+    /// with B-frames. A seek decoded every frame from the key frame before it,
+    /// seconds of them in a file whose key frames are far apart; the screens
+    /// held their last frame all that time. The last stretch is decoded whole,
+    /// so the frame asked for is there, whatever kind it is.
+    fn decode_next(&mut self) -> Result<Option<f64>, VideoError> {
+        loop {
+            if !(std::mem::take(&mut self.primed) || self.receive()?) {
+                self.skip_unreferenced(false);
+                return Ok(None);
             }
+            let seconds = self.seconds_of(&self.decoded);
+            if let Some(target) = self.seek_target {
+                // Within half a frame counts as there.
+                if seconds + self.frame_seconds / 2.0 < target {
+                    self.skip_unreferenced(seconds + CATCH_UP_MARGIN < target);
+                    continue;
+                }
+                self.skip_unreferenced(false);
+                self.seek_target = None;
+            }
+            return Ok(Some(seconds));
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn shrink_on_gpu(&mut self) -> bool {
-        false
+    /// Whether the frames nothing else is decoded from are skipped.
+    fn skip_unreferenced(&mut self, skip: bool) {
+        self.decoder.skip_frame(if skip {
+            ff::codec::discard::Discard::NonReference
+        } else {
+            ff::codec::discard::Discard::Default
+        });
+    }
+
+    /// Take back and drop whatever is converting: it is from before a move.
+    fn discard_in_flight(&mut self) {
+        while self.in_flight.pop_front().is_some() {
+            let _ = self.pipeline.take();
+        }
+        self.flowing = false;
     }
 
     /// Feed the decoder the next packet of our stream, or tell it the file ended.
@@ -693,37 +1031,8 @@ fn libc_enoent() -> i32 {
 impl VideoDecoder for FfmpegVideoDecoder {
     fn next_frame(&mut self) -> Result<Option<VideoFrame>, VideoError> {
         loop {
-            let frame = if std::mem::take(&mut self.primed) {
-                Ok(true)
-            } else {
-                self.receive()
-            };
-            let frame = match frame {
-                Ok(true) => {
-                    let seconds = self.seconds_of(&self.decoded);
-                    if let Some(target) = self.seek_target {
-                        // Within half a frame counts as there.
-                        if seconds + self.frame_seconds / 2.0 < target {
-                            continue;
-                        }
-                        self.seek_target = None;
-                    }
-                    self.deliver().map(|bgra| Some((bgra, seconds)))
-                }
-                Ok(false) => Ok(None),
-                Err(error) => Err(error),
-            };
-            match frame {
-                Ok(Some((bgra, seconds))) => {
-                    self.last_seconds = Some(seconds);
-                    return Ok(Some(VideoFrame {
-                        width: self.size.0,
-                        height: self.size.1,
-                        bgra,
-                        presentation_seconds: seconds,
-                    }));
-                }
-                Ok(None) => return Ok(None),
+            match self.next_converted() {
+                Ok(frame) => return Ok(frame),
                 // A GPU decoder can give up partway — a stream that changes
                 // profile, a device lost to sleep. The video carries on in
                 // software from the frame after the last one shown.
@@ -741,7 +1050,10 @@ impl VideoDecoder for FfmpegVideoDecoder {
                         .unwrap_or(0.0);
                     self.use_software(resume)?;
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    self.discard_in_flight();
+                    return Err(error);
+                }
             }
         }
     }
@@ -750,9 +1062,13 @@ impl VideoDecoder for FfmpegVideoDecoder {
         if !seconds.is_finite() || seconds < 0.0 {
             return Err(VideoError::Decode(format!("cannot seek to {seconds}")));
         }
+        // What is converting is from before the move.
+        self.discard_in_flight();
+        // Every frame decoded until the first one says how far there is to go.
+        self.skip_unreferenced(false);
         let timestamp = (seconds * f64::from(ff::ffi::AV_TIME_BASE)) as i64;
         // To the key frame at or before the time; the frames between are
-        // decoded and dropped in `next_frame`.
+        // decoded and dropped in `decode_next`.
         self.input
             .seek(timestamp, i64::MIN..timestamp.saturating_add(1))
             .map_err(decode_error)?;
@@ -774,11 +1090,11 @@ impl VideoDecoder for FfmpegVideoDecoder {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    enum Codec {
+    pub(crate) enum Codec {
         Id(ff::codec::Id),
         /// By encoder name; only the Mac's hardware encoder so far.
         #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -786,7 +1102,7 @@ mod tests {
     }
 
     /// A clip written for one test, deleted after it.
-    struct Clip(PathBuf);
+    pub(crate) struct Clip(pub(crate) PathBuf);
 
     impl Drop for Clip {
         fn drop(&mut self) {
@@ -794,20 +1110,24 @@ mod tests {
         }
     }
 
-    struct ClipSpec {
-        codec: Codec,
-        size: (u32, u32),
-        frames: i64,
-        fps: i32,
+    pub(crate) struct ClipSpec {
+        pub(crate) codec: Codec,
+        pub(crate) size: (u32, u32),
+        pub(crate) frames: i64,
+        pub(crate) fps: i32,
         /// A key frame every this many frames.
-        gop: u32,
-        space: color::Space,
-        range: color::Range,
+        pub(crate) gop: u32,
+        pub(crate) space: color::Space,
+        pub(crate) range: color::Range,
     }
 
     /// Write a clip whose frame `i` is filled with `fill(i)` as Y, Cb, Cr.
     /// `None` when this FFmpeg cannot encode `spec.codec`.
-    fn write_clip(name: &str, spec: &ClipSpec, fill: impl Fn(i64) -> (u8, u8, u8)) -> Option<Clip> {
+    pub(crate) fn write_clip(
+        name: &str,
+        spec: &ClipSpec,
+        fill: impl Fn(i64) -> (u8, u8, u8),
+    ) -> Option<Clip> {
         init();
         let codec = match spec.codec {
             Codec::Id(id) => ff::encoder::find(id)?,
@@ -868,6 +1188,179 @@ mod tests {
         write_packets(&mut encoder, &mut output);
         output.write_trailer().expect("a trailer");
         Some(clip)
+    }
+
+    /// A clip whose pixels are `aspect` wide for each high, flagged to be
+    /// shown turned by `rotation` degrees as FFmpeg counts them — what a DVD
+    /// rip or a phone writes. Its top-left quarter is white and the rest
+    /// black, so which way it was turned can be seen.
+    fn write_shaped_clip(
+        name: &str,
+        size: (u32, u32),
+        aspect: (i32, i32),
+        rotation: Option<f64>,
+    ) -> Option<Clip> {
+        init();
+        let codec = ff::encoder::find(ff::codec::Id::MPEG4)?;
+        let clip = Clip(
+            std::env::temp_dir().join(format!("present-ffmpeg-{}-{name}.mkv", std::process::id())),
+        );
+        let mut output = ff::format::output(&clip.0).expect("an output file");
+        let global_header = output
+            .format()
+            .flags()
+            .contains(ff::format::Flags::GLOBAL_HEADER);
+        let mut stream = output.add_stream(codec).expect("a stream");
+        let mut encoder = ff::codec::context::Context::new_with_codec(codec)
+            .encoder()
+            .video()
+            .expect("a video encoder");
+        encoder.set_width(size.0);
+        encoder.set_height(size.1);
+        encoder.set_format(Pixel::YUV420P);
+        encoder.set_time_base((1, 10));
+        encoder.set_frame_rate(Some((10, 1)));
+        encoder.set_aspect_ratio(aspect);
+        encoder.set_bit_rate(4_000_000);
+        if global_header {
+            encoder.set_flags(ff::codec::Flags::GLOBAL_HEADER);
+        }
+        let mut encoder = encoder.open_as(codec).expect("the encoder opens");
+        stream.set_parameters(&encoder);
+        // SAFETY: the stream's own parameters, before the header is written.
+        unsafe {
+            let raw = stream.as_mut_ptr();
+            (*raw).sample_aspect_ratio = ff::ffi::AVRational {
+                num: aspect.0,
+                den: aspect.1,
+            };
+            if let Some(degrees) = rotation {
+                let parameters = (*raw).codecpar;
+                let side = ff::ffi::av_packet_side_data_new(
+                    &mut (*parameters).coded_side_data,
+                    &mut (*parameters).nb_coded_side_data,
+                    ff::ffi::AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX,
+                    9 * 4,
+                    0,
+                );
+                assert!(!side.is_null(), "room for the rotation");
+                ff::ffi::av_display_rotation_set((*side).data.cast::<i32>(), degrees);
+            }
+        }
+        output.write_header().expect("a header");
+        let stream_time_base = output.stream(0).expect("the stream").time_base();
+        let write_packets = |encoder: &mut ff::encoder::Video,
+                             output: &mut ff::format::context::Output| {
+            let mut packet = ff::Packet::empty();
+            while encoder.receive_packet(&mut packet).is_ok() {
+                packet.set_stream(0);
+                packet.rescale_ts((1, 10), stream_time_base);
+                packet.write_interleaved(output).expect("a packet written");
+            }
+        };
+        for index in 0..5 {
+            let mut frame = ff::frame::Video::new(Pixel::YUV420P, size.0, size.1);
+            let stride = frame.stride(0);
+            for y in 0..size.1 as usize {
+                for x in 0..size.0 as usize {
+                    let marked = x < size.0 as usize / 2 && y < size.1 as usize / 2;
+                    frame.data_mut(0)[y * stride + x] = if marked { 235 } else { 16 };
+                }
+            }
+            frame.data_mut(1).fill(128);
+            frame.data_mut(2).fill(128);
+            frame.set_pts(Some(index));
+            encoder.send_frame(&frame).expect("a frame encoded");
+            write_packets(&mut encoder, &mut output);
+        }
+        encoder.send_eof().expect("the encoder drains");
+        write_packets(&mut encoder, &mut output);
+        output.write_trailer().expect("a trailer");
+        Some(clip)
+    }
+
+    /// Whether the pixel at `x`, `y` of a frame is the white marker.
+    fn marked(frame: &VideoFrame, x: u32, y: u32) -> bool {
+        let index = ((y * frame.width + x) * 4) as usize;
+        frame.bgra[index + 1] > 128
+    }
+
+    /// The owner's report: a 720x480 video meant to be seen at 16:9 (853x480
+    /// in QuickTime) was shown squeezed to 3:2.
+    #[test]
+    fn pixels_that_are_not_square_are_shown_the_shape_they_are_meant_to_be() {
+        let Some(clip) = write_shaped_clip("sar", (72, 48), (32, 27), None) else {
+            return;
+        };
+        let mut decoder = FfmpegVideoDecoder::open_sized(&clip.0, Some).expect("it opens");
+        assert_eq!(decoder.dimensions(), (85, 48), "72 x 32/27 is 85 across");
+        let frame = decoder.next_frame().unwrap().expect("a frame");
+        assert_eq!((frame.width, frame.height), (85, 48));
+        // Asked to fit 16:9, it fills it.
+        let mut fitted = FfmpegVideoDecoder::open_sized(&clip.0, |natural| {
+            Some(crate::services::video::contain_size(natural, (1920, 1080)))
+        })
+        .expect("it opens");
+        assert_eq!(fitted.dimensions(), (1913, 1080));
+        assert!(fitted.next_frame().unwrap().is_some());
+    }
+
+    /// A phone's portrait video, kept lying on its side with a flag to stand
+    /// it up, is shown standing — and turned the right way, as FFmpeg's own
+    /// player turns it (`av_display_rotation_set` takes the angle clockwise,
+    /// and a phone's reads as -90 in ffprobe).
+    #[test]
+    fn a_video_flagged_to_be_turned_is_shown_turned() {
+        // Where the top-left quarter lands, as (left, top).
+        let cases = [
+            ("phone", 90.0, (32, 64), (false, true)),
+            ("other-way", -90.0, (32, 64), (true, false)),
+            ("upside-down", 180.0, (64, 32), (false, false)),
+        ];
+        for (name, degrees, size, (left, top)) in cases {
+            let Some(clip) = write_shaped_clip(name, (64, 32), (1, 1), Some(degrees)) else {
+                return;
+            };
+            let mut decoder = FfmpegVideoDecoder::open_sized(&clip.0, Some).expect("it opens");
+            if name == "phone" && decoder.dimensions() == (64, 32) {
+                // This FFmpeg's Matroska did not keep the flag: nothing to check.
+                return;
+            }
+            assert_eq!(decoder.dimensions(), size, "{name}");
+            let frame = decoder.next_frame().unwrap().expect("a frame");
+            let (width, height) = (frame.width, frame.height);
+            let x = if left { 4 } else { width - 4 };
+            let y = if top { 4 } else { height - 4 };
+            assert!(
+                marked(&frame, x, y),
+                "{name}: the marked quarter at ({x}, {y})"
+            );
+            assert!(
+                !marked(&frame, width - 1 - x, height - 1 - y),
+                "{name}: and not across from it"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shown_size_squares_the_pixels_then_stands_the_picture_up() {
+        assert_eq!(shown_size((720, 480), 32.0 / 27.0, 0), (853, 480));
+        assert_eq!(shown_size((1920, 1080), 1.0, 1), (1080, 1920));
+        assert_eq!(shown_size((1920, 1080), 1.0, 2), (1920, 1080));
+        assert_eq!(shown_size((720, 480), 32.0 / 27.0, 3), (480, 853));
+    }
+
+    #[test]
+    fn a_frame_is_turned_a_quarter_a_half_and_three_quarters() {
+        // 3 x 2, each pixel numbered in its blue byte.
+        let numbered: Vec<u8> = (0..6u8).flat_map(|n| [n, 0, 0, 255]).collect();
+        let blues = |bgra: &[u8]| bgra.chunks(4).map(|pixel| pixel[0]).collect::<Vec<_>>();
+        // 0 1 2      3 0
+        // 3 4 5  ->  4 1
+        //            5 2
+        assert_eq!(blues(&turn_bgra(&numbered, (3, 2), 1)), [3, 0, 4, 1, 5, 2]);
+        assert_eq!(blues(&turn_bgra(&numbered, (3, 2), 2)), [5, 4, 3, 2, 1, 0]);
+        assert_eq!(blues(&turn_bgra(&numbered, (3, 2), 3)), [2, 5, 1, 4, 0, 3]);
     }
 
     /// Y'CbCr to R'G'B', as the standards write it.
@@ -1030,6 +1523,43 @@ mod tests {
         }
     }
 
+    /// A seek far from the key frame before it skips, on the way, the frames
+    /// nothing else is decoded from — and still lands on the frame asked for,
+    /// B-frame or not, and plays on from it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn seeking_far_from_a_key_frame_skips_on_the_way_and_lands_exactly() {
+        let spec = ClipSpec {
+            codec: Codec::Named("h264_videotoolbox"),
+            size: (640, 360),
+            frames: 45,
+            fps: 10,
+            gop: 30,
+            space: color::Space::BT709,
+            range: color::Range::MPEG,
+        };
+        let Some(clip) = write_clip("seek-far-h264", &spec, numbered) else {
+            return;
+        };
+        let mut decoder = FfmpegVideoDecoder::open_sized(&clip.0, Some).expect("it opens");
+        for target in [25, 7, 29, 12, 40, 26] {
+            let seconds = f64::from(target) / 10.0;
+            decoder.seek(seconds).unwrap();
+            let frame = decoder.next_frame().unwrap().expect("a frame");
+            assert_eq!(
+                i64::from(target),
+                frame_number(&frame),
+                "the frame at {seconds} s"
+            );
+            let next = decoder.next_frame().unwrap().expect("the one after");
+            assert_eq!(
+                i64::from(target) + 1,
+                frame_number(&next),
+                "after {seconds} s"
+            );
+        }
+    }
+
     /// A GPU frame larger than wanted is shrunk on the GPU, and keeps its
     /// colour through that — including to an odd size, which the GPU cannot
     /// make and the CPU finishes.
@@ -1061,7 +1591,7 @@ mod tests {
             );
             if decoder.hardware.is_some() {
                 assert!(
-                    matches!(decoder.gpu_scaling, GpuScaling::Built(_)),
+                    decoder.pipeline.shrunk_on_gpu.load(Ordering::Relaxed),
                     "decoded on the GPU, so shrunk there too"
                 );
             }

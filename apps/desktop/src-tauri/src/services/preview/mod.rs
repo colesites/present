@@ -24,10 +24,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
 use crate::services::media_protocol;
-use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed};
-use crate::services::output::OutputScene;
+use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed, Waiting};
 use crate::services::thumbnails;
 use crate::services::video::{self, VideoDecoder};
+use crate::state::output_state::{Drawn, SceneCache};
 use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
 /// The largest preview that will be drawn, per side.
@@ -61,7 +61,12 @@ pub struct PreviewSource {
     open: Opener,
     /// What the last JPEG was drawn from, so an unchanged scene is encoded
     /// once however often it is asked for.
-    last: Option<(OutputScene, Option<f64>, (u32, u32))>,
+    last: Option<Drawn>,
+    /// The scene, worked out again only when it changes.
+    scene: SceneCache,
+    /// The frame as BGRA on its way to a JPEG, kept rather than allocated
+    /// each frame.
+    bgra: Vec<u8>,
     picture: Vec<u8>,
 }
 
@@ -76,6 +81,8 @@ impl PreviewSource {
             regions: RegionVideos::new(),
             open,
             last: None,
+            scene: SceneCache::new(),
+            bgra: Vec::new(),
             picture: Vec::new(),
         }
     }
@@ -94,6 +101,47 @@ impl PreviewSource {
         size: (u32, u32),
         lead: std::time::Duration,
     ) -> Result<(&[u8], bool), String> {
+        let first = self.picture.is_empty();
+        if !self.draw(size, lead, first)? {
+            return Ok((&self.picture, false));
+        }
+        let rendered = self
+            .compositor
+            .frame()
+            .ok_or_else(|| "the preview was not drawn".to_owned())?;
+        rendered.write_bgra(&mut self.bgra);
+        self.picture = thumbnails::encode_jpeg(size.0, size.1, &self.bgra)
+            .map_err(|error| error.to_string())?;
+        Ok((&self.picture, true))
+    }
+
+    /// The scene on screen at `size`, as premultiplied BGRA for a native
+    /// panel (`surface::panel`) — `None` while it has not changed. No JPEG,
+    /// and no lead: the panel's picture reaches the screen as the audience
+    /// view's does.
+    pub fn picture(&mut self, size: (u32, u32)) -> Result<Option<&[u8]>, String> {
+        let first = self.last.is_none();
+        if !self.draw(size, std::time::Duration::ZERO, first)? {
+            return Ok(None);
+        }
+        let rendered = self
+            .compositor
+            .frame()
+            .ok_or_else(|| "the preview was not drawn".to_owned())?;
+        // Into the same buffer each time: the panel copies it into a surface
+        // of its own (`surface/iosurface.rs`).
+        rendered.write_bgra_premultiplied(&mut self.bgra);
+        Ok(Some(&self.bgra))
+    }
+
+    /// Draw the scene at `size` if anything changed since the last time, or
+    /// if `force`. Whether it drew.
+    fn draw(
+        &mut self,
+        size: (u32, u32),
+        lead: std::time::Duration,
+        force: bool,
+    ) -> Result<bool, String> {
         let (Some(output), Some(files)) = (
             self.app.try_state::<OutputState>(),
             self.app.try_state::<FileState>(),
@@ -114,37 +162,40 @@ impl PreviewSource {
             self.last = None;
         }
 
-        let scene = match self.app.try_state::<LooksState>() {
-            Some(looks) => looks.scene_for_screen(output.on_screen(), &self.screen),
-            None => output.on_screen(),
-        };
+        let looks = self.app.try_state::<LooksState>();
+        let scene = self
+            .scene
+            .for_screen(&output, looks.as_deref(), &self.screen);
         let now = Instant::now() + lead;
-        let frame = self.video.frame_for(&scene, now, size, &self.open);
+        let frame = match self.video.frame_or_wait(&scene, now, size, &self.open) {
+            Ok(frame) => frame,
+            // As the audience screen does: the picture it has, until the new
+            // video's first frame is decoded.
+            Err(Waiting) if self.last.is_some() && !force => return Ok(false),
+            Err(Waiting) => None,
+        };
         let shown = frame.map(|frame| frame.presentation_seconds);
         let region_frames = self.regions.frames_for(&scene, now, size, &self.open);
         // The same question the audience window asks, so a transition is drawn
         // to its end here too, rather than its first frame kept.
-        let unchanged =
-            !self
-                .compositor
-                .needs_drawing(self.last.as_ref(), &scene, shown, &region_frames, size);
-        if unchanged && !self.picture.is_empty() {
-            return Ok((&self.picture, false));
+        let drawn = self
+            .last
+            .as_ref()
+            .map(|(scene, video, size)| (scene.as_ref(), *video, *size));
+        let unchanged = !self
+            .compositor
+            .needs_drawing(drawn, &scene, shown, &region_frames, size);
+        if unchanged && !force {
+            return Ok(false);
         }
 
         self.compositor.resize(size.0, size.1);
         let loader = ScopedMediaLoader::new(&files);
-        let (rendered, _) = self
-            .compositor
+        self.compositor
             .render_with_regions(&scene, frame, &region_frames, &loader)
             .ok_or_else(|| format!("could not draw a {}x{} preview", size.0, size.1))?;
-
-        let mut bgra = Vec::new();
-        rendered.write_bgra(&mut bgra);
-        self.picture =
-            thumbnails::encode_jpeg(size.0, size.1, &bgra).map_err(|error| error.to_string())?;
         self.last = Some((scene, shown, size));
-        Ok((&self.picture, true))
+        Ok(true)
     }
 }
 

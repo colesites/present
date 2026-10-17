@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isTauri } from "../../renderer/tauri/runtime";
 import type {
   ScreenComposerLayout,
   ScreenComposerMediaType,
@@ -518,12 +519,15 @@ export function useScreenComposerState() {
 
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", syncFromStorage);
-    const intervalId = window.setInterval(syncFromStorage, 500);
+    // In the desktop app every change arrives as `COMPOSER_CHANGED_EVENT`;
+    // reading the store twice a second in every window is only for where it
+    // cannot.
+    const intervalId = isTauri() ? null : window.setInterval(syncFromStorage, 500);
 
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", syncFromStorage);
-      window.clearInterval(intervalId);
+      if (intervalId !== null) window.clearInterval(intervalId);
     };
   }, [syncFromStorage]);
 

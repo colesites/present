@@ -218,6 +218,20 @@ impl ScreenLayout {
     }
 }
 
+/// How whole-screen media meets a screen of another shape: inside it with
+/// bars — the default, which keeps all of it in view — filling it and cropped
+/// at the edges, or stretched to it. Chosen per media in the operator's media
+/// settings, so a background loop can fill a screen while a phone's portrait
+/// testimony stays whole. `mediaFit` on the wire.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaFit {
+    #[default]
+    Fit,
+    Fill,
+    Stretch,
+}
+
 /// How the live timer looks once it has run out, `timerTimeUp` on the wire:
 /// its words are then the operator's message (Settings, Timer), drawn in this
 /// colour, and blinking if asked.
@@ -305,6 +319,9 @@ pub struct OutputScene {
     /// mismatch that shows up as a background filter silently not applying.
     #[serde(rename = "mediaFilterCSS")]
     pub media_filter_css: String,
+    /// How the media meets a screen of another shape (`MediaFit`).
+    #[serde(default)]
+    pub media_fit: MediaFit,
     pub is_video_playing: bool,
     pub video_current_time: f64,
     /// When the operator's video was at `video_current_time`, in milliseconds
@@ -375,6 +392,7 @@ impl Default for OutputScene {
             text_position: None,
             video_settings: VideoSettings::DEFAULT,
             media_filter_css: "none".to_owned(),
+            media_fit: MediaFit::Fit,
             is_video_playing: false,
             video_current_time: 0.0,
             video_time_sampled_at_ms: None,
@@ -475,11 +493,12 @@ impl OutputScene {
     }
 
     pub fn differs(&self, other: &Self) -> bool {
-        let mut left = self.clone();
-        let mut right = other.clone();
-        left.should_sync_time = false;
-        right.should_sync_time = false;
-        left != right
+        if self.should_sync_time == other.should_sync_time {
+            return self != other;
+        }
+        let mut probe = other.clone();
+        probe.should_sync_time = self.should_sync_time;
+        *self != probe
     }
 
     #[cfg(test)]
@@ -588,6 +607,8 @@ pub struct MediaUpdate {
     pub video_settings: VideoSettings,
     #[serde(rename = "mediaFilterCSS")]
     pub media_filter_css: String,
+    #[serde(default)]
+    pub media_fit: MediaFit,
     pub is_video_playing: bool,
     pub video_current_time: f64,
     #[serde(default)]
@@ -622,6 +643,7 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
                 text_position,
                 video_settings,
                 media_filter_css,
+                media_fit,
                 is_video_playing,
                 video_current_time,
                 video_time_sampled_at_ms,
@@ -645,6 +667,7 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
             }
             scene.video_settings = video_settings;
             scene.media_filter_css = media_filter_css;
+            scene.media_fit = media_fit;
             scene.is_video_playing = is_video_playing;
             scene.video_current_time = video_current_time;
             scene.video_time_sampled_at_ms = video_time_sampled_at_ms;
@@ -1200,6 +1223,7 @@ mod tests {
                 text_position: None,
                 video_settings: VideoSettings::DEFAULT,
                 media_filter_css: "none".to_owned(),
+                media_fit: crate::services::output::MediaFit::Fit,
                 is_video_playing: false,
                 video_current_time: 0.0,
                 video_time_sampled_at_ms: None,

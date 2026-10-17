@@ -104,14 +104,30 @@ fn decode(path: &Path) -> AppResult<Vec<u8>> {
 }
 
 /// BGRA to a JPEG. The alpha of a video frame is always opaque.
+///
+/// Also what every panel that shows a video gets each frame as
+/// (`media_frames_state`, `preview_state`), so it is encoded straight from
+/// the BGRA, without a copy into RGB first.
 pub fn encode_jpeg(width: u32, height: u32, bgra: &[u8]) -> AppResult<Vec<u8>> {
-    let rgb: Vec<u8> = bgra
-        .chunks_exact(4)
-        .flat_map(|pixel| [pixel[2], pixel[1], pixel[0]])
-        .collect();
-    let mut jpeg = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, JPEG_QUALITY)
-        .encode(&rgb, width, height, image::ExtendedColorType::Rgb8)
+    let (Ok(narrow_width), Ok(narrow_height)) = (u16::try_from(width), u16::try_from(height))
+    else {
+        return Err(AppError::Invalid(format!(
+            "a {width}x{height} picture is too large for a JPEG"
+        )));
+    };
+    if bgra.len() != width as usize * height as usize * 4 {
+        return Err(AppError::Invalid(
+            "the picture's size does not match its pixels".to_owned(),
+        ));
+    }
+    let mut jpeg = Vec::with_capacity(bgra.len() / 10);
+    jpeg_encoder::Encoder::new(&mut jpeg, JPEG_QUALITY)
+        .encode(
+            bgra,
+            narrow_width,
+            narrow_height,
+            jpeg_encoder::ColorType::Bgra,
+        )
         .map_err(|error| AppError::Invalid(format!("could not encode the thumbnail: {error}")))?;
     Ok(jpeg)
 }

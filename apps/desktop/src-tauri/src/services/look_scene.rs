@@ -61,6 +61,12 @@ use crate::services::output::{LayerBox, OutputScene, OutputTextPosition, ScreenL
 /// window folds that column's layers into the scene before sending it — all
 /// but props, which it leaves to this — so only they and the layout are
 /// applied here. The banner is not gated, as the module's notes say.
+///
+/// The timer is gated here as well. The operator window folds its own copy of
+/// the column, which starts as the shipped look — timer on — until the
+/// app's arrives, so the first scenes it sent after a launch showed the timer
+/// for a moment with the operator's timer off. This copy is the app's own,
+/// read before any window opened.
 pub fn scene_for_program(on_screen: &OutputScene, column: &LookTargetState) -> OutputScene {
     let scene = OutputScene {
         props_overlay: if column.layers.props {
@@ -68,6 +74,7 @@ pub fn scene_for_program(on_screen: &OutputScene, column: &LookTargetState) -> O
         } else {
             Vec::new()
         },
+        timer_visible: column.layers.timer && on_screen.timer_visible,
         ..on_screen.clone()
     };
     laid_out(scene, &column.layout)
@@ -298,6 +305,23 @@ mod tests {
             ),
             ("left", "bottom")
         );
+    }
+
+    /// The owner's report: the timer flashed on the preview as the app
+    /// opened, with the timer layer off — the operator window's first scenes
+    /// came from the shipped look, which has it on.
+    #[test]
+    fn the_screen_never_shows_a_timer_its_look_has_off() {
+        let mut column = LookPreset::default_preset().targets.program;
+        column.layers.timer = false;
+        let scene = OutputScene {
+            timer_visible: true,
+            timer_text: Some("00:05:00".to_owned()),
+            ..OutputScene::default()
+        };
+        assert!(!scene_for_program(&scene, &column).timer_visible);
+        column.layers.timer = true;
+        assert!(scene_for_program(&scene, &column).timer_visible);
     }
 
     #[test]

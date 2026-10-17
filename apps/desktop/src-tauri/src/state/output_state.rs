@@ -4,16 +4,25 @@
 //! is on screen *right now* — restoring last Sunday's slide on launch would be
 //! worse than starting blank.
 
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 use crate::services::output::{OutputScene, OutputUpdate};
 
 pub struct OutputState {
     /// What the operator has set up, frozen or not.
-    scene: RwLock<OutputScene>,
+    scene: RwLock<Arc<OutputScene>>,
     /// What the surfaces were last told to show. The same as `scene` except
     /// while frozen, when it is the held screen.
-    on_screen: RwLock<OutputScene>,
+    on_screen: RwLock<Arc<OutputScene>>,
+    /// Counts up each time `on_screen` changes.
+    ///
+    /// Every screen, preview and stream draws from `on_screen` up to sixty
+    /// times a second. Each used to copy the whole scene — slide elements and
+    /// all — and compare it with the one it drew last, every time. Now they
+    /// read this number, and look at the scene again only when it has moved
+    /// (`SceneCache`).
+    version: AtomicU64,
     frozen: RwLock<bool>,
 }
 
@@ -25,9 +34,11 @@ impl Default for OutputState {
 
 impl OutputState {
     pub fn new() -> Self {
+        let empty = Arc::new(OutputScene::default());
         Self {
-            scene: RwLock::new(OutputScene::default()),
-            on_screen: RwLock::new(OutputScene::default()),
+            scene: RwLock::new(Arc::clone(&empty)),
+            on_screen: RwLock::new(empty),
+            version: AtomicU64::new(0),
             frozen: RwLock::new(false),
         }
     }
@@ -35,7 +46,17 @@ impl OutputState {
     /// The scene the operator has set up, including anything queued behind a
     /// freeze.
     pub fn scene(&self) -> OutputScene {
-        self.read_scene().clone()
+        OutputScene::clone(&self.scene_shared())
+    }
+
+    /// [`scene`](Self::scene) without copying it.
+    pub fn scene_shared(&self) -> Arc<OutputScene> {
+        Arc::clone(
+            &self
+                .scene
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
     }
 
     /// The scene the audience is looking at.
@@ -46,17 +67,31 @@ impl OutputState {
     /// a livestream the slides the operator is lining up behind the freeze.
     /// The same goes for an audience window opened mid-freeze.
     pub fn on_screen(&self) -> OutputScene {
-        self.on_screen
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        OutputScene::clone(&self.on_screen_shared().1)
     }
 
-    fn show(&self, scene: &OutputScene) {
-        *self
+    /// [`on_screen`](Self::on_screen) without copying it, with its version.
+    pub fn on_screen_shared(&self) -> (u64, Arc<OutputScene>) {
+        let scene = self
+            .on_screen
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Read under the same lock `show` writes both under.
+        (self.version.load(Ordering::Acquire), Arc::clone(&scene))
+    }
+
+    /// The version of what is on screen: it moves whenever that does.
+    pub fn version(&self) -> u64 {
+        self.version.load(Ordering::Acquire)
+    }
+
+    fn show(&self, scene: Arc<OutputScene>) {
+        let mut on_screen = self
             .on_screen
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = scene.clone();
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *on_screen = scene;
+        self.version.fetch_add(1, Ordering::AcqRel);
     }
 
     pub fn is_frozen(&self) -> bool {
@@ -81,18 +116,20 @@ impl OutputState {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        let before = scene.clone();
-        crate::services::output::apply(&mut scene, update);
+        let mut next = OutputScene::clone(&scene);
+        crate::services::output::apply(&mut next, update);
 
-        if !before.differs(&scene) {
+        if !scene.differs(&next) {
             return None;
         }
+        let next = Arc::new(next);
+        *scene = Arc::clone(&next);
         if self.is_frozen() {
             return None;
         }
 
-        self.show(&scene);
-        Some(scene.clone())
+        self.show(Arc::clone(&next));
+        Some(OutputScene::clone(&next))
     }
 
     /// Freeze or unfreeze the audience output.
@@ -117,17 +154,72 @@ impl OutputState {
         };
 
         if was_frozen && !frozen {
-            let scene = self.scene();
-            self.show(&scene);
-            return Some(scene);
+            let scene = self.scene_shared();
+            self.show(Arc::clone(&scene));
+            return Some(OutputScene::clone(&scene));
         }
         None
     }
+}
 
-    fn read_scene(&self) -> std::sync::RwLockReadGuard<'_, OutputScene> {
-        self.scene
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+/// What a drawing loop drew last: the scene, the video frame's time and the
+/// size (`SceneCompositor::needs_drawing`).
+pub type Drawn = (Arc<OutputScene>, Option<f64>, (u32, u32));
+
+/// A screen's scene, worked out again only when the output or the looks have
+/// changed: what each drawing loop keeps, rather than copying the whole scene
+/// and comparing it with the last one sixty times a second.
+///
+/// The same `Arc` comes back while nothing has changed, so a loop can tell an
+/// unchanged scene by pointer (`SceneCompositor::needs_drawing`).
+#[derive(Default)]
+pub struct SceneCache {
+    key: Option<(u64, u64)>,
+    scene: Option<Arc<OutputScene>>,
+}
+
+impl SceneCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// What is on screen as the audience screen `screen` shows it
+    /// (`LooksState::scene_for_screen`).
+    pub fn for_screen(
+        &mut self,
+        output: &OutputState,
+        looks: Option<&crate::state::LooksState>,
+        screen: &str,
+    ) -> Arc<OutputScene> {
+        match looks {
+            Some(looks) => self.through(output, Some(looks), |scene| {
+                looks.scene_for_screen(scene, screen)
+            }),
+            None => self.through(output, None, |scene| scene),
+        }
+    }
+
+    /// What is on screen, made into a picture's own by `derive` — called only
+    /// when the output or the looks have changed since the last time.
+    pub fn through(
+        &mut self,
+        output: &OutputState,
+        looks: Option<&crate::state::LooksState>,
+        derive: impl FnOnce(OutputScene) -> OutputScene,
+    ) -> Arc<OutputScene> {
+        let looks_version = looks.map_or(0, crate::state::LooksState::version);
+        if let Some(scene) = self
+            .scene
+            .as_ref()
+            .filter(|_| self.key == Some((output.version(), looks_version)))
+        {
+            return Arc::clone(scene);
+        }
+        let (version, on_screen) = output.on_screen_shared();
+        let scene = Arc::new(derive(OutputScene::clone(&on_screen)));
+        self.key = Some((version, looks_version));
+        self.scene = Some(Arc::clone(&scene));
+        scene
     }
 }
 
@@ -150,6 +242,7 @@ mod tests {
                 muted: false,
             },
             media_filter_css: "none".to_owned(),
+            media_fit: crate::services::output::MediaFit::Fit,
             is_video_playing: playing,
             video_current_time: time,
             video_time_sampled_at_ms: None,
@@ -279,5 +372,47 @@ mod tests {
         let state = OutputState::new();
 
         assert!(state.set_frozen(false).is_none());
+    }
+
+    #[test]
+    fn a_cached_scene_is_the_same_one_until_the_output_changes() {
+        let state = OutputState::new();
+        state.apply(media_update(true, 0.0, false));
+        let mut cache = SceneCache::new();
+        let mut derived = 0;
+        let mut derive = |scene: OutputScene| {
+            derived += 1;
+            scene
+        };
+        let first = cache.through(&state, None, &mut derive);
+        let again = cache.through(&state, None, &mut derive);
+        assert!(Arc::ptr_eq(&first, &again), "not copied again");
+        state.apply(media_update(false, 4.0, false));
+        let changed = cache.through(&state, None, &mut derive);
+        assert!(!Arc::ptr_eq(&first, &changed));
+        assert_eq!(changed.video_current_time, 4.0);
+        assert_eq!(derived, 2, "worked out once per change");
+    }
+
+    #[test]
+    fn the_version_moves_only_when_what_is_on_screen_does() {
+        let state = OutputState::new();
+        let start = state.version();
+        state.apply(media_update(true, 0.0, false));
+        let shown = state.version();
+        assert!(shown > start);
+
+        state.apply(media_update(true, 0.0, false));
+        assert_eq!(state.version(), shown, "nothing changed");
+
+        state.set_frozen(true);
+        state.apply(media_update(false, 30.0, false));
+        assert_eq!(state.version(), shown, "held behind the freeze");
+
+        state.set_frozen(false);
+        assert!(state.version() > shown, "caught up");
+        let (version, scene) = state.on_screen_shared();
+        assert_eq!(version, state.version());
+        assert_eq!(scene.video_current_time, 30.0);
     }
 }

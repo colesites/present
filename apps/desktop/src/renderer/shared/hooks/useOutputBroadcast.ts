@@ -29,6 +29,9 @@ type VideoSettings = {
   muted: boolean;
 };
 
+/** How the media meets a screen of another shape (`MediaFit` in Rust). */
+type MediaFit = "fit" | "fill" | "stretch";
+
 type ActiveSlidePayload = {
   type: "active-slide";
   slideId: string | null;
@@ -58,6 +61,8 @@ type Params = {
 
   videoSettings: VideoSettings;
   mediaFilterCSS: string;
+  /** How the media meets a screen of another shape. */
+  mediaFit?: MediaFit;
 
   isVideoPlaying: boolean;
   videoCurrentTime: number;
@@ -110,6 +115,7 @@ export function useOutputBroadcast({
   textPosition,
   videoSettings,
   mediaFilterCSS,
+  mediaFit = "fit",
   isVideoPlaying,
   videoCurrentTime,
   videoTimeSampledAtMs = null,
@@ -253,6 +259,7 @@ export function useOutputBroadcast({
         muted: videoMuted,
       },
       mediaFilterCSS,
+      mediaFit,
       isVideoPlaying,
       videoCurrentTime,
       videoTimeSampledAtMs,
@@ -405,6 +412,7 @@ export function useOutputBroadcast({
     videoLoop,
     videoMuted,
     mediaFilterCSS,
+    mediaFit,
     isVideoPlaying,
     videoCurrentTime,
     videoTimeSampledAtMs,

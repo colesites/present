@@ -122,13 +122,66 @@ fn read<T>(look: impl FnOnce(Option<&HeardClock>) -> T) -> T {
 /// is the live video then. `now` may be ahead of the wall's clock: a picture
 /// that will be seen later asks for then.
 pub fn position_for(url: &str, now: Instant) -> Option<(f64, bool)> {
-    let path = media_protocol::path_from_uri(url)
-        .or_else(|| url.starts_with('/').then(|| PathBuf::from(url)))?;
+    let path = path_of(url)?;
     read(|clock| {
         let segment = clock?.segment_at(now);
         let live = segment.path.as_deref()?;
         same_file(&path, live).then(|| (segment.seconds_at(now), segment.playing))
     })
+}
+
+/// Where a video is, how it is moving, and how fast.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Reading {
+    pub seconds: f64,
+    pub playing: bool,
+    pub rate: f64,
+}
+
+/// The video `url` names, if it is the live video at `now` — or is about to
+/// be: a change the operator made that has not reached its moment yet
+/// ([`GO_DELAY`]). That one is read as held where it will start, so its first
+/// frame can be decoded before it is due.
+///
+/// What decides whether a picture shares the live video's one decoder
+/// (`video::live`) rather than opening the file itself.
+pub fn reading_for(url: &str, now: Instant) -> Option<Reading> {
+    let path = path_of(url)?;
+    read(|clock| {
+        let clock = clock?;
+        let segment = clock.segment_at(now);
+        if segment
+            .path
+            .as_deref()
+            .is_some_and(|live| same_file(&path, live))
+        {
+            return Some(Reading {
+                seconds: segment.seconds_at(now),
+                playing: segment.playing,
+                rate: segment.rate,
+            });
+        }
+        clock
+            .scheduled
+            .iter()
+            .find(|coming| {
+                coming.at > now
+                    && coming
+                        .path
+                        .as_deref()
+                        .is_some_and(|live| same_file(&path, live))
+            })
+            .map(|coming| Reading {
+                seconds: coming.seconds,
+                playing: false,
+                rate: coming.rate,
+            })
+    })
+}
+
+/// The file a media URL names, as the sound engine names it.
+pub fn path_of(url: &str) -> Option<PathBuf> {
+    media_protocol::path_from_uri(url).or_else(|| url.starts_with('/').then(|| PathBuf::from(url)))
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -171,5 +224,38 @@ mod tests {
         let after = clock.segment_at(paused_at + Duration::from_secs(3));
         assert!(!after.playing);
         assert_eq!(after.seconds_at(paused_at + Duration::from_secs(3)), 10.1);
+    }
+
+    #[test]
+    fn a_video_about_to_go_live_is_read_where_it_will_start() {
+        let start = Instant::now();
+        let switch_at = start + GO_DELAY;
+        publish(Some(HeardClock {
+            now: segment("/a.mp4", 10.0, true, start),
+            scheduled: vec![Segment {
+                rate: 2.0,
+                ..segment("/b.mp4", 4.0, true, switch_at)
+            }],
+        }));
+        let live = reading_for("local-media://media/a.mp4", start).expect("a is live");
+        assert!(live.playing && (live.seconds - 10.0).abs() < 1e-9);
+        let coming = reading_for("local-media://media/b.mp4", start).expect("b is coming");
+        assert_eq!(
+            coming,
+            Reading {
+                seconds: 4.0,
+                playing: false,
+                rate: 2.0
+            },
+            "held at its start until its moment"
+        );
+        let then = reading_for(
+            "local-media://media/b.mp4",
+            switch_at + Duration::from_millis(500),
+        )
+        .expect("b is live");
+        assert!(then.playing && (then.seconds - 5.0).abs() < 1e-9);
+        assert_eq!(reading_for("local-media://media/c.mp4", start), None);
+        publish(None);
     }
 }

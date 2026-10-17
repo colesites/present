@@ -166,12 +166,14 @@ export function useShowVideoSync(params: {
     transport.pause();
   }, [currentVideoItem?.type, transport]);
 
+  // The speed is kept from video to video (`services/playback.rs`), so it is
+  // set with no video live as well: the next one starts at it.
   const setRateLive = useCallback(
     (rate: number) => {
-      if (currentVideoItem?.type !== "video" || !Number.isFinite(rate)) return;
+      if (!Number.isFinite(rate)) return;
       transport.setRate(rate);
     },
-    [currentVideoItem?.type, transport],
+    [transport],
   );
 
   const seekLive = useCallback(

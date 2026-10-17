@@ -245,23 +245,36 @@ export const LibrariesPanel = memo(
     }));
 
     const { visibleCategories, canonicalCategoryIdById } = useMemo(() => {
-      const byName = new Map<string, Category>();
-      const canonicalById = new Map<string, string>();
-
+      const groups = new Map<string, Category[]>();
       for (const category of categories) {
         const key = normalizedCategoryKey(category.name);
-        const existing = byName.get(key);
-        const canonical = existing ?? category;
-
-        if (!existing) {
-          byName.set(key, category);
+        const group = groups.get(key);
+        if (group) {
+          group.push(category);
+        } else {
+          groups.set(key, [category]);
         }
+      }
 
-        canonicalById.set(String(category._id), String(canonical._id));
+      const canonicalById = new Map<string, string>();
+      const visible: Category[] = [];
+      for (const group of groups.values()) {
+        // Songs made on the account point at the account's category. A copy
+        // created on this computer (`category_…`) shares the name and, if it
+        // were the one shown, new songs would be filed where the old ones
+        // are not.
+        const canonical =
+          group.find((category) => !String(category._id).startsWith("category_")) ??
+          group[0];
+        visible.push(canonical);
+        const canonicalId = String(canonical._id);
+        for (const category of group) {
+          canonicalById.set(String(category._id), canonicalId);
+        }
       }
 
       return {
-        visibleCategories: Array.from(byName.values()),
+        visibleCategories: visible,
         canonicalCategoryIdById: canonicalById,
       };
     }, [categories]);

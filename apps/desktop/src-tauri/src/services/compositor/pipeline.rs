@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use tiny_skia::{Color, FilterQuality, Pixmap, PixmapPaint, Transform};
 
-use crate::services::output::{LayerBox, MediaKind, OutputScene, ScreenLayout};
+use crate::services::output::{LayerBox, MediaFit, MediaKind, OutputScene, ScreenLayout};
 use crate::services::slide::SlideElementType;
 
 use super::transition;
@@ -301,9 +301,13 @@ impl SceneCompositor {
     /// itself and forgot transitions: it drew the first frame of each one,
     /// which is mostly the slide being left, and kept showing it, so the
     /// preview was always one slide behind whenever a transition was set.
+    ///
+    /// `last` is what was drawn last: the scene, the video frame's time and
+    /// the size. A scene that is the very same one — a loop's cached `Arc`
+    /// (`state::output_state::SceneCache`) — is not compared field by field.
     pub fn needs_drawing(
         &self,
-        last: Option<&(OutputScene, Option<f64>, (u32, u32))>,
+        last: Option<(&OutputScene, Option<f64>, (u32, u32))>,
         scene: &OutputScene,
         video: Option<f64>,
         regions: &[RegionFrame<'_>],
@@ -343,9 +347,9 @@ impl SceneCompositor {
             return true;
         }
         !last.is_some_and(|(previous_scene, previous_video, previous_size)| {
-            *previous_size == size
-                && *previous_video == video
-                && !previous_scene.draws_differently(scene)
+            previous_size == size
+                && previous_video == video
+                && (std::ptr::eq(previous_scene, scene) || !previous_scene.draws_differently(scene))
         })
     }
 
@@ -457,11 +461,13 @@ impl SceneCompositor {
             .filter(|_| !scene.screen_composer_enabled);
 
         // 1. The background media, letterboxed as `object-contain` does, or
-        //    where this screen's layout puts it, fitted or filling its box.
+        //    where this screen's layout puts it, fitted or filling its box —
+        //    or filling or stretched to the screen, as its own settings say.
         let media_area = scene
             .screen_layout
             .as_ref()
-            .and_then(media_area_of(self.width, self.height));
+            .and_then(media_area_of(self.width, self.height, scene.media_fit))
+            .or_else(|| whole_screen_area(self.width, self.height, scene.media_fit));
         let media_rect = match (media_url, video.filter(|video| video.is_well_formed())) {
             (Some(_), Some(video)) if media_area.is_some() => {
                 self.draw_video_in(&mut frame, video, media_area, &mut report)
@@ -1540,8 +1546,13 @@ impl SceneCompositor {
 type MediaArea = ((f32, f32, f32, f32), images::ObjectFit);
 
 /// The media's place on a `width` by `height` screen, when its layout moves
-/// it or fills its box; `None` for the whole screen, letterboxed, as before.
-fn media_area_of(width: u32, height: u32) -> impl Fn(&ScreenLayout) -> Option<MediaArea> {
+/// it or fills its box; `None` for the whole screen (`whole_screen_area`). A
+/// box the layout does not fill takes the media's own fit.
+fn media_area_of(
+    width: u32,
+    height: u32,
+    fit: MediaFit,
+) -> impl Fn(&ScreenLayout) -> Option<MediaArea> {
     move |layout| {
         if layout.media_box.is_full() && !layout.media_fill {
             return None;
@@ -1549,9 +1560,24 @@ fn media_area_of(width: u32, height: u32) -> impl Fn(&ScreenLayout) -> Option<Me
         let fit = if layout.media_fill {
             images::ObjectFit::Cover
         } else {
-            images::ObjectFit::Contain
+            object_fit(fit)
         };
         layout.media_box.rect(width, height).map(|rect| (rect, fit))
+    }
+}
+
+/// The whole screen as the media's box, for media set to fill it or be
+/// stretched to it; `None` for media fitted inside it, which is letterboxed
+/// the quick way (`draw_video`).
+fn whole_screen_area(width: u32, height: u32, fit: MediaFit) -> Option<MediaArea> {
+    (fit != MediaFit::Fit).then(|| ((0.0, 0.0, width as f32, height as f32), object_fit(fit)))
+}
+
+fn object_fit(fit: MediaFit) -> images::ObjectFit {
+    match fit {
+        MediaFit::Fit => images::ObjectFit::Contain,
+        MediaFit::Fill => images::ObjectFit::Cover,
+        MediaFit::Stretch => images::ObjectFit::Fill,
     }
 }
 
@@ -2089,7 +2115,11 @@ mod tests {
 
     impl Skipping {
         fn tick(&mut self, compositor: &mut SceneCompositor, scene: &OutputScene) {
-            if !compositor.needs_drawing(self.last.as_ref(), scene, None, &[], (100, 100)) {
+            let last = self
+                .last
+                .as_ref()
+                .map(|(scene, video, size)| (scene, *video, *size));
+            if !compositor.needs_drawing(last, scene, None, &[], (100, 100)) {
                 return;
             }
             let (frame, _) = compositor.render(scene, None, &NoMedia).expect("a frame");
@@ -2404,6 +2434,32 @@ mod tests {
             Some((255, 0, 0, 255)),
             "its left edge where 4:3 puts it"
         );
+    }
+
+    /// Set to fill, a video of another shape covers the screen, cropped at
+    /// its edges; set to stretch, it is pulled to the screen's shape. Fitted —
+    /// the default — it keeps its bars (above).
+    #[test]
+    fn a_video_set_to_fill_or_stretch_covers_the_screen() {
+        let video = frame_of(120, 90, [0, 0, 255, 255]);
+        for fit in [MediaFit::Fill, MediaFit::Stretch] {
+            let mut compositor = SceneCompositor::new(160, 90);
+            let scene = OutputScene {
+                media_fit: fit,
+                ..video_scene()
+            };
+            let (frame, report) = compositor
+                .render(&scene, Some(&video), &NoMedia)
+                .expect("frame");
+            assert!(report.background_media_drawn, "{fit:?}");
+            for x in [2, 80, 157] {
+                assert_eq!(
+                    frame.pixel_at(x, 45),
+                    Some((255, 0, 0, 255)),
+                    "{fit:?}: no bar at {x}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -3254,9 +3310,9 @@ mod tests {
 
         let video = frame_of(64, 36, [0, 255, 0, 255]);
         let frames = [("left".to_owned(), &video)];
-        let drawn = Some((scene.clone(), None, (200, 100)));
+        let drawn = Some((&scene, None, (200, 100)));
         assert!(
-            compositor.needs_drawing(drawn.as_ref(), &scene, None, &frames, (200, 100)),
+            compositor.needs_drawing(drawn, &scene, None, &frames, (200, 100)),
             "a region's first frame moves the picture while the scene stands still"
         );
         let (frame, _) = compositor
@@ -3274,7 +3330,7 @@ mod tests {
         );
 
         assert!(
-            !compositor.needs_drawing(drawn.as_ref(), &scene, None, &frames, (200, 100)),
+            !compositor.needs_drawing(drawn, &scene, None, &frames, (200, 100)),
             "the same frame is not drawn twice"
         );
         let next = VideoFrame {
@@ -3283,7 +3339,7 @@ mod tests {
         };
         let moved_on = [("left".to_owned(), &next)];
         assert!(
-            compositor.needs_drawing(drawn.as_ref(), &scene, None, &moved_on, (200, 100)),
+            compositor.needs_drawing(drawn, &scene, None, &moved_on, (200, 100)),
             "the next one is"
         );
     }

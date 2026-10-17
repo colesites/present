@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   Pause,
@@ -15,6 +15,7 @@ import {
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { cn } from "../../../renderer/shared/lib/utils";
 import { setBackingTrackGain, useAudioRouting } from "../../../renderer/shared/hooks/useAudioRouting";
+import { useSeekOnRelease } from "../../../renderer/shared/hooks/useSeekOnRelease";
 import type { SourceRouting } from "../../../renderer/tauri/audio";
 
 interface AudioTabPanelProps {
@@ -132,6 +133,16 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
 
   /** How long the playing track is, once Rust has read its file. */
   const [trackDuration, setTrackDuration] = useState<number | null>(null);
+
+  // The progress bar seeks once, where it is let go: a seek on every step of
+  // a drag flushed the sound dozens of times a second.
+  const seekBackingTrack = useCallback((seconds: number) => {
+    setProgress(seconds);
+    void sound()
+      .then((core) => core.backingTrackSeek(seconds))
+      .catch((error: unknown) => console.error("[Audio] could not seek the backing track", error));
+  }, []);
+  const progressSlider = useSeekOnRelease(progress, seekBackingTrack);
 
   const currentTrack = useMemo(
     () => sortedTracks.find((t) => t._id === currentTrackId) ?? null,
@@ -416,14 +427,8 @@ export function AudioTabPanel({ orgId: _orgId }: AudioTabPanelProps) {
           min={0}
           max={duration || 1}
           step={0.1}
-          value={Math.min(progress, duration || 0)}
-          onChange={(event) => {
-            const next = Number(event.target.value);
-            setProgress(next);
-            void sound()
-              .then((core) => core.backingTrackSeek(next))
-              .catch((error: unknown) => console.error("[Audio] could not seek the backing track", error));
-          }}
+          {...progressSlider}
+          value={Math.min(progressSlider.value, duration || 0)}
           className="mb-1 w-full accent-primary"
         />
         <div className="mb-2 flex items-center justify-between text-[10px] tabular-nums text-muted-foreground">

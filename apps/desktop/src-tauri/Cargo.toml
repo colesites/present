@@ -1,6 +1,6 @@
 [package]
 name = "present"
-version = "0.4.13"
+version = "0.4.14"
 description = "Presentation software for churches, conferences and live events"
 authors = ["Cole"]
 license = "MIT"
@@ -60,6 +60,11 @@ tokio = { version = "1.53.1", features = ["sync", "time", "rt-multi-thread", "ne
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 cosmic-text = "0.19"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+# The JPEGs the operator's panels show a video through (`thumbnails::encode_jpeg`),
+# thirty a second per panel: encoded straight from BGRA, with SIMD where the
+# processor has it. `image`'s encoder took several times as long, after a
+# copy of every pixel into RGB first.
+jpeg-encoder = { version = "0.7", features = ["simd"] }
 # The NDI runtime, opened when NDI is first used rather than linked at build
 # time — so no machine that builds Present needs the NDI SDK installed, and a
 # machine without NDI still launches. See `services/ndi/library.rs`.
@@ -118,6 +123,9 @@ ffmpeg-next = { version = "9", default-features = false, features = ["codec", "f
 # and an rtrb ring carries it between them without a lock on the audio thread.
 cpal = "0.17"
 rtrb = "0.4"
+# MP3 export. LAME is LGPL-3.0 and is compiled in for this encoder only.
+# AAC uses AudioToolbox on a Mac; WAVE and AIFF are written here.
+mp3lame-encoder = { version = "0.2.5", features = ["std"] }
 # Browser mode's two webviews (`services/browser_mode/view.rs`), built directly
 # rather than as Tauri child webviews (stage-7-subsystems.md §10). Pinned to
 # the version Tauri resolves: a second wry would be a second webview runtime in
@@ -207,12 +215,15 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     # The system font list, as font-list's helpers read it.
     "NSFontManager",
 ] }
-# The view's layer, and the image each frame becomes.
+# The view's layer, and the image each frame becomes. A panel's picture under
+# the operator window's page (`surface/panel.rs`) has a black background behind
+# a letterboxed video.
 objc2-quartz-core = { version = "0.3", default-features = false, features = [
     "std",
     "CALayer",
     "CATransaction",
     "objc2-core-foundation",
+    "objc2-core-graphics",
 ] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "std",
@@ -222,10 +233,25 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "CGImage",
     "CGDataProvider",
     "CGColorSpace",
+    "CGColor",
 ] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = [
     "std",
     "CFCGTypes",
+    # An IOSurface's description (`surface/iosurface.rs`).
+    "CFDictionary",
+    "CFNumber",
+    "CFString",
+] }
+# Pictures handed to Core Animation as IOSurfaces (`surface/iosurface.rs`):
+# shown by the window server as they are, with no copy and no colour matching
+# on the main thread.
+objc2-io-surface = { version = "0.3", default-features = false, features = [
+    "std",
+    "IOSurfaceRef",
+    "IOSurfaceTypes",
+    "objc2-core-foundation",
+    "libc",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std",
@@ -294,6 +320,20 @@ lto = "thin"
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# The per-pixel work, built for speed inside a build otherwise built for size:
+# the compositor and the frame handling (this crate), the rasteriser, and the
+# JPEG encoder every panel's video goes through. `opt-level = "s"` holds back
+# exactly the loop unrolling and vectorising these live on, and they run for
+# every frame of every screen. The rest of the tree stays small.
+[profile.release.package.present]
+opt-level = 3
+
+[profile.release.package.tiny-skia]
+opt-level = 3
+
+[profile.release.package.jpeg-encoder]
+opt-level = 3
 
 # For measuring the compositor, not for shipping.
 #

@@ -1,10 +1,11 @@
 //! The native view under the audience window's webview, on macOS.
 //!
 //! A layer-backed `NSView` inserted directly below the `WKWebView` in the
-//! window's content view, sized with it. Each frame becomes a `CGImage` set as
-//! the view layer's contents on the main thread — AppKit and Core Animation are
-//! main-thread-only; drawing happens on the surface thread and only the handover
-//! crosses.
+//! window's content view, sized with it. Each frame is written into an
+//! IOSurface on the surface thread (`iosurface.rs`) and set as the view layer's
+//! contents on the main thread — AppKit and Core Animation are
+//! main-thread-only, and only the handover crosses: no copy and no colour
+//! matching is left for the main thread to do.
 //!
 //! A view rather than a sublayer added to the content view's own layer: AppKit
 //! manages the layers of a layer-backed view hierarchy and may reorder sublayers
@@ -18,7 +19,6 @@
 //! the feature on for every window in the app.
 
 use std::cell::Cell;
-use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -26,18 +26,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
 use objc2::{msg_send, MainThreadMarker, Message};
 use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindowOrderingMode};
-use objc2_core_foundation::CFRetained;
-use objc2_core_graphics::{
-    CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
-    CGImageByteOrderInfo,
-};
 use objc2_foundation::{ns_string, NSNumber};
 use objc2_quartz_core::CATransaction;
 use tauri::{AppHandle, Manager};
 
+use super::iosurface::{Frame, Surfaces};
 use super::Presenter;
 
 /// The view, retained, as an address the surface thread may carry but never
@@ -61,14 +56,6 @@ fn lock_view(view: &SharedView) -> std::sync::MutexGuard<'_, Option<ViewAddress>
     view.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// A finished image on its way to the main thread. A `CGImage` is immutable and
-/// thread-safe; the wrapper only says so to the compiler.
-struct SendImage(CFRetained<CGImage>);
-
-// SAFETY: CGImage is an immutable Core Foundation object, documented as safe to
-// use from any thread.
-unsafe impl Send for SendImage {}
-
 pub struct MacPresenter {
     app: AppHandle,
     label: String,
@@ -89,7 +76,10 @@ pub struct MacPresenter {
     /// arrived after it, which is the opposite: any moment the operator's own
     /// window kept the main thread busy cost the audience a frame of video
     /// that was never retried, because the loop had already counted it shown.
-    mailbox: Arc<std::sync::Mutex<Option<SendImage>>>,
+    mailbox: Arc<std::sync::Mutex<Option<Arc<Frame>>>>,
+    /// The surfaces frames are written into, reused once the window server has
+    /// let go of them.
+    surfaces: Surfaces,
     /// The window's size and when it was read. Reading it is a round trip to
     /// the main thread; sixty of those a second is load the main thread does
     /// not need for a window that is fullscreen on a projector and never
@@ -156,13 +146,14 @@ impl MacPresenter {
             webview: ViewAddress(webview),
             in_flight: Arc::new(AtomicBool::new(false)),
             mailbox: Arc::new(std::sync::Mutex::new(None)),
+            surfaces: Surfaces::new(),
             size: Cell::new(None),
         })
     }
 }
 
 /// Turn a `WKWebView`'s own background painting off or on.
-fn set_draws_background(webview: &NSView, draws: bool) {
+pub(super) fn set_draws_background(webview: &NSView, draws: bool) {
     let value = NSNumber::numberWithBool(draws);
     // SAFETY: `drawsBackground` is a KVC key WKWebView answers on every macOS
     // this app supports (wry relies on it); the value is an NSNumber boolean.
@@ -171,62 +162,18 @@ fn set_draws_background(webview: &NSView, draws: bool) {
     }
 }
 
-/// Wrap premultiplied BGRA bytes as a `CGImage` without copying them. The
-/// same frame can be every output's of a mirrored screen at once.
-fn image_from(width: u32, height: u32, bgra: Arc<Vec<u8>>) -> Option<CFRetained<CGImage>> {
-    unsafe extern "C-unwind" fn release(info: *mut c_void, _data: NonNull<c_void>, _size: usize) {
-        // SAFETY: `info` is the box leaked below, released exactly once, by
-        // Core Graphics, when the provider is freed.
-        drop(unsafe { Box::from_raw(info.cast::<Arc<Vec<u8>>>()) });
-    }
-
-    let expected = (width as usize)
-        .checked_mul(height as usize)?
-        .checked_mul(4)?;
-    if bgra.len() != expected || width == 0 || height == 0 {
-        return None;
-    }
-    let boxed = Box::new(bgra);
-    let data = boxed.as_ptr().cast::<c_void>();
-    let info = Box::into_raw(boxed).cast::<c_void>();
-
-    // SAFETY: `data` stays valid until `release` frees the box it lives in.
-    let provider = unsafe { CGDataProvider::with_data(info, data, expected, Some(release)) };
-    let Some(provider) = provider else {
-        // SAFETY: the provider was not created, so nothing else owns the box.
-        drop(unsafe { Box::from_raw(info.cast::<Arc<Vec<u8>>>()) });
-        return None;
-    };
-    let space = CGColorSpace::new_device_rgb()?;
-    let info = CGBitmapInfo(
-        CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0,
-    );
-    // SAFETY: the provider holds `width * height * 4` bytes of B, G, R, A.
-    unsafe {
-        CGImage::new(
-            width as usize,
-            height as usize,
-            8,
-            32,
-            width as usize * 4,
-            Some(&space),
-            info,
-            Some(&provider),
-            std::ptr::null(),
-            false,
-            CGColorRenderingIntent::RenderingIntentDefault,
-        )
-    }
-}
-
 impl Presenter for MacPresenter {
     fn present(&mut self, width: u32, height: u32, bgra: Arc<Vec<u8>>) -> Result<(), String> {
-        let image = SendImage(image_from(width, height, bgra).ok_or("could not wrap the frame")?);
+        let Some(frame) = self.surfaces.fill(width, height, &bgra) else {
+            // Every surface is still on screen or on its way there: this frame
+            // is skipped, and the next is written when one is free.
+            return Ok(());
+        };
         // Newest wins: this replaces a frame the main thread has not got to.
         *self
             .mailbox
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(image);
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(frame);
         // A job already on its way will show it; only start one if none is.
         if self.in_flight.swap(true, Ordering::AcqRel) {
             return Ok(());
@@ -240,7 +187,7 @@ impl Presenter for MacPresenter {
                 // Cleared before the frame is taken, so a frame arriving while
                 // this runs starts a job of its own rather than being stranded.
                 in_flight.store(false, Ordering::Release);
-                let Some(image) = mailbox
+                let Some(frame) = mailbox
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .take()
@@ -258,12 +205,8 @@ impl Presenter for MacPresenter {
                 if let Some(layer) = view.layer() {
                     CATransaction::begin();
                     CATransaction::setDisableActions(true);
-                    // SAFETY: a CGImage is a valid `contents` value.
-                    unsafe {
-                        layer.setContents(Some(
-                            &*(CFRetained::as_ptr(&image.0).as_ptr() as *const AnyObject),
-                        ));
-                    }
+                    // SAFETY: an IOSurface is a valid `contents` value.
+                    unsafe { layer.setContents(Some(frame.as_contents())) };
                     CATransaction::commit();
                 }
             })

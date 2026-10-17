@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::http;
@@ -25,6 +25,8 @@ use tauri::AppHandle;
 use crate::services::frame_delivery::{self, Latest};
 use crate::services::preview::{self, PreviewSource};
 use crate::services::screens;
+use crate::services::surface::panel::NativePanel;
+use crate::services::surface::tap;
 
 /// How often the loop draws. The output's own rate: a preview that skips is
 /// not a preview of what the congregation is seeing.
@@ -60,6 +62,8 @@ struct Loop {
 struct Shared {
     /// The newest frame, as JPEG. `Arc` so a request clones a pointer.
     latest: Mutex<Option<Latest>>,
+    /// Told when `latest` changes, for a request waiting on a new frame.
+    fresh: Condvar,
     /// How far ahead to draw the video, in milliseconds: how late the
     /// preview's frames reach its screen (`frame_delivery`).
     lead_ms: AtomicU64,
@@ -124,6 +128,7 @@ impl PreviewState {
         screen: &str,
         size: (u32, u32),
         lead: Duration,
+        after: Option<u64>,
     ) -> Option<Latest> {
         let drawing = self
             .loops
@@ -132,7 +137,7 @@ impl PreviewState {
             .entry(screen.to_owned())
             .or_default()
             .clone();
-        drawing.frame(app, screen, size, lead)
+        drawing.frame(app, screen, size, lead, after)
     }
 
     /// Let go of the compositors, any video they have open, and the loops.
@@ -158,12 +163,15 @@ impl PreviewState {
 }
 
 impl Loop {
+    /// The newest frame — or, for a preview that already has it (`after`),
+    /// the next, once it is drawn (`frame_delivery::newer_than`).
     fn frame(
         &self,
         app: &AppHandle,
         screen: &str,
         size: (u32, u32),
         lead: Duration,
+        after: Option<u64>,
     ) -> Option<Latest> {
         self.shared.want(size);
         self.shared
@@ -175,11 +183,7 @@ impl Loop {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now());
         self.ensure_drawing(app, screen);
-        self.shared
-            .latest
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        frame_delivery::newer_than(&self.shared.latest, &self.shared.fresh, after)
     }
 
     /// Start the loop if it is not already running.
@@ -222,6 +226,58 @@ impl Loop {
             .running
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// Show the audience screen `screen` on `panel`, natively (`surface::panel`):
+/// its own frames while its window is open, drawn here for the panel while
+/// not. Stops when the flag it returns is set.
+pub fn start_native(app: &AppHandle, screen: &str, panel: Arc<NativePanel>) -> Arc<AtomicBool> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (app, screen, flag) = (app.clone(), screen.to_owned(), Arc::clone(&stop));
+    let spawned = std::thread::Builder::new()
+        .name("present-preview-panel".to_owned())
+        .spawn(move || present_until_stopped(&app, &screen, &panel, &flag));
+    if let Err(error) = spawned {
+        tracing::warn!(%error, "the native preview could not start");
+    }
+    stop
+}
+
+/// The native preview's loop.
+///
+/// While the audience screen is drawn in its window (`surface::tap`), the
+/// preview is that very frame — no second compositor, no second copy of the
+/// video, no JPEG — made smaller by the GPU. While it is not, the preview is
+/// drawn here, at the panel's own size.
+fn present_until_stopped(app: &AppHandle, screen: &str, panel: &NativePanel, stop: &AtomicBool) {
+    let mut own: Option<PreviewSource> = None;
+    let mut shown: Option<u64> = None;
+    while !stop.load(Ordering::Relaxed) {
+        let started = Instant::now();
+        if !panel.is_current() {
+            // Out of sight, or its page has stopped saying where it is.
+            own = None;
+            shown = None;
+        } else if let Some(tapped) = tap::latest(screen) {
+            own = None;
+            if shown != Some(tapped.seq) {
+                shown = Some(tapped.seq);
+                panel.show_picture(tapped.size, &tapped.frame);
+            }
+        } else {
+            shown = None;
+            let size = panel.pixel_size();
+            let source = own.get_or_insert_with(|| PreviewSource::new(app.clone(), screen));
+            match source.picture(size) {
+                Ok(Some(picture)) => panel.show_picture(size, picture),
+                Ok(None) => {}
+                Err(error) => tracing::debug!(%error, "no native preview frame this time"),
+            }
+        }
+        if let Some(rest) = FRAME_EVERY.checked_sub(started.elapsed()) {
+            std::thread::sleep(rest);
+        }
     }
 }
 
@@ -269,6 +325,7 @@ fn draw_until_idle(app: &AppHandle, screen: &str, shared: &Shared) {
                             at: Instant::now(),
                             seq: frame_delivery::next_seq(),
                         });
+                        shared.fresh.notify_all();
                     }
                 }
                 Err(error) => {
@@ -289,6 +346,7 @@ fn draw_until_idle(app: &AppHandle, screen: &str, shared: &Shared) {
         .latest
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    shared.fresh.notify_all();
 }
 
 /// The size asked for in `?w=` and `?h=`, whatever the query looks like.
@@ -321,13 +379,15 @@ pub fn screen_from_uri(uri: &str) -> &str {
 /// preview is a picture of what is already on screen elsewhere, so the honest
 /// answer to "not yet" is to show nothing and let the next request try again.
 pub fn respond(state: &PreviewState, app: &AppHandle, uri: &str) -> http::Response<Vec<u8>> {
+    let asked = Instant::now();
     let latest = state.frame(
         app,
         screen_from_uri(uri),
         size_from_uri(uri),
         frame_delivery::lead_from_uri(uri),
+        frame_delivery::query_number(uri, "after"),
     );
-    frame_delivery::respond(latest, uri)
+    frame_delivery::respond(latest, uri, asked.elapsed())
 }
 
 #[cfg(test)]

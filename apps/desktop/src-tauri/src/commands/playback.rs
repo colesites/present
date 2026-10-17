@@ -10,14 +10,15 @@
 use tauri::{AppHandle, Emitter, State};
 
 use crate::errors::AppResult;
-use crate::services::playback::MediaPlayback;
+use crate::services::playback::{now_ms, MediaPlayback};
 use crate::services::sound::SoundEngine;
 use crate::state::PlaybackState;
 
 /// Emitted when the transport moves.
 ///
-/// Not emitted for a position report that changed nothing, which is most of
-/// them: the element reports about ten times a second.
+/// Not emitted for a position report that changed nothing. The sound engine
+/// reports only when the sound starts, stops, moves or strays
+/// (`services::sound`), so a running video does not wake every window.
 pub const PLAYBACK_CHANGED_EVENT: &str = "playback:changed";
 
 fn broadcast(
@@ -86,7 +87,7 @@ pub async fn play_playback(
     state: State<'_, PlaybackState>,
     engine: State<'_, SoundEngine>,
 ) -> AppResult<MediaPlayback> {
-    let changed = state.update(MediaPlayback::play);
+    let changed = state.update(|playback| playback.play_at(now_ms()));
     steer(&app, &state, &engine, changed, None)
 }
 
@@ -96,7 +97,7 @@ pub async fn pause_playback(
     state: State<'_, PlaybackState>,
     engine: State<'_, SoundEngine>,
 ) -> AppResult<MediaPlayback> {
-    let changed = state.update(MediaPlayback::pause);
+    let changed = state.update(|playback| playback.pause_at(now_ms()));
     steer(&app, &state, &engine, changed, None)
 }
 
@@ -106,7 +107,7 @@ pub async fn toggle_playback(
     state: State<'_, PlaybackState>,
     engine: State<'_, SoundEngine>,
 ) -> AppResult<MediaPlayback> {
-    let changed = state.update(MediaPlayback::toggle);
+    let changed = state.update(|playback| playback.toggle_at(now_ms()));
     steer(&app, &state, &engine, changed, None)
 }
 
@@ -128,7 +129,7 @@ pub async fn set_playback_rate(
     engine: State<'_, SoundEngine>,
     rate: f64,
 ) -> AppResult<MediaPlayback> {
-    let changed = state.update(|playback| playback.set_rate(rate));
+    let changed = state.update(|playback| playback.set_rate_at(rate, now_ms()));
     steer(&app, &state, &engine, changed, None)
 }
 

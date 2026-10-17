@@ -36,6 +36,7 @@ pub mod playback;
 pub mod pptx;
 pub mod presentation;
 pub mod preview;
+pub mod recorder;
 pub mod remote;
 pub mod screen_picture;
 pub mod screens;

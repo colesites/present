@@ -25,6 +25,7 @@ export {
 } from "./useTimers";
 export type {
   TimeUpSettings,
+  TimerCategory,
   TimerConfig,
   TimerItem,
   TimerType,

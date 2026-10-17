@@ -12,8 +12,10 @@ import { LibrariesPanel, type LibrariesPanelRef } from "../../features/shows";
 import { ScripturePanel, type ScripturePanelRef } from "../../features/scripture";
 import type { ScriptureSlide } from "../../features/scripture/lib/slides";
 import { MediaItem, VideoSettings } from "../media/hooks/useMediaFolders";
+import { VIDEO_SPEEDS } from "../media/speeds";
 import { cn } from "../../renderer/shared/lib/utils";
 import { RustVideo } from "../../renderer/shared/components/RustVideo";
+import { useSeekOnRelease } from "../../renderer/shared/hooks/useSeekOnRelease";
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
 import { SongAgentControl } from "../song-agent/SongAgentControl";
 import type { BibleAgentSettings } from "../scripture/components/ScripturePanel";
@@ -117,14 +119,12 @@ const formatTime = (seconds: number): string => {
   return `${minutes}:${String(whole % 60).padStart(2, "0")}`;
 };
 
-/** The speeds a video can play at. */
-const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
-
 /** A slider whose track shows how far along it is. */
 function TrackSlider({
   value,
   max,
   onChange,
+  seekOnRelease = false,
   label,
   disabled,
   className,
@@ -132,21 +132,33 @@ function TrackSlider({
   value: number;
   max: number;
   onChange: (value: number) => void;
+  /** A position: the thumb moves while dragged, `onChange` once on release. */
+  seekOnRelease?: boolean;
   label: string;
   disabled?: boolean;
   className?: string;
 }) {
-  const percent = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
+  const release = useSeekOnRelease(value, onChange);
+  const shown = seekOnRelease ? release.value : value;
+  const percent = max > 0 ? Math.min(100, Math.max(0, (shown / max) * 100)) : 0;
+  const events = seekOnRelease
+    ? {
+        onChange: release.onChange,
+        onPointerUp: release.onPointerUp,
+        onKeyUp: release.onKeyUp,
+        onBlur: release.onBlur,
+      }
+    : { onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange(Number(event.target.value)) };
   return (
     <input
       type="range"
       min={0}
       max={max > 0 ? max : 1}
       step={max > 10 ? 0.1 : 0.01}
-      value={Math.min(value, max > 0 ? max : 1)}
+      value={Math.min(shown, max > 0 ? max : 1)}
       disabled={disabled}
       aria-label={label}
-      onChange={(event) => onChange(Number(event.target.value))}
+      {...events}
       style={{
         background: `linear-gradient(to right, var(--primary) ${percent}%, color-mix(in oklab, var(--foreground) 22%, transparent) ${percent}%)`,
       }}
@@ -279,9 +291,14 @@ function PreviewVideo({
             : { mode: "local", playing: local.playing, positionSeconds: local.position, loop, rate: local.rate }
         }
         label={`${item.name} service preview`}
-        // The operator's preview's size: sharp in a panel, and each frame
-        // small enough to reach the screen as soon as the projector's.
-        largest={1280}
+        // Drawn by the app over the page, as the screens are: the same frame
+        // as the audience at the same moment, whatever this window is busy
+        // with (`useNativePanel`).
+        native
+        // The operator's preview's size (`CompositorPreviewLayer`): sharp in a
+        // panel, and each frame small enough to shrink, encode and reach the
+        // screen thirty times a second without taking a core to do it.
+        largest={960}
         className="aspect-video w-full cursor-pointer bg-black"
         onClick={() => {
           if (!isLive) onSend?.();
@@ -293,6 +310,7 @@ function PreviewVideo({
           max={duration ?? 0}
           disabled={!duration}
           onChange={seek}
+          seekOnRelease
           label="Position"
           className="w-full"
         />
@@ -331,7 +349,7 @@ function PreviewVideo({
                 onChange={(event) => changeRate(Number(event.target.value))}
                 className="cursor-pointer bg-transparent text-[12px] font-medium tabular-nums text-foreground outline-none"
               >
-                {SPEEDS.map((speed) => (
+                {VIDEO_SPEEDS.map((speed) => (
                   <option key={speed} value={String(speed)}>
                     {speed}×
                   </option>

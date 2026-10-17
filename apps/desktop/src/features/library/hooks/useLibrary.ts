@@ -208,10 +208,11 @@ export function useLibrary(
   const filteredItems = useMemo(() => {
     let result = libraryItems;
 
-    // Filter by category
-    if (selectedCategoryId) {
-      result = result.filter((s) => s.categoryId === selectedCategoryId);
-    }
+    // Category filtering lives in the libraries panel. Two categories can
+    // share a name — one created on this computer, one from the account —
+    // and the panel treats them as one. Filtering on the raw id here kept
+    // only the empty copy, so Songs (and the rest) showed nothing while All
+    // still listed everything.
 
     // Filter by search query
     if (searchQuery.trim()) {
@@ -240,7 +241,7 @@ export function useLibrary(
     }
 
     return result;
-  }, [libraryItems, selectedCategoryId, searchMode, searchQuery, contentSource]);
+  }, [libraryItems, searchMode, searchQuery, contentSource]);
 
   const createNewItem = async (
     title: string,

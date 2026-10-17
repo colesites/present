@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 
 use crate::services::output::{MediaKind, OutputScene};
 use crate::services::playback::MIRROR_DRIFT_TOLERANCE;
+use crate::services::video::live::{Ask, LiveHub};
+use crate::services::video::resize::Resizer;
 use crate::services::video::{Polled, VideoDecoder, VideoFrame};
 
 /// Decode forward while the frame on hand is more than this far behind.
@@ -55,6 +57,16 @@ pub struct Anchor {
     pub seconds: f64,
     pub playing: bool,
     pub at: Instant,
+}
+
+/// The video `scene` shows, if it shows one.
+fn video_url(scene: &OutputScene) -> Option<&str> {
+    scene
+        .media_url
+        .as_deref()
+        .filter(|url| !url.is_empty())
+        .filter(|_| scene.media_type == Some(MediaKind::Video))
+        .filter(|_| scene.show_media && !scene.hide_background)
 }
 
 /// Where the video should be at `now`.
@@ -132,7 +144,9 @@ struct Playing {
     url: String,
     size: (u32, u32),
     decoder: Box<dyn VideoDecoder>,
-    frame: Option<VideoFrame>,
+    /// Shared, so a picture that shows it as it is (`surface::panel`) takes
+    /// it without a copy.
+    frame: Option<Arc<VideoFrame>>,
     anchor: Anchor,
     /// The last position report seen, to tell a fresh report from a repeat.
     last_reported: f64,
@@ -157,6 +171,17 @@ struct Playing {
     /// A video that stops decoding is re-opened after [`RECOVER_AFTER`].
     broken_at: Option<Instant>,
 }
+
+/// The longest a picture keeps what it shows while a video it has just been
+/// given finds its first frame (`VideoFeed::frame_or_wait`). Past this the
+/// video is taken as not coming, and the picture is drawn without it.
+const HOLD_FOR_FIRST_FRAME: Duration = Duration::from_secs(2);
+
+/// A video the scene shows has not given its first frame yet: the picture
+/// should keep what it shows, rather than go black for the moment the file
+/// takes to open (`VideoFeed::frame_or_wait`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Waiting;
 
 /// How long a video that stopped decoding is left alone before it is opened
 /// again. Long enough not to thrash a file that is genuinely unreadable,
@@ -185,11 +210,37 @@ pub struct VideoFeed {
     opening: Option<Opening>,
     /// A video that would not open, so it is not re-opened every frame.
     refused: Option<(String, (u32, u32))>,
+    /// Where the live video is decoded, once for every picture of it
+    /// (`video::live`). `None` is the app's own; a test brings its own.
+    hub: Option<Arc<LiveHub>>,
+    /// The live video's frame as this picture last showed it.
+    live: Option<LiveShown>,
+    /// Makes the live video's frame this picture's size.
+    resizer: Resizer,
+    /// Takes the live video's frames at any size (`set_any_size`).
+    any_size: bool,
+    /// The video the scene shows that has not given a frame yet, and since
+    /// when (`frame_or_wait`).
+    waiting: Option<(String, Instant)>,
+}
+
+/// The live video's frame, as one picture shows it: the shared frame, or the
+/// same made this picture's size.
+struct LiveShown {
+    url: String,
+    frame: Arc<VideoFrame>,
 }
 
 impl VideoFeed {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Share live videos through `hub` rather than the app's own.
+    #[cfg(test)]
+    fn with_hub(mut self, hub: Arc<LiveHub>) -> Self {
+        self.hub = Some(hub);
+        self
     }
 
     /// Keep the scene's time even for the live video (see `own_clock`).
@@ -298,19 +349,87 @@ impl VideoFeed {
         size: (u32, u32),
         open: &Opener,
     ) -> Option<&VideoFrame> {
-        let url = scene
-            .media_url
-            .as_deref()
-            .filter(|url| !url.is_empty())
-            .filter(|_| scene.media_type == Some(MediaKind::Video))
-            .filter(|_| scene.show_media && !scene.hide_background);
+        self.frame_or_wait(scene, now, size, open).unwrap_or(None)
+    }
+
+    /// [`frame_for`](Self::frame_for), or [`Waiting`] while a video the scene
+    /// has just started showing has no frame yet — for a picture that can
+    /// keep what it shows until it does.
+    ///
+    /// A video put on screen took the time its file took to open and decode a
+    /// first frame, and every picture drew the scene without it meanwhile: the
+    /// screen went black, then the video came. A picture that keeps what it
+    /// shows instead cuts from the last picture to the video's first frame,
+    /// as a switcher does. If no frame comes within [`HOLD_FOR_FIRST_FRAME`],
+    /// the video is taken as not coming and the scene is drawn without it.
+    pub fn frame_or_wait(
+        &mut self,
+        scene: &OutputScene,
+        now: Instant,
+        size: (u32, u32),
+        open: &Opener,
+    ) -> Result<Option<&VideoFrame>, Waiting> {
+        let url = video_url(scene).map(str::to_owned);
+        if self.frame_now(scene, now, size, open).is_some() {
+            self.waiting = None;
+            return Ok(url.as_deref().and_then(|url| self.shown(url)));
+        }
+        let Some(url) = url else {
+            self.waiting = None;
+            return Ok(None);
+        };
+        let since = match &self.waiting {
+            Some((waiting, since)) if *waiting == url => *since,
+            _ => {
+                self.waiting = Some((url, now));
+                now
+            }
+        };
+        if now.saturating_duration_since(since) < HOLD_FOR_FIRST_FRAME {
+            Err(Waiting)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// The frame this feed last gave of `url`: the shared live video's, or
+    /// its own decoder's.
+    fn shown(&self, url: &str) -> Option<&VideoFrame> {
+        if let Some(live) = self.live.as_ref().filter(|live| live.url == url) {
+            return Some(&live.frame);
+        }
+        self.playing
+            .as_ref()
+            .filter(|playing| playing.url == url)
+            .and_then(|playing| playing.frame.as_deref())
+    }
+
+    fn frame_now(
+        &mut self,
+        scene: &OutputScene,
+        now: Instant,
+        size: (u32, u32),
+        open: &Opener,
+    ) -> Option<&VideoFrame> {
+        let url = video_url(scene);
 
         let Some(url) = url else {
             // Nothing to show: let the decoder and its file go.
             self.playing = None;
             self.opening = None;
+            self.live = None;
             return None;
         };
+
+        // The live video, or the one about to be, is decoded once for every
+        // picture of it (`video::live`), not by each. A picture keeping its own
+        // time — the operator previewing a video — still opens its own.
+        if !self.own_clock && self.exact.is_none() {
+            if let Some(reading) = crate::services::sound::clock::reading_for(url, now) {
+                return self.live_frame(url, reading, size, open);
+            }
+        }
+        self.live = None;
 
         let current = self
             .playing
@@ -344,14 +463,9 @@ impl VideoFeed {
         let looping = scene.video_settings.loop_;
         let duration = playing.decoder.duration_seconds();
 
-        // The live video keeps the sound's time, exactly, as every other
-        // picture of it does (`sound::clock`): no report to wait for and no
-        // tolerance to drift within.
-        let heard = match self.exact.take() {
-            Some(exact) => Some(exact),
-            None if self.own_clock => None,
-            None => crate::services::sound::clock::position_for(url, now),
-        };
+        // A picture that keeps its own time exactly (`media_frames`) is
+        // followed as exactly. The live video went to its shared decoder above.
+        let heard = self.exact.take();
         if let Some((seconds, running)) = heard {
             playing.anchor = Anchor {
                 seconds,
@@ -420,7 +534,77 @@ impl VideoFeed {
             }
         }
 
-        self.playing.as_ref()?.frame.as_ref()
+        self.playing.as_ref()?.frame.as_deref()
+    }
+
+    /// [`frame_for`](Self::frame_for), shared rather than lent: for a picture
+    /// that hands the frame on as it is (`surface::panel`).
+    pub fn frame_for_shared(
+        &mut self,
+        scene: &OutputScene,
+        now: Instant,
+        size: (u32, u32),
+        open: &Opener,
+    ) -> Option<Arc<VideoFrame>> {
+        let shown = std::ptr::from_ref(self.frame_for(scene, now, size, open)?);
+        [
+            self.live.as_ref().map(|live| &live.frame),
+            self.playing
+                .as_ref()
+                .and_then(|playing| playing.frame.as_ref()),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|frame| std::ptr::eq(Arc::as_ptr(frame), shown))
+        .cloned()
+    }
+
+    /// Take the live video's frames at whatever size they were decoded, for a
+    /// picture the GPU scales (`surface::panel`), rather than made this
+    /// picture's size first.
+    pub fn set_any_size(&mut self, any: bool) {
+        self.any_size = any;
+    }
+
+    /// The live video's frame for this picture: the one every picture of it
+    /// shows at this moment, at this picture's size.
+    fn live_frame(
+        &mut self,
+        url: &str,
+        reading: crate::services::sound::clock::Reading,
+        size: (u32, u32),
+        open: &Opener,
+    ) -> Option<&VideoFrame> {
+        let path = crate::services::sound::clock::path_of(url)?;
+        let ask = Ask {
+            seconds: reading.seconds,
+            playing: reading.playing,
+            rate: reading.rate,
+            bounds: size,
+        };
+        let hub = self.hub.clone().unwrap_or_else(LiveHub::global);
+        let resizer = (!self.any_size).then_some(&mut self.resizer);
+        if let Some(frame) = hub.frame(url, &path, ask, open, resizer) {
+            // A decoder of its own, from before the video went live, is no
+            // longer needed.
+            self.playing = None;
+            self.opening = None;
+            self.refused = None;
+            self.live = Some(LiveShown {
+                url: url.to_owned(),
+                frame,
+            });
+            return self.live.as_ref().map(|shown| shown.frame.as_ref());
+        }
+        // Nothing yet — the decoder is opening, or finding a new place. What
+        // this picture already shows of this video stays up.
+        if self.live.as_ref().is_some_and(|shown| shown.url == url) {
+            return self.live.as_ref().map(|shown| shown.frame.as_ref());
+        }
+        self.playing
+            .as_ref()
+            .filter(|playing| playing.url == url)
+            .and_then(|playing| playing.frame.as_deref())
     }
 }
 
@@ -628,7 +812,7 @@ fn take_one(playing: &mut Playing) -> Result<Took, String> {
         .map_err(|error| error.to_string())?
     {
         Polled::Frame(frame) if frame.is_well_formed() => {
-            playing.frame = Some(frame);
+            playing.frame = Some(Arc::new(frame));
             playing.awaiting_seek = None;
             Ok(Took::Frame)
         }
@@ -923,17 +1107,17 @@ mod tests {
 
     /// Two pictures of the live video that heard the operator's reports at
     /// different moments — one late, one early — still show the same frame,
-    /// because both keep the sound's clock rather than their own.
+    /// because both keep the sound's clock rather than their own; and it is
+    /// one decoder's frame, not one each (`video::live`).
     #[test]
     fn every_picture_of_the_live_video_shows_the_frame_the_sound_is_at() {
         let url = "local-media://media/heard-clock-test.mp4";
-        let start = Instant::now();
         crate::services::sound::clock::publish(Some(crate::services::sound::clock::HeardClock {
             now: crate::services::sound::clock::Segment {
                 path: Some("/heard-clock-test.mp4".into()),
-                seconds: 2.0,
-                playing: true,
-                at: start,
+                seconds: 2.5,
+                playing: false,
+                at: Instant::now(),
                 rate: 1.0,
             },
             scheduled: Vec::new(),
@@ -942,18 +1126,31 @@ mod tests {
             media_url: Some(url.to_owned()),
             ..video_scene(reported, true, false)
         };
+        let hub = LiveHub::new();
         let mut late = Harness::new(300);
+        late.feed = VideoFeed::new().with_hub(Arc::clone(&hub));
         let mut early = Harness::new(300);
-        // Asked once a frame, as the screens ask, for half a second.
-        let (mut late_frame, mut early_frame) = (None, None);
-        for step in 0..=15 {
-            let now = start + STREAM_FRAME * step;
-            late_frame = late.shown(&scene(1.9), now);
-            early_frame = early.shown(&scene(2.08), now);
-        }
+        early.feed = VideoFeed::new().with_hub(Arc::clone(&hub));
+        // Asked once a frame, as the screens ask, until the decoder answers.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (late_frame, early_frame) = loop {
+            let now = Instant::now();
+            let late_frame = late.shown(&scene(1.9), now);
+            let early_frame = early.shown(&scene(2.08), now);
+            if late_frame.is_some() && early_frame.is_some() {
+                break (late_frame, early_frame);
+            }
+            assert!(now < deadline, "the live video never showed");
+            std::thread::sleep(Duration::from_millis(2));
+        };
         crate::services::sound::clock::publish(None);
         assert_eq!(late_frame, Some(75), "2.5 s in, at 30 fps");
         assert_eq!(late_frame, early_frame);
+        assert_eq!(
+            *late.opens.lock().unwrap() + *early.opens.lock().unwrap(),
+            1,
+            "one decoder for both pictures"
+        );
     }
 
     #[test]
@@ -1289,6 +1486,74 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         assert_eq!(opened.load(Ordering::SeqCst), 1, "opened once");
+    }
+
+    /// The owner's report: a video put on screen showed black first. A
+    /// picture is told to keep what it shows until the video's first frame
+    /// is decoded — and, for a video that never gives one, only so long.
+    #[test]
+    fn a_picture_keeps_what_it_shows_until_a_new_video_has_its_first_frame() {
+        let release = Arc::new(AtomicBool::new(false));
+        let released = release.clone();
+        let open: Opener = Arc::new(move |url: &str, _size: (u32, u32)| {
+            if url.ends_with("never.mp4") {
+                return Err("will not open".to_owned());
+            }
+            while !released.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(Box::new(FakeDecoder {
+                next: 0,
+                frames: 90,
+                knows_duration: true,
+                log: Arc::default(),
+                ready: None,
+                fails_from: None,
+            }) as Box<dyn VideoDecoder>)
+        });
+        let mut feed = VideoFeed::new();
+        let scene = video_scene(0.0, true, false);
+        let start = Instant::now();
+        assert_eq!(
+            feed.frame_or_wait(&scene, start, (2, 2), &open)
+                .map(|frame| frame.is_some()),
+            Err(Waiting),
+            "opening: keep what is shown"
+        );
+        release.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match feed.frame_or_wait(&scene, Instant::now(), (2, 2), &open) {
+                Ok(Some(_)) => break,
+                Err(Waiting) => {}
+                Ok(None) => panic!("drawn without the video while it was opening"),
+            }
+            assert!(Instant::now() < deadline, "the video never arrived");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        // A video that never gives a frame is waited for, then drawn without.
+        let mut never = video_scene(0.0, true, false);
+        never.media_url = Some("local-media://media/never.mp4".to_owned());
+        let asked = Instant::now();
+        assert_eq!(
+            feed.frame_or_wait(&never, asked, (2, 2), &open)
+                .map(|frame| frame.is_some()),
+            Err(Waiting)
+        );
+        assert_eq!(
+            feed.frame_or_wait(&never, asked + HOLD_FOR_FIRST_FRAME, (2, 2), &open)
+                .map(|frame| frame.is_some()),
+            Ok(false),
+            "not coming: drawn without it"
+        );
+        // Nothing on screen to show: never waiting.
+        let none = OutputScene::default();
+        assert_eq!(
+            feed.frame_or_wait(&none, Instant::now(), (2, 2), &open)
+                .map(|frame| frame.is_some()),
+            Ok(false)
+        );
     }
 
     #[test]

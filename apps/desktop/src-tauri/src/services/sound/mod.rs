@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::services::playback::MediaPlayback;
+use crate::services::video::live::Readiness;
 
 use decoder::AudioDecoder;
 use output::{Output, BACKING_TRACK, VIDEO};
@@ -52,9 +53,19 @@ const CLOCK_SLACK: f64 = 0.012;
 /// How much sound is kept decoded ahead of the device.
 const AHEAD_SECONDS: f64 = 0.35;
 
-/// How often the video's position goes into the transport while it runs: as
-/// often as the `<video>` element reported it.
-const REPORT_EVERY: Duration = Duration::from_millis(100);
+/// How far the sound may get from where the transport last heard it was —
+/// moved on by the time since — before it is told again.
+///
+/// The position used to go into the transport ten times a second, as the
+/// `<video>` element had reported it. Every report woke every window, the
+/// operator's re-rendered and sent the whole scene back, and every window
+/// re-rendered again: most of the app's work while a video played, for a
+/// number each of them can work out for itself from the last one and the time
+/// since. So the transport is told when the sound starts, stops, moves or
+/// changes speed, and otherwise only if it strays, which a device's clock
+/// does by milliseconds an hour. Under the 0.3 s at which an operator's
+/// change would be taken for a seek (`SEEK_TOLERANCE`).
+const REPORT_DRIFT: f64 = 0.1;
 
 /// How often the backing track's place is told to the Audio tab.
 const BACKING_REPORT_EVERY: Duration = Duration::from_millis(250);
@@ -81,8 +92,16 @@ pub struct BackingTrackState {
 
 /// Where the engine tells the rest of the app what the sound is doing.
 pub trait Transport: Send + 'static {
-    /// Where the video's sound is now.
-    fn report_position(&self, seconds: f64);
+    /// Where the video's sound is now, and whether it is running there or
+    /// held — held, the time shown stands still rather than counting on.
+    fn report_position(&self, seconds: f64, running: bool);
+    /// How far the live video's pictures have got towards `seconds` of the
+    /// file at `path` (`video::live`). A video starting, or moving, waits for
+    /// its frame there, so the picture and the sound begin together.
+    fn picture(&self, path: &Path, seconds: f64) -> Readiness {
+        let _ = (path, seconds);
+        Readiness::Ready
+    }
     /// How long the video is, once its file has been read.
     fn set_duration(&self, seconds: Option<f64>);
     /// The video reached its end.
@@ -214,24 +233,33 @@ struct Track {
 
 impl Track {
     /// `path`'s sound, ready to play on `output`. Without one — no file, no
-    /// sound in it, no device — it is timed by the wall clock.
+    /// sound in it, no device — it is timed by the wall clock, and ends at
+    /// the file's length as one with sound does.
     fn open(id: String, path: Option<&Path>, output: Option<&Output>) -> Self {
-        let decoder = match (path, output) {
-            (Some(path), Some(output)) => {
-                match AudioDecoder::open(path, output.rate, output.voice_channels as u16) {
-                    Ok(decoder) => decoder,
+        let (decoder, duration_seconds) = match path {
+            Some(path) => {
+                // With no device the sound is not played, but the file is
+                // still read for its length.
+                let (rate, channels) = output.map_or((48_000, 2), |output| {
+                    (output.rate, output.voice_channels as u16)
+                });
+                match AudioDecoder::open(path, rate, channels) {
+                    Ok(opened) => (
+                        opened.sound.filter(|_| output.is_some()),
+                        opened.duration_seconds,
+                    ),
                     Err(error) => {
                         tracing::warn!(%error, "the sound could not be read; it plays without");
-                        None
+                        (None, None)
                     }
                 }
             }
-            _ => None,
+            None => (None, None),
         };
         Self {
             id,
             path: path.map(Path::to_owned),
-            duration_seconds: decoder.as_ref().and_then(AudioDecoder::duration_seconds),
+            duration_seconds,
             decoder,
             base_seconds: 0.0,
             written: 0,
@@ -403,6 +431,26 @@ impl Track {
     }
 }
 
+/// Where the transport was last told the video's sound was.
+#[derive(Debug, Clone, Copy)]
+struct Reported {
+    seconds: f64,
+    at: Instant,
+    playing: bool,
+    rate: f64,
+}
+
+impl Reported {
+    /// Where the transport has it at `now`, moving on as it would.
+    fn seconds_at(&self, now: Instant) -> f64 {
+        if self.playing {
+            self.seconds + now.saturating_duration_since(self.at).as_secs_f64() * self.rate
+        } else {
+            self.seconds
+        }
+    }
+}
+
 struct Engine<T: Transport> {
     transport: T,
     routing: Routing,
@@ -411,7 +459,8 @@ struct Engine<T: Transport> {
     source: Option<(String, Option<PathBuf>)>,
     video: Option<Track>,
     backing: Option<Track>,
-    last_report: Instant,
+    /// What the transport was last told; `None` to tell it again at once.
+    reported: Option<Reported>,
     last_backing_report: Instant,
     idle_since: Option<Instant>,
     last_default_check: Instant,
@@ -429,7 +478,25 @@ struct Scheduled {
     segment: clock::Segment,
     /// Which video it is from then on.
     media_id: Option<String>,
+    /// The moment it was first due, which a wait for its picture is counted
+    /// from (`PREROLL_MOST`).
+    due: Instant,
 }
+
+/// The longest a video starting, or moving while it plays, waits for its
+/// picture before its sound goes anyway: a file that will not give a frame
+/// must not hold the service.
+const PREROLL_MOST: Duration = Duration::from_millis(1500);
+
+/// How far ahead the start of a video held for its picture is put, and put
+/// again while it waits: always to come, so no picture reads it as begun
+/// before the sound is.
+const HOLD_STEP: Duration = Duration::from_millis(40);
+
+/// How long a video starting waits for any picture of it to ask for it at
+/// all. Nothing showing it — no audience window, no panel — and the sound
+/// goes alone.
+const UNASKED_GRACE: Duration = Duration::from_millis(300);
 
 enum Change {
     /// No live video.
@@ -454,7 +521,7 @@ impl<T: Transport> Engine<T> {
             source: None,
             video: None,
             backing: None,
-            last_report: Instant::now(),
+            reported: None,
             last_backing_report: Instant::now(),
             idle_since: None,
             last_default_check: Instant::now(),
@@ -561,6 +628,7 @@ impl<T: Transport> Engine<T> {
                     rate: playback.rate,
                 },
                 media_id: None,
+                due: at,
             },
             Some(media_id) if before_id.as_deref() != Some(media_id.as_str()) => {
                 let path = self
@@ -591,6 +659,7 @@ impl<T: Transport> Engine<T> {
                         playing: playback.playing,
                     },
                     media_id: Some(media_id),
+                    due: at,
                 }
             }
             Some(media_id) => {
@@ -618,6 +687,7 @@ impl<T: Transport> Engine<T> {
                         rate: playback.rate,
                     },
                     media_id: Some(media_id),
+                    due: at,
                 }
             }
         };
@@ -634,6 +704,13 @@ impl<T: Transport> Engine<T> {
 
     /// Make the changes whose moment has come — ahead of it by as long as the
     /// device takes to sound, so they are heard on the frame they are seen.
+    ///
+    /// A video starting, or moving while it plays, starts when its picture
+    /// can: at its moment the old sound stops and the new place is held, and
+    /// the sound goes from there once the frame for it is decoded
+    /// (`picture_pending`). It went at its moment whatever the picture was
+    /// doing, and a file a second in opening was heard a second before it was
+    /// seen, the screen black meanwhile.
     fn apply_due(&mut self, now: Instant) {
         let sounding = self.output.as_ref().map_or(Duration::ZERO, |output| {
             Duration::from_secs_f64(output.in_flight_frames() as f64 / f64::from(output.rate))
@@ -643,6 +720,10 @@ impl<T: Transport> Engine<T> {
             .front()
             .is_some_and(|next| next.segment.at <= now + sounding)
         {
+            if self.picture_pending(now) {
+                self.hold_for_picture(now + sounding);
+                break;
+            }
             let Some(next) = self.scheduled.pop_front() else {
                 break;
             };
@@ -659,6 +740,79 @@ impl<T: Transport> Engine<T> {
             });
             clock::publish(self.published.clone());
         }
+    }
+
+    /// Whether the change due next starts a video, or moves one, whose
+    /// picture is not ready there yet — and has not waited too long for it.
+    /// A later change already made does not wait for this one's picture.
+    fn picture_pending(&self, now: Instant) -> bool {
+        let Some(next) = self.scheduled.front() else {
+            return false;
+        };
+        if self.scheduled.len() > 1 || !next.segment.playing {
+            return false;
+        }
+        if matches!(next.change, Change::Unload) || now >= next.due + PREROLL_MOST {
+            return false;
+        }
+        let Some(path) = next.segment.path.as_deref() else {
+            return false;
+        };
+        match self.transport.picture(path, next.segment.seconds) {
+            Readiness::Ready => false,
+            Readiness::Preparing => true,
+            Readiness::Unasked => now < next.due + UNASKED_GRACE,
+        }
+    }
+
+    /// The change due next, made now but held: the old sound stops at its
+    /// moment and the new place is held, every picture asking for its frame
+    /// there. Running it is put back as the next change, made once the
+    /// picture is ready (`apply_due`).
+    fn hold_for_picture(&mut self, heard_at: Instant) {
+        let Some(next) = self.scheduled.pop_front() else {
+            return;
+        };
+        let (held, rate) = match next.change {
+            Change::Load { track, .. } => (
+                Change::Load {
+                    track,
+                    playing: false,
+                },
+                next.segment.rate,
+            ),
+            Change::Same { seek_to, rate, .. } => (
+                Change::Same {
+                    seek_to,
+                    playing: false,
+                    rate,
+                },
+                rate,
+            ),
+            Change::Unload => (Change::Unload, next.segment.rate),
+        };
+        self.apply(held);
+        let mut start = next.segment.clone();
+        start.at = heard_at + HOLD_STEP;
+        let mut held_segment = next.segment;
+        held_segment.playing = false;
+        self.published = Some(clock::HeardClock {
+            now: held_segment,
+            scheduled: std::iter::once(start.clone())
+                .chain(self.scheduled.iter().map(|later| later.segment.clone()))
+                .collect(),
+        });
+        clock::publish(self.published.clone());
+        self.scheduled.push_front(Scheduled {
+            change: Change::Same {
+                seek_to: None,
+                playing: true,
+                rate,
+            },
+            segment: start,
+            media_id: next.media_id,
+            due: next.due,
+        });
     }
 
     fn apply(&mut self, change: Change) {
@@ -698,8 +852,9 @@ impl<T: Transport> Engine<T> {
             video.set_playing(playing, self.output.as_mut(), VIDEO);
             if playing {
                 self.idle_since = None;
-                self.last_report = Instant::now();
             }
+            // Started or stopped: the transport hears where, at once.
+            self.reported = None;
         }
     }
 
@@ -775,12 +930,15 @@ impl<T: Transport> Engine<T> {
         let Some(video) = &mut self.video else {
             return;
         };
+        // Moved: the transport hears where, at once.
+        self.reported = None;
         if !video.seek(seconds, self.output.as_mut(), VIDEO) {
             self.reopen_output();
         }
     }
 
     /// Where the video is, as heard. `None` with nothing loaded.
+    #[cfg(test)]
     fn video_position(&self) -> Option<f64> {
         Some(self.video.as_ref()?.position(self.output.as_ref(), VIDEO))
     }
@@ -924,14 +1082,30 @@ impl<T: Transport> Engine<T> {
         clock::publish(self.published.clone());
     }
 
+    /// Tell the transport where the sound is when that is news: it started,
+    /// stopped, moved or changed speed, or has strayed from where the transport
+    /// would have it by [`REPORT_DRIFT`]. Not ten times a second.
     fn report(&mut self) {
-        if self.video.as_ref().is_some_and(|video| video.playing)
-            && self.last_report.elapsed() >= REPORT_EVERY
-        {
-            self.last_report = Instant::now();
-            if let Some(position) = self.video_position() {
-                self.transport.report_position(position);
+        match &self.video {
+            Some(video) => {
+                let now = Instant::now();
+                let heard = video.position(self.output.as_ref(), VIDEO);
+                let due = self.reported.is_none_or(|told| {
+                    told.playing != video.playing
+                        || (told.rate - video.rate).abs() > 1e-6
+                        || (told.seconds_at(now) - heard).abs() > REPORT_DRIFT
+                });
+                if due {
+                    self.reported = Some(Reported {
+                        seconds: heard,
+                        at: now,
+                        playing: video.playing,
+                        rate: video.rate,
+                    });
+                    self.transport.report_position(heard, video.playing);
+                }
             }
+            None => self.reported = None,
         }
         if self.backing.as_ref().is_some_and(|track| track.playing)
             && self.last_backing_report.elapsed() >= BACKING_REPORT_EVERY
@@ -1108,8 +1282,12 @@ mod tests {
     struct Recorded(Arc<Mutex<Vec<String>>>);
 
     impl Transport for Recorded {
-        fn report_position(&self, seconds: f64) {
-            self.0.lock().unwrap().push(format!("at {seconds:.1}"));
+        fn report_position(&self, seconds: f64, running: bool) {
+            let held = if running { "" } else { " held" };
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("at {seconds:.1}{held}"));
         }
         fn set_duration(&self, seconds: Option<f64>) {
             self.0.lock().unwrap().push(format!("duration {seconds:?}"));
@@ -1175,6 +1353,19 @@ mod tests {
         assert!(!engine.video.as_ref().unwrap().playing);
     }
 
+    /// The background loop with no sound: its clock ran on past its end, so
+    /// it never started again, and every picture held its last frame.
+    #[test]
+    fn a_silent_video_is_as_long_as_its_file_with_no_device_too() {
+        let Some(clip) = decoder::tests::silent_clip("silent-track") else {
+            return;
+        };
+        let track = Track::open("clip".into(), Some(&clip.0), None);
+        assert!(track.decoder.is_none());
+        let length = track.duration_seconds.expect("the file's length");
+        assert!((length - 1.0).abs() < 0.15, "{length} seconds");
+    }
+
     #[test]
     fn the_operator_moving_the_video_moves_the_clock() {
         let mut engine = Engine::new(Recorded::default(), Routing::default());
@@ -1224,6 +1415,150 @@ mod tests {
             Some("clip")
         );
         assert!(engine.scheduled.is_empty());
+    }
+
+    /// Every report woke every window; ten a second was most of the app's
+    /// work while a video played. A running video's place follows from where
+    /// it started and the time since, so it is told when that changes.
+    #[test]
+    fn the_transport_hears_of_a_change_not_ten_times_a_second() {
+        let recorded = Recorded::default();
+        let reports = |recorded: &Recorded| {
+            recorded
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| event.starts_with("at "))
+                .count()
+        };
+        let mut engine = Engine::new(recorded.clone(), Routing::default());
+        engine.follow(&playing("clip", 0.0), None);
+        engine.settle();
+        for _ in 0..30 {
+            engine.report();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(reports(&recorded), 1, "once, as it started");
+
+        engine.set_video_playing(false);
+        engine.report();
+        engine.report();
+        assert_eq!(reports(&recorded), 2, "once more, where it stopped");
+
+        engine.seek_video(42.0);
+        engine.report();
+        assert_eq!(reports(&recorded), 3, "and where it was moved to");
+        assert_eq!(
+            recorded.0.lock().unwrap().last().map(String::as_str),
+            Some("at 42.0 held"),
+            "held there: the time shown stands still"
+        );
+    }
+
+    /// A transport whose pictures are ready only once told they are.
+    #[derive(Clone, Default)]
+    struct Pictured {
+        log: Recorded,
+        ready: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Transport for Pictured {
+        fn report_position(&self, seconds: f64, running: bool) {
+            self.log.report_position(seconds, running);
+        }
+        fn set_duration(&self, seconds: Option<f64>) {
+            self.log.set_duration(seconds);
+        }
+        fn ended(&self, looping: bool) {
+            self.log.ended(looping);
+        }
+        fn looping(&self) -> bool {
+            false
+        }
+        fn backing_track(&self, state: &BackingTrackState, ended: bool) {
+            self.log.backing_track(state, ended);
+        }
+        fn picture(&self, _path: &Path, _seconds: f64) -> Readiness {
+            if self.ready.load(Ordering::SeqCst) {
+                Readiness::Ready
+            } else {
+                Readiness::Preparing
+            }
+        }
+    }
+
+    /// A playing video moved to 5 s, of a file the pictures show.
+    fn moved_to_five(engine: &mut Engine<Pictured>, now: Instant) {
+        engine.follow(&playing("clip", 0.0), None);
+        engine.settle();
+        engine.scheduled.push_back(Scheduled {
+            change: Change::Same {
+                seek_to: Some(5.0),
+                playing: true,
+                rate: 1.0,
+            },
+            segment: clock::Segment {
+                path: Some(PathBuf::from("/clip.mp4")),
+                seconds: 5.0,
+                playing: true,
+                at: now,
+                rate: 1.0,
+            },
+            media_id: Some("clip".into()),
+            due: now,
+        });
+    }
+
+    /// The owner's report: a video's sound went before its picture, and the
+    /// screen was black meanwhile. Started or moved, it is held at its place
+    /// until the frame there is decoded, and both go on together.
+    #[test]
+    fn a_video_is_heard_when_it_can_be_seen() {
+        let pictured = Pictured::default();
+        let mut engine = Engine::new(pictured.clone(), Routing::default());
+        let now = Instant::now();
+        moved_to_five(&mut engine, now);
+
+        engine.apply_due(now);
+        assert!(
+            !engine.video.as_ref().unwrap().playing,
+            "held at its new place"
+        );
+        assert!((engine.video_position().unwrap() - 5.0).abs() < 0.05);
+        assert_eq!(engine.scheduled.len(), 1, "its start waits");
+        let published = engine.published.clone().unwrap();
+        assert!(
+            !published.now.playing && (published.now.seconds - 5.0).abs() < 1e-9,
+            "every picture asks for 5 s, held"
+        );
+
+        engine.apply_due(now + Duration::from_millis(200));
+        assert!(
+            !engine.video.as_ref().unwrap().playing,
+            "still decoding: it waits"
+        );
+
+        pictured.ready.store(true, Ordering::SeqCst);
+        engine.apply_due(now + Duration::from_millis(400));
+        assert!(engine.video.as_ref().unwrap().playing, "ready: it goes");
+        assert!(engine.scheduled.is_empty());
+        assert!(engine.published.as_ref().unwrap().now.playing);
+    }
+
+    #[test]
+    fn a_picture_that_never_comes_holds_the_sound_only_so_long() {
+        let pictured = Pictured::default();
+        let mut engine = Engine::new(pictured, Routing::default());
+        let now = Instant::now();
+        moved_to_five(&mut engine, now);
+        engine.apply_due(now);
+        assert!(!engine.video.as_ref().unwrap().playing);
+        engine.apply_due(now + PREROLL_MOST + Duration::from_millis(10));
+        assert!(
+            engine.video.as_ref().unwrap().playing,
+            "a file that gives no frame does not hold the service"
+        );
     }
 
     #[test]

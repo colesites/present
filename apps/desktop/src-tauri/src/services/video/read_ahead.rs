@@ -88,6 +88,12 @@ impl ReadAhead {
 }
 
 impl VideoDecoder for ReadAhead {
+    fn take_unbuffered(&mut self) -> Option<Box<dyn VideoDecoder>> {
+        // Before the worker has started the decoder is still here to hand
+        // back; after, it is the worker's, and this stays as it is.
+        self.idle.take()
+    }
+
     fn next_frame(&mut self) -> Result<Option<VideoFrame>, VideoError> {
         self.start();
         let mut queue = self.shared.lock();

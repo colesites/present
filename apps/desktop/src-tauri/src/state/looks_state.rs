@@ -10,6 +10,7 @@
 //! during a service while that one does not.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
 use crate::errors::AppResult;
@@ -24,6 +25,9 @@ const LOOKS_FILE: &str = "looks.json";
 pub struct LooksState {
     config: RwLock<LooksConfig>,
     path: PathBuf,
+    /// Counts up with every change, so a screen drawing through a look asks
+    /// it again only when it has moved (`output_state::SceneCache`).
+    version: AtomicU64,
 }
 
 impl LooksState {
@@ -47,7 +51,13 @@ impl LooksState {
         Self {
             config: RwLock::new(config),
             path,
+            version: AtomicU64::new(0),
         }
+    }
+
+    /// Moves whenever the looks change.
+    pub fn version(&self) -> u64 {
+        self.version.load(Ordering::Acquire)
     }
 
     pub fn snapshot(&self) -> LooksConfig {
@@ -89,11 +99,17 @@ impl LooksState {
             if !mutate(&mut config) {
                 return Ok(None);
             }
+            self.version.fetch_add(1, Ordering::AcqRel);
             config.clone()
         };
 
         persist::save_atomic(&self.path, &snapshot)?;
         Ok(Some(snapshot))
+    }
+
+    /// Whether the live look shows the timer on the Screen.
+    pub fn screen_shows_timer(&self) -> bool {
+        self.read().live_look().targets.program.layers.timer
     }
 
     fn read(&self) -> std::sync::RwLockReadGuard<'_, LooksConfig> {

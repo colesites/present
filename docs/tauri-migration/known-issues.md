@@ -28,6 +28,7 @@ zero-behaviour-change change, per migration rule 4.
 | 20 | Windows showed white until the UI painted | Medium | **Fixed** |
 | 21 | The editor's Artist and Author fields would not take a space | Medium | **Fixed** |
 | 22 | The NDI stream fell to 2 fps when video decoding fell behind | **High** | **Fixed**; 4K video itself still trails on this Mac |
+| 23 | One video decoded five times, and the app woken ten times a second while it played | **High** | **Fixed**; not yet measured in the running app |
 
 ---
 
@@ -650,4 +651,171 @@ catches it up. AVFoundation kept it within 15 ms. The stream itself holds
 turn with the copy and conversion on one thread. Splitting those onto two
 threads would help, and the wgpu compositor removes the copy and conversion
 altogether (HANDOFF §4).
+
+---
+
+## 23. One video decoded five times, and the app woken ten times a second while it played — FIXED
+
+The owner's report: playing a video took a lot of CPU, and the center pane
+skipped and froze while the audience screen played on, as if the screen had a
+control of its own.
+
+The screen had no control of its own; it had a decoder of its own. The
+audience view, the operator's preview, the center pane, each stage display
+and NDI each opened the live video, so one file was decoded five times, each
+copy taken off the GPU, converted and scaled on its own threads. The center
+pane's copy was then encoded as a JPEG and fetched by the webview, which only
+asked when React was free — and React was not: the sound engine reported the
+position ten times a second, every report woke every window, the operator's
+re-rendered and sent the whole scene back, and every window re-rendered
+again. A paused video's panel asked for a new frame every 6 ms. Every
+per-pixel pass started a dozen threads a frame. The audience frame was copied
+whole before macOS copied it again.
+
+**Fixed:**
+
+- **The live video is decoded once** (`services/video/live.rs`): one decoder,
+  at the largest size any picture asks for, the last few frames kept. Every
+  picture of it takes the same frame for the same moment and shrinks it if it
+  shows it smaller (`video/resize.rs`). A video the operator is previewing on
+  a clock of its own, and a prop, still have their own.
+- **The sound tells the transport only what is news** — started, stopped,
+  moved, changed speed, or strayed 0.1 s — and every window works the
+  position out from the last report and the time since. A pause or a speed
+  change counts what played since (`MediaPlayback::anchor`).
+- **A version number, not the whole scene**: each drawing loop asks the scene
+  again only when `OutputState`'s or `LooksState`'s version moves
+  (`SceneCache`), and an unchanged scene is recognised by pointer.
+- **A panel's request waits in Rust for the next frame** (up to 250 ms,
+  `frame_delivery::newer_than`) rather than polling; the center pane is drawn
+  at most 960 px wide; frames are encoded with `jpeg-encoder` straight from
+  BGRA.
+- **Position sliders seek once, on release** (`useSeekOnRelease`).
+- The audience frame is handed to the native view without a copy; settings
+  and the screen composer no longer poll storage under Tauri; the release
+  build compiles this crate, `tiny-skia` and `jpeg-encoder` at
+  `opt-level = 3`.
+
+**Measured** (`examples/live_share_probe`, a development build on the
+owner's 2018 MacBook Pro, four pictures of one video for 15 s: a 1080p
+screen, two 960x540 panels encoded as JPEGs, a 640x360 stage display):
+
+| File | A decoder each | One shared |
+|---|---|---|
+| 1080p H.264, decoded on the GPU | 15.5–16.9 s of processor, 147 MB | 16.9–19.6 s, 105 MB |
+| 1080p H.264 4:2:2 10-bit, decoded in software | 58.7 s, 846 MB | 34.5 s, 268 MB |
+
+On the GPU each extra decoder costs the processor little, so sharing saves
+memory there and not time; in software it saves both. Shrinking the shared
+frame with swscale's plain bilinear took more than the decoders it replaced,
+and an average of pixel boxes across every core took more again; fast
+bilinear on one core, made once per size for every picture of that size, is
+what is left. Moving the compositor's passes from a thread per band to a
+pool (rayon) was tried and measured 10% more processor (`surface_rate`), so
+it was not kept.
+
+**Drawn natively, inside the window** (macOS; `surface/panel.rs`,
+`useNativePanel.ts`): the center pane's video and the operator's preview are
+no longer drawn by the page, so nothing React is busy with can hold them.
+Each is a layer-backed view the app puts under the webview, as the audience
+screen is drawn, showing the shared decoder's frame — the preview shows the
+very frame the audience window drew (`surface/tap.rs`) — set on the main
+thread through a one-slot mailbox. The webview stops painting its background
+when the main window is made (WebKit keeps the layers it built opaque if that
+changes later), and the page clears the panel's box: `html` and `body` are
+clear, and each box around the panel that paints a colour has it redrawn
+around the panel's hole, and every other panel's, with rounded pieces at the
+corners. Menus, dialogs and props are still the page's, drawn over the
+picture. Where a box around a panel paints an image, or on another platform,
+the page draws the panel as before. The webview's content starts under the
+title bar, so a panel is placed from the bottom of the page's viewport, not
+the window's: it sat 28 pt too high.
+
+**Found in the owner's testing, and fixed:**
+
+- The center pane showed nothing once the preview was drawn natively: a box
+  both panels are in had been cleared by the first, so the second read it as
+  clear and never cut its own hole in it. Each panel now reads a box's own
+  colour with every panel's clearing taken off for the moment.
+- The time stayed at 0:00 for some videos. A report at the place the
+  transport already had — 0, for a video just started — was dropped along
+  with its time, and with reports only on change no other came to put it
+  right. A report with a new time is kept (`MediaPlayback::report_position`).
+- A video with no sound (a VJ loop) froze after its first play-through while
+  its time went on. With no sound to decode, the sound engine never knew its
+  length, so its clock ran past the end and never looped; each picture used
+  to wrap the time itself, which hid it. The file's length is now read when
+  it has no sound, or there is no audio device, so it ends and loops like any
+  other. And the shared decoder, sent past the end of a file, goes back when
+  the clock does: with no frame on hand it held nothing for good.
+
+**Not yet done, and not in the release after 0.4.14:** Windows and Linux still
+draw the audience window and these panels in the webview: the native output
+is to come.
+
+## 24. Video started black, skipped frames at 4K, and the operator window hung — FIXED
+
+The owner's report, on 0.4.14 in development: a video put on screen showed
+black before its first frame; videos skipped frames; seeking froze the
+picture; the cursor spun and the window would not respond while a video
+played; the preview flashed when the app was switched away from and back;
+and the app still took a lot of processor. VLC plays the same files well.
+
+Measured, not guessed — `sample` of the running app, and
+`examples/start_seek_probe` on the owner's files (H.264, 1080p and 4K, 30
+fps, key frames 1 to 8.3 s apart), old and new decoders run back to back:
+
+- **The main thread was 46% busy converting colours.** Every frame shown on
+  the audience window, the center pane and the preview was a `CGImage` in
+  device RGB set as a layer's contents; Core Animation copied it and matched
+  it to the display's colours, pixel by pixel on the processor, on the main
+  thread, as the change committed (`CA::Render::copy_image`, vImage). That is
+  the thread that answers the mouse. **Fixed:** frames are written into
+  IOSurfaces on the thread that made them (`surface/iosurface.rs`), tagged
+  sRGB; the main thread only points the layer at one, and the window server
+  matches colours on the GPU. Surfaces are reused only once the window
+  server has let go of them.
+- **The decoder could not keep up with 4K.** FFmpeg drives VideoToolbox one
+  frame at a time: a 4K frame decoded (some 24 ms, 59% of the decoder's time
+  waiting on it), then was copied off the GPU and converted (some 14 ms)
+  while the decoder waited. 30 fps 4K files came out at 33 to 38 frames a
+  second with the processor free, and under 30 with anything else running —
+  so the pictures skipped to keep up with the sound. **Fixed:** the decoder
+  converts on a thread of its own (`Conversion`, `Pipeline` in
+  `video/ffmpeg.rs`) while it decodes the next frame. Back to back on the
+  same files: 4K 33–38 → 82–93 fps, 1080p 67–83 → 121–142 fps.
+- **The screen went black while a video opened**, 0.4 to 1.6 s for these
+  files: every picture drew the scene without the video until its first
+  frame was decoded, and the sound started on its schedule regardless, so
+  it was heard before it was seen. **Fixed:** the audience screen and the
+  preview keep the picture they have until the new video's first frame is
+  decoded (`VideoFeed::frame_or_wait`, at most 2 s), and the sound engine
+  holds a video starting — or moving while it plays — at its place until
+  the shared decoder has the frame there (`LiveHub::readiness`,
+  `Engine::apply_due`, at most 1.5 s). Picture and sound start together, from
+  the first frame.
+- **A seek decoded every frame from the key frame before it.** On the way to
+  a target more than half a second off, the frames nothing else is decoded
+  from are now skipped (`decode_next`); the last stretch is decoded whole, so
+  the frame asked for is exact. 1080p 595 → 338 ms; a 4K file with key
+  frames 8.3 s apart 3.5 → 2.8 s — that one is the file's own encoding.
+- **The panels drew at Retina size**, four times the pixels of the page's
+  960-pixel panels they replaced: capped at 960 across again
+  (`PanelGeometry::pixel_size`), the GPU scaling up.
+- **The preview flashed on returning to the app.** A covered window's page
+  said its panels were hidden, its boxes were painted over them, and on its
+  return the page showed for a frame before they were cleared again. The
+  page now says only that it is away (`active`), the panel stops drawing and
+  keeps its place and its last frame. The boxes' colours are read again on a
+  change of theme, not every second, which repainted the window each time.
+
+**Measuring on the owner's MacBook Pro:** it throttles hard when hot — `pmset
+-g therm` showed the processor limited to 36% after a long build, with
+Spotlight indexing `target/` and the browser busy — so a probe run alone can
+be off by a factor of three. Compare old and new back to back.
+
+**Not done, and not in the release after 0.4.14:** NDI streams still draw a
+new video's first moments without it (they send a frame every tick into a
+shared buffer). The IOSurface hand-off is macOS's; Windows and Linux still
+draw the audience window in the webview.
 

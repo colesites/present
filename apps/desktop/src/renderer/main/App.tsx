@@ -49,6 +49,7 @@ import { StageLayoutEditor } from "../../features/stage/StageLayoutEditor";
 import { MultiviewWindow } from "../../features/stage/MultiviewWindow";
 import { LooksWindow } from "../../features/looks/LooksWindow";
 import { ScreenComposerWindow } from "../../features/screen-composer";
+import { RecorderWindow } from "../../features/recorder/RecorderWindow";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
 import { MiniLyricsWindow } from "../../features/editor";
 import { areDisplayListsEqual } from "../shared/lib/display-list";
@@ -93,6 +94,9 @@ export default function Home() {
   }
   if (windowType === "screen-composer") {
     return <ScreenComposerWindow />;
+  }
+  if (windowType === "recorder") {
+    return <RecorderWindow />;
   }
   return <AuthenticatedHome windowType={windowType} />;
 }

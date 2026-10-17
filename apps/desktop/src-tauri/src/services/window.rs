@@ -282,6 +282,18 @@ pub fn open(
 
     let window = builder.build()?;
 
+    // The operator window's videos are drawn by the app under its page
+    // (`surface::panel`), which shows them through the page's clear boxes.
+    // WebKit settles whether a page's layers are opaque when it first builds
+    // them, so the webview stops painting its own background now, before the
+    // page has drawn anything — switched off later, it kept its layers opaque
+    // until the page was reloaded, and the videos stayed hidden. The page
+    // paints the app's colour itself from its first frame (`index.html`).
+    #[cfg(target_os = "macos")]
+    if spec.role == WindowRole::Main {
+        crate::services::surface::panel::clear_webview_background(&window);
+    }
+
     // On Windows and Linux the application menu is a bar inside each window.
     // It belongs on the operator's, and on nothing an audience or a stage
     // might see: a menu bar across the projector is exactly what a
@@ -383,6 +395,19 @@ fn register_close_handler(app: &AppHandle, window: &WebviewWindow, spec: &Window
 
         if let Some(state) = app.try_state::<WindowState>() {
             state.forget(&label);
+        }
+
+        // Its panels' pictures go with it (`surface::panel`).
+        if let Some(panels) = app.try_state::<crate::state::NativePanelsState>() {
+            panels.forget_window(&label);
+        }
+
+        // Closing the recording window must let go of the microphone. The
+        // takes stay, so opening it again shows them.
+        if role == WindowRole::Recorder {
+            if let Some(recorder) = app.try_state::<crate::services::recorder::Recorder>() {
+                recorder.suspend();
+            }
         }
 
         if matches!(role, WindowRole::Output | WindowRole::AudienceScreen) {

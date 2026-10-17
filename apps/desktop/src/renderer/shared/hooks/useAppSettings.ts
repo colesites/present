@@ -491,7 +491,10 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
     };
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", syncFromStorage);
-    const intervalId = window.setInterval(syncFromStorage, 400);
+    // Read again on a timer only where the event below cannot arrive. Every
+    // window used to re-read and compare the settings two and a half times a
+    // second, for a change the event already brings.
+    let intervalId: number | null = null;
 
     // Straight from the window that made the change, whether this one is in
     // front or not.
@@ -519,7 +522,8 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
       })
       .catch(() => {
         // Not in the desktop app (a test, a browser): storage and focus still
-        // carry changes.
+        // carry changes, and a slow look catches what they miss.
+        if (!cancelled) intervalId = window.setInterval(syncFromStorage, 400);
       });
 
     return () => {
@@ -527,7 +531,7 @@ export function useAppSettings({ folders, allMediaItems }: UseAppSettingsProps) 
       detach?.();
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", syncFromStorage);
-      window.clearInterval(intervalId);
+      if (intervalId !== null) window.clearInterval(intervalId);
     };
   }, [applyParsedSettings, syncFromStorage]);
 

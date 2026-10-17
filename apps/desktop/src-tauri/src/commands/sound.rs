@@ -13,10 +13,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::errors::AppResult;
 use crate::services::audio::{AudioGraph, AudioSource, AudioSurface};
 use crate::services::media_protocol;
+use crate::services::playback::now_ms;
 use crate::services::sound::{
     self, AudioDevices, BackingTrackCommand, BackingTrackState, Level, Routing, SoundEngine,
     Transport,
 };
+use crate::services::video::live::{LiveHub, Readiness};
 use crate::state::{OutputState, PlaybackState};
 
 use super::playback::broadcast_playback;
@@ -42,17 +44,17 @@ pub struct AppTransport {
 #[derive(Default)]
 pub struct BackingTrackNow(std::sync::Mutex<BackingTrackState>);
 
-fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
-}
-
 impl Transport for AppTransport {
-    fn report_position(&self, seconds: f64) {
+    fn report_position(&self, seconds: f64, running: bool) {
         let state = self.app.state::<PlaybackState>();
-        let changed = state.update(|playback| playback.report_position(seconds, Some(now_ms())));
+        // Held, it has no time to count on from: the time shown stands still.
+        let sampled = running.then(now_ms);
+        let changed = state.update(|playback| playback.report_position(seconds, sampled));
         broadcast_playback(&self.app, changed);
+    }
+
+    fn picture(&self, path: &std::path::Path, seconds: f64) -> Readiness {
+        LiveHub::global().readiness(path, seconds)
     }
 
     fn set_duration(&self, seconds: Option<f64>) {

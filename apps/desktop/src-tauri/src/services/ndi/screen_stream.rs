@@ -13,6 +13,7 @@ use tauri::{AppHandle, Manager};
 use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
 use crate::services::screen_picture::{arrange, plan};
 use crate::services::screens::FALLBACK_SIZE;
+use crate::state::output_state::SceneCache;
 use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
 use super::output::FrameSource;
@@ -28,6 +29,8 @@ pub struct ScreenFrameSource {
     regions: RegionVideos,
     open: Opener,
     canvas: Vec<u8>,
+    /// The scene, worked out again only when it changes.
+    scene: SceneCache,
 }
 
 impl ScreenFrameSource {
@@ -42,6 +45,7 @@ impl ScreenFrameSource {
             regions: RegionVideos::new(),
             open: opener,
             canvas: Vec::new(),
+            scene: SceneCache::new(),
         }
     }
 }
@@ -74,10 +78,10 @@ impl FrameSource for ScreenFrameSource {
         self.compositor.set_base(base);
         self.compositor.resize(laid.canvas.0, laid.canvas.1);
 
-        let scene = match self.app.try_state::<LooksState>() {
-            Some(looks) => looks.scene_for_screen(output_state.on_screen(), &self.screen),
-            None => output_state.on_screen(),
-        };
+        let looks = self.app.try_state::<LooksState>();
+        let scene = self
+            .scene
+            .for_screen(&output_state, looks.as_deref(), &self.screen);
         let now = Instant::now();
         let frame = self.video.frame_for(&scene, now, laid.canvas, &self.open);
         let region_frames = self

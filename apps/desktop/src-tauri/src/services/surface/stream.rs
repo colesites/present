@@ -13,14 +13,14 @@ use tauri::{AppHandle, Manager};
 
 use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
 use crate::services::media_protocol;
-use crate::services::output::OutputScene;
 use crate::services::screen_picture::{self, Arrangement, Plan};
 use crate::services::screens::screen_for_label;
 use crate::services::video::{self, VideoDecoder};
+use crate::state::output_state::{Drawn, SceneCache};
 use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
 use super::{OutputView, SurfaceSource};
-use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed};
+use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed, Waiting};
 
 pub struct AppSurfaceSource {
     app: AppHandle,
@@ -36,7 +36,9 @@ pub struct AppSurfaceSource {
     open: Opener,
     /// What the last presented frame was drawn from, so an unchanged slide is
     /// not handed to the view again.
-    last: Option<(OutputScene, Option<f64>, (u32, u32))>,
+    last: Option<Drawn>,
+    /// The scene, worked out again only when it changes.
+    scene: SceneCache,
     /// The screen laid out over its windows, as of the last render.
     plan: Option<Plan>,
     /// Which output each window is.
@@ -54,6 +56,7 @@ impl AppSurfaceSource {
             regions: RegionVideos::new(),
             open: scoped_opener(app_for_opening),
             last: None,
+            scene: SceneCache::new(),
             plan: None,
             outputs: Vec::new(),
         }
@@ -103,6 +106,7 @@ impl SurfaceSource for AppSurfaceSource {
             regions,
             open,
             last,
+            scene: scene_cache,
             ..
         } = self;
         let (Some(output), Some(files)) =
@@ -113,20 +117,27 @@ impl SurfaceSource for AppSurfaceSource {
 
         // Through its own column of the live look, for a screen added beside
         // the Screen: a change in Looks shows at once.
-        let scene = match app.try_state::<LooksState>() {
-            Some(looks) => looks.scene_for_screen(output.on_screen(), screen_id),
-            None => output.on_screen(),
-        };
+        let looks = app.try_state::<LooksState>();
+        let scene = scene_cache.for_screen(&output, looks.as_deref(), screen_id);
         compositor.resize(size.0, size.1);
         let now = Instant::now();
-        let frame = video.frame_for(&scene, now, size, open);
+        let frame = match video.frame_or_wait(&scene, now, size, open) {
+            Ok(frame) => frame,
+            // The scene's new video has not given its first frame yet: the
+            // screen keeps the picture it has until it does, and cuts to the
+            // video then, rather than going black while the file opens.
+            Err(Waiting) if last.is_some() => return Ok(false),
+            Err(Waiting) => None,
+        };
         let shown = frame.map(|frame| frame.presentation_seconds);
         let region_frames = regions.frames_for(&scene, now, size, open);
 
         // A transition or a scrolling message moves while the scene stands
         // still, so "unchanged" is the compositor's to say, not just the scene's.
-        let unchanged =
-            !compositor.needs_drawing(last.as_ref(), &scene, shown, &region_frames, size);
+        let drawn = last
+            .as_ref()
+            .map(|(scene, video, size)| (scene.as_ref(), *video, *size));
+        let unchanged = !compositor.needs_drawing(drawn, &scene, shown, &region_frames, size);
         if unchanged {
             return Ok(false);
         }

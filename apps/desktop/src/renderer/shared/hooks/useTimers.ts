@@ -11,6 +11,8 @@ export type TimerType = "countdown" | "countdownToTime" | "elapsed";
 export type TimerConfig = {
   id: string;
   name: string;
+  /** The category it is listed in (`TimerCategory`); the first one's when absent. */
+  categoryId?: string;
   type: TimerType;
   duration: string; // HH:MM:SS for countdown
   hour: number;
@@ -72,12 +74,87 @@ export function getLiveTimerText(timer: TimerItem | null, timeUp: TimeUpSettings
   return getTimerDisplay(timer);
 }
 
+/**
+ * A group of timers, as the Audio tab has playlists: one service's run of
+ * timers, another's, an event's. The Timer tab shows one at a time.
+ */
+export type TimerCategory = { id: string; name: string };
+
+/** Where timers saved before there were categories go. */
+export const DEFAULT_TIMER_CATEGORY: TimerCategory = { id: "service", name: "Service" };
+
 type StoredTimerState = {
   timers: TimerItem[];
   expandedTimerId: string | null;
   activeTimerId: string | null;
   autoAdvanceEnabled: boolean;
+  categories: TimerCategory[];
+  /** The category the Timer tab shows. */
+  shownCategoryId: string | null;
 };
+
+/**
+ * Categories as stored, and every timer in one that exists. A save from
+ * before there were categories has none: its timers go into the first.
+ */
+export function normalizeTimerCategories(
+  stored: unknown,
+  timers: TimerItem[],
+): { categories: TimerCategory[]; timers: TimerItem[] } {
+  const categories = (Array.isArray(stored) ? stored : [])
+    .filter(
+      (candidate): candidate is TimerCategory =>
+        Boolean(candidate) &&
+        typeof candidate === "object" &&
+        typeof (candidate as TimerCategory).id === "string" &&
+        (candidate as TimerCategory).id.trim() !== "",
+    )
+    .map((category) => ({
+      id: category.id,
+      name: typeof category.name === "string" && category.name.trim() ? category.name : "Timers",
+    }))
+    .filter((category, index, all) => all.findIndex((other) => other.id === category.id) === index);
+  if (categories.length === 0) categories.push(DEFAULT_TIMER_CATEGORY);
+  const known = new Set(categories.map((category) => category.id));
+  return {
+    categories,
+    timers: timers.map((timer) =>
+      timer.categoryId && known.has(timer.categoryId)
+        ? timer
+        : { ...timer, categoryId: categories[0].id },
+    ),
+  };
+}
+
+/**
+ * Move the `fromIndex`th timer of `categoryId` to where its `toIndex`th is,
+ * as the Timer tab counts them; every other timer keeps its place.
+ */
+export function reorderWithinCategory(
+  timers: TimerItem[],
+  categoryId: string,
+  fromIndex: number,
+  toIndex: number,
+): TimerItem[] {
+  const listed = timers.filter((timer) => timer.categoryId === categoryId);
+  const moved = listed[fromIndex];
+  const target = listed[toIndex];
+  if (!moved || !target || fromIndex === toIndex) return timers;
+  const rest = timers.filter((timer) => timer.id !== moved.id);
+  const at = rest.findIndex((timer) => timer.id === target.id);
+  rest.splice(fromIndex < toIndex ? at + 1 : at, 0, moved);
+  return rest;
+}
+
+/** The timer after the `finishedIndex`th in its own category: what Auto starts next. */
+export function nextInCategory(timers: TimerItem[], finishedIndex: number): TimerItem | null {
+  const finished = timers[finishedIndex];
+  if (!finished) return null;
+  return (
+    timers.slice(finishedIndex + 1).find((timer) => timer.categoryId === finished.categoryId) ??
+    null
+  );
+}
 
 const TIMER_AFFECTS_RUNTIME_FIELDS: (keyof TimerConfig)[] = [
   "type",
@@ -206,6 +283,7 @@ const DEFAULT_TIMERS: TimerConfig[] = [
 const createDefaultTimerItems = (): TimerItem[] =>
   DEFAULT_TIMERS.map((timer) => ({
     ...timer,
+    categoryId: DEFAULT_TIMER_CATEGORY.id,
     isRunning: false,
     secondsValue: getInitialTimerValue(timer),
   }));
@@ -253,6 +331,9 @@ function normalizeTimerItem(candidate: unknown, index: number): TimerItem | null
         ? timer.elapsedEnd
         : "00:15",
   };
+  if (typeof timer.categoryId === "string" && timer.categoryId.trim()) {
+    config.categoryId = timer.categoryId;
+  }
   return {
     ...config,
     isRunning: false,
@@ -270,6 +351,8 @@ function loadTimerState(): StoredTimerState {
     expandedTimerId: fallbackTimers[0]?.id ?? null,
     activeTimerId: fallbackTimers[0]?.id ?? null,
     autoAdvanceEnabled: false,
+    categories: [DEFAULT_TIMER_CATEGORY],
+    shownCategoryId: DEFAULT_TIMER_CATEGORY.id,
   };
   if (typeof window === "undefined") return fallback;
   try {
@@ -293,8 +376,16 @@ function loadTimerState(): StoredTimerState {
       return { ...timer, isRunning: false };
     });
     const timerIds = new Set(normalizedTimers.map((timer) => timer.id));
+    const sorted = normalizeTimerCategories(parsed.categories, normalizedTimers);
+    const shownCategoryId =
+      typeof parsed.shownCategoryId === "string" &&
+      sorted.categories.some((category) => category.id === parsed.shownCategoryId)
+        ? parsed.shownCategoryId
+        : sorted.categories[0].id;
     return {
-      timers: normalizedTimers,
+      categories: sorted.categories,
+      shownCategoryId,
+      timers: sorted.timers,
       expandedTimerId:
         typeof parsed.expandedTimerId === "string" &&
         timerIds.has(parsed.expandedTimerId)
@@ -317,14 +408,26 @@ function saveTimerState(state: StoredTimerState) {
 }
 
 export interface UseTimersResult {
+  /** Every timer, in every category. */
   timers: TimerItem[];
+  /** The timers of the category the Timer tab shows, in order. */
+  shownTimers: TimerItem[];
+  categories: TimerCategory[];
+  shownCategoryId: string;
+  showCategory: (id: string) => void;
+  createCategory: () => void;
+  renameCategory: (id: string, name: string) => void;
+  /** Only an empty category, and never the last. */
+  removeCategory: (id: string) => void;
   activeTimer: TimerItem | null;
   autoAdvanceEnabled: boolean;
   expandedTimerId: string | null;
   setExpandedTimerId: (id: string | null) => void;
   setAutoAdvanceEnabled: (enabled: boolean) => void;
+  /** A new timer in the category shown. */
   createTimer: () => void;
   updateTimer: (id: string, patch: Partial<TimerConfig>) => void;
+  /** Within the category shown, by its timers' places in it. */
   reorderTimers: (fromIndex: number, toIndex: number) => void;
   toggleTimerPlayback: (id: string) => void;
   resetTimer: (id: string) => void;
@@ -344,6 +447,18 @@ export function useTimers(): UseTimersResult {
   );
   const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(
     initialTimerState.autoAdvanceEnabled,
+  );
+  const [categories, setCategories] = useState<TimerCategory[]>(initialTimerState.categories);
+  const [shownCategory, setShownCategory] = useState<string | null>(
+    initialTimerState.shownCategoryId,
+  );
+  const shownCategoryId =
+    shownCategory && categories.some((category) => category.id === shownCategory)
+      ? shownCategory
+      : (categories[0]?.id ?? DEFAULT_TIMER_CATEGORY.id);
+  const shownTimers = useMemo(
+    () => timers.filter((timer) => timer.categoryId === shownCategoryId),
+    [shownCategoryId, timers],
   );
 
   const activeTimerId = useMemo(
@@ -368,13 +483,17 @@ export function useTimers(): UseTimersResult {
       expandedTimerId,
       activeTimerId,
       autoAdvanceEnabled,
+      categories,
+      shownCategoryId,
     });
-  }, [activeTimerId, autoAdvanceEnabled, expandedTimerId, timers]);
+  }, [activeTimerId, autoAdvanceEnabled, categories, expandedTimerId, shownCategoryId, timers]);
 
+  // The next in the finished timer's own category: a run of timers is one
+  // category's, and Auto never wanders into another's.
   const getNextTimerToStart = useCallback(
     (timerList: TimerItem[], finishedIndex: number): TimerItem | null => {
       if (!autoAdvanceEnabled) return null;
-      return timerList[finishedIndex + 1] ?? null;
+      return nextInCategory(timerList, finishedIndex);
     },
     [autoAdvanceEnabled],
   );
@@ -475,7 +594,8 @@ export function useTimers(): UseTimersResult {
   const createTimer = useCallback(() => {
     const config: TimerConfig = {
       id: crypto.randomUUID(),
-      name: `Timer ${timers.length + 1}`,
+      name: `Timer ${shownTimers.length + 1}`,
+      categoryId: shownCategoryId,
       type: "countdown",
       duration: "00:05:00",
       hour: 5,
@@ -491,7 +611,7 @@ export function useTimers(): UseTimersResult {
     };
     setTimers((previous) => [...previous, timer]);
     setExpandedTimerId(timer.id);
-  }, [timers.length]);
+  }, [shownCategoryId, shownTimers.length]);
 
   const updateTimer = useCallback(
     (id: string, patch: Partial<TimerConfig>) => {
@@ -515,24 +635,42 @@ export function useTimers(): UseTimersResult {
     [],
   );
 
-  const reorderTimers = useCallback((fromIndex: number, toIndex: number) => {
-    setTimers((previous) => {
-      if (
-        fromIndex < 0 ||
-        toIndex < 0 ||
-        fromIndex >= previous.length ||
-        toIndex >= previous.length ||
-        fromIndex === toIndex
-      ) {
-        return previous;
-      }
+  const reorderTimers = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      setTimers((previous) =>
+        reorderWithinCategory(previous, shownCategoryId, fromIndex, toIndex),
+      );
+    },
+    [shownCategoryId],
+  );
 
-      const next = [...previous];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      return next;
-    });
+  const showCategory = useCallback((id: string) => setShownCategory(id), []);
+
+  const createCategory = useCallback(() => {
+    const category: TimerCategory = {
+      id: crypto.randomUUID(),
+      name: `Category ${categories.length + 1}`,
+    };
+    setCategories((previous) => [...previous, category]);
+    setShownCategory(category.id);
+  }, [categories.length]);
+
+  const renameCategory = useCallback((id: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setCategories((previous) =>
+      previous.map((category) => (category.id === id ? { ...category, name: trimmed } : category)),
+    );
   }, []);
+
+  // An empty one only: a category's timers are never lost with it.
+  const removeCategory = useCallback(
+    (id: string) => {
+      if (categories.length <= 1 || timers.some((timer) => timer.categoryId === id)) return;
+      setCategories((previous) => previous.filter((category) => category.id !== id));
+    },
+    [categories.length, timers],
+  );
 
   const toggleTimerPlayback = useCallback((id: string) => {
     setExpandedTimerId(id);
@@ -629,6 +767,13 @@ export function useTimers(): UseTimersResult {
 
   return {
     timers,
+    shownTimers,
+    categories,
+    shownCategoryId,
+    showCategory,
+    createCategory,
+    renameCategory,
+    removeCategory,
     activeTimer,
     autoAdvanceEnabled,
     expandedTimerId,

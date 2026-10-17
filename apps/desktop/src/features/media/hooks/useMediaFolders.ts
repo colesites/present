@@ -29,6 +29,12 @@ export type VideoSettings = {
   volume: number;
 };
 
+/**
+ * How whole-screen media meets a screen of another shape: inside it with bars
+ * (the default), filling it cropped, or stretched to it — `MediaFit` in Rust.
+ */
+export type MediaFit = "fit" | "fill" | "stretch";
+
 export type MediaFilters = {
   brightness: number; 
   contrast: number; 
@@ -36,7 +42,9 @@ export type MediaFilters = {
   blur: number; 
   grayscale: number; 
   sepia: number; 
-  hueRotate: number; 
+  hueRotate: number;
+  /** Not a filter, but per media like them; absent is `"fit"`. */
+  fit?: MediaFit;
 };
 
 export const DEFAULT_FILTERS: MediaFilters = {
@@ -352,11 +360,12 @@ export function useMediaFolders() {
     [],
   );
 
+  // Resetting the filters leaves how the media fits the screen as it was.
   const resetMediaFilters = useCallback(() => {
     if (!activeMediaItem) return;
     setItemFilters((prev) => ({
       ...prev,
-      [activeMediaItem.id]: DEFAULT_FILTERS,
+      [activeMediaItem.id]: { ...DEFAULT_FILTERS, fit: prev[activeMediaItem.id]?.fit },
     }));
   }, [activeMediaItem]);
 
@@ -365,7 +374,7 @@ export function useMediaFolders() {
       if (!item) return;
       setItemFilters((prev) => ({
         ...prev,
-        [item.id]: DEFAULT_FILTERS,
+        [item.id]: { ...DEFAULT_FILTERS, fit: prev[item.id]?.fit },
       }));
     },
     [],
