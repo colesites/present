@@ -749,9 +749,15 @@ the window's: it sat 28 pt too high.
   other. And the shared decoder, sent past the end of a file, goes back when
   the clock does: with no frame on hand it held nothing for good.
 
-**Not yet done, and not in the release after 0.4.14:** Windows and Linux still
+**Not yet done, and not in 0.4.15:** Windows and Linux still
 draw the audience window and these panels in the webview: the native output
 is to come.
+
+**Fixed in 0.4.15:** a packaged build still hid the preview and a video in a
+show. The page is already in the bundle, so WebKit built its layers solid
+during `build`, before the background was turned off. Development's page
+loads afterwards, so the same call was in time there. The background is now
+turned off on the webview's configuration, before the page exists.
 
 ## 24. Video started black, skipped frames at 4K, and the operator window hung — FIXED
 
@@ -814,7 +820,7 @@ fps, key frames 1 to 8.3 s apart), old and new decoders run back to back:
 Spotlight indexing `target/` and the browser busy — so a probe run alone can
 be off by a factor of three. Compare old and new back to back.
 
-**Not done, and not in the release after 0.4.14:** NDI streams still draw a
+**Not done, and not in 0.4.15:** NDI streams still draw a
 new video's first moments without it (they send a frame every tick into a
 shared buffer). The IOSurface hand-off is macOS's; Windows and Linux still
 draw the audience window in the webview.

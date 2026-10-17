@@ -4,6 +4,8 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.15] - 2026-10-18
+
 ### Added
 
 - Recording. File ▸ New Recording opens a window — it is not a tab — to record
@@ -14,6 +16,19 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   into one file. Closing the window stops the microphone and keeps what was
   recorded.
 
+### Fixed
+
+- The packaged app's screen preview, and a video opened in a show, stayed
+  blank. Both are drawn under the page, and a packaged page is already in the
+  app, so it had been built solid before the webview was told to let them
+  through. Development loads its page later, which is why the same window
+  looked right there. The webview is now told before the page exists.
+- Libraries. Choosing a category such as Songs showed an empty list when that
+  name existed twice, once created on this computer and once from the account.
+  All still listed everything, and the counts counted both. The list now
+  follows the name, the way the counts do, and a new item is filed with the
+  songs already there.
+
 ### Not in this release
 
 - Windows and Linux still draw the audience window, the center pane and the
@@ -21,14 +36,6 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 - An NDI stream still sends the first moments of a new video without it. The
   screens keep the picture they have until that frame is ready; the stream
   does not.
-
-### Fixed
-
-- Libraries. Choosing a category such as Songs showed an empty list when that
-  name existed twice, once created on this computer and once from the account.
-  All still listed everything, and the counts counted both. The list now
-  follows the name, the way the counts do, and a new item is filed with the
-  songs already there.
 
 ## [0.4.14] - 2026-10-13
 

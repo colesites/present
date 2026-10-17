@@ -1,6 +1,6 @@
 [package]
 name = "present"
-version = "0.4.14"
+version = "0.4.15"
 description = "Presentation software for churches, conferences and live events"
 authors = ["Cole"]
 license = "MIT"
@@ -21,7 +21,13 @@ tauri-build = { version = "2", features = [] }
 cc = "1.2"
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `macos-private-api` turns the webview's own background off when a window is
+# given a background colour, and it does it on the webview's configuration,
+# before the page exists. Done afterwards — all that is possible without this —
+# a packaged page has already been built solid, and the pictures drawn under it
+# stay hidden: the screen preview, and a video opened in a show. A development
+# page has not loaded yet, so the same call worked there.
+tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: parse floats exactly. The PPTX importer is tested against
 # the Electron importer's JSON to the last bit, and the default parser can land

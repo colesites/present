@@ -285,10 +285,14 @@ pub fn open(
     // The operator window's videos are drawn by the app under its page
     // (`surface::panel`), which shows them through the page's clear boxes.
     // WebKit settles whether a page's layers are opaque when it first builds
-    // them, so the webview stops painting its own background now, before the
-    // page has drawn anything — switched off later, it kept its layers opaque
-    // until the page was reloaded, and the videos stayed hidden. The page
-    // paints the app's colour itself from its first frame (`index.html`).
+    // them. The window's background colour already asks for that to be off, on
+    // the webview's configuration, before this page exists (`macos-private-api`
+    // on the tauri dependency): a packaged page is in the bundle and paints
+    // during `build`, so asking afterwards left it solid and hid the preview
+    // and a video in a show. A development page has not loaded yet, which is
+    // why the same window looked right there. This asks again for a page that
+    // is reloaded later. The page paints the app's colour itself from its
+    // first frame (`index.html`).
     #[cfg(target_os = "macos")]
     if spec.role == WindowRole::Main {
         crate::services::surface::panel::clear_webview_background(&window);
