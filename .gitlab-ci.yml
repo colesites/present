@@ -1,0 +1,410 @@
+# Present's desktop builds, the same work as .github/workflows/build-*.yml.
+#
+# A push of ordinary commits does not start this. It runs when a desktop-v*
+# tag is pushed, or when someone chooses Run pipeline. That is the same rule
+# as the GitHub workflows: a build compiles FFmpeg from source and is not
+# something every push should spend.
+#
+# GitLab's free shared runners are Linux. The Linux job uses one. macOS and
+# Windows are here with the same steps, and they run when a runner carrying
+# their tag is registered — GitLab does not hand out free Mac or Windows
+# machines. Register one with Settings → CI/CD → Runners, give it the tag
+# below, and set BUILD_MACOS or BUILD_WINDOWS to "true" so a release tag
+# starts it. Until then those two stay buttons on the pipeline, so a missing
+# runner cannot hold a Linux build.
+#
+# Secrets are CI/CD variables, same names as the GitHub secrets. A missing
+# voice-search key still builds; voice search then says it is not set up. A
+# missing signing key still builds and makes no update package.
+#
+#   ASSEMBLYAI_API_KEY  AI_GATEWAY_API_KEY  GROQ_API_KEY
+#   TAURI_SIGNING_PRIVATE_KEY  TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#   R2_ACCOUNT_ID  R2_BUCKET  R2_PUBLIC_BASE_URL
+#   R2_ACCESS_KEY_ID  R2_SECRET_ACCESS_KEY
+
+spec:
+  inputs:
+    publish:
+      description: Upload to R2 and add to the download manifest
+      type: boolean
+      default: false
+---
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^desktop-v\d+\.\d+\.\d+$/
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "pipeline"
+    - when: never
+
+stages:
+  - build
+
+variables:
+  CARGO_TERM_COLOR: always
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  RUSTUP_HOME: $CI_PROJECT_DIR/.rustup
+  BUN_INSTALL: $CI_PROJECT_DIR/.bun
+  CONVEX_URL: https://wary-iguana-735.convex.cloud
+  WEB_APP_URL: https://present.multivrs.space
+
+# A release tag publishes. So does Run pipeline with publish turned on.
+.publish: &publish |
+  if [ -n "${CI_COMMIT_TAG:-}" ] || [ "$[[ inputs.publish ]]" = "true" ]; then
+    export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:-}"
+    export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:-}"
+    export AWS_DEFAULT_REGION=auto
+    node apps/desktop/scripts/publish-to-r2.mjs \
+      --version "$(node -p "require('./apps/desktop/package.json').version")" \
+      --artifacts apps/desktop/src-tauri/target/release/bundle
+  else
+    echo "Not publishing. A desktop-v tag publishes; otherwise turn publish on when starting the pipeline."
+  fi
+
+.unix-tools: &unix-tools |
+  set -euo pipefail
+  export PATH="$BUN_INSTALL/bin:$CARGO_HOME/bin:$PATH"
+  if ! command -v bun >/dev/null 2>&1; then
+    curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.5"
+  fi
+  if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q '^v22\.'; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt-get install -y nodejs
+  fi
+  if ! command -v rustup >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.96.0 --profile minimal
+  fi
+  rustup toolchain install 1.96.0 --profile minimal
+  rustup default 1.96.0
+
+# The version check the release tag runs on GitHub. Lint stays a button of
+# its own: it fails on errors older than the migration, and that must not
+# throw away a finished build.
+verify-release:
+  stage: build
+  image: ubuntu:24.04
+  tags: [saas-linux-small-amd64]
+  timeout: 30m
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^desktop-v\d+\.\d+\.\d+$/
+  before_script:
+    - apt-get update && apt-get install -y curl ca-certificates
+    - *unix-tools
+  script:
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - bun install --frozen-lockfile
+    - bun run release:check -- "$CI_COMMIT_TAG"
+
+# Started by hand, as on GitHub. It fails on lint errors that predate the
+# migration, which is already known.
+quality:
+  stage: build
+  image: ubuntu:24.04
+  tags: [saas-linux-small-amd64]
+  timeout: 30m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "pipeline"
+      when: manual
+      allow_failure: true
+  before_script:
+    - apt-get update && apt-get install -y curl ca-certificates
+    - *unix-tools
+  script:
+    - export PATH="$BUN_INSTALL/bin:$PATH"
+    - bun install --frozen-lockfile
+    - bun run test
+    - bun run typecheck
+    - bun run --filter @present/desktop lint
+
+build-linux:
+  stage: build
+  image: ubuntu:24.04
+  # Four cores and 16GB. The small runner's 8GB runs out while linking.
+  tags: [saas-linux-medium-amd64]
+  timeout: 90m
+  cache:
+    - key:
+        files: [apps/desktop/scripts/build-ffmpeg.sh]
+        prefix: ffmpeg-ubuntu-24.04
+      paths:
+        - apps/desktop/src-tauri/ffmpeg/prefix
+        - apps/desktop/src-tauri/ffmpeg/cache
+    - key:
+        prefix: rust-ubuntu-24.04
+      paths:
+        - .cargo
+        - .rustup
+        - .bun
+        - apps/desktop/src-tauri/target
+  artifacts:
+    name: present-tauri-linux
+    expire_in: 14 days
+    paths:
+      - apps/desktop/src-tauri/ffmpeg/cache/ffmpeg-*.tar.xz
+      - apps/desktop/src-tauri/target/release/bundle/**/*.deb
+      - apps/desktop/src-tauri/target/release/bundle/**/*.rpm
+      - apps/desktop/src-tauri/target/release/bundle/**/*.AppImage
+  before_script:
+    - |
+      set -euo pipefail
+      apt-get update
+      apt-get install -y \
+        curl ca-certificates xz-utils build-essential \
+        libwebkit2gtk-4.1-dev \
+        libayatana-appindicator3-dev \
+        librsvg2-dev \
+        libxdo-dev \
+        patchelf \
+        nasm \
+        libva-dev \
+        pkg-config \
+        clang \
+        libclang-dev \
+        libasound2-dev \
+        libdbus-1-dev
+    - *unix-tools
+  script:
+    - export PATH="$BUN_INSTALL/bin:$CARGO_HOME/bin:$PATH"
+    - bun install --frozen-lockfile
+    - bun run --filter @present/desktop tauri:build
+    - node apps/desktop/scripts/check-ffmpeg-source.mjs
+    - |
+      set -euo pipefail
+      found=$(find apps/desktop/src-tauri/target/release/bundle -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) | head -n 1)
+      if [ -z "$found" ]; then
+        echo "No Linux bundle was produced."
+        exit 1
+      fi
+    - *publish
+
+# Apple Silicon. Tag the runner `saas-macos-medium-m1` if it is GitLab's, or
+# the same tag on a Mac you register yourself.
+build-macos-arm64:
+  stage: build
+  tags: [saas-macos-medium-m1]
+  timeout: 90m
+  rules:
+    - if: $BUILD_MACOS == "true" && ($CI_COMMIT_TAG =~ /^desktop-v\d+\.\d+\.\d+$/ || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "pipeline")
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "pipeline"
+      when: manual
+      allow_failure: true
+  cache:
+    - key:
+        files: [apps/desktop/scripts/build-ffmpeg.sh]
+        prefix: ffmpeg-macos-arm64
+      paths:
+        - apps/desktop/src-tauri/ffmpeg/prefix
+        - apps/desktop/src-tauri/ffmpeg/cache
+    - key:
+        prefix: rust-macos-arm64
+      paths:
+        - .cargo
+        - .rustup
+        - .bun
+        - apps/desktop/src-tauri/target
+  artifacts:
+    name: present-tauri-macos-arm64
+    expire_in: 14 days
+    paths:
+      - apps/desktop/src-tauri/ffmpeg/cache/ffmpeg-*.tar.xz
+      - apps/desktop/src-tauri/target/release/bundle/**/*.dmg
+      - apps/desktop/src-tauri/target/release/bundle/**/*.app.tar.gz
+      - apps/desktop/src-tauri/target/release/bundle/**/*.sig
+  script:
+    - |
+      set -euo pipefail
+      if [ -x /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+      fi
+      brew install nasm
+      export PATH="$BUN_INSTALL/bin:$CARGO_HOME/bin:$PATH"
+      if ! command -v bun >/dev/null 2>&1; then
+        curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.5"
+      fi
+      if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q '^v22\.'; then
+        brew install node@22
+        brew link --overwrite node@22
+      fi
+      if ! command -v rustup >/dev/null 2>&1; then
+        curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.96.0 --profile minimal
+      fi
+      rustup toolchain install 1.96.0 --profile minimal
+      rustup default 1.96.0
+      bun install --frozen-lockfile
+      bun run --filter @present/desktop tauri:build
+      node apps/desktop/scripts/check-ffmpeg-source.mjs
+      found=$(find apps/desktop/src-tauri/target/release/bundle -type f -name '*.dmg' | head -n 1)
+      if [ -z "$found" ]; then
+        echo "No macOS disk image was produced."
+        exit 1
+      fi
+      if [ -n "${CI_COMMIT_TAG:-}" ] || [ "$[[ inputs.publish ]]" = "true" ]; then
+        export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:-}"
+        export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:-}"
+        export AWS_DEFAULT_REGION=auto
+        node apps/desktop/scripts/publish-to-r2.mjs \
+          --version "$(node -p "require('./apps/desktop/package.json').version")" \
+          --artifacts apps/desktop/src-tauri/target/release/bundle
+      else
+        echo "Not publishing. A desktop-v tag publishes; otherwise turn publish on when starting the pipeline."
+      fi
+
+# Intel. GitLab has no Intel Mac runner. Register one and tag it
+# present-macos-intel. Built on the machine rather than cross-compiled,
+# because the bundle carries an FFmpeg built from source.
+build-macos-intel:
+  stage: build
+  tags: [present-macos-intel]
+  timeout: 90m
+  rules:
+    - if: $BUILD_MACOS == "true" && ($CI_COMMIT_TAG =~ /^desktop-v\d+\.\d+\.\d+$/ || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "pipeline")
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "pipeline"
+      when: manual
+      allow_failure: true
+  cache:
+    - key:
+        files: [apps/desktop/scripts/build-ffmpeg.sh]
+        prefix: ffmpeg-macos-x64
+      paths:
+        - apps/desktop/src-tauri/ffmpeg/prefix
+        - apps/desktop/src-tauri/ffmpeg/cache
+    - key:
+        prefix: rust-macos-x64
+      paths:
+        - .cargo
+        - .rustup
+        - .bun
+        - apps/desktop/src-tauri/target
+  artifacts:
+    name: present-tauri-macos-x64
+    expire_in: 14 days
+    paths:
+      - apps/desktop/src-tauri/ffmpeg/cache/ffmpeg-*.tar.xz
+      - apps/desktop/src-tauri/target/release/bundle/**/*.dmg
+      - apps/desktop/src-tauri/target/release/bundle/**/*.app.tar.gz
+      - apps/desktop/src-tauri/target/release/bundle/**/*.sig
+  script:
+    - |
+      set -euo pipefail
+      if [ -x /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+      elif [ -x /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+      fi
+      brew install nasm
+      export PATH="$BUN_INSTALL/bin:$CARGO_HOME/bin:$PATH"
+      if ! command -v bun >/dev/null 2>&1; then
+        curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.5"
+      fi
+      if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q '^v22\.'; then
+        brew install node@22
+        brew link --overwrite node@22
+      fi
+      if ! command -v rustup >/dev/null 2>&1; then
+        curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.96.0 --profile minimal
+      fi
+      rustup toolchain install 1.96.0 --profile minimal
+      rustup default 1.96.0
+      bun install --frozen-lockfile
+      bun run --filter @present/desktop tauri:build
+      node apps/desktop/scripts/check-ffmpeg-source.mjs
+      found=$(find apps/desktop/src-tauri/target/release/bundle -type f -name '*.dmg' | head -n 1)
+      if [ -z "$found" ]; then
+        echo "No macOS disk image was produced."
+        exit 1
+      fi
+      if [ -n "${CI_COMMIT_TAG:-}" ] || [ "$[[ inputs.publish ]]" = "true" ]; then
+        export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:-}"
+        export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:-}"
+        export AWS_DEFAULT_REGION=auto
+        node apps/desktop/scripts/publish-to-r2.mjs \
+          --version "$(node -p "require('./apps/desktop/package.json').version")" \
+          --artifacts apps/desktop/src-tauri/target/release/bundle
+      else
+        echo "Not publishing. A desktop-v tag publishes; otherwise turn publish on when starting the pipeline."
+      fi
+
+# Tag the runner `saas-windows-medium-amd64` if it is GitLab's, or the same
+# tag on a Windows machine you register. FFmpeg is built here, in MSYS2, with
+# MSVC's compiler on PATH — `tauri:build` will not attempt that itself.
+build-windows:
+  stage: build
+  tags: [saas-windows-medium-amd64]
+  timeout: 90m
+  rules:
+    - if: $BUILD_WINDOWS == "true" && ($CI_COMMIT_TAG =~ /^desktop-v\d+\.\d+\.\d+$/ || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "pipeline")
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "pipeline"
+      when: manual
+      allow_failure: true
+  cache:
+    - key:
+        files: [apps/desktop/scripts/build-ffmpeg.sh]
+        prefix: ffmpeg-windows
+      paths:
+        - apps/desktop/src-tauri/ffmpeg/prefix
+        - apps/desktop/src-tauri/ffmpeg/cache
+    - key:
+        prefix: rust-windows
+      paths:
+        - .cargo
+        - .rustup
+        - .bun
+        - apps/desktop/src-tauri/target
+  artifacts:
+    name: present-tauri-windows
+    expire_in: 14 days
+    paths:
+      - apps/desktop/src-tauri/ffmpeg/cache/ffmpeg-*.tar.xz
+      - apps/desktop/src-tauri/target/release/bundle/**/*.msi
+      - apps/desktop/src-tauri/target/release/bundle/**/*.exe
+      - apps/desktop/src-tauri/target/release/bundle/**/*.sig
+  script:
+    - |
+      $ErrorActionPreference = "Stop"
+      $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+      if (-not (Test-Path $vswhere)) { throw "vswhere.exe is missing — Visual Studio is not installed" }
+      $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+      if (-not $vs) { throw "MSVC is not installed" }
+      cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && set" | ForEach-Object {
+        if ($_ -match '^(.*?)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] }
+      }
+      if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) { throw "cl.exe is not on PATH" }
+      if (-not (Test-Path "C:\Program Files\LLVM\bin\libclang.dll")) { throw "libclang.dll not found — bindgen cannot run" }
+      $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
+      $env:BUN_INSTALL = "$env:CI_PROJECT_DIR\.bun"
+      $env:CARGO_HOME = "$env:CI_PROJECT_DIR\.cargo"
+      $env:RUSTUP_HOME = "$env:CI_PROJECT_DIR\.rustup"
+      if (-not (Test-Path "$env:BUN_INSTALL\bin\bun.exe")) {
+        iex "& { $(irm https://bun.sh/install.ps1) } bun-v1.3.5"
+      }
+      if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        choco install nodejs-lts --version=22.21.0 -y
+      }
+      if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+        Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+        .\rustup-init.exe -y --default-toolchain 1.96.0 --profile minimal
+      }
+      $env:Path = "$env:BUN_INSTALL\bin;$env:CARGO_HOME\bin;$env:Path"
+      rustup toolchain install 1.96.0 --profile minimal
+      rustup default 1.96.0
+      if (-not (Test-Path "C:\tools\msys64\usr\bin\bash.exe")) {
+        choco install msys2 -y
+      }
+      $env:Path = "C:\tools\msys64\usr\bin;$env:Path"
+      $env:MSYSTEM = "MSYS"
+      $env:CHERE_INVOKING = "1"
+      & "C:\tools\msys64\usr\bin\bash.exe" -c "pacman -S --noconfirm --needed make diffutils nasm tar xz && mv -f /usr/bin/link.exe /usr/bin/link-msys.exe || true && bash apps/desktop/scripts/build-ffmpeg.sh"
+      bun install --frozen-lockfile
+      bun run --filter @present/desktop tauri:build
+      node apps/desktop/scripts/check-ffmpeg-source.mjs
+      $bundle = Get-ChildItem -Recurse apps/desktop/src-tauri/target/release/bundle -Include *.msi,*.exe -ErrorAction SilentlyContinue
+      if (-not $bundle) { throw "No Windows bundle was produced." }
+      if ($env:CI_COMMIT_TAG -or ("$[[ inputs.publish ]]" -eq "true")) {
+        $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+        $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+        $env:AWS_DEFAULT_REGION = "auto"
+        $version = node -p "require('./apps/desktop/package.json').version"
+        node apps/desktop/scripts/publish-to-r2.mjs --version $version --artifacts apps/desktop/src-tauri/target/release/bundle
+      } else {
+        Write-Host "Not publishing. A desktop-v tag publishes; otherwise turn publish on when starting the pipeline."
+      }
