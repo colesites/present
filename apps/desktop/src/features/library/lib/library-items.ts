@@ -187,6 +187,11 @@ export function normalizeLibrarySlide(
     backgroundId: cleanOptionalText(slide.backgroundId),
     backgroundColor: cleanOptionalText(slide.backgroundColor),
     useBackgroundColor: Boolean(slide.useBackgroundColor),
+    // A deck's own timing, kept only when it has some.
+    ...(slide.transition ? { transition: slide.transition } : {}),
+    ...(slide.advanceAfterMs && slide.advanceAfterMs > 0 ? { advanceAfterMs: slide.advanceAfterMs } : {}),
+    ...(slide.hidden ? { hidden: true } : {}),
+    ...(slide.notes?.trim() ? { notes: slide.notes } : {}),
   };
 }
 

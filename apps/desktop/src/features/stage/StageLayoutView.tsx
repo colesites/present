@@ -143,6 +143,16 @@ function StageObjectView({
           )}
         </div>
       );
+    case "notes":
+    case "next-notes": {
+      const notes = (object.kind === "notes" ? feed.current : feed.next).notes;
+      return frame(
+        <FitText
+          text={notes ?? (sample ? (object.kind === "notes" ? "Speaker notes for this slide" : "Notes for the next slide") : "")}
+          style={style}
+        />,
+      );
+    }
     case "section":
     case "next-section": {
       const words = object.kind === "section" ? feed.current : feed.next;

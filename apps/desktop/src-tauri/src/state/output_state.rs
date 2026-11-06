@@ -252,6 +252,7 @@ mod tests {
             timer_layout: None,
             screen_composer_enabled: None,
             screen_composer_layout: None,
+            slide_media_box: None,
         }))
     }
 

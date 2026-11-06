@@ -26,9 +26,12 @@ export type ServicePosition = {
 
 export type PresentationPosition = {
   service: ServicePosition;
-  deck: { libraryId: string | null; slideCount: number };
+  deck: { libraryId: string | null; slideCount: number; skipped?: number[] };
   /** The slide on screen. `null` means nothing selected, not slide zero. */
   slideIndex: number | null;
+  /** How far through its builds the slide on screen is; past them, all built. */
+  buildStep?: number;
+  clickSteps?: number;
 };
 
 export const getPresentationPosition = (): Promise<PresentationPosition> =>
@@ -49,8 +52,12 @@ export const setServiceGroup = (groupId: string | null): Promise<PresentationPos
 export const setDeck = (
   libraryId: string | null,
   slideCount: number,
+  /** Slides "next" and "previous" pass over: the deck's hidden ones. */
+  skipped: number[] = [],
+  /** How many clicks the slide on screen's builds take. */
+  clickSteps = 0,
 ): Promise<PresentationPosition> =>
-  invoke("set_presentation_deck", { libraryId, slideCount });
+  invoke("set_presentation_deck", { libraryId, slideCount, skipped, clickSteps });
 
 /** 0-based, unlike the AI Operator's tool argument. */
 export const goToSlide = (index: number): Promise<PresentationPosition> =>

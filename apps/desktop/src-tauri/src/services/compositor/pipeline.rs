@@ -86,6 +86,12 @@ struct CachedStill {
 pub struct SceneCompositor {
     width: u32,
     height: u32,
+    /// When the live slide came up and its build step began (`build`).
+    build_clock: Option<BuildClock>,
+    /// How each object with builds is drawn this frame; absent ones as made.
+    build_poses: std::collections::HashMap<String, super::build::Pose>,
+    /// A build is part-way: the next frame looks different.
+    builds_moving: bool,
     /// The slide layers over transparency, valid while `cached_for` holds.
     cached_layers: Option<Pixmap>,
     /// The picture on screen before the one being drawn, for a whole-slide
@@ -170,6 +176,11 @@ pub struct SceneCompositor {
     /// What is under everything: the screen's colour (Screen Configuration),
     /// black unless one is chosen.
     base: Color,
+    /// Draw everything but the background media, over transparency: the
+    /// layer that goes over a video shown by the GPU as it is
+    /// (`surface::layered`). The screen's colour and the video are then the
+    /// layers' to show.
+    omit_media: bool,
 }
 
 /// Which frame of each region's video `regions` holds, in a comparable form.
@@ -251,6 +262,9 @@ impl SceneCompositor {
         Self {
             width,
             height,
+            build_clock: None,
+            build_poses: std::collections::HashMap::new(),
+            builds_moving: false,
             cached_layers: None,
             cached_for: None,
             previous: None,
@@ -270,6 +284,7 @@ impl SceneCompositor {
             composer_clock: None,
             drawn_regions: Vec::new(),
             base: Color::BLACK,
+            omit_media: false,
         }
     }
 
@@ -288,7 +303,41 @@ impl SceneCompositor {
     /// Anything that draws only when its scene changes has to ask this, and
     /// does, through [`needs_drawing`](Self::needs_drawing).
     pub fn is_animating(&self) -> bool {
-        self.running.is_some()
+        self.running.is_some() || self.builds_moving
+    }
+
+    /// The live slide's builds at this moment: which slide and step, how
+    /// long since that step began, and so each object's pose.
+    fn update_builds(&mut self, scene: &OutputScene) {
+        let now = Instant::now();
+        let Some(step) = scene.build_step.filter(|_| scene.show_text) else {
+            self.build_clock = None;
+            self.build_poses.clear();
+            self.builds_moving = false;
+            return;
+        };
+        let slide = scene.active_slide_id.clone();
+        let clock = match self.build_clock.take() {
+            Some(clock) if clock.slide == slide && clock.step == step => clock,
+            // Back a step: shown settled, as PowerPoint shows it, not replayed.
+            Some(clock) if clock.slide == slide && step < clock.step => BuildClock {
+                slide,
+                step,
+                since: now.checked_sub(Duration::from_secs(3600)).unwrap_or(now),
+            },
+            _ => BuildClock {
+                slide,
+                step,
+                since: now,
+            },
+        };
+        let elapsed_ms = now.duration_since(clock.since).as_secs_f64() * 1000.0;
+        self.build_clock = Some(clock);
+        let elements = scene.slide_elements().unwrap_or_default();
+        let timeline = super::build::timeline(&elements);
+        let (poses, moving) = super::build::poses(&timeline, step, elapsed_ms);
+        self.build_poses = poses;
+        self.builds_moving = moving;
     }
 
     /// Whether a consumer that skips unchanged scenes has to draw this one.
@@ -391,6 +440,35 @@ impl SceneCompositor {
         true
     }
 
+    /// Leave the background media and the screen's colour out of every frame
+    /// from now on, or put them back (`omit_media`). `true` if that changed,
+    /// and the next frame must be drawn whatever else did.
+    pub fn set_omit_media(&mut self, omit: bool) -> bool {
+        if self.omit_media == omit {
+            return false;
+        }
+        self.omit_media = omit;
+        true
+    }
+
+    /// Whether a transition is running that blends whole pictures, video and
+    /// all, rather than only the slide's elements.
+    pub fn is_blending_whole_frames(&self) -> bool {
+        self.running
+            .as_ref()
+            .is_some_and(|(running, _)| running.mode() == transition::Mode::FullSlide)
+    }
+
+    /// What is under everything in this frame: the screen's colour, or
+    /// nothing when it is the layers' to show.
+    fn under(&self) -> Color {
+        if self.omit_media {
+            Color::TRANSPARENT
+        } else {
+            self.base
+        }
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if (self.width, self.height) == (width, height) {
             return;
@@ -458,15 +536,21 @@ impl SceneCompositor {
             .as_deref()
             .filter(|url| !url.is_empty())
             .filter(|_| scene.show_media && !scene.hide_background)
-            .filter(|_| !scene.screen_composer_enabled);
+            .filter(|_| !scene.screen_composer_enabled)
+            .filter(|_| !self.omit_media);
 
         // 1. The background media, letterboxed as `object-contain` does, or
         //    where this screen's layout puts it, fitted or filling its box —
         //    or filling or stretched to the screen, as its own settings say.
-        let media_area = scene
-            .screen_layout
-            .as_ref()
-            .and_then(media_area_of(self.width, self.height, scene.media_fit))
+        // A live slide's movie plays in its box on the slide.
+        let media_area = slide_media_area(scene, self.width, self.height)
+            .or_else(|| {
+                scene.screen_layout.as_ref().and_then(media_area_of(
+                    self.width,
+                    self.height,
+                    scene.media_fit,
+                ))
+            })
             .or_else(|| whole_screen_area(self.width, self.height, scene.media_fit));
         let media_rect = match (media_url, video.filter(|video| video.is_well_formed())) {
             (Some(_), Some(video)) if media_area.is_some() => {
@@ -477,16 +561,16 @@ impl SceneCompositor {
                 // A video with no decoded frame yet is not a still. The image
                 // path would read the whole file — hundreds of megabytes — and
                 // fail to decode it, on every frame.
-                frame.clear(self.base);
+                frame.clear(self.under());
                 report.background_media_missing = true;
                 None
             }
             (Some(url), None) => {
-                frame.clear(self.base);
+                frame.clear(self.under());
                 self.draw_still(&mut frame, url, loader, media_area, &mut report)
             }
             (None, _) => {
-                frame.clear(self.base);
+                frame.clear(self.under());
                 None
             }
         };
@@ -596,7 +680,7 @@ impl SceneCompositor {
         // its place for the next.
         let mut out = match self.whole_slide_spare.take() {
             Some(mut out) if out.width() == self.width && out.height() == self.height => {
-                out.clear(self.base);
+                out.clear(self.under());
                 out
             }
             _ => match Frame::new(self.width, self.height) {
@@ -808,6 +892,17 @@ impl SceneCompositor {
                         report.elements_deferred += 1;
                         continue;
                     }
+                    // An object part-way through a build, or not yet built in.
+                    match self.build_poses.get(&element.id) {
+                        Some(super::build::Pose::Hidden) => continue,
+                        Some(pose) => {
+                            if draw_posed(layers, &element, viewport, loader, *pose) {
+                                report.elements_drawn += 1;
+                            }
+                            continue;
+                        }
+                        None => {}
+                    }
                     if super::scene::draw_element_into(layers, &element, viewport, loader) {
                         report.elements_drawn += 1;
                     }
@@ -854,6 +949,21 @@ impl SceneCompositor {
             }
         }
         self.draw_slide_as_made(target, scene, loader, report, keep, viewport);
+        // The slide's movie plays under it, in its box: the slide leaves the
+        // box clear so it shows, on the CPU's frame and over the GPU's video.
+        if let Some(media_box) = scene
+            .slide_media_box
+            .filter(|_| scene.media_url.is_some() && scene.show_media && !scene.hide_background)
+        {
+            let (x, y, w, h) = media_box.on_frame(target.width() as f32, target.height() as f32);
+            if let Some(rect) = tiny_skia::Rect::from_xywh(x, y, w, h) {
+                let paint = tiny_skia::Paint {
+                    blend_mode: tiny_skia::BlendMode::Clear,
+                    ..tiny_skia::Paint::default()
+                };
+                target.fill_rect(rect, &paint, Transform::identity(), None);
+            }
+        }
         if let (Some(slide), Some(area)) = (boxed.as_ref(), area) {
             draw_into_box(&mut layers.as_mut(), slide, &area);
         }
@@ -1374,10 +1484,15 @@ impl SceneCompositor {
         loader: &dyn MediaLoader,
         report: &mut Rendered,
     ) -> Option<&Pixmap> {
+        let poses_before = self.build_poses.clone();
+        self.update_builds(scene);
         let unchanged = self
             .cached_for
             .as_ref()
-            .is_some_and(|cached| !layers_differ(cached, scene));
+            .is_some_and(|cached| !layers_differ(cached, scene))
+            // A build moving, or one that just settled, draws anew.
+            && !self.builds_moving
+            && poses_before == self.build_poses;
 
         if unchanged && self.cached_layers.is_some() {
             self.last_rebuild = false;
@@ -1544,6 +1659,168 @@ impl SceneCompositor {
 
 /// Where a screen's layout puts the media, in pixels, and how it fits there.
 type MediaArea = ((f32, f32, f32, f32), images::ObjectFit);
+
+/// Where a scene's background video is drawn on a `width` by `height`
+/// screen, in its pixels: the box it is clipped to, and the picture's own
+/// rectangle, which runs past the box when the video fills it. The geometry
+/// `render` draws with, for a video shown by the GPU instead
+/// (`surface::layered`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VideoGeometry {
+    pub clip: (f32, f32, f32, f32),
+    pub picture: (f32, f32, f32, f32),
+}
+
+pub fn video_geometry(
+    scene: &OutputScene,
+    width: u32,
+    height: u32,
+    video: (u32, u32),
+) -> Option<VideoGeometry> {
+    let area = slide_media_area(scene, width, height)
+        .or_else(|| {
+            scene
+                .screen_layout
+                .as_ref()
+                .and_then(media_area_of(width, height, scene.media_fit))
+        })
+        .or_else(|| whole_screen_area(width, height, scene.media_fit));
+    match area {
+        Some(((x, y, w, h), fit)) => {
+            let placement = images::place(video.0, video.1, w, h, fit)?;
+            Some(VideoGeometry {
+                clip: (x, y, w, h),
+                picture: (
+                    x + placement.offset_x,
+                    y + placement.offset_y,
+                    video.0 as f32 * placement.scale_x,
+                    video.1 as f32 * placement.scale_y,
+                ),
+            })
+        }
+        None => {
+            let (x, y, w, h) = contained_rect(video.0, video.1, width, height)?;
+            Some(VideoGeometry {
+                clip: (0.0, 0.0, width as f32, height as f32),
+                picture: (x as f32, y as f32, w as f32, h as f32),
+            })
+        }
+    }
+}
+
+/// The live slide and build step, and when that step began.
+#[derive(Debug, Clone)]
+struct BuildClock {
+    slide: Option<String>,
+    step: usize,
+    since: Instant,
+}
+
+/// An object drawn part-way through a build: on its own, then faded, moved,
+/// scaled about its middle and cut back from one side onto the slide.
+fn draw_posed(
+    layers: &mut Pixmap,
+    element: &crate::services::slide::SlideElement,
+    viewport: &geometry::Viewport,
+    loader: &dyn MediaLoader,
+    pose: super::build::Pose,
+) -> bool {
+    let super::build::Pose::Moving {
+        opacity,
+        dx,
+        dy,
+        scale,
+        wipe,
+    } = pose
+    else {
+        return false;
+    };
+    let Some(mut alone) = Pixmap::new(layers.width(), layers.height()) else {
+        return false;
+    };
+    if !super::scene::draw_element_into(&mut alone, element, viewport, loader) {
+        return false;
+    }
+    let x = (element.x() * viewport.scale_x()) as f32;
+    let y = (element.y() * viewport.scale_y()) as f32;
+    let w = (element.width() * viewport.scale_x()) as f32;
+    let h = (element.height() * viewport.scale_y()) as f32;
+    if let Some((from, shown)) = wipe {
+        use super::build::WipeFrom;
+        // What is not shown yet, cleared away.
+        let hidden = match from {
+            WipeFrom::Left => tiny_skia::Rect::from_xywh(
+                x + w * shown,
+                0.0,
+                layers.width() as f32,
+                layers.height() as f32,
+            ),
+            WipeFrom::Right => {
+                tiny_skia::Rect::from_xywh(0.0, 0.0, x + w * (1.0 - shown), layers.height() as f32)
+            }
+            WipeFrom::Top => tiny_skia::Rect::from_xywh(
+                0.0,
+                y + h * shown,
+                layers.width() as f32,
+                layers.height() as f32,
+            ),
+            WipeFrom::Bottom => {
+                tiny_skia::Rect::from_xywh(0.0, 0.0, layers.width() as f32, y + h * (1.0 - shown))
+            }
+        };
+        if let Some(hidden) = hidden {
+            let clear = tiny_skia::Paint {
+                blend_mode: tiny_skia::BlendMode::Clear,
+                ..tiny_skia::Paint::default()
+            };
+            alone.fill_rect(hidden, &clear, Transform::identity(), None);
+        }
+    }
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let transform =
+        Transform::from_translate(dx * layers.width() as f32, dy * layers.height() as f32)
+            .pre_translate(cx, cy)
+            .pre_scale(scale, scale)
+            .pre_translate(-cx, -cy);
+    layers.draw_pixmap(
+        0,
+        0,
+        alone.as_ref(),
+        &PixmapPaint {
+            opacity: opacity.clamp(0.0, 1.0),
+            quality: FilterQuality::Bilinear,
+            ..PixmapPaint::default()
+        },
+        transform,
+        None,
+    );
+    true
+}
+
+/// Where a live slide's movie plays on a `width` by `height` screen: its box
+/// on the slide, wherever this screen puts the slide — the whole screen, or
+/// scaled evenly into the layout's slide box (`draw_into_box`). Stretched to
+/// the box, as PowerPoint draws a movie in its frame.
+fn slide_media_area(scene: &OutputScene, width: u32, height: u32) -> Option<MediaArea> {
+    let media_box = scene.slide_media_box?;
+    let (w, h) = (width as f32, height as f32);
+    let (mut x, mut y, mut box_w, mut box_h) = media_box.on_frame(w, h);
+    let slide_box = scene
+        .screen_layout
+        .as_ref()
+        .map(|layout| layout.slide_box)
+        .filter(|area| !area.is_full());
+    if let Some(slide_box) = slide_box {
+        let (sx, sy, sw, sh) = slide_box.rect(width, height)?;
+        let scale = (sw / w).min(sh / h);
+        let (ox, oy) = (sx + (sw - w * scale) / 2.0, sy + (sh - h * scale) / 2.0);
+        x = ox + x * scale;
+        y = oy + y * scale;
+        box_w *= scale;
+        box_h *= scale;
+    }
+    (box_w > 0.0 && box_h > 0.0).then_some(((x, y, box_w, box_h), images::ObjectFit::Fill))
+}
 
 /// The media's place on a `width` by `height` screen, when its layout moves
 /// it or fills its box; `None` for the whole screen (`whole_screen_area`). A
@@ -1925,6 +2202,7 @@ mod tests {
                 .take((width * height * 4) as usize)
                 .collect(),
             presentation_seconds: 0.0,
+            gpu: None,
         }
     }
 
@@ -2607,6 +2885,41 @@ mod tests {
 
     /// A screen's layout from Looks, with its words in a lower third over a
     /// blue band.
+    #[test]
+    fn a_slides_movie_plays_in_its_box_wherever_the_slide_is() {
+        let movie = crate::services::output::SlideMediaBox {
+            x: 0.5,
+            y: 0.25,
+            width: 0.25,
+            height: 0.5,
+        };
+        let mut scene = OutputScene {
+            slide_media_box: Some(movie),
+            ..video_scene()
+        };
+        // The slide fills a 1000 by 500 screen: the box is its share of it.
+        let ((x, y, w, h), fit) = slide_media_area(&scene, 1000, 500).expect("a box");
+        assert_eq!((x, y, w, h), (500.0, 125.0, 250.0, 250.0));
+        assert_eq!(fit, images::ObjectFit::Fill);
+
+        // The slide shrunk into the right half of the screen: the box with it.
+        scene.screen_layout = Some(ScreenLayout {
+            slide_box: LayerBox {
+                x_percent: 75.0,
+                y_percent: 50.0,
+                width_percent: 50.0,
+                height_percent: 100.0,
+            },
+            ..ScreenLayout::NONE
+        });
+        let ((x, y, w, h), _) = slide_media_area(&scene, 1000, 500).expect("a box");
+        assert_eq!((x, y, w, h), (750.0, 187.5, 125.0, 125.0));
+
+        // Not the movie playing: the media goes where it always does.
+        scene.slide_media_box = None;
+        assert!(slide_media_area(&scene, 1000, 500).is_none());
+    }
+
     fn lower_third() -> ScreenLayout {
         ScreenLayout {
             words_box: Some(LayerBox {
@@ -2759,6 +3072,46 @@ mod tests {
             }])),
             ..scene()
         }
+    }
+
+    #[test]
+    fn a_build_waits_for_its_click_and_then_shows() {
+        // A green box that fades in on the first click.
+        let built = |step: usize| OutputScene {
+            active_slide_id: Some("presentation_x:0".to_owned()),
+            build_step: Some(step),
+            slide_elements: Some(json!([{
+                "id": "box", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 1920.0, "height": 1080.0,
+                "style": { "backgroundColor": "#00ff00" },
+                "builds": { "in": { "effect": "fade", "durationMs": 400, "start": "on-click" } }
+            }])),
+            ..presentation_page()
+        };
+        let mut compositor = SceneCompositor::new(160, 90);
+
+        let (frame, _) = compositor.render(&built(0), None, &NoMedia).expect("frame");
+        assert_ne!(
+            frame.pixel_at(80, 45).map(|p| p.1),
+            Some(255),
+            "not before its click"
+        );
+        assert!(!compositor.is_animating(), "nothing moves while it waits");
+
+        let (frame, _) = compositor.render(&built(1), None, &NoMedia).expect("frame");
+        let green = frame.pixel_at(80, 45).map(|p| p.1).unwrap_or(0);
+        assert!(green < 255, "fading in, not yet whole: {green}");
+        assert!(
+            compositor.is_animating(),
+            "frames keep coming while it fades"
+        );
+
+        // Stepped back onto the slide: everything built, at once.
+        let (frame, _) = compositor
+            .render(&built(1_000_000), None, &NoMedia)
+            .expect("frame");
+        assert_eq!(frame.pixel_at(80, 45).map(|p| p.1), Some(255), "all built");
+        assert!(!compositor.is_animating());
     }
 
     #[test]
@@ -3138,6 +3491,7 @@ mod tests {
             height: 100,
             bgra: vec![0; 16],
             presentation_seconds: 0.0,
+            gpu: None,
         };
 
         let (_, report) = compositor

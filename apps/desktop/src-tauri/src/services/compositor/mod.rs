@@ -9,6 +9,7 @@
 //! consumer — the audience window, NDI, and anything later — instead of each
 //! one capturing separately.
 
+pub mod build;
 pub mod color;
 pub mod composer;
 pub mod fill;

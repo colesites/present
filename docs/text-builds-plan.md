@@ -1,6 +1,15 @@
 # Builds: animating any layer on a slide
 
-Status: plan, nothing built yet.
+Status: **phase 1 built** (2026-11-06): Build In/Out on any object with
+appear, fade, wipe, fly and zoom; start (on click, with previous, after
+previous), delay and length; build order; Next/Previous through the core
+(`services/presentation.rs`, `build_step`); poses drawn by the compositor
+(`compositor/build.rs`); dots on thumbnails; the editor's Build tab; and
+PowerPoint entrance/exit animations imported (`services/pptx/animation.rs`).
+Builds are kept on the element (`builds.in`, `builds.out`, each with an
+`order`) rather than a slide-level `buildOrder`: the steps are worked out from
+the elements alone. Phases 2–5 (text by line/word/letter, presets, …) are not
+built.
 
 ## Words first
 

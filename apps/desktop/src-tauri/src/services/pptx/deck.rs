@@ -346,6 +346,8 @@ fn read_slide(
     if let Some(tree) = sp_tree(slide_root) {
         builder.walk(tree, slide_part, &[], ShapeSource::Slide);
     }
+    // The slide's animations, as builds on what each shape became.
+    super::animation::apply(slide_root, &mut elements);
 
     let text_content = elements
         .iter()
@@ -354,11 +356,15 @@ fn read_slide(
         .filter(|text| !text.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n");
+    let timing = super::transition::read(slide_root);
     Ok(json!({
         "id": format!("pptx:{number}"),
         "title": format!("Slide {number}"),
+        "transition": timing.transition.unwrap_or(Value::Null),
+        "advanceAfterMs": timing.advance_after_ms.map_or(Value::Null, |ms| json!(ms)),
         "backgroundColor": background_color.map(|color: Rgba| color.to_hex()).map_or(Value::Null, Value::String),
         "hidden": slide_root.attribute("show") == Some("0"),
+        "notes": super::notes::read(package, slide_part).map_or(Value::Null, Value::String),
         "elements": elements,
         "textContent": text_content,
     }))
@@ -643,10 +649,31 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
         if source == ShapeSource::Inherited && placeholder_key(shape).is_some() {
             return;
         }
+        let first = self.elements.len();
         match name {
             "grpSp" => self.group(shape, part, groups, source, group_fill),
             "graphicFrame" => self.graphic_frame(shape, part, groups),
             _ => self.drawn_shape(shape, part, groups, source, group_fill),
+        }
+        // Which slide shape each element came from, a group's too, for the
+        // slide's animations to find (`animation.rs`).
+        if source == ShapeSource::Slide {
+            let id = xml::elements(shape)
+                .next()
+                .and_then(|non_visual| xml::child(non_visual, P, "cNvPr"))
+                .and_then(|properties| properties.attribute("id"));
+            if let Some(id) = id {
+                for element in &mut self.elements[first..] {
+                    if let Value::Object(map) = element {
+                        let ids = map
+                            .entry(super::animation::SHAPE_TAG)
+                            .or_insert_with(|| json!([]));
+                        if let Value::Array(ids) = ids {
+                            ids.push(json!(id));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -804,12 +831,19 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
         match &fill {
             Paint::Picture(picture) => {
                 let named_in = self.picture_part(fill_from_theme, part);
+                let poster_at = self.elements.len();
                 self.picture(
                     picture,
                     &named_in,
                     &placed,
                     (!is_rectangle).then_some(&paths),
                 );
+                // A movie or a sound: the picture is its poster.
+                if is_picture {
+                    if let Some((url, kind)) = self.movie_of(shape, part) {
+                        self.make_movie(poster_at, &placed, url, kind);
+                    }
+                }
                 if let Some(line) = &line {
                     self.shape_element(&placed, &paths, None, Some(line));
                 }
@@ -915,6 +949,79 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
         self.elements.push(Value::Object(element));
     }
 
+    /// The movie or sound a picture shape plays, stored, and which it is:
+    /// `a:videoFile`, `a:audioFile` (by link) or `p14:media` (embedded), each
+    /// a relationship to a part of the deck. One linked to a file outside the
+    /// deck cannot come with it; its poster stays a picture.
+    fn movie_of(&mut self, shape: Node, part: &str) -> Option<(String, &'static str)> {
+        let holder = xml::path(shape, P, &["nvPicPr", "nvPr"])?;
+        let mut references: Vec<(String, &'static str)> = Vec::new();
+        for node in holder.descendants() {
+            let kind = match node.tag_name().name() {
+                "videoFile" | "quickTimeFile" => "video",
+                "audioFile" | "wavAudioFile" => "audio",
+                "media" => "media",
+                _ => continue,
+            };
+            for attribute in node.attributes() {
+                if attribute.namespace() == Some(R) && matches!(attribute.name(), "embed" | "link")
+                {
+                    references.push((attribute.value().to_owned(), kind));
+                }
+            }
+        }
+        for (rel_id, kind) in references {
+            let Some(target) = self.package.related_by_id(part, &rel_id).ok().flatten() else {
+                continue;
+            };
+            let Some(bytes) = self.package.bytes(&target) else {
+                continue;
+            };
+            let extension = target
+                .rsplit_once('.')
+                .map(|(_, extension)| extension.to_ascii_lowercase())
+                .filter(|extension| {
+                    extension.len() <= 5 && extension.chars().all(|c| c.is_ascii_alphanumeric())
+                })
+                .unwrap_or_else(|| "mp4".to_owned());
+            let sound = matches!(
+                extension.as_str(),
+                "mp3" | "m4a" | "wav" | "wma" | "aac" | "aif" | "aiff"
+            );
+            let kind = match kind {
+                "media" if sound => "audio",
+                "media" => "video",
+                other => other,
+            };
+            let url = self.sink.store(&target, bytes, &extension)?;
+            return Some((url, kind));
+        }
+        None
+    }
+
+    /// The picture just added at `poster_at` as the poster of a movie, or a
+    /// box of its own when the movie has none.
+    fn make_movie(&mut self, poster_at: usize, placed: &Placement, url: String, kind: &str) {
+        if let Some(Value::Object(element)) = self.elements.get_mut(poster_at) {
+            let poster = element.get("content").cloned().unwrap_or(Value::Null);
+            element.insert("type".into(), json!("video"));
+            element.insert("content".into(), json!(url));
+            if let Some(Value::Object(style)) = element.get_mut("style") {
+                style.insert("poster".into(), poster);
+                style.insert("mediaKind".into(), json!(kind));
+            }
+            return;
+        }
+        let mut element = self.box_json(placed);
+        element.insert("id".into(), json!(self.id()));
+        element.insert("type".into(), json!("video"));
+        element.insert("content".into(), json!(url));
+        let mut style = Self::transform_style(placed, true);
+        style.insert("mediaKind".into(), json!(kind));
+        element.insert("style".into(), Value::Object(style));
+        self.elements.push(Value::Object(element));
+    }
+
     /// The picture a relationship of `part` points at, with its effects
     /// applied, stored.
     fn media(
@@ -932,6 +1039,21 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
             }
         }
         let extension = sniff_extension(bytes);
+        // A metafile, an SVG, a BMP or a TIFF: drawn into PNG here, since the
+        // screens cannot draw them. A metafile that cannot be drawn is left
+        // out; the others are kept as they are for the webview.
+        if super::convert_picture::needs_conversion(extension) {
+            if let Some(png) = super::convert_picture::to_png(bytes, extension) {
+                return self.sink.store(&format!("{target}#png"), &png, "png");
+            }
+            if matches!(extension, "emf" | "wmf") {
+                tracing::info!(
+                    target,
+                    "a metafile picture could not be drawn; it is left out"
+                );
+                return None;
+            }
+        }
         // Not a picture at all — a part a wrong relationship led to — is left
         // out rather than kept as one nothing can show.
         if extension == "png" && !bytes.starts_with(b"\x89PNG") {
@@ -1144,6 +1266,7 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
                 }
             }
             Some(DIAGRAM_URI) => self.diagram(frame, part, &own, groups),
+            Some(super::chart::CHART_URI) => self.chart(frame, part, &own, groups),
             _ => {
                 // An embedded object or anything else that carries a picture of
                 // itself: draw the picture in the frame.
@@ -1158,6 +1281,134 @@ impl<'b, 'a, 'i> Builder<'b, 'a, 'i> {
                 }
             }
         }
+    }
+
+    /// A chart, drawn from the data it carries as grouped shapes and words
+    /// (`chart.rs`), so it shows on every screen and can be edited.
+    fn chart(&mut self, frame: Node, part: &str, own: &Frame, groups: &[Frame]) {
+        let chart_part = xml::path(frame, A, &["graphic", "graphicData"])
+            .and_then(|data| {
+                data.children()
+                    .find(|node| node.tag_name().name() == "chart")
+            })
+            .and_then(|chart| chart.attribute((R, "id")))
+            .and_then(|rel_id| self.package.related_by_id(part, rel_id).ok().flatten());
+        let Some(text) = chart_part.and_then(|chart_part| self.package.text(&chart_part)) else {
+            return;
+        };
+        let Some(items) =
+            super::chart::draw(&text, &self.theme.palette, own.extent.0, own.extent.1)
+        else {
+            tracing::info!("[pptx] a chart could not be read; it is left out");
+            return;
+        };
+        let group = format!("pptx_{}_chart_{}", self.number, self.next_id + 1);
+        let first = self.elements.len();
+        let scale = self.canvas.scale;
+        for item in items {
+            let rect = match &item {
+                super::chart::Item::Shape { rect, .. } | super::chart::Item::Text { rect, .. } => {
+                    *rect
+                }
+            };
+            let placed = place(
+                &Frame {
+                    offset: (own.offset.0 + rect.x, own.offset.1 + rect.y),
+                    extent: (rect.w, rect.h),
+                    ..Frame::default()
+                },
+                groups,
+            );
+            match item {
+                super::chart::Item::Shape {
+                    paths, fill, line, ..
+                } => {
+                    let paths: Vec<ShapePath> = paths
+                        .iter()
+                        .map(|path| ShapePath {
+                            d: chart_path_data(&path.cmds, scale),
+                            fill: path.fill,
+                            stroke: path.stroke,
+                        })
+                        .collect();
+                    let fill_json = fill.and_then(|color| {
+                        Paint::Solid(color).to_json(placed.w * scale, placed.h * scale)
+                    });
+                    let line = line.map(|outline| Line {
+                        color: outline.color,
+                        width: outline.width * scale,
+                        dash: Vec::new(),
+                        cap: "round",
+                        join: "round",
+                    });
+                    self.shape_element(&placed, &paths, fill_json, line.as_ref());
+                }
+                super::chart::Item::Text {
+                    text,
+                    size_pt,
+                    color,
+                    bold,
+                    align,
+                    ..
+                } => {
+                    self.label(&placed, &text, size_pt, color, bold, align);
+                }
+            }
+        }
+        // One group: the chart is picked and moved whole in the editor.
+        for element in &mut self.elements[first..] {
+            if let Value::Object(map) = element {
+                map.insert("groupId".into(), json!(group));
+            }
+        }
+    }
+
+    /// A line of words in a box of its own, in the theme's body font.
+    fn label(
+        &mut self,
+        placed: &Placement,
+        text: &str,
+        size_pt: f64,
+        color: Rgba,
+        bold: bool,
+        align: &str,
+    ) {
+        let size = round(size_pt * 12_700.0 * self.canvas.scale);
+        let font = self
+            .theme
+            .font_collection("minor")
+            .unwrap_or_else(|| "Calibri".to_string());
+        let weight = if bold { "700" } else { "400" };
+        let mut element = self.box_json(placed);
+        element.insert("id".into(), json!(self.id()));
+        element.insert("type".into(), json!("text"));
+        element.insert("content".into(), json!(text));
+        element.insert(
+            "style".into(),
+            json!({
+                "rotation": 0,
+                "fontFamily": font,
+                "fontSize": size,
+                "fontWeight": weight,
+                "color": color.to_hex(),
+                "textAlign": align,
+                "verticalAlign": "middle",
+                "paddingLeft": 0, "paddingTop": 0, "paddingRight": 0, "paddingBottom": 0,
+            }),
+        );
+        element.insert(
+            "textBody".into(),
+            json!({
+                "insetLeft": 0, "insetTop": 0, "insetRight": 0, "insetBottom": 0,
+                "verticalAlign": "middle",
+                "wrap": false,
+                "paragraphs": [{
+                    "alignment": align,
+                    "runs": [{ "text": text, "fontFamily": font, "fontSize": size, "fontWeight": weight, "color": color.to_hex() }],
+                }],
+            }),
+        );
+        self.elements.push(Value::Object(element));
     }
 
     /// SmartArt: the drawing PowerPoint saved of it, placed in its frame.
@@ -1445,6 +1696,30 @@ struct TableCellStyle<'n, 'i> {
     whole: Option<Node<'n, 'i>>,
     header: Option<Node<'n, 'i>>,
     band: Option<Node<'n, 'i>>,
+}
+
+/// A chart's path, from EMU to the element's own canvas pixels.
+fn chart_path_data(cmds: &[super::chart::Cmd], scale: f64) -> String {
+    use super::chart::Cmd;
+    let p = |value: f64| round(value * scale);
+    let mut d = String::new();
+    for cmd in cmds {
+        match cmd {
+            Cmd::M(x, y) => d.push_str(&format!("M{} {}", p(*x), p(*y))),
+            Cmd::L(x, y) => d.push_str(&format!("L{} {}", p(*x), p(*y))),
+            Cmd::C(x1, y1, x2, y2, x, y) => d.push_str(&format!(
+                "C{} {} {} {} {} {}",
+                p(*x1),
+                p(*y1),
+                p(*x2),
+                p(*y2),
+                p(*x),
+                p(*y)
+            )),
+            Cmd::Z => d.push('Z'),
+        }
+    }
+    d
 }
 
 fn geometry_json(paths: &[ShapePath]) -> Value {

@@ -4,6 +4,8 @@ import { memo } from "react";
 import { cn } from "../../../renderer/shared/lib/utils";
 
 interface EditorHeaderProps {
+  /** A deck has slides of objects, no lyrics: no Lyrics view, nothing to fix. */
+  isDeck?: boolean;
   editorView: "slides" | "source";
   setEditorView: (view: "slides" | "source") => void;
   handleFix: () => void;
@@ -13,6 +15,7 @@ interface EditorHeaderProps {
 }
 
 export const EditorHeader = memo(function EditorHeader({
+  isDeck = false,
   editorView,
   setEditorView,
   handleFix,
@@ -27,6 +30,7 @@ export const EditorHeader = memo(function EditorHeader({
           <span className="rounded-full border border-border bg-muted/50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.26em] text-muted-foreground">
             Editor
           </span>
+          {isDeck ? null : (
           <div className="flex rounded-full border border-border bg-background/50 p-1">
             <button
               type="button"
@@ -53,9 +57,11 @@ export const EditorHeader = memo(function EditorHeader({
               Lyrics
             </button>
           </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
+          {isDeck ? null : (
           <button
             type="button"
             onClick={handleFix}
@@ -65,6 +71,7 @@ export const EditorHeader = memo(function EditorHeader({
           >
             {isFixing ? "Fixing..." : "Fix / Break Lyrics"}
           </button>
+          )}
           <button
             type="button"
             onClick={handleManualSave}

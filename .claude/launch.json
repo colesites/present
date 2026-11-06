@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "desktop-vite",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--filter", "@present/desktop", "tauri:vite:dev"],
+      "port": 5173
+    }
+  ]
+}

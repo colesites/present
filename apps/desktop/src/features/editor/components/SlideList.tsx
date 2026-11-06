@@ -1,5 +1,6 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { 
+  Copy,
   GripVertical, 
   Image as ImageIcon,
   Plus, 
@@ -18,12 +19,25 @@ import type { LibrarySlide, LibraryContent, SlideElement } from "../../../shared
 import { getSlideBackgroundColor } from "../../library/lib/library-items";
 import { resolveSlideListScrollTop } from "../lib/slide-list-scroll.mjs";
 import { SlideMediaBackdrop } from "../../../renderer/shared/components/SlideMediaBackdrop";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "../../../renderer/shared/components/ui/context-menu";
+import type { SlideCommand } from "../hooks/useSlideCommands";
 
 const SLIDE_DRAG_DATA_KEY = "application/x-present-slide-index";
 const LAYER_DRAG_DATA_KEY = "application/x-present-layer-index";
 const slideListScrollPositions = new Map<string, number>();
 
 interface SlideListProps {
+  /** An imported deck: its list is "Slides", not a song's playlist. */
+  isDeck?: boolean;
+  onSlideCommand: (command: SlideCommand, slideId: string | null) => boolean;
+  canPasteSlides: () => boolean;
   sidebarTab: "slides" | "layers";
   setSidebarTab: (tab: "slides" | "layers") => void;
   slides: LibrarySlide[];
@@ -48,6 +62,9 @@ interface SlideListProps {
 }
 
 export const SlideList = memo(function SlideList({
+  isDeck = false,
+  onSlideCommand,
+  canPasteSlides,
   sidebarTab,
   setSidebarTab,
   slides,
@@ -186,7 +203,7 @@ export const SlideList = memo(function SlideList({
         {sidebarTab === "slides" ? (
           <div className="space-y-2 p-3">
             <div className="flex items-center justify-between mb-4">
-               <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/50">Playlist</span>
+               <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/50">{isDeck ? "Slides" : "Playlist"}</span>
                <button
                  type="button"
                  onClick={onAddSlide}
@@ -200,7 +217,9 @@ export const SlideList = memo(function SlideList({
               const isSelected = slide.id === selectedSlideId;
               const backgroundColor = getSlideBackgroundColor(slide, content);
               return (
-                <div key={slide.id ?? index} className="relative">
+                <ContextMenu key={slide.id ?? index}>
+                <ContextMenuTrigger asChild>
+                <div className="group/slide relative" onContextMenu={() => onSelectSlide(slide.id ?? null)}>
                   <button
                     type="button"
                     aria-label={`Select slide ${index + 1}`}
@@ -249,6 +268,7 @@ export const SlideList = memo(function SlideList({
                         : "border-border/40 bg-muted/20 hover:border-border hover:bg-muted/40",
                       dropSlideIndex === index && "ring-2 ring-primary/40",
                       draggedSlideIndex === index && "opacity-40",
+                      slide.hidden && "opacity-50",
                     )}
                   >
                     <div className="flex items-center justify-between px-0.5 pr-5">
@@ -265,6 +285,14 @@ export const SlideList = memo(function SlideList({
                         >
                           {slide.label?.trim() || "Untitled"}
                         </span>
+                        {slide.hidden ? (
+                          <span className="rounded bg-muted px-1 text-[9px] font-semibold uppercase text-muted-foreground">Skipped</span>
+                        ) : null}
+                        {slide.advanceAfterMs ? (
+                          <span className="rounded bg-muted px-1 text-[9px] font-semibold text-muted-foreground">
+                            {Math.round(slide.advanceAfterMs / 100) / 10}s
+                          </span>
+                        ) : null}
                       </div>
                     </div>
 
@@ -307,7 +335,49 @@ export const SlideList = memo(function SlideList({
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSlideCommand("duplicate", slide.id ?? null);
+                    }}
+                    title="Duplicate (⌘D)"
+                    className="absolute right-6 top-1.5 inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground/45 opacity-0 transition hover:bg-muted hover:text-foreground group-hover/slide:opacity-100 focus-visible:opacity-100"
+                    aria-label={`Duplicate slide ${index + 1}`}
+                  >
+                    <Copy className="h-3 w-3" />
+                  </button>
                 </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-52">
+                  <ContextMenuItem onSelect={() => onSlideCommand("duplicate", slide.id ?? null)}>
+                    Duplicate<ContextMenuShortcut>⌘D</ContextMenuShortcut>
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => onSlideCommand("copy", slide.id ?? null)}>
+                    Copy<ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => onSlideCommand("cut", slide.id ?? null)}>
+                    Cut<ContextMenuShortcut>⌘X</ContextMenuShortcut>
+                  </ContextMenuItem>
+                  <ContextMenuItem disabled={!canPasteSlides()} onSelect={() => onSlideCommand("paste", slide.id ?? null)}>
+                    Paste after this slide<ContextMenuShortcut>⌘V</ContextMenuShortcut>
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem disabled={index === 0} onSelect={() => onSlideCommand("moveUp", slide.id ?? null)}>
+                    Move up
+                  </ContextMenuItem>
+                  <ContextMenuItem disabled={index === slides.length - 1} onSelect={() => onSlideCommand("moveDown", slide.id ?? null)}>
+                    Move down
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => onSlideCommand("backgroundToAll", slide.id ?? null)}>
+                    Give every slide this background
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem variant="destructive" onSelect={() => onSlideCommand("delete", slide.id ?? null)}>
+                    Delete<ContextMenuShortcut>⌫</ContextMenuShortcut>
+                  </ContextMenuItem>
+                </ContextMenuContent>
+                </ContextMenu>
               );
             })}
           </div>

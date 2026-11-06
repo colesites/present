@@ -9,7 +9,7 @@ import {
   type DragEvent,
   type MutableRefObject,
 } from "react";
-import type { LibraryItem, LibrarySlide } from "../../shared/types";
+import type { CanvasSizePreset, LibraryItem, LibrarySlide } from "../../shared/types";
 import { stripBracketsForDisplay } from "../../renderer/shared/lib/lyrics";
 import { getLabelColor } from "../../shared/types";
 import { cn } from "../../renderer/shared/lib/utils";
@@ -22,14 +22,19 @@ import {
   ContextMenuTrigger,
 } from "../../renderer/shared/components/ui/context-menu";
 import { ArrowRight, GripVertical, NotebookPen, Pencil } from "lucide-react";
-import { getSlideBackgroundColor } from "../library/lib/library-items";
+import {
+  getCanvasSizeDimensions,
+  getSlideBackgroundColor,
+} from "../library/lib/library-items";
 import { SlideMediaBackdrop } from "../../renderer/shared/components/SlideMediaBackdrop";
+import { clickStepsOf } from "../editor/lib/builds";
 import { SLIDE_SCALE_MAX } from "../../renderer/shared/components/WorkspaceFooter";
 
-// Fixed slide box height
-const BASE_SLIDE_HEIGHT = 160;
-// Minimum width for each slide (controls when columns reduce)
+// Minimum width for each slide (controls when columns reduce).
+// Height follows the slide's own aspect, so scale changes size only.
 const BASE_MIN_SLIDE_WIDTH = 220;
+// List thumbnail width at the default scale. Height is width / aspect.
+const BASE_LIST_PREVIEW_WIDTH = 128;
 const SLIDE_DRAG_DATA_KEY = "application/x-present-slide-index";
 const SMART_SCROLL_DURATION_MS = 650;
 
@@ -145,10 +150,7 @@ export const SlidesGrid = memo(function SlidesGrid({
   // The largest scale is one slide to a row, however wide the pane: at the
   // widths in between it fitted two, or three on a wide screen.
   const singleColumn = externalScale >= SLIDE_SCALE_MAX;
-  const slideHeight = useMemo(
-    () => Math.round((singleColumn ? BASE_SLIDE_HEIGHT * 2 : BASE_SLIDE_HEIGHT) * scaleFactor),
-    [singleColumn, scaleFactor]
-  );
+  const listPreviewWidth = Math.round(BASE_LIST_PREVIEW_WIDTH * scaleFactor);
   const minSlideWidth = useMemo(
     () => Math.round(BASE_MIN_SLIDE_WIDTH * scaleFactor),
     [scaleFactor]
@@ -355,7 +357,8 @@ export const SlidesGrid = memo(function SlidesGrid({
                 fontBold={fontBold}
                 fontItalic={fontItalic}
                 fontUnderline={fontUnderline}
-                slideHeight={slideHeight}
+                canvasSize={libraryItem?.content?.presentation?.canvasSize}
+                listPreviewWidth={listPreviewWidth}
                 isGridView={isGridView}
               />
             </div>
@@ -392,7 +395,8 @@ interface SlideCardProps {
   fontBold?: boolean;
   fontItalic?: boolean;
   fontUnderline?: boolean;
-  slideHeight: number;
+  canvasSize?: CanvasSizePreset | null;
+  listPreviewWidth: number;
   isGridView?: boolean;
 }
 
@@ -419,9 +423,12 @@ const SlideCard = memo(function SlideCard({
   fontBold,
   fontItalic,
   fontUnderline,
-  slideHeight,
+  canvasSize,
+  listPreviewWidth,
   isGridView = true,
 }: SlideCardProps) {
+  const { preset: slideCanvas, aspectRatio } = getCanvasSizeDimensions(canvasSize);
+  const clickSteps = useMemo(() => clickStepsOf(slide.elements), [slide.elements]);
   const customLabelStyle = slide.labelColor
     ? {
         backgroundColor: slide.labelColor,
@@ -471,7 +478,6 @@ const SlideCard = memo(function SlideCard({
           onDrop={onDrop}
           onDragEnd={onDragEnd}
           onClick={onClick}
-          style={{ height: isGridView ? slideHeight : 64 }}
           className={cn(
             "group relative flex w-full overflow-hidden rounded-xl border text-left transition-all duration-150",
             isGridView ? "flex-col" : "flex-row items-center",
@@ -483,17 +489,24 @@ const SlideCard = memo(function SlideCard({
             isDragging && "opacity-45",
             isDropTarget && "ring-2 ring-primary ring-offset-2 ring-offset-background",
             canReorder && "cursor-grab active:cursor-grabbing",
+            // A deck's hidden slide: Next passes over it, a click still shows it.
+            slide.hidden && !isActive && "opacity-45",
           )}
+          title={slide.hidden ? "Skipped in the slide show: Next passes over it" : undefined}
         >
           {/* The slide itself: a plain rectangle, edge to edge, the colour
               the audience sees. The inset it used to have shrank the picture
               and made the words wrap where the slide does not. */}
           <div
             className={cn(
-              "relative flex min-w-0 items-center justify-center overflow-hidden",
-              isGridView ? "w-full flex-1" : "h-full w-32 shrink-0 border-r border-border"
+              "relative flex min-w-0 shrink-0 items-center justify-center overflow-hidden",
+              isGridView ? "w-full" : "border-r border-border",
             )}
-            style={{ backgroundColor: backgroundColor ?? "#000000" }}
+            style={{
+              backgroundColor: backgroundColor ?? "#000000",
+              aspectRatio,
+              ...(isGridView ? {} : { width: listPreviewWidth }),
+            }}
           >
             {/* An image or video background from the slide's theme. */}
             {!isScripture ? <SlideMediaBackdrop backgroundId={slide.backgroundId} /> : null}
@@ -502,6 +515,7 @@ const SlideCard = memo(function SlideCard({
                 <CanvasSlideLayer
                   text={displayText}
                   elements={displayElements}
+                  canvasSize={slideCanvas}
                   className="absolute inset-0"
                   libraryStyle={{
                     fontFamily: fontFamily ?? "inherit",
@@ -565,7 +579,35 @@ const SlideCard = memo(function SlideCard({
                 ) : null}
               </span>
             </div>
-            <span>{displayModifier || ""}</span>
+            <span className="inline-flex items-center gap-1.5">
+              {slide.notes ? (
+                // Speaker notes: on hover here, and on a stage display.
+                <span title={slide.notes} aria-label="Speaker notes" className="inline-flex opacity-70">
+                  <NotebookPen className="h-3 w-3" />
+                </span>
+              ) : null}
+              {clickSteps > 0 ? (
+                // One dot per click a build takes: why Next stays on the slide.
+                <span
+                  className="inline-flex items-center gap-0.5"
+                  title={`${clickSteps} build ${clickSteps === 1 ? "step" : "steps"}: Next shows ${clickSteps === 1 ? "it" : "them"} first`}
+                >
+                  {Array.from({ length: Math.min(clickSteps, 6) }, (_, dot) => (
+                    <span key={dot} className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+                  ))}
+                  {clickSteps > 6 ? <span className="text-[10px] leading-none">+{clickSteps - 6}</span> : null}
+                </span>
+              ) : null}
+              {slide.advanceAfterMs ? (
+                <span className="rounded-full bg-black/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none" title="Moves on by itself">
+                  {Math.round(slide.advanceAfterMs / 100) / 10}s
+                </span>
+              ) : null}
+              {slide.hidden ? (
+                <span className="rounded-full bg-black/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none">Skipped</span>
+              ) : null}
+              {displayModifier || ""}
+            </span>
           </div>
         </button>
       </ContextMenuTrigger>

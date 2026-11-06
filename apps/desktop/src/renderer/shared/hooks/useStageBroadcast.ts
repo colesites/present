@@ -13,6 +13,9 @@ type StageBroadcastParams = {
   nextLabel?: string | null;
   nextRepeat?: string | null;
   nextInlineInstruction?: string | null;
+  /** Speaker notes, for a stage layout's Speaker Notes object. */
+  currentNotes?: string | null;
+  nextNotes?: string | null;
 };
 
 export function useStageBroadcast({
@@ -26,6 +29,8 @@ export function useStageBroadcast({
   nextLabel,
   nextRepeat,
   nextInlineInstruction,
+  currentNotes,
+  nextNotes,
 }: StageBroadcastParams) {
   const [syncTrigger, setSyncTrigger] = useState(0);
 
@@ -55,6 +60,8 @@ export function useStageBroadcast({
       nextLabel,
       nextRepeat,
       nextInlineInstruction,
+      currentNotes,
+      nextNotes,
     });
     window.electronAPI.sendToWorshipStage?.({
       type: "stage-content",
@@ -73,6 +80,8 @@ export function useStageBroadcast({
     nextLabel,
     nextRepeat,
     nextInlineInstruction,
+    currentNotes,
+    nextNotes,
     syncTrigger,
   ]);
 }

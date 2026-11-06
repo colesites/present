@@ -7,6 +7,11 @@
 //! the other side.
 
 fn main() {
+    // Pictures a deck carries that need drawing (an EMF) are drawn by a copy
+    // of this executable, as the app does it.
+    if present_lib::services::pptx::convert_picture::run_helper_if_asked() {
+        return;
+    }
     let Some(path) = std::env::args().nth(1) else {
         eprintln!("usage: pptx_import_probe <deck.pptx>");
         std::process::exit(2);

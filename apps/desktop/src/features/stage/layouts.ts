@@ -19,6 +19,8 @@ export type StageObjectKind =
   | "current-text"
   | "next-text"
   | "current-slide"
+  | "notes"
+  | "next-notes"
   | "section"
   | "next-section"
   | "clock"
@@ -94,6 +96,8 @@ export const OBJECT_KINDS: Array<{ kind: StageObjectKind; label: string; descrip
   { kind: "current-text", label: "Current Slide Text", description: "The words on screen now." },
   { kind: "next-text", label: "Next Slide Text", description: "The words coming next." },
   { kind: "current-slide", label: "Current Slide", description: "The slide as the room sees it, with its media." },
+  { kind: "notes", label: "Speaker Notes", description: "The current slide's notes, for whoever is speaking." },
+  { kind: "next-notes", label: "Next Notes", description: "The next slide's notes." },
   { kind: "section", label: "Section", description: "Where the song is: [Chorus], [x2]." },
   { kind: "next-section", label: "Next Section", description: "The section coming next." },
   { kind: "timer", label: "Timer", description: "The live timer." },
@@ -168,6 +172,22 @@ export function objectOf(kind: StageObjectKind, at: { x: number; y: number; widt
       };
     case "current-slide":
       return { ...base, style: { ...base.style, padding: 0 } };
+    case "notes":
+    case "next-notes":
+      return {
+        ...base,
+        caption: kind === "notes" ? "Notes" : "Next Notes",
+        style: {
+          ...base.style,
+          ...card,
+          align: "left",
+          valign: "top",
+          fontSize: 44,
+          fontWeight: "400",
+          color: kind === "notes" ? "#f4f4f5" : "#a1a1aa",
+          fit: true,
+        },
+      };
     case "section":
     case "next-section":
       return {
@@ -268,6 +288,24 @@ export const TEMPLATES: Array<{ id: string; name: string; description: string; m
         place("timer", 40, 890, 580, 160),
         place("clock", 670, 890, 580, 160),
         place("section", 1300, 890, 580, 160, { style: { ...DEFAULT_STYLE, fontSize: 48, fontWeight: "900", uppercase: true, align: "right", color: "#e0f2fe", fit: true, padding: 0 } }),
+      ],
+    }),
+  },
+  {
+    id: "presenter",
+    name: "Presenter",
+    description: "The slide as the room sees it, its speaker notes beside it, the next slide's words, the timer and the clock.",
+    make: () => ({
+      name: "Presenter",
+      width: 1920,
+      height: 1080,
+      background: null,
+      objects: [
+        place("current-slide", 40, 40, 1100, 619),
+        place("notes", 1170, 40, 710, 820),
+        place("next-text", 40, 690, 1100, 170),
+        place("timer", 40, 890, 900, 160),
+        place("clock", 980, 890, 900, 160),
       ],
     }),
   },

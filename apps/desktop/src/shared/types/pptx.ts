@@ -1,4 +1,4 @@
-import type { SlideElement } from "./index";
+import type { SlideElement, SlideTransition } from "./index";
 
 export interface ParsedPptxSlide {
   id: string;
@@ -6,6 +6,10 @@ export interface ParsedPptxSlide {
   backgroundColor: string | null;
   elements: SlideElement[];
   textContent: string;
+  transition?: SlideTransition | null;
+  advanceAfterMs?: number | null;
+  hidden?: boolean;
+  notes?: string | null;
 }
 
 export interface ParsedPptxPresentation {
