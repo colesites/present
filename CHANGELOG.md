@@ -4,6 +4,8 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.15] - 2026-10-18
+
 ### Added
 
 - Speaker notes. An imported PowerPoint keeps each slide's notes; in the
@@ -13,7 +15,6 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   room sees it, its notes beside it, the next slide's words, the timer and
   the clock. Notes never show on the audience screens; in Show a slide with
   notes has a small notebook mark, and its notes on hover.
-
 - Builds: objects arriving and leaving step by step, as PowerPoint's
   animations and Keynote's builds do. In the editor, select an object and
   open Build: a Build In and a Build Out, each Appear, Fade, Wipe, Fly or
@@ -32,7 +33,6 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   box, through the same player as the media layer, and stops when the slide
   changes. Media chosen while the slide is live takes its place. Select it
   in the editor to choose another video from Media or another poster.
-
 - Charts in an imported PowerPoint. Column, bar, line, area, pie, doughnut
   and scatter charts (stacked and 100% too, and 3-D ones drawn flat) are
   drawn from the numbers the deck carries: title, legend, gridlines, axis
@@ -53,7 +53,6 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   arrow keys, a pedal and a remote, and still shows when clicked; it is
   dimmed and marked Skipped in the slide grid. Slide ▸ Timing ▸ In show
   hides or shows any slide of a deck.
-
 - Shapes in the editor. The shape button opens twelve: rectangle, rounded
   rectangle, oval, triangles, diamond, pentagon, hexagon, star, arrow,
   chevron and line, and the inspector changes one shape into another,
@@ -94,13 +93,19 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   a picture. Crop cuts each side, the picture staying where it is; Reset
   brings the whole picture back. Dragging a picture's corner keeps its
   shape (Shift lets it stretch); Shift keeps a shape's.
+- Recording. File ▸ New Recording opens a window — it is not a tab — to record
+  the microphone into tracks. Pause holds the take and record continues it;
+  stopping finishes it, and recording that track again replaces it. Share ▸
+  Export Recording writes MP3, AIFF or WAVE on every platform, and AAC on a
+  Mac, at low, medium, high or highest quality, each track on its own or mixed
+  into one file. Closing the window stops the microphone and keeps what was
+  recorded.
 
 ### Fixed
 
 - Next and Previous from a foot pedal, a remote or a lighting desk change
   the slide on the screens again. They moved the slide in the app's core
   and the operator window never followed, so nothing changed.
-
 - Pictures in an imported PowerPoint that no screen could draw now show: an
   embedded object's preview (a workbook's icon and name, an equation, old
   clip art), kept as a Windows metafile (EMF or WMF), and BMP and TIFF
@@ -110,7 +115,6 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   background in the editor: clicking it no longer picks the page up and
   drags it off the slide, and text or shapes added on top are picked
   instead. Pages imported before work the same way.
-
 - Editing an imported PowerPoint slide changes what the screens show. The
   editor changed a copy of the words the screens never draw, so a deck's
   text looked edited in the editor and stayed as it was everywhere else.
@@ -126,21 +130,6 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   shape inside it stayed as it was, on the screens and in the editor.
 - A turned or flipped object resizes from the handle you drag, its far side
   staying where it was. The box moved as if it were upright.
-
-## [0.4.15] - 2026-10-18
-
-### Added
-
-- Recording. File ▸ New Recording opens a window — it is not a tab — to record
-  the microphone into tracks. Pause holds the take and record continues it;
-  stopping finishes it, and recording that track again replaces it. Share ▸
-  Export Recording writes MP3, AIFF or WAVE on every platform, and AAC on a
-  Mac, at low, medium, high or highest quality, each track on its own or mixed
-  into one file. Closing the window stops the microphone and keeps what was
-  recorded.
-
-### Fixed
-
 - The packaged app's screen preview, and a video opened in a show, stayed
   blank. Both are drawn under the page, and a packaged page is already in the
   app, so it had been built solid before the webview was told to let them
