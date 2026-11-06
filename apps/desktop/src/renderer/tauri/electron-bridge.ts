@@ -217,10 +217,11 @@ const openRoleWindow = (
   role: "output" | "media-stage" | "worship-stage",
   displayId?: number | null,
   resolution?: string | null,
+  alone = false,
 ): Promise<boolean> =>
   invoke("open_window", {
     role,
-    options: { displayId: displayId ?? null, resolution: resolution ?? null },
+    options: { displayId: displayId ?? null, resolution: resolution ?? null, alone },
   });
 
 /**
@@ -230,9 +231,12 @@ const openRoleWindow = (
  */
 const bridge = {
   // --- Stage 2: windows and displays -------------------------------------
-  openOutputWindow: (displayId?: number | null, resolution?: string | null) =>
-    openRoleWindow("output", displayId, resolution),
-  closeOutputWindow: () => invoke<boolean>("close_window", { role: "output" }),
+  // `alone`: the Screen only, leaving the audience screens added beside it
+  // as they are. Without it the Output is the whole audience group's switch.
+  openOutputWindow: (displayId?: number | null, resolution?: string | null, alone?: boolean) =>
+    openRoleWindow("output", displayId, resolution, alone),
+  closeOutputWindow: (alone?: boolean) =>
+    invoke<boolean>("close_window", { role: "output", alone: alone ?? false }),
   openMediaStageWindow: (displayId?: number | null, resolution?: string | null) =>
     openRoleWindow("media-stage", displayId, resolution),
   closeMediaStageWindow: () => invoke<boolean>("close_window", { role: "media-stage" }),

@@ -228,6 +228,48 @@ impl NativePanel {
         #[cfg(not(target_os = "macos"))]
         let _ = (size, bgra);
     }
+
+    /// Show a video frame that is only on the GPU (`VideoFrame::gpu`) as it
+    /// is: nothing copied, scaled to the panel by the GPU. `false` if the
+    /// frame has no picture, or this platform cannot.
+    pub fn show_video_picture(&self, frame: &VideoFrame) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            let Some(picture) = frame.gpu.as_ref() else {
+                return false;
+            };
+            let size = (frame.width.max(1), frame.height.max(1));
+            let whole = (0.0, 0.0, size.0 as f32, size.1 as f32);
+            self.inner.show_layers(super::LayeredShow {
+                canvas: size,
+                base: [0.0, 0.0, 0.0, 1.0],
+                video: Some(super::layered::VideoLayer {
+                    picture: std::sync::Arc::clone(picture),
+                    geometry: crate::services::compositor::pipeline::VideoGeometry {
+                        clip: whole,
+                        picture: whole,
+                    },
+                    seconds: frame.presentation_seconds,
+                }),
+                overlay: None,
+            });
+            true
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = frame;
+            false
+        }
+    }
+
+    /// Show a screen drawn as layers (`surface::layered`), fitted inside the
+    /// panel as a whole picture of it would be.
+    pub fn show_layers(&self, show: &super::LayeredShow) {
+        #[cfg(target_os = "macos")]
+        self.inner.show_layers(show.clone());
+        #[cfg(not(target_os = "macos"))]
+        let _ = show;
+    }
 }
 
 /// Stop `window`'s webview painting its own background, for good: what the
@@ -269,9 +311,13 @@ mod mac {
     use objc2_quartz_core::{CACornerMask, CATransaction};
     use tauri::{AppHandle, Manager};
 
+    use std::collections::VecDeque;
+
     use super::super::iosurface::{Frame, Surfaces};
+    use super::super::layers::{self, Fit, Layered};
     use super::super::macos::set_draws_background;
     use super::PanelGeometry;
+    use crate::services::video::GpuPicture;
 
     /// A retained Objective-C object's address, which another thread may carry
     /// but only the main thread dereferences.
@@ -337,10 +383,16 @@ mod mac {
         /// The newest frame not yet shown, and whether a job is on its way to
         /// show it: one slot, so a busy main thread never builds a backlog,
         /// and the newest frame is the one that lands — `MacPresenter`'s way.
-        image: Arc<Mutex<Option<Arc<Frame>>>>,
+        image: Arc<Mutex<Option<Shown>>>,
         image_in_flight: Arc<AtomicBool>,
         /// The surfaces frames are written into (`iosurface.rs`).
         surfaces: Mutex<Surfaces>,
+        /// The slide over a screen's video, as last written into a surface,
+        /// and what it was written from.
+        overlay: Mutex<Option<Written>>,
+        /// Video pictures shown, kept until the window server lets them go
+        /// (`MacPresenter`'s way).
+        pictures: Mutex<VecDeque<Arc<GpuPicture>>>,
         /// The same, for where the panel is.
         geometry: Arc<Mutex<Option<PanelGeometry>>>,
         geometry_in_flight: Arc<AtomicBool>,
@@ -379,6 +431,8 @@ mod mac {
                 image: Arc::default(),
                 image_in_flight: Arc::default(),
                 surfaces: Mutex::new(Surfaces::new()),
+                overlay: Mutex::default(),
+                pictures: Mutex::default(),
                 geometry: Arc::default(),
                 geometry_in_flight: Arc::default(),
             })
@@ -417,7 +471,48 @@ mod mac {
             let Some(frame) = lock(&self.surfaces).fill(width, height, bgra) else {
                 return;
             };
-            *lock(&self.image) = Some(frame);
+            *lock(&self.overlay) = None;
+            retire(&mut lock(&self.pictures), None);
+            self.put(Shown::Whole(frame));
+        }
+
+        pub(super) fn show_layers(&self, show: super::super::LayeredShow) {
+            let overlay = match &show.overlay {
+                Some(drawn) => {
+                    let mut kept = lock(&self.overlay);
+                    match kept.as_ref() {
+                        Some((from, frame)) if Arc::ptr_eq(from, drawn) => Some(Arc::clone(frame)),
+                        _ => match lock(&self.surfaces).fill(show.canvas.0, show.canvas.1, drawn) {
+                            Some(frame) => {
+                                *kept = Some((Arc::clone(drawn), Arc::clone(&frame)));
+                                Some(frame)
+                            }
+                            None => kept.as_ref().map(|(_, frame)| Arc::clone(frame)),
+                        },
+                    }
+                }
+                None => {
+                    *lock(&self.overlay) = None;
+                    None
+                }
+            };
+            let video = show.video.map(|video| (video.picture, video.geometry));
+            retire(
+                &mut lock(&self.pictures),
+                video.as_ref().map(|(picture, _)| picture),
+            );
+            self.put(Shown::Layers(Layered {
+                canvas: show.canvas,
+                base: show.base,
+                video,
+                overlay,
+            }));
+        }
+
+        /// Put `shown` on the panel on the main thread: one slot, newest
+        /// wins.
+        fn put(&self, shown: Shown) {
+            *lock(&self.image) = Some(shown);
             if self.image_in_flight.swap(true, Ordering::AcqRel) {
                 return;
             }
@@ -430,7 +525,7 @@ mod mac {
                 // Cleared before the frame is taken, so one arriving while this
                 // runs starts a job of its own rather than being stranded.
                 in_flight.store(false, Ordering::Release);
-                let Some(frame) = lock(&mailbox).take() else {
+                let Some(shown) = lock(&mailbox).take() else {
                     return;
                 };
                 let Some(views) = *lock(&views) else {
@@ -439,12 +534,51 @@ mod mac {
                 // SAFETY: on the main thread, read from the slot.
                 let (_, picture) = unsafe { views.get() };
                 if let Some(layer) = picture.layer() {
-                    // SAFETY: an IOSurface is a valid `contents` value.
-                    quietly(|| unsafe { layer.setContents(Some(frame.as_contents())) });
+                    // SAFETY: on the main thread; an IOSurface is a valid
+                    // `contents` value.
+                    unsafe {
+                        match &shown {
+                            Shown::Whole(frame) => layers::show_whole(&layer, frame.as_contents()),
+                            Shown::Layers(layered) => {
+                                layers::show_layered(&layer, layered, Fit::Proportional);
+                            }
+                        }
+                    }
                 }
             });
             if sent.is_err() {
                 self.image_in_flight.store(false, Ordering::Release);
+            }
+        }
+    }
+
+    /// A slide as drawn, and the surface it was written into.
+    type Written = (Arc<Vec<u8>>, Arc<Frame>);
+
+    /// What the main thread is to put on a panel next.
+    enum Shown {
+        Whole(Arc<Frame>),
+        Layers(Layered),
+    }
+
+    /// Keep `newest`, and every picture before it the window server still
+    /// holds; let the rest go back to the decoder.
+    fn retire(pictures: &mut VecDeque<Arc<GpuPicture>>, newest: Option<&Arc<GpuPicture>>) {
+        if let Some(newest) = newest {
+            if !pictures
+                .back()
+                .is_some_and(|last| Arc::ptr_eq(last, newest))
+            {
+                pictures.push_back(Arc::clone(newest));
+            }
+        }
+        let keep_last = usize::from(newest.is_some());
+        let mut index = 0;
+        while index + keep_last < pictures.len() {
+            if pictures[index].is_in_use() {
+                index += 1;
+            } else {
+                pictures.remove(index);
             }
         }
     }

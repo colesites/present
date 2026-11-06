@@ -263,7 +263,12 @@ fn present_until_stopped(app: &AppHandle, screen: &str, panel: &NativePanel, sto
             own = None;
             if shown != Some(tapped.seq) {
                 shown = Some(tapped.seq);
-                panel.show_picture(tapped.size, &tapped.frame);
+                // The screen's own layers, shown as it shows them: the
+                // video's surface and the slide's, nothing copied.
+                match &tapped.layers {
+                    Some(layers) => panel.show_layers(layers),
+                    None => panel.show_picture(tapped.size, &tapped.frame),
+                }
             }
         } else {
             shown = None;

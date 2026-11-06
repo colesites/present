@@ -277,6 +277,7 @@ mod tests {
                 height: 1,
                 bgra: vec![0; 4],
                 presentation_seconds: self.next as f64 / FPS,
+                gpu: None,
             };
             self.next += 1;
             Ok(Some(frame))

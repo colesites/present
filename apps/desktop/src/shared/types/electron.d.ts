@@ -140,11 +140,13 @@ interface PptxAPI {
 }
 
 interface ElectronAPI {
+  /** `alone`: the Screen only, not the audience screens added beside it. */
   openOutputWindow: (
     displayId?: number | null,
     resolution?: string | null,
+    alone?: boolean,
   ) => Promise<boolean>;
-  closeOutputWindow: () => Promise<boolean>;
+  closeOutputWindow: (alone?: boolean) => Promise<boolean>;
   openMediaStageWindow: (
     displayId?: number | null,
     resolution?: string | null,

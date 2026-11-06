@@ -28,7 +28,7 @@ use ff::software::scaling;
 use ff::util::color;
 use ffmpeg_next as ff;
 
-use super::{VideoDecoder, VideoError, VideoFrame};
+use super::{GpuPicture, VideoDecoder, VideoError, VideoFrame};
 
 pub(crate) fn init() {
     static INIT: Once = Once::new();
@@ -132,11 +132,20 @@ fn hardware_types() -> &'static [ff::ffi::AVHWDeviceType] {
 struct HardwareDevice(*mut ff::ffi::AVBufferRef);
 
 impl HardwareDevice {
-    /// The first of the platform's GPU decoders that opens, unless
+    /// The first of the platform's GPU decoders that opens for `codec`, as
+    /// the operator's hardware decoding setting allows (`projection`), unless
     /// `PRESENT_VIDEO_SOFTWARE` is set to rule the GPU out while diagnosing.
-    fn open() -> Option<Self> {
+    fn open(codec: ff::codec::Id) -> Option<Self> {
+        use crate::services::projection::{self, HardwareDecoding};
         if std::env::var_os("PRESENT_VIDEO_SOFTWARE").is_some() {
             return None;
+        }
+        match projection::settings().hardware_decoding {
+            HardwareDecoding::Disabled => return None,
+            // A codec this GPU does not decode goes straight to software,
+            // with no attempt on the GPU to fail first.
+            HardwareDecoding::Auto if !projection::capabilities::gpu_decodes(codec) => return None,
+            HardwareDecoding::Auto | HardwareDecoding::Enabled => {}
         }
         hardware_types().iter().find_map(|&kind| {
             let mut device = ptr::null_mut();
@@ -384,6 +393,71 @@ fn convert(
     Ok(bgra)
 }
 
+/// A GPU picture's pixels in memory, at a size: for something that needs
+/// them — NDI, a screen in the middle of a transition — when the frame was
+/// handed over on the GPU (`GpuPicture`). The same copy and conversion the
+/// decoder makes for every frame when not asked for GPU pictures, so the
+/// colour is the same.
+pub struct PictureConverter {
+    scaler: Option<Scaler>,
+    transferred: ff::frame::Video,
+    planar: ff::frame::Video,
+    converted: ff::frame::Video,
+}
+
+// SAFETY: used through `&mut self` only, by one thread at a time.
+unsafe impl Send for PictureConverter {}
+
+impl Default for PictureConverter {
+    fn default() -> Self {
+        Self {
+            scaler: None,
+            transferred: ff::frame::Video::empty(),
+            planar: ff::frame::Video::empty(),
+            converted: ff::frame::Video::empty(),
+        }
+    }
+}
+
+impl PictureConverter {
+    /// `picture` as BGRA at `size`.
+    pub fn convert(
+        &mut self,
+        picture: &GpuPicture,
+        size: (u32, u32),
+    ) -> Result<Vec<u8>, VideoError> {
+        if size.0 == 0 || size.1 == 0 {
+            return Err(VideoError::Decode("nothing to convert to".to_owned()));
+        }
+        let source = picture.hardware_frame();
+        // SAFETY: both frames are valid; the destination is reset so the
+        // transfer allocates it in the GPU frame's software format.
+        let result = unsafe {
+            ff::ffi::av_frame_unref(self.transferred.as_mut_ptr());
+            let result = ff::ffi::av_hwframe_transfer_data(
+                self.transferred.as_mut_ptr(),
+                source.as_ptr(),
+                0,
+            );
+            if result >= 0 {
+                ff::ffi::av_frame_copy_props(self.transferred.as_mut_ptr(), source.as_ptr())
+            } else {
+                result
+            }
+        };
+        if result < 0 {
+            return Err(decode_error(ff::Error::from(result)));
+        }
+        convert(
+            &mut self.scaler,
+            size,
+            &self.transferred,
+            &mut self.planar,
+            &mut self.converted,
+        )
+    }
+}
+
 /// Whether a GPU frame is shrunk before it is copied off (`gpu_scale.rs`).
 #[cfg(target_os = "macos")]
 enum GpuScaling {
@@ -526,6 +600,15 @@ struct Conversion {
     converted: ff::frame::Video,
     /// Set once a frame has been shrunk on the GPU.
     shrunk_on_gpu: Arc<AtomicBool>,
+    /// Hand GPU frames over as they are, uncopied (`GpuPicture`).
+    gpu_pictures: Arc<AtomicBool>,
+}
+
+/// A frame as the conversion thread hands it back: its pixels in memory, or
+/// the GPU frame itself with none.
+struct Delivered {
+    bgra: Vec<u8>,
+    gpu: Option<Arc<GpuPicture>>,
 }
 
 // SAFETY: the FFmpeg objects inside are only ever used by one thread: made on
@@ -547,17 +630,48 @@ impl Conversion {
             planar: ff::frame::Video::empty(),
             converted: ff::frame::Video::empty(),
             shrunk_on_gpu: Arc::default(),
+            gpu_pictures: Arc::default(),
         }
     }
 
     /// `decoded` as BGRA, copied off the GPU first if it is there, and turned
-    /// the way it is shown.
-    fn deliver(&mut self, decoded: &mut ff::frame::Video) -> Result<Vec<u8>, VideoError> {
+    /// the way it is shown — or, asked for GPU pictures, a GPU frame left
+    /// where it is, made smaller there if it is larger than wanted.
+    fn deliver(&mut self, decoded: &mut ff::frame::Video) -> Result<Delivered, VideoError> {
+        if self.turns == 0
+            && self.gpu_pictures.load(Ordering::Relaxed)
+            && is_hardware_frame(decoded)
+        {
+            if let Some(picture) = self.picture(decoded) {
+                return Ok(Delivered {
+                    bgra: Vec::new(),
+                    gpu: Some(Arc::new(picture)),
+                });
+            }
+        }
         let bgra = self.lying(decoded)?;
-        Ok(match self.turns {
-            0 => bgra,
-            turns => turn_bgra(&bgra, self.size, turns),
+        Ok(Delivered {
+            bgra: match self.turns {
+                0 => bgra,
+                turns => turn_bgra(&bgra, self.size, turns),
+            },
+            gpu: None,
         })
+    }
+
+    /// `decoded`, still on the GPU: shrunk there first if it is larger than
+    /// wanted, so the surface is no bigger than it is shown. One smaller than
+    /// wanted is made the size wanted there too at the High video quality
+    /// (`projection::VideoQuality`), so the screen shows it pixel for pixel;
+    /// at Standard it is left as it is and the window server scales it.
+    fn picture(&mut self, decoded: &mut ff::frame::Video) -> Option<GpuPicture> {
+        use crate::services::projection::{self, VideoQuality};
+        let space = effective_color_space(decoded.color_space(), decoded.height());
+        let full_range = is_full_range(decoded.color_range(), decoded.format());
+        let enlarge = projection::settings().video_quality == VideoQuality::High;
+        let shrunk = self.scale_on_gpu(decoded, enlarge);
+        let source = if shrunk { &self.gpu_scaled } else { &*decoded };
+        GpuPicture::new(source, space, full_range)
     }
 
     /// `decoded` as BGRA at `size`, as it was recorded.
@@ -607,12 +721,20 @@ impl Conversion {
 
     /// Shrink the GPU frame on the GPU when it is larger than wanted; `true`
     /// when `gpu_scaled` holds the result.
-    #[cfg(target_os = "macos")]
     fn shrink_on_gpu(&mut self, decoded: &mut ff::frame::Video) -> bool {
+        self.scale_on_gpu(decoded, false)
+    }
+
+    /// Make the GPU frame the size wanted on the GPU: when it is larger, and
+    /// when it is smaller too if `enlarge`. `true` when `gpu_scaled` holds the
+    /// result.
+    #[cfg(target_os = "macos")]
+    fn scale_on_gpu(&mut self, decoded: &mut ff::frame::Video, enlarge: bool) -> bool {
         use super::gpu_scale::{gpu_size, GpuScaler};
 
         let larger = decoded.width() > self.size.0 || decoded.height() > self.size.1;
-        if !larger || matches!(self.gpu_scaling, GpuScaling::Off) {
+        let smaller = gpu_size(self.size) != (decoded.width(), decoded.height()) && !larger;
+        if !(larger || (enlarge && smaller)) || matches!(self.gpu_scaling, GpuScaling::Off) {
             return false;
         }
         let output = gpu_size(self.size);
@@ -652,7 +774,7 @@ impl Conversion {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn shrink_on_gpu(&mut self, _decoded: &mut ff::frame::Video) -> bool {
+    fn scale_on_gpu(&mut self, _decoded: &mut ff::frame::Video, _enlarge: bool) -> bool {
         false
     }
 }
@@ -667,16 +789,19 @@ unsafe impl Send for Handed {}
 /// The conversion thread: decoded frames in, BGRA out, in the same order.
 struct Pipeline {
     frames: Option<std::sync::mpsc::SyncSender<Handed>>,
-    converted: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, VideoError>>>,
+    converted: Option<std::sync::mpsc::Receiver<Result<Delivered, VideoError>>>,
     thread: Option<std::thread::JoinHandle<()>>,
     /// Whether the conversion has shrunk a frame on the GPU.
     #[cfg_attr(not(test), allow(dead_code))]
     shrunk_on_gpu: Arc<AtomicBool>,
+    /// Shared with the conversion: frames handed over on the GPU.
+    gpu_pictures: Arc<AtomicBool>,
 }
 
 impl Pipeline {
     fn start(mut conversion: Conversion) -> Result<Self, VideoError> {
         let shrunk_on_gpu = Arc::clone(&conversion.shrunk_on_gpu);
+        let gpu_pictures = Arc::clone(&conversion.gpu_pictures);
         // One frame waiting while one converts: the decoder never has more
         // than two out.
         let (frames, incoming) = std::sync::mpsc::sync_channel::<Handed>(1);
@@ -698,6 +823,7 @@ impl Pipeline {
             converted: Some(converted),
             thread: Some(thread),
             shrunk_on_gpu,
+            gpu_pictures,
         })
     }
 
@@ -709,7 +835,7 @@ impl Pipeline {
     }
 
     /// The next frame converted, in the order they were handed over.
-    fn take(&self) -> Result<Vec<u8>, VideoError> {
+    fn take(&self) -> Result<Delivered, VideoError> {
         self.converted
             .as_ref()
             .and_then(|converted| converted.recv().ok())
@@ -798,7 +924,7 @@ impl FfmpegVideoDecoder {
             None
         };
 
-        let hardware = HardwareDevice::open();
+        let hardware = HardwareDevice::open(stream.parameters().id());
         let decoder = open_decoder(stream.parameters(), hardware.as_ref(), path)?;
 
         let coded = (decoder.width(), decoder.height());
@@ -932,7 +1058,7 @@ impl FfmpegVideoDecoder {
         let Some(seconds) = self.in_flight.pop_front() else {
             return Ok(None);
         };
-        let bgra = self.pipeline.take()?;
+        let Delivered { bgra, gpu } = self.pipeline.take()?;
         self.flowing = true;
         self.last_seconds = Some(seconds);
         Ok(Some(VideoFrame {
@@ -940,6 +1066,7 @@ impl FfmpegVideoDecoder {
             height: self.size.1,
             bgra,
             presentation_seconds: seconds,
+            gpu,
         }))
     }
 
@@ -1086,6 +1213,16 @@ impl VideoDecoder for FfmpegVideoDecoder {
 
     fn dimensions(&self) -> (u32, u32) {
         self.size
+    }
+
+    /// Only on macOS, where Core Animation shows a VideoToolbox surface as it
+    /// is, and only while the GPU is decoding.
+    fn deliver_gpu_pictures(&mut self, on: bool) -> bool {
+        let able = cfg!(target_os = "macos") && self.hardware.is_some();
+        self.pipeline
+            .gpu_pictures
+            .store(on && able, Ordering::Relaxed);
+        able
     }
 }
 
@@ -1564,6 +1701,76 @@ pub(crate) mod tests {
     /// colour through that — including to an odd size, which the GPU cannot
     /// make and the CPU finishes.
     #[cfg(target_os = "macos")]
+    /// Asked for GPU pictures, a frame the GPU decoded comes with no pixels
+    /// copied off it; converted later, for something that needs them, it has
+    /// the colour the decoder's own conversion gives — shrunk or not.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_frame_handed_over_on_the_gpu_converts_to_the_same_colour() {
+        let spec = ClipSpec {
+            codec: Codec::Named("h264_videotoolbox"),
+            size: (1280, 720),
+            frames: 10,
+            fps: 30,
+            gop: 5,
+            space: color::Space::BT709,
+            range: color::Range::MPEG,
+        };
+        let Some(clip) = write_clip("picture-h264", &spec, |_| COLOUR) else {
+            return;
+        };
+        let (y, cb, cr) = COLOUR;
+        for size in [(1280, 720), (640, 360)] {
+            let mut decoder =
+                FfmpegVideoDecoder::open_sized(&clip.0, |_| Some(size)).expect("it opens");
+            if !decoder.deliver_gpu_pictures(true) {
+                // A Mac without the GPU decoder: nothing to hand over.
+                return;
+            }
+            let frame = decoder.next_frame().unwrap().expect("a frame");
+            assert!(frame.is_gpu_only(), "no pixels copied off the GPU");
+            assert_eq!((frame.width, frame.height), size, "the size it is shown at");
+            let picture = frame.gpu.as_ref().expect("the picture");
+            assert_eq!(picture.size(), size, "made that size on the GPU");
+            assert!(picture.io_surface().is_some(), "a surface to show");
+
+            let converted = crate::services::video::resize::Resizer::new()
+                .convert_picture(&frame, size)
+                .expect("its pixels");
+            assert!(converted.is_well_formed());
+            assert_close(
+                centre(&converted),
+                expected_rgb(y, cb, cr, true, false),
+                &format!("a GPU picture at {size:?}, converted"),
+            );
+        }
+    }
+
+    /// Turned off again, the decoder converts every frame as before.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn gpu_pictures_turned_off_bring_the_pixels_back() {
+        let spec = seek_clip(Codec::Named("h264_videotoolbox"));
+        let Some(clip) = write_clip("picture-off", &spec, numbered) else {
+            return;
+        };
+        let mut decoder = FfmpegVideoDecoder::open_sized(&clip.0, |_| None).expect("it opens");
+        if !decoder.deliver_gpu_pictures(true) {
+            return;
+        }
+        // Two frames are decoded ahead of the one asked for.
+        let mut kinds = Vec::new();
+        for index in 0..6 {
+            if index == 1 {
+                decoder.deliver_gpu_pictures(false);
+            }
+            let frame = decoder.next_frame().unwrap().expect("a frame");
+            kinds.push(frame.is_gpu_only());
+        }
+        assert!(kinds[0], "the first on the GPU: {kinds:?}");
+        assert!(kinds[4..].iter().all(|gpu| !gpu), "pixels again: {kinds:?}");
+    }
+
     #[test]
     fn a_frame_shrunk_on_the_gpu_keeps_its_colour() {
         let spec = ClipSpec {

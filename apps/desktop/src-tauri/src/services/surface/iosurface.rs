@@ -35,7 +35,7 @@ const MOST: usize = 6;
 const BGRA: i32 = i32::from_be_bytes(*b"BGRA");
 
 /// One picture in memory the window server reads as it is.
-pub(super) struct Frame(CFRetained<IOSurfaceRef>);
+pub struct Frame(CFRetained<IOSurfaceRef>);
 
 // SAFETY: an IOSurface is a kernel object documented as usable from any
 // thread; this one is written only by the picture's own thread, under its
@@ -45,7 +45,7 @@ unsafe impl Sync for Frame {}
 
 impl Frame {
     /// The surface as a layer's `contents`.
-    pub(super) fn as_contents(&self) -> &AnyObject {
+    pub fn as_contents(&self) -> &AnyObject {
         // SAFETY: an IOSurfaceRef is toll-free bridged to the `IOSurface`
         // class, which a CALayer takes as its contents.
         unsafe { &*(CFRetained::as_ptr(&self.0).as_ptr() as *const AnyObject) }
@@ -53,7 +53,7 @@ impl Frame {
 }
 
 /// One picture's surfaces, reused frame after frame.
-pub(super) struct Surfaces {
+pub struct Surfaces {
     size: (u32, u32),
     pool: Vec<Arc<Frame>>,
     /// The last one handed out. Never written next: the window server may not
@@ -61,8 +61,14 @@ pub(super) struct Surfaces {
     newest: Option<Arc<Frame>>,
 }
 
+impl Default for Surfaces {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Surfaces {
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             size: (0, 0),
             pool: Vec::new(),
@@ -73,7 +79,7 @@ impl Surfaces {
     /// `bgra` — premultiplied, `width * 4` bytes a row, top row first — in a
     /// surface nothing shows. `None` when every surface is still in use, or
     /// one could not be made: the picture keeps the frame it has.
-    pub(super) fn fill(&mut self, width: u32, height: u32, bgra: &[u8]) -> Option<Arc<Frame>> {
+    pub fn fill(&mut self, width: u32, height: u32, bgra: &[u8]) -> Option<Arc<Frame>> {
         let row = width as usize * 4;
         if width == 0 || height == 0 || bgra.len() != row * height as usize {
             return None;

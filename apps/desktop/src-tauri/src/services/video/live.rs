@@ -70,6 +70,14 @@ const SEEK_WHEN_BACK: f64 = 0.12;
 /// clock and the frames' times are both rounded.
 const PICK_SLACK: f64 = 0.004;
 
+/// How many frames past the picture furthest ahead a playing video is
+/// decoded. VideoToolbox now and then takes 50 to 120 ms over a frame —
+/// measured on the owner's MacBook Pro, in both its modes, with other apps
+/// using the GPU — and a decoder that stops at the moment asked for shows
+/// each of those as a frame held too long. Three frames ahead covers them; a
+/// frame handed over on the GPU costs nothing to keep.
+const DECODE_AHEAD: f64 = 3.0;
+
 /// Until the frames say otherwise.
 const DEFAULT_FRAME: f64 = 1.0 / 30.0;
 
@@ -83,6 +91,27 @@ type FitKey = (u64, (u32, u32), (u32, u32));
 /// How long a video that would not open, or stopped decoding, is left before
 /// it is opened again.
 const RECOVER_AFTER: Duration = Duration::from_secs(2);
+
+/// How long the decoder keeps handing frames over on the GPU after the last
+/// picture that shows them as they are asked. A screen draws itself on the
+/// processor for the length of a transition, and switching the decoder back
+/// and forth for each would leave it showing converted frames when it came
+/// back.
+const PICTURES_FOR: Duration = Duration::from_secs(3);
+
+/// What a picture of the live video takes of each frame.
+pub enum Want<'a> {
+    /// Its pixels, fitted inside the ask's bounds: made that size with the
+    /// resizer the first time a picture of that size asks, and shared after.
+    Fitted(&'a mut Resizer),
+    /// Its pixels, at whatever size it was decoded, for a picture the GPU
+    /// scales.
+    AsDecoded(&'a mut Resizer),
+    /// The frame as the GPU decoder left it (`VideoFrame::gpu`), for a
+    /// picture that shows it as it is. A frame decoded on the processor —
+    /// a file the GPU turned down — comes as it was decoded.
+    Picture,
+}
 
 /// What a picture says each time it draws.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -140,19 +169,19 @@ impl LiveHub {
     }
 
     /// The frame of the video at `path` for `ask`, decoded once for everyone
-    /// who shows it and fitted inside `ask.bounds` — made smaller with
-    /// `resizer` the first time a picture of that size asks for it, and the
-    /// same `Arc` for every picture of that size after. Without a `resizer`,
-    /// the frame as it was decoded, for a picture the GPU scales
-    /// (`surface::panel`). `None` until its first frame is decoded, and while
-    /// it finds a new place: the picture keeps what it already shows.
+    /// who shows it, as `want` says: its pixels fitted inside `ask.bounds` —
+    /// made that size the first time a picture of that size asks for it, and
+    /// the same `Arc` for every picture of that size after — or as it was
+    /// decoded, or still on the GPU. `None` until its first frame is decoded,
+    /// and while it finds a new place: the picture keeps what it already
+    /// shows.
     pub fn frame(
         self: &Arc<Self>,
         url: &str,
         path: &Path,
         ask: Ask,
         open: &Opener,
-        resizer: Option<&mut Resizer>,
+        want: Want<'_>,
     ) -> Option<Arc<VideoFrame>> {
         let now = Instant::now();
         let mut entries = lock(&self.entries);
@@ -164,23 +193,27 @@ impl LiveHub {
         let (picked, start) = {
             let mut inner = lock(&entry.inner);
             inner.record(ask, now);
+            if matches!(want, Want::Picture) {
+                inner.pictures_asked = Some(now);
+            }
             let start = !inner.running;
             inner.running = true;
             let picked = pick(&inner.frames, ask.seconds).map(|source| {
-                let size = contain_size((source.width, source.height), ask.bounds);
-                let key = (
-                    source.presentation_seconds.to_bits(),
-                    (source.width, source.height),
-                    size,
-                );
-                let done = if resizer.is_none() || size == (source.width, source.height) {
-                    Some(Arc::clone(&source))
-                } else {
-                    inner
+                let decoded = (source.width, source.height);
+                let size = match &want {
+                    Want::Fitted(_) => contain_size(decoded, ask.bounds),
+                    Want::AsDecoded(_) | Want::Picture => decoded,
+                };
+                let key = (source.presentation_seconds.to_bits(), decoded, size);
+                let has_pixels = source.is_well_formed();
+                let done = match &want {
+                    Want::Picture => Some(Arc::clone(&source)),
+                    _ if has_pixels && size == decoded => Some(Arc::clone(&source)),
+                    _ => inner
                         .fitted
                         .iter()
                         .find(|(made, _)| *made == key)
-                        .map(|(_, frame)| Arc::clone(frame))
+                        .map(|(_, frame)| Arc::clone(frame)),
                 };
                 (source, key, done)
             });
@@ -204,11 +237,19 @@ impl LiveHub {
         if let Some(done) = done {
             return Some(done);
         }
-        let resizer = resizer?;
-        // Made smaller outside the lock, so the other pictures carry on.
-        // Shown larger, should the scaler ever refuse: slower to draw, but
-        // still the right frame.
-        let fitted = resizer.resize(&source, key.2).map_or(source, Arc::new);
+        let resizer = match want {
+            Want::Fitted(resizer) | Want::AsDecoded(resizer) => resizer,
+            Want::Picture => return Some(source),
+        };
+        // Made smaller, or copied off the GPU, outside the lock, so the other
+        // pictures carry on. Shown larger, should the scaler ever refuse:
+        // slower to draw, but still the right frame. A frame only on the GPU
+        // that will not copy is no frame for a picture that needs pixels.
+        let fitted = match resizer.resize(&source, key.2) {
+            Some(made) => Arc::new(made),
+            None if source.is_well_formed() => source,
+            None => return None,
+        };
         let mut inner = lock(&entry.inner);
         inner.fitted.push_back((key, Arc::clone(&fitted)));
         while inner.fitted.len() > MAX_FITTED {
@@ -283,6 +324,8 @@ struct Inner {
     /// Sizes asked for, and when each last was.
     sizes: Vec<((u32, u32), Instant)>,
     asked_at: Instant,
+    /// When a picture that shows frames on the GPU last asked.
+    pictures_asked: Option<Instant>,
     running: bool,
 }
 
@@ -298,6 +341,7 @@ impl Entry {
                 asks: VecDeque::new(),
                 sizes: Vec::new(),
                 asked_at: Instant::now(),
+                pictures_asked: None,
                 running: false,
             }),
             wake: Condvar::new(),
@@ -324,6 +368,8 @@ struct Aim {
     playing: bool,
     /// What the frames are decoded to fit inside.
     bounds: (u32, u32),
+    /// Hand the frames over on the GPU, for a picture that shows them so.
+    pictures: bool,
 }
 
 impl Inner {
@@ -361,6 +407,7 @@ impl Inner {
                 target: seconds,
                 playing: false,
                 bounds: (1, 1),
+                pictures: false,
             });
             current.floor = current.floor.min(seconds);
             current.target = current.target.max(seconds);
@@ -370,6 +417,9 @@ impl Inner {
         for (size, _) in &self.sizes {
             aim.bounds = (aim.bounds.0.max(size.0), aim.bounds.1.max(size.1));
         }
+        aim.pictures = self
+            .pictures_asked
+            .is_some_and(|at| now.saturating_duration_since(at) <= PICTURES_FOR);
         Some(aim)
     }
 }
@@ -414,11 +464,16 @@ fn decide(
     sought: f64,
     frame_seconds: f64,
 ) -> Step {
+    let ahead = if aim.playing {
+        frame_seconds * DECODE_AHEAD
+    } else {
+        0.0
+    };
     match (oldest, newest) {
         (Some(oldest), Some(newest)) => {
             if aim.floor + SEEK_WHEN_BACK < oldest || aim.floor > newest + SEEK_WHEN_BEHIND {
                 Step::Seek(aim.floor)
-            } else if !ended && room && newest < aim.target - frame_seconds / 2.0 {
+            } else if !ended && room && newest < aim.target + ahead - frame_seconds / 2.0 {
                 Step::Decode
             } else {
                 Step::Hold
@@ -450,6 +505,8 @@ struct Decoding {
     sought: f64,
     /// How far apart the frames are.
     frame_seconds: f64,
+    /// Frames are being handed over on the GPU.
+    pictures: bool,
 }
 
 fn work(hub: &LiveHub, entry: &Arc<Entry>) {
@@ -495,6 +552,7 @@ fn work(hub: &LiveHub, entry: &Arc<Entry>) {
             });
             match opened {
                 Ok(mut decoder) => {
+                    let pictures = aim.pictures && decoder.deliver_gpu_pictures(true);
                     let mut sought = 0.0;
                     if aim.floor > PICK_SLACK {
                         match decoder.seek(aim.floor) {
@@ -512,6 +570,7 @@ fn work(hub: &LiveHub, entry: &Arc<Entry>) {
                         ended: false,
                         sought,
                         frame_seconds: DEFAULT_FRAME,
+                        pictures,
                     });
                     // Kept until now, so the pictures had something to show
                     // while the decoder opened.
@@ -529,10 +588,21 @@ fn work(hub: &LiveHub, entry: &Arc<Entry>) {
         let Some(current) = decoding.as_mut() else {
             continue;
         };
+        if current.pictures != aim.pictures {
+            // From the next frame decoded; those already kept are converted
+            // for whoever needs their pixels.
+            let able = current.decoder.deliver_gpu_pictures(aim.pictures);
+            current.pictures = aim.pictures && able;
+        }
 
         let (oldest, newest, room) = {
             let inner = lock(&entry.inner);
-            let frame_bytes = inner.frames.back().map_or(0, |frame| frame.bgra.len());
+            // A frame on the GPU is counted as if it were in memory: it is
+            // memory all the same, the decoder's.
+            let frame_bytes = inner
+                .frames
+                .back()
+                .map_or(0, |frame| frame.width as usize * frame.height as usize * 4);
             (
                 inner.frames.front().map(|frame| frame.presentation_seconds),
                 inner.frames.back().map(|frame| frame.presentation_seconds),
@@ -563,7 +633,7 @@ fn work(hub: &LiveHub, entry: &Arc<Entry>) {
                 }
             },
             Step::Decode => match current.decoder.next_frame() {
-                Ok(Some(frame)) if frame.is_well_formed() => {
+                Ok(Some(frame)) if frame.is_well_formed() || frame.is_gpu_only() => {
                     if let Some(previous) = newest {
                         let apart = frame.presentation_seconds - previous;
                         if apart > 0.001 && apart < 0.2 {
@@ -606,7 +676,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::*;
     use crate::services::video::VideoError;
@@ -630,6 +700,7 @@ mod tests {
                 height: self.size.1,
                 bgra: vec![0; self.size.0 as usize * self.size.1 as usize * 4],
                 presentation_seconds: self.next as f64 / 30.0,
+                gpu: None,
             };
             self.next += 1;
             Ok(Some(frame))
@@ -682,7 +753,7 @@ mod tests {
             path,
             ask,
             open,
-            Some(&mut Resizer::new()),
+            Want::Fitted(&mut Resizer::new()),
         )
     }
 
@@ -748,6 +819,60 @@ mod tests {
             1,
             "one decoder for all of them"
         );
+    }
+
+    /// Counts, and says whether it was asked to hand frames over on the GPU.
+    struct Handing {
+        inner: Counting,
+        pictures: Arc<AtomicBool>,
+    }
+
+    impl VideoDecoder for Handing {
+        fn next_frame(&mut self) -> Result<Option<VideoFrame>, VideoError> {
+            self.inner.next_frame()
+        }
+        fn seek(&mut self, seconds: f64) -> Result<(), VideoError> {
+            self.inner.seek(seconds)
+        }
+        fn duration_seconds(&self) -> Option<f64> {
+            self.inner.duration_seconds()
+        }
+        fn dimensions(&self) -> (u32, u32) {
+            self.inner.dimensions()
+        }
+        fn deliver_gpu_pictures(&mut self, on: bool) -> bool {
+            self.pictures.store(on, Ordering::SeqCst);
+            true
+        }
+    }
+
+    #[test]
+    fn a_picture_that_shows_frames_on_the_gpu_has_them_handed_over_so() {
+        let hub = LiveHub::new();
+        let pictures = Arc::new(AtomicBool::new(false));
+        let told = Arc::clone(&pictures);
+        let open: Opener = Arc::new(move |_url: &str, bounds: (u32, u32)| {
+            Ok(Box::new(Handing {
+                inner: Counting {
+                    next: 0,
+                    frames: 3000,
+                    size: bounds,
+                    decoded: Arc::default(),
+                },
+                pictures: Arc::clone(&told),
+            }) as Box<dyn VideoDecoder>)
+        });
+        let path = Path::new("/live-pictures.mp4");
+        // A screen that needs pixels: frames converted as ever.
+        frame_when_ready(&hub, path, held(1.0, (64, 36)), &open);
+        assert!(!pictures.load(Ordering::SeqCst));
+        // A screen drawn as layers asks for the frames as they are.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pictures.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "never handed over on the GPU");
+            hub.frame("x", path, held(1.0, (64, 36)), &open, Want::Picture);
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]
@@ -911,6 +1036,7 @@ mod tests {
             target,
             playing: true,
             bounds: (64, 36),
+            pictures: false,
         };
         let frame = 1.0 / 30.0;
         assert_eq!(
@@ -944,8 +1070,37 @@ mod tests {
                 0.0,
                 frame
             ),
+            Step::Decode,
+            "playing: a few frames past the panel furthest ahead"
+        );
+        assert_eq!(
+            decide(
+                Some(3.9),
+                Some(4.2),
+                true,
+                &aim(4.0, 4.1),
+                false,
+                0.0,
+                frame
+            ),
             Step::Hold,
             "far enough ahead"
+        );
+        assert_eq!(
+            decide(
+                Some(3.9),
+                Some(4.1),
+                true,
+                &Aim {
+                    playing: false,
+                    ..aim(4.0, 4.1)
+                },
+                false,
+                0.0,
+                frame
+            ),
+            Step::Hold,
+            "held: nothing decoded ahead"
         );
         assert_eq!(
             decide(
@@ -1024,6 +1179,7 @@ mod tests {
                 height: 1,
                 bgra: vec![0; 4],
                 presentation_seconds: seconds,
+                gpu: None,
             })
         };
         let frames: VecDeque<_> = [1.0, 1.04, 1.08].into_iter().map(frame).collect();

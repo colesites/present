@@ -78,22 +78,34 @@ const defaultTextPosition = {
   verticalAlign: "middle",
 };
 
+/** Every layer on but the mask: a column that lets everything through. `LookLayers::ALL`. */
+const ALL_LAYERS = {
+  mask: false,
+  messages: true,
+  props: true,
+  timer: true,
+  announcements: true,
+  presentation: true,
+  slide: true,
+  media: true,
+  videoInput: true,
+};
+
+/**
+ * The operator's switches in the right sidebar as a new setup has them: the
+ * words, slides, media and timer showing, no banner. They are their own, not
+ * the Screen's column (which they once were), so a column in Looks says what
+ * its screen may show and the switches say what is showing. `LookLayers::SHOWING`.
+ */
+export const SHOWING_DEFAULT = { ...ALL_LAYERS, messages: false, announcements: false };
+
 export const createDefaultLookPreset = () => ({
   id: "default",
   name: "Default",
   targets: {
+    // The Screen lets everything through; the switches say what shows.
     program: {
-      layers: {
-        mask: false,
-        messages: false,
-        props: true,
-        timer: true,
-        announcements: false,
-        presentation: true,
-        slide: true,
-        media: true,
-        videoInput: true,
-      },
+      layers: { ...ALL_LAYERS },
       textPosition: { ...defaultTextPosition },
       layout: {},
     },
@@ -138,6 +150,7 @@ export const createDefaultLooksConfig = (now = Date.now()) => ({
   selectedLookId: "default",
   liveLookId: "default",
   looks: [createDefaultLookPreset()],
+  showing: { ...SHOWING_DEFAULT },
   updatedAt: now,
 });
 
@@ -258,17 +271,7 @@ export const generateLookId = () => `look-${Date.now()}-${Math.round(Math.random
  * `LookTargets::screen_default`.
  */
 export const screenDefaultColumn = (targets) => ({
-  layers: {
-    mask: false,
-    messages: true,
-    props: true,
-    timer: true,
-    announcements: true,
-    presentation: true,
-    slide: true,
-    media: true,
-    videoInput: true,
-  },
+  layers: { ...ALL_LAYERS },
   textPosition: { ...targets.program.textPosition },
   layout: {},
 });
@@ -296,8 +299,12 @@ const normalizeLookPreset = (candidate, fallbackLook, index, newId) => {
         ? "Default"
         : `Look ${index + 1}`;
 
+  // A Screen column saved before the switches were their own *was* the
+  // switches, and may become them (`settleShowing`): what it does not say
+  // falls back to what they started as, never to "on".
+  const fallbackLayers = (key) => (key === "program" ? SHOWING_DEFAULT : fallbackLook.targets[key].layers);
   const target = (key) => ({
-    layers: normalizeLayers(fallbackLook.targets[key].layers, candidate?.targets?.[key]?.layers),
+    layers: normalizeLayers(fallbackLayers(key), candidate?.targets?.[key]?.layers),
     textPosition: normalizeTextPosition({
       ...fallbackLook.targets[key].textPosition,
       ...candidate?.targets?.[key]?.textPosition,
@@ -369,7 +376,10 @@ export const normalizeLooksConfig = (candidate, { now = Date.now(), newId = gene
         ? candidate.liveLookId
         : fallbackLookId;
 
-    return { version: 2, selectedTarget, selectedLookId, liveLookId, looks, updatedAt };
+    return settleShowing(
+      { version: 2, selectedTarget, selectedLookId, liveLookId, looks, updatedAt },
+      candidate.showing,
+    );
   }
 
   // Version 1 held a single unnamed preset. Migrate it into the list rather
@@ -388,14 +398,17 @@ export const normalizeLooksConfig = (candidate, { now = Date.now(), newId = gene
       0,
       newId,
     );
-    return {
-      version: 2,
-      selectedTarget,
-      selectedLookId: migratedLook.id,
-      liveLookId: migratedLook.id,
-      looks: [migratedLook],
-      updatedAt,
-    };
+    return settleShowing(
+      {
+        version: 2,
+        selectedTarget,
+        selectedLookId: migratedLook.id,
+        liveLookId: migratedLook.id,
+        looks: [migratedLook],
+        updatedAt,
+      },
+      undefined,
+    );
   }
 
   return {
@@ -404,9 +417,49 @@ export const normalizeLooksConfig = (candidate, { now = Date.now(), newId = gene
     selectedLookId: fallback.selectedLookId,
     liveLookId: fallback.liveLookId,
     looks: fallback.looks,
+    showing: fallback.showing,
     updatedAt,
   };
 };
+
+/**
+ * The switches as stored — or, from a setup saved before they were their
+ * own, the live look's Screen column, which is where they used to write.
+ * That column then lets everything through, so the Screen shows what it did.
+ * The other looks keep theirs. `settle_showing`.
+ */
+const settleShowing = (config, stored) => {
+  if (isPart(stored)) {
+    return { ...config, showing: normalizeLayers(SHOWING_DEFAULT, stored) };
+  }
+  const live = config.looks.find((look) => look.id === config.liveLookId);
+  if (!live) return { ...config, showing: { ...SHOWING_DEFAULT } };
+  return {
+    ...config,
+    showing: { ...live.targets.program.layers },
+    looks: config.looks.map((look) =>
+      look !== live
+        ? look
+        : {
+            ...look,
+            targets: {
+              ...look.targets,
+              program: { ...look.targets.program, layers: { ...ALL_LAYERS } },
+            },
+          },
+    ),
+  };
+};
+
+/** The operator's switch for `layers` turned on or off. `set_showing`. */
+export const withShowing = (config, layers, enabled, now = Date.now()) => ({
+  ...config,
+  showing: {
+    ...config.showing,
+    ...Object.fromEntries(layers.map((layer) => [layer, enabled])),
+  },
+  updatedAt: now,
+});
 
 // --- transitions ---------------------------------------------------------
 // Each returns a new config. `now` is passed in so a caller can make a whole

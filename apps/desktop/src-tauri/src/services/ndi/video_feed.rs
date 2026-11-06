@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use crate::services::output::{MediaKind, OutputScene};
 use crate::services::playback::MIRROR_DRIFT_TOLERANCE;
-use crate::services::video::live::{Ask, LiveHub};
+use crate::services::video::live::{Ask, LiveHub, Want};
 use crate::services::video::resize::Resizer;
 use crate::services::video::{Polled, VideoDecoder, VideoFrame};
 
@@ -219,6 +219,9 @@ pub struct VideoFeed {
     resizer: Resizer,
     /// Takes the live video's frames at any size (`set_any_size`).
     any_size: bool,
+    /// Takes the live video's frames as the GPU decoder left them
+    /// (`set_pictures`).
+    pictures: bool,
     /// The video the scene shows that has not given a frame yet, and since
     /// when (`frame_or_wait`).
     waiting: Option<(String, Instant)>,
@@ -559,11 +562,34 @@ impl VideoFeed {
         .cloned()
     }
 
+    /// The frame this feed just lent (`frame_for`, `frame_or_wait`), shared
+    /// rather than lent: `None` if it is not one this feed holds.
+    pub fn shared(&self, frame: *const VideoFrame) -> Option<Arc<VideoFrame>> {
+        [
+            self.live.as_ref().map(|live| &live.frame),
+            self.playing
+                .as_ref()
+                .and_then(|playing| playing.frame.as_ref()),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|each| std::ptr::eq(Arc::as_ptr(each), frame))
+        .cloned()
+    }
+
     /// Take the live video's frames at whatever size they were decoded, for a
     /// picture the GPU scales (`surface::panel`), rather than made this
     /// picture's size first.
     pub fn set_any_size(&mut self, any: bool) {
         self.any_size = any;
+    }
+
+    /// Take the live video's frames as the GPU decoder left them, with no
+    /// pixels copied off it (`VideoFrame::gpu`), for a picture that shows them
+    /// as they are (`surface::layers`). A video decoded on the processor still
+    /// comes with its pixels.
+    pub fn set_pictures(&mut self, pictures: bool) {
+        self.pictures = pictures;
     }
 
     /// The live video's frame for this picture: the one every picture of it
@@ -583,8 +609,14 @@ impl VideoFeed {
             bounds: size,
         };
         let hub = self.hub.clone().unwrap_or_else(LiveHub::global);
-        let resizer = (!self.any_size).then_some(&mut self.resizer);
-        if let Some(frame) = hub.frame(url, &path, ask, open, resizer) {
+        let want = if self.pictures {
+            Want::Picture
+        } else if self.any_size {
+            Want::AsDecoded(&mut self.resizer)
+        } else {
+            Want::Fitted(&mut self.resizer)
+        };
+        if let Some(frame) = hub.frame(url, &path, ask, open, want) {
             // A decoder of its own, from before the video went live, is no
             // longer needed.
             self.playing = None;
@@ -597,8 +629,23 @@ impl VideoFeed {
             return self.live.as_ref().map(|shown| shown.frame.as_ref());
         }
         // Nothing yet — the decoder is opening, or finding a new place. What
-        // this picture already shows of this video stays up.
+        // this picture already shows of this video stays up: with its pixels,
+        // for a picture that needs them and last showed it on the GPU.
         if self.live.as_ref().is_some_and(|shown| shown.url == url) {
+            let pixels_wanted = !self.pictures;
+            if let Some(shown) = self.live.as_mut() {
+                if pixels_wanted && shown.frame.is_gpu_only() {
+                    let decoded = (shown.frame.width, shown.frame.height);
+                    let fit = if self.any_size {
+                        decoded
+                    } else {
+                        crate::services::video::contain_size(decoded, size)
+                    };
+                    if let Some(converted) = self.resizer.convert_picture(&shown.frame, fit) {
+                        shown.frame = Arc::new(converted);
+                    }
+                }
+            }
             return self.live.as_ref().map(|shown| shown.frame.as_ref());
         }
         self.playing
@@ -989,6 +1036,7 @@ mod tests {
                 height: 2,
                 bgra: vec![0; 16],
                 presentation_seconds: self.next as f64 / 30.0,
+                gpu: None,
             };
             self.next += 1;
             Ok(Some(frame))

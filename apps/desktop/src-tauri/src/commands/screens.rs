@@ -355,9 +355,9 @@ pub fn set_outputs(
 }
 
 /// Everything that goes on and off with a built-in screen, turned on or off
-/// with it: its other outputs, and for the audience output the added audience
-/// screens too.
-pub fn follow_built_in(app: &AppHandle, id: &str, open: bool) {
+/// with it: its other outputs, and for the audience output, as the audience
+/// group's switch (`group`), the added audience screens too.
+pub fn follow_built_in(app: &AppHandle, id: &str, open: bool, group: bool) {
     let Some(state) = app.try_state::<DisplayState>() else {
         return;
     };
@@ -365,7 +365,7 @@ pub fn follow_built_in(app: &AppHandle, id: &str, open: bool) {
     if let Some(built_in) = all.iter().find(|screen| screen.id == id) {
         set_outputs(app, &state, built_in, open, true);
     }
-    if id == screens::AUDIENCE {
+    if group && id == screens::AUDIENCE {
         for added in all
             .iter()
             .filter(|screen| screen.group == ScreenGroup::Audience && !screen.is_built_in())

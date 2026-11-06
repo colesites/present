@@ -287,6 +287,12 @@ pub fn run() {
             commands::diagnostics::report_diagnostic,
             commands::diagnostics::report_renderer_error,
             commands::speech::mint_speech_token,
+            commands::speech::start_speech_stream,
+            commands::speech::send_speech_stream,
+            commands::speech::close_speech_stream,
+            commands::projection::get_projection_settings,
+            commands::projection::set_projection_settings,
+            commands::projection::get_projection_capabilities,
             commands::display::get_displays,
             commands::display::get_preferred_display,
             commands::display::set_preferred_display,
@@ -373,9 +379,16 @@ pub fn run() {
             commands::sound::stop_microphone,
             commands::recorder::recorder_snapshot,
             commands::recorder::recorder_set_input,
+            commands::recorder::recorder_set_strip,
+            commands::recorder::recorder_set_mix,
+            commands::recorder::recorder_arm,
+            commands::recorder::recorder_feedback_risk,
+            commands::recorder::recorder_resolve_feedback,
             commands::recorder::recorder_add_track,
             commands::recorder::recorder_rename_track,
             commands::recorder::recorder_remove_track,
+            commands::recorder::recorder_clear_track,
+            commands::recorder::recorder_playback_track,
             commands::recorder::recorder_start,
             commands::recorder::recorder_pause,
             commands::recorder::recorder_stop,
@@ -395,6 +408,7 @@ pub fn run() {
             commands::looks::set_look_name,
             commands::looks::set_look_layer,
             commands::looks::set_look_layers,
+            commands::looks::set_showing_layers,
             commands::looks::set_look_text_position,
             commands::looks::set_look_layout,
             commands::auth::get_stored_auth_session,
@@ -504,6 +518,9 @@ pub fn run() {
             // Before any window, which asks for it before React starts.
             app.manage(state::WebStorageState::load(&config_dir));
             app.manage(state::DisplayState::load(&config_dir));
+            // How the screens are drawn (`services::projection`): read by
+            // every screen's loop and the decoder, so in force before either.
+            services::projection::load(&config_dir);
             // The media folders, and with them the only paths `local-media://`
             // will serve. Registered before any window exists so the operator
             // window's first media request already has a scope to check.
@@ -606,6 +623,7 @@ pub fn run() {
             let routing = commands::sound::routing(&app.state::<state::AudioState>().snapshot());
             app.manage(commands::sound::BackingTrackNow::default());
             app.manage(commands::sound::MicrophoneState::default());
+            app.manage(commands::speech::SpeechStreams::default());
             // The recording window's takes. In memory: a recording is of this
             // sitting, and it is not a library item until it is exported.
             app.manage(services::recorder::Recorder::new());

@@ -29,11 +29,20 @@ use objc2::rc::Retained;
 use objc2::{msg_send, MainThreadMarker, Message};
 use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindowOrderingMode};
 use objc2_foundation::{ns_string, NSNumber};
-use objc2_quartz_core::CATransaction;
 use tauri::{AppHandle, Manager};
 
+use std::collections::VecDeque;
+
 use super::iosurface::{Frame, Surfaces};
-use super::Presenter;
+use super::layers::{self, Fit, Layered};
+use super::{LayeredShow, Presenter};
+use crate::services::video::GpuPicture;
+
+/// What the main thread is to put on the view next.
+enum Shown {
+    Whole(Arc<Frame>),
+    Layers(Layered),
+}
 
 /// The view, retained, as an address the surface thread may carry but never
 /// dereference. Only the main thread touches what it points at.
@@ -76,10 +85,17 @@ pub struct MacPresenter {
     /// arrived after it, which is the opposite: any moment the operator's own
     /// window kept the main thread busy cost the audience a frame of video
     /// that was never retried, because the loop had already counted it shown.
-    mailbox: Arc<std::sync::Mutex<Option<Arc<Frame>>>>,
+    mailbox: Arc<std::sync::Mutex<Option<Shown>>>,
     /// The surfaces frames are written into, reused once the window server has
     /// let go of them.
     surfaces: Surfaces,
+    /// The slide over the video, as last written into a surface, and what it
+    /// was written from: written again only when it changes.
+    overlay: Option<(Arc<Vec<u8>>, Arc<Frame>)>,
+    /// Video pictures handed to the view, newest last, each kept until the
+    /// window server has let go of it: the decoder writes into a surface
+    /// again only once nothing holds it.
+    pictures: VecDeque<Arc<GpuPicture>>,
     /// The window's size and when it was read. Reading it is a round trip to
     /// the main thread; sixty of those a second is load the main thread does
     /// not need for a window that is fullscreen on a projector and never
@@ -147,6 +163,8 @@ impl MacPresenter {
             in_flight: Arc::new(AtomicBool::new(false)),
             mailbox: Arc::new(std::sync::Mutex::new(None)),
             surfaces: Surfaces::new(),
+            overlay: None,
+            pictures: VecDeque::new(),
             size: Cell::new(None),
         })
     }
@@ -169,11 +187,65 @@ impl Presenter for MacPresenter {
             // is skipped, and the next is written when one is free.
             return Ok(());
         };
-        // Newest wins: this replaces a frame the main thread has not got to.
+        // A whole picture covers the layers; what they held can go.
+        self.overlay = None;
+        self.retire_pictures(None);
+        self.show(Shown::Whole(frame))
+    }
+
+    fn shows_layers(&self) -> bool {
+        true
+    }
+
+    fn present_layers(&mut self, show: &LayeredShow) -> Result<(), String> {
+        let overlay = match &show.overlay {
+            Some(drawn) => match &self.overlay {
+                Some((from, frame)) if Arc::ptr_eq(from, drawn) => Some(Arc::clone(frame)),
+                _ => match self.surfaces.fill(show.canvas.0, show.canvas.1, drawn) {
+                    Some(frame) => {
+                        self.overlay = Some((Arc::clone(drawn), Arc::clone(&frame)));
+                        Some(frame)
+                    }
+                    // Every surface still in use: the slide as it was, until
+                    // the next video frame tries again.
+                    None => self.overlay.as_ref().map(|(_, frame)| Arc::clone(frame)),
+                },
+            },
+            None => {
+                self.overlay = None;
+                None
+            }
+        };
+        let video = show
+            .video
+            .as_ref()
+            .map(|video| (Arc::clone(&video.picture), video.geometry));
+        self.retire_pictures(video.as_ref().map(|(picture, _)| picture));
+        self.show(Shown::Layers(Layered {
+            canvas: show.canvas,
+            base: show.base,
+            video,
+            overlay,
+        }))
+    }
+
+    fn size(&self) -> Option<(u32, u32)> {
+        self.reading().map(|(size, _)| size)
+    }
+
+    fn scale(&self) -> f64 {
+        self.reading().map_or(1.0, |(_, scale)| scale)
+    }
+}
+
+impl MacPresenter {
+    /// Put `shown` on the view on the main thread: the newest wins.
+    fn show(&mut self, shown: Shown) -> Result<(), String> {
+        // Newest wins: this replaces a picture the main thread has not got to.
         *self
             .mailbox
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(frame);
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(shown);
         // A job already on its way will show it; only start one if none is.
         if self.in_flight.swap(true, Ordering::AcqRel) {
             return Ok(());
@@ -184,10 +256,10 @@ impl Presenter for MacPresenter {
 
         self.app
             .run_on_main_thread(move || {
-                // Cleared before the frame is taken, so a frame arriving while
+                // Cleared before the picture is taken, so one arriving while
                 // this runs starts a job of its own rather than being stranded.
                 in_flight.store(false, Ordering::Release);
-                let Some(frame) = mailbox
+                let Some(shown) = mailbox
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .take()
@@ -203,11 +275,16 @@ impl Presenter for MacPresenter {
                 // this thread, so not while this runs.
                 let view = unsafe { &*(view.0 as *const NSView) };
                 if let Some(layer) = view.layer() {
-                    CATransaction::begin();
-                    CATransaction::setDisableActions(true);
-                    // SAFETY: an IOSurface is a valid `contents` value.
-                    unsafe { layer.setContents(Some(frame.as_contents())) };
-                    CATransaction::commit();
+                    // SAFETY: on the main thread; an IOSurface is a valid
+                    // `contents` value.
+                    unsafe {
+                        match &shown {
+                            Shown::Whole(frame) => layers::show_whole(&layer, frame.as_contents()),
+                            Shown::Layers(layered) => {
+                                layers::show_layered(&layer, layered, Fit::Stretch);
+                            }
+                        }
+                    }
                 }
             })
             .map_err(|error| {
@@ -216,16 +293,29 @@ impl Presenter for MacPresenter {
             })
     }
 
-    fn size(&self) -> Option<(u32, u32)> {
-        self.reading().map(|(size, _)| size)
+    /// Keep `newest`, and every picture before it the window server still
+    /// holds; let the rest go back to the decoder.
+    fn retire_pictures(&mut self, newest: Option<&Arc<GpuPicture>>) {
+        if let Some(newest) = newest {
+            if !self
+                .pictures
+                .back()
+                .is_some_and(|last| Arc::ptr_eq(last, newest))
+            {
+                self.pictures.push_back(Arc::clone(newest));
+            }
+        }
+        let keep_last = usize::from(newest.is_some());
+        let mut index = 0;
+        while index + keep_last < self.pictures.len() {
+            if self.pictures[index].is_in_use() {
+                index += 1;
+            } else {
+                self.pictures.remove(index);
+            }
+        }
     }
 
-    fn scale(&self) -> f64 {
-        self.reading().map_or(1.0, |(_, scale)| scale)
-    }
-}
-
-impl MacPresenter {
     /// The window's size in its CSS pixels, and its scale, read at most
     /// every [`SIZE_REFRESH`].
     fn reading(&self) -> Option<((u32, u32), f64)> {

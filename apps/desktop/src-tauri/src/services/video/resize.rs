@@ -21,6 +21,7 @@ use ff::format::Pixel;
 use ff::software::scaling;
 use ffmpeg_next as ff;
 
+use super::ffmpeg::PictureConverter;
 use super::VideoFrame;
 
 /// A scaler from BGRA to smaller BGRA, kept between frames of one size.
@@ -28,6 +29,9 @@ pub struct Resizer {
     context: *mut ff::ffi::SwsContext,
     /// The sizes the context was made for: from, to.
     sizes: Option<((u32, u32), (u32, u32))>,
+    /// For frames handed over on the GPU: their pixels copied off and
+    /// converted straight to the size wanted, in one pass.
+    pictures: PictureConverter,
 }
 
 // SAFETY: the context is only used through `&mut self`, so never from two
@@ -45,11 +49,36 @@ impl Resizer {
         Self {
             context: ptr::null_mut(),
             sizes: None,
+            pictures: PictureConverter::default(),
+        }
+    }
+
+    /// `frame`'s pixels at `size`, for a frame only on the GPU
+    /// (`VideoFrame::is_gpu_only`): copied off it and converted once, at the
+    /// size they are shown. The picture stays with them, for anything that
+    /// shows it as it is. `None` if there is no picture, or it will not copy.
+    pub fn convert_picture(&mut self, frame: &VideoFrame, size: (u32, u32)) -> Option<VideoFrame> {
+        let picture = frame.gpu.as_ref()?;
+        match self.pictures.convert(picture, size) {
+            Ok(bgra) => Some(VideoFrame {
+                width: size.0,
+                height: size.1,
+                bgra,
+                presentation_seconds: frame.presentation_seconds,
+                gpu: Some(std::sync::Arc::clone(picture)),
+            }),
+            Err(error) => {
+                tracing::warn!(%error, "a GPU video frame could not be copied off it");
+                None
+            }
         }
     }
 
     /// `frame` at `size`. `None` if either is empty, or the scaler refuses.
     pub fn resize(&mut self, frame: &VideoFrame, size: (u32, u32)) -> Option<VideoFrame> {
+        if frame.is_gpu_only() {
+            return self.convert_picture(frame, size);
+        }
         if !frame.is_well_formed() || size.0 == 0 || size.1 == 0 {
             return None;
         }
@@ -90,6 +119,7 @@ impl Resizer {
             height: size.1,
             bgra,
             presentation_seconds: frame.presentation_seconds,
+            gpu: frame.gpu.clone(),
         })
     }
 
@@ -157,6 +187,7 @@ mod tests {
             height,
             bgra: bgra.repeat(width as usize * height as usize),
             presentation_seconds: seconds,
+            gpu: None,
         }
     }
 

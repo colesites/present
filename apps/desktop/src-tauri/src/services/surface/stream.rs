@@ -11,16 +11,17 @@ use std::time::Instant;
 
 use tauri::{AppHandle, Manager};
 
-use crate::services::compositor::{SceneCompositor, ScopedMediaLoader};
+use crate::services::compositor::ScopedMediaLoader;
 use crate::services::media_protocol;
 use crate::services::screen_picture::{self, Arrangement, Plan};
 use crate::services::screens::screen_for_label;
 use crate::services::video::{self, VideoDecoder};
-use crate::state::output_state::{Drawn, SceneCache};
+use crate::state::output_state::SceneCache;
 use crate::state::{DisplayState, FileState, LooksState, OutputState};
 
+use super::layered::{Drew, Layers, ScreenRenderer};
 use super::{OutputView, SurfaceSource};
-use crate::services::ndi::video_feed::{Opener, RegionVideos, VideoFeed, Waiting};
+use crate::services::ndi::video_feed::Opener;
 
 pub struct AppSurfaceSource {
     app: AppHandle,
@@ -28,15 +29,16 @@ pub struct AppSurfaceSource {
     /// and colour are read each frame, so a change in Screen Configuration
     /// shows at once.
     screen: String,
-    compositor: SceneCompositor,
-    video: VideoFeed,
-    /// The videos playing in screen composer regions.
-    regions: RegionVideos,
+    /// The screen's picture: as layers the window server puts together where
+    /// it can be, whole where it cannot (`layered.rs`).
+    renderer: ScreenRenderer,
     /// Opening a video, on its own thread (`video_feed.rs`).
     open: Opener,
-    /// What the last presented frame was drawn from, so an unchanged slide is
-    /// not handed to the view again.
-    last: Option<Drawn>,
+    /// The last render's layers, for the loop to take.
+    layers: Option<Layers>,
+    /// The size the last render drew at: the plan's canvas, within the
+    /// projection resolution.
+    canvas: (u32, u32),
     /// The scene, worked out again only when it changes.
     scene: SceneCache,
     /// The screen laid out over its windows, as of the last render.
@@ -51,11 +53,10 @@ impl AppSurfaceSource {
         Self {
             app,
             screen: screen.to_owned(),
-            compositor: SceneCompositor::new(1920, 1080),
-            video: VideoFeed::new(),
-            regions: RegionVideos::new(),
+            renderer: ScreenRenderer::new(1920, 1080),
             open: scoped_opener(app_for_opening),
-            last: None,
+            layers: None,
+            canvas: (1920, 1080),
             scene: SceneCache::new(),
             plan: None,
             outputs: Vec::new(),
@@ -91,21 +92,31 @@ impl SurfaceSource for AppSurfaceSource {
             .as_deref()
             .and_then(crate::services::compositor::color::parse)
             .unwrap_or(tiny_skia::Color::BLACK);
-        if self.compositor.set_base(base) || self.plan.as_ref() != Some(&plan) {
+        if self.renderer.set_base(base) || self.plan.as_ref() != Some(&plan) {
             // The scene has not changed, but the picture has.
-            self.last = None;
+            self.renderer.invalidate();
         }
-        let size = plan.canvas;
+        // No larger than the operator's projection resolution allows: the
+        // views scale the picture to the window, as they always have.
+        let projection = crate::services::projection::settings();
+        let size = projection.canvas_for(plan.canvas);
+        self.canvas = size;
+        // Layers only where every window shows the whole picture and can show
+        // layers, and the operator has not asked for whole pictures.
+        let layers = !views.is_empty()
+            && views.iter().all(|view| view.layers)
+            && plan
+                .arrangements
+                .iter()
+                .all(|(_, arrangement)| arrangement.is_identity())
+            && projection.layers_allowed();
         self.plan = Some(plan);
 
         let Self {
             app,
             screen: screen_id,
-            compositor,
-            video,
-            regions,
+            renderer,
             open,
-            last,
             scene: scene_cache,
             ..
         } = self;
@@ -119,45 +130,28 @@ impl SurfaceSource for AppSurfaceSource {
         // the Screen: a change in Looks shows at once.
         let looks = app.try_state::<LooksState>();
         let scene = scene_cache.for_screen(&output, looks.as_deref(), screen_id);
-        compositor.resize(size.0, size.1);
-        let now = Instant::now();
-        let frame = match video.frame_or_wait(&scene, now, size, open) {
-            Ok(frame) => frame,
-            // The scene's new video has not given its first frame yet: the
-            // screen keeps the picture it has until it does, and cuts to the
-            // video then, rather than going black while the file opens.
-            Err(Waiting) if last.is_some() => return Ok(false),
-            Err(Waiting) => None,
-        };
-        let shown = frame.map(|frame| frame.presentation_seconds);
-        let region_frames = regions.frames_for(&scene, now, size, open);
-
-        // A transition or a scrolling message moves while the scene stands
-        // still, so "unchanged" is the compositor's to say, not just the scene's.
-        let drawn = last
-            .as_ref()
-            .map(|(scene, video, size)| (scene.as_ref(), *video, *size));
-        let unchanged = !compositor.needs_drawing(drawn, &scene, shown, &region_frames, size);
-        if unchanged {
-            return Ok(false);
-        }
-
         let loader = ScopedMediaLoader::new(&files);
-        let (rendered, _) = compositor
-            .render_with_regions(&scene, frame, &region_frames, &loader)
-            .ok_or_else(|| {
-                format!(
-                    "the compositor could not draw a {}x{} frame",
-                    size.0, size.1
-                )
-            })?;
-        rendered.write_bgra_premultiplied(out);
-        *last = Some((scene, shown, size));
-        Ok(true)
+        let drew = renderer.render(&scene, size, Instant::now(), open, &loader, layers, out)?;
+        Ok(match drew {
+            Drew::Unchanged => false,
+            Drew::Whole => true,
+            Drew::Layers(layers) => {
+                self.layers = Some(layers);
+                true
+            }
+        })
+    }
+
+    fn take_layers(&mut self) -> Option<Layers> {
+        self.layers.take()
+    }
+
+    fn busy(&self) -> bool {
+        self.renderer.busy()
     }
 
     fn canvas_size(&self) -> (u32, u32) {
-        self.plan.as_ref().map_or((1920, 1080), |plan| plan.canvas)
+        self.canvas
     }
 
     fn arrangement(&self, label: &str) -> Option<Arrangement> {

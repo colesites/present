@@ -107,9 +107,9 @@ impl LooksState {
         Ok(Some(snapshot))
     }
 
-    /// Whether the live look shows the timer on the Screen.
-    pub fn screen_shows_timer(&self) -> bool {
-        self.read().live_look().targets.program.layers.timer
+    /// Whether the operator's timer switch is on.
+    pub fn timer_switched_on(&self) -> bool {
+        self.read().showing.timer
     }
 
     fn read(&self) -> std::sync::RwLockReadGuard<'_, LooksConfig> {
@@ -232,7 +232,10 @@ mod tests {
         let config = LooksState::load(&dir).snapshot();
         assert_eq!(config.selected_target, LookTarget::Stage);
         assert_eq!(config.live_look_id, "evening");
-        assert!(config.live_look().targets.program.layers.mask);
+        // Saved when the sidebar's switches were the Screen's column: the
+        // background stays hidden, now by its switch.
+        assert!(config.showing.mask);
+        assert!(!config.live_look().targets.program.layers.mask);
     }
 
     #[test]
@@ -287,5 +290,37 @@ mod tests {
             showing,
             "the Screen's is the scene as the operator sent it"
         );
+
+        // The words off on the Screen in Looks: off there, and only there.
+        state
+            .update(|config| {
+                looks::set_layer_enabled(
+                    config,
+                    "default",
+                    &LookTarget::Program,
+                    LookLayer::Slide,
+                    false,
+                    now_ms(),
+                );
+                true
+            })
+            .expect("saved");
+        assert!(
+            !state
+                .scene_for_screen(showing.clone(), "audience")
+                .show_text
+        );
+        assert!(
+            state
+                .scene_for_screen(showing.clone(), "a1b2c3d4e5")
+                .show_text,
+            "Screen 2 is not tied to the Screen"
+        );
+        // And the sidebar's switch off: off everywhere.
+        let switched_off = OutputScene {
+            show_text: false,
+            ..showing
+        };
+        assert!(!state.scene_for_screen(switched_off, "a1b2c3d4e5").show_text);
     }
 }

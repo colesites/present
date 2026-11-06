@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadServiceKeys } from "./service-keys.mjs";
 
 const DESKTOP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PREFIX = path.join(DESKTOP_DIR, "src-tauri", "ffmpeg", "prefix");
@@ -55,8 +56,12 @@ if (process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
   console.log("[tauri-build] no TAURI_SIGNING_PRIVATE_KEY: no update packages");
 }
 
+const keys = loadServiceKeys(DESKTOP_DIR, "tauri-build");
+
 run("bun", ["run", "tauri", "build", ...updaterArgs, ...process.argv.slice(2)], {
   ...process.env,
+  MACOSX_DEPLOYMENT_TARGET: process.env.MACOSX_DEPLOYMENT_TARGET ?? "10.15",
   FFMPEG_DIR: PREFIX,
   PRESENT_BUNDLE_BUILD: "1",
+  ...keys,
 });

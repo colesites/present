@@ -29,14 +29,14 @@ fn broadcast(app: &AppHandle, scene: Option<OutputScene>) {
     let Some(mut scene) = scene else {
         return;
     };
-    // The operator window folds the Screen's timer layer into the scene from
-    // its own copy of the look, which is the shipped one — timer on — until
-    // the app's arrives: the first scenes after a launch showed the timer for
-    // a moment with it off. The app's copy is read before any window opens.
+    // The operator window folds the timer switch into the scene from its own
+    // copy of the looks, which is the shipped one — timer on — until the
+    // app's arrives: the first scenes after a launch showed the timer for a
+    // moment with it off. The app's copy is read before any window opens.
     // It turns the layer on only once the app has, so this never hides a
     // timer just switched on.
     if let Some(looks) = app.try_state::<LooksState>() {
-        scene.timer_visible &= looks.screen_shows_timer();
+        scene.timer_visible &= looks.timer_switched_on();
     }
     if let Err(error) = app.emit(OUTPUT_CHANGED_EVENT, &scene) {
         tracing::error!(%error, "could not broadcast the output scene");

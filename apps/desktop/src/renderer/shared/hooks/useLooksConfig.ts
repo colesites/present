@@ -141,6 +141,17 @@ export function useLooksConfig() {
     [apply],
   );
 
+  /**
+   * The operator's switches: what shows on every screen whose own column
+   * lets it through. Not part of any look (`LooksConfig::showing`).
+   */
+  const setShowing = useCallback(
+    (layers: LookLayerKey[], enabled: boolean) => {
+      apply((core) => core.setShowingLayers(layers, enabled));
+    },
+    [apply],
+  );
+
   const setLayerEnabled = useCallback(
     (target: LookTargetKey, layer: LookLayerKey, enabled: boolean) => {
       setLayerEnabledForLook(looksConfig.selectedLookId, target, layer, enabled);
@@ -202,6 +213,7 @@ export function useLooksConfig() {
     setLayerEnabled,
     setLayerEnabledForLook,
     setLayersEnabledForLook,
+    setShowing,
     setTextPosition,
     setTextPositionForLook,
     setLayoutForLook,

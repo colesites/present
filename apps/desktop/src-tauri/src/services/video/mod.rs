@@ -19,8 +19,10 @@ pub mod ffmpeg;
 #[cfg(target_os = "macos")]
 mod gpu_scale;
 pub mod live;
+pub mod picture;
 mod read_ahead;
 pub mod resize;
+pub use picture::GpuPicture;
 pub use read_ahead::ReadAhead;
 
 /// One decoded frame, in the compositor's own terms.
@@ -32,10 +34,15 @@ pub use read_ahead::ReadAhead;
 pub struct VideoFrame {
     pub width: u32,
     pub height: u32,
-    /// `width * height * 4` bytes, B, G, R, A.
+    /// `width * height * 4` bytes, B, G, R, A. Empty for a frame that is
+    /// only on the GPU (`gpu`), until something converts it.
     pub bgra: Vec<u8>,
     /// Where this frame sits in the video, in seconds.
     pub presentation_seconds: f64,
+    /// The frame as the GPU decoder left it, for a picture that shows it as it
+    /// is (`picture.rs`). `width` and `height` are still the size it is shown
+    /// at; the surface may be another size, which the GPU scales.
+    pub gpu: Option<std::sync::Arc<GpuPicture>>,
 }
 
 /// Its pixels, for something that shows them as they are: an image wrapped
@@ -57,6 +64,12 @@ impl VideoFrame {
         self.width > 0
             && self.height > 0
             && self.bgra.len() == self.width as usize * self.height as usize * 4
+    }
+
+    /// Only on the GPU: no pixels in memory yet. Not well formed for anything
+    /// that reads `bgra`, which is everything but a layer showing the surface.
+    pub fn is_gpu_only(&self) -> bool {
+        self.width > 0 && self.height > 0 && self.bgra.is_empty() && self.gpu.is_some()
     }
 }
 
@@ -106,6 +119,13 @@ pub trait VideoDecoder: Send {
     /// thread for nothing. `None` for a decoder that is not wrapped.
     fn take_unbuffered(&mut self) -> Option<Box<dyn VideoDecoder>> {
         None
+    }
+
+    /// Hand frames over as the GPU decoder left them (`VideoFrame::gpu`),
+    /// with no pixels copied off it, where the decoder can. `false` if it
+    /// cannot, and goes on converting every frame.
+    fn deliver_gpu_pictures(&mut self, _on: bool) -> bool {
+        false
     }
 
     /// The next frame if it is ready now, without waiting for one.
@@ -416,6 +436,7 @@ mod tests {
             height: 2,
             bgra: vec![0; 16],
             presentation_seconds: 0.0,
+            gpu: None,
         };
         assert!(good.is_well_formed());
 

@@ -258,19 +258,6 @@ const page = {
   containers: new Map<HTMLElement, number>(),
 };
 
-/** The rules that clear the page for every panel; added once. */
-function addRules() {
-  if (document.getElementById("present-native-panels")) return;
-  const style = document.createElement("style");
-  style.id = "present-native-panels";
-  style.textContent = `
-html[data-native-panels], html[data-native-panels] body { background: transparent !important; }
-[data-native-panel] { background: transparent !important; }
-[data-native-container] > [data-under-native] { visibility: hidden !important; }
-`;
-  document.head.appendChild(style);
-}
-
 function putBack(box: HTMLElement, saved: Saved) {
   for (const { property, value, priority } of saved) {
     if (value) box.style.setProperty(property, value, priority);
@@ -333,7 +320,6 @@ class Clearing {
   follow(geometry: NativePanelGeometry, lookAgain: boolean) {
     if (!this.active) {
       this.active = true;
-      addRules();
       page.panels.add(this.key);
       document.documentElement.setAttribute("data-native-panels", "");
       this.element.setAttribute("data-native-panel", "");

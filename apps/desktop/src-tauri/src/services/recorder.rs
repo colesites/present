@@ -4,28 +4,33 @@
 //! device's own rate and channel count (the first two channels, when a device
 //! has more) so a take is not reduced on the way in. Export — from Share, not
 //! from the window — chooses AAC, MP3, AIFF or WAVE, and a quality, and
-//! whether the tracks are written separately or mixed into one file. Mixed
-//! tracks start together: a shorter one is silence after it ends.
+//! whether the tracks are written separately or mixed into one file. Each
+//! take sits where it was recorded on the timeline, at its track's volume and
+//! pan; muted tracks are left out.
 //!
 //! Pause keeps what has been captured and record continues that same take.
 //! Stop finishes it. Recording a finished track again replaces it, and only
 //! once the new take has actually been read, so a microphone that never
 //! starts does not wipe the one already there.
 //!
-//! The audio callback never takes the session lock. It appends to a buffer
-//! the capture owns, and stopping joins the thread that owns the stream
-//! before that buffer is read.
+//! The chosen input stays open while the window has one, so record and
+//! monitor are switches, not a device opening: what is monitored stays live
+//! through record and stop. The audio callback never takes the session lock
+//! and never waits for one.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::FromSample;
+use rtrb::{Producer, RingBuffer};
 use serde::Serialize;
+
+use super::recorder_strip::{pan_frame, ride, shape, FeedbackWatch, InputRider, Voice};
+pub use super::recorder_strip::{ChannelStrip, TrackMix};
 
 /// Where an export is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,17 +103,29 @@ impl Quality {
     }
 }
 
+/// How many slices a second of take the window draws.
+pub const PEAKS_PER_SECOND: u32 = 10;
+
 /// One take, as the window draws it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackView {
     pub id: u64,
     pub name: String,
+    /// Where the take begins on the timeline, in seconds.
+    pub start: f64,
+    /// How long the take is, in seconds.
     pub seconds: f64,
     pub recording: bool,
     pub paused: bool,
-    /// Loudest sample in each slice of the take, 0 to 1. Short enough to draw.
-    pub peaks: Vec<f32>,
+    /// Loudest moment in each [`PEAKS_PER_SECOND`] slice of the take, 0 to 255.
+    pub peaks: Vec<u8>,
+    /// Changes whenever what the track plays changes: a new take, a cleared
+    /// one, or its smart controls. Volume, pan, mute and solo do not change
+    /// it; the window applies those as it plays.
+    pub revision: u64,
+    pub strip: ChannelStrip,
+    pub mix: TrackMix,
 }
 
 /// What the window draws.
@@ -117,17 +134,23 @@ pub struct TrackView {
 pub struct Snapshot {
     pub input_id: Option<String>,
     pub tracks: Vec<TrackView>,
+    /// The track the input is heard through and recorded onto.
+    pub armed_track_id: Option<u64>,
     pub recording_track_id: Option<u64>,
     pub paused_track_id: Option<u64>,
+    /// The input after the record level, 0 to 1, loudest since the last read.
     pub level: f32,
     /// Set when the microphone stops on its own. Written for the operator.
     pub warning: Option<String>,
+    /// Feedback protection heard feedback and muted monitoring.
+    pub feedback: bool,
     /// Share ▸ Export Recording was chosen. The window opens its options and
     /// then clears this.
     pub export_requested: bool,
     /// The formats this computer can write. AAC is a Mac; MP3, AIFF and WAVE
     /// are everywhere.
     pub formats: Vec<&'static str>,
+    pub peaks_per_second: u32,
 }
 
 #[derive(Clone)]
@@ -137,15 +160,54 @@ pub struct Recorder {
     /// Set when the window closes, so a take that was still opening — the
     /// permission dialog can outlive the window — is not left running.
     closed: Arc<AtomicBool>,
+    /// The chosen input, open for as long as the window has one. Recording
+    /// and monitoring are switches on it, so neither reopens the device and
+    /// what is heard stays live through record, stop and monitor.
+    input: Arc<Mutex<Option<Capture>>>,
+    /// What the audio thread reads without taking the session lock.
+    live: Arc<Live>,
+    /// The input that last failed to open, and when, so the window's polling
+    /// does not ask for it again every tick.
+    open_failed: Arc<Mutex<Option<(String, Instant)>>>,
+}
+
+struct Live {
+    config: Mutex<LiveConfig>,
+    /// Feedback protection tripped. Monitoring stays muted until the operator
+    /// says otherwise.
+    feedback: AtomicBool,
+}
+
+/// The armed track's settings, as the audio thread uses them.
+#[derive(Clone, Copy)]
+struct LiveConfig {
+    strip: ChannelStrip,
+    /// Monitoring is on and the track is audible.
+    monitor: bool,
+    gain: f32,
+    pan: f32,
+}
+
+impl Default for LiveConfig {
+    fn default() -> Self {
+        Self {
+            strip: ChannelStrip::default(),
+            monitor: false,
+            gain: 1.0,
+            pan: 0.0,
+        }
+    }
 }
 
 struct Session {
     input_id: Option<String>,
     tracks: Vec<Track>,
+    armed: Option<u64>,
     recording: Option<Recording>,
     /// The take pause held. Record on this track continues it.
     paused: Option<u64>,
     next_id: u64,
+    next_revision: u64,
     warning: Option<String>,
     export_requested: bool,
 }
@@ -158,23 +220,90 @@ struct Track {
     samples: Vec<f32>,
     channels: u16,
     rate: u32,
+    /// Where the take begins on the timeline, in seconds.
+    start: f64,
+    peaks: Vec<u8>,
+    revision: u64,
+    strip: ChannelStrip,
+    mix: TrackMix,
 }
 
 struct Recording {
     track_id: u64,
-    capture: Capture,
     /// The samples join the take already stored. A fresh recording replaces it.
     append: bool,
+    /// Where a fresh take begins on the timeline.
+    at: f64,
 }
 
 struct Capture {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
-    buffer: Arc<Mutex<Vec<f32>>>,
-    peak: Arc<AtomicU32>,
-    failed: Arc<Mutex<Option<String>>>,
+    shared: Arc<CaptureShared>,
+    device_id: String,
     channels: u16,
     rate: u32,
+}
+
+/// Between the audio thread and everything else.
+struct CaptureShared {
+    take: Mutex<Take>,
+    /// Keep what comes in. Off, the input is only metered and monitored.
+    recording: AtomicBool,
+    peak: AtomicU32,
+    failed: Mutex<Option<String>>,
+    /// Monitoring wants the speakers open.
+    want_speakers: AtomicBool,
+    /// A new monitoring ring for the audio thread to pick up.
+    hear: Mutex<Option<Producer<f32>>>,
+    /// Frames in the input's last callback: how much backlog monitoring needs.
+    chunk: AtomicUsize,
+}
+
+/// What a recording has captured so far.
+#[derive(Default)]
+struct Take {
+    samples: Vec<f32>,
+    peaks: Vec<u8>,
+    slice_peak: f32,
+    slice_frames: u32,
+}
+
+impl Take {
+    fn clear(&mut self) {
+        self.samples.clear();
+        self.peaks.clear();
+        self.slice_peak = 0.0;
+        self.slice_frames = 0;
+    }
+
+    fn push(&mut self, samples: &[f32], channels: usize, rate: u32) {
+        self.samples.extend_from_slice(samples);
+        let slice = (rate / PEAKS_PER_SECOND).max(1);
+        for frame in samples.chunks(channels.max(1)) {
+            let loudest = frame.iter().fold(0.0f32, |a, b| a.max(b.abs()));
+            self.slice_peak = self.slice_peak.max(loudest);
+            self.slice_frames += 1;
+            if self.slice_frames >= slice {
+                self.peaks.push(peak_byte(self.slice_peak));
+                self.slice_peak = 0.0;
+                self.slice_frames = 0;
+            }
+        }
+    }
+
+    /// The peaks, with the slice still filling.
+    fn drawn(&self) -> Vec<u8> {
+        let mut peaks = self.peaks.clone();
+        if self.slice_frames > 0 {
+            peaks.push(peak_byte(self.slice_peak));
+        }
+        peaks
+    }
+}
+
+fn peak_byte(peak: f32) -> u8 {
+    (peak.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 impl Drop for Capture {
@@ -186,36 +315,124 @@ impl Drop for Capture {
     }
 }
 
-impl Capture {
-    fn finish(mut self) -> Finished {
-        self.stop.store(true, Ordering::Release);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-        let samples = std::mem::take(&mut *lock(&self.buffer));
-        let warning = lock(&self.failed).clone();
-        Finished {
-            samples,
-            channels: self.channels,
-            rate: self.rate,
-            warning,
-        }
-    }
-}
-
-struct Finished {
-    samples: Vec<f32>,
-    channels: u16,
-    rate: u32,
-    warning: Option<String>,
-}
-
 impl Recorder {
     pub fn new() -> Self {
         Self {
             gate: Arc::new(Mutex::new(())),
             inner: Arc::new(Mutex::new(Session::new())),
             closed: Arc::new(AtomicBool::new(false)),
+            input: Arc::new(Mutex::new(None)),
+            live: Arc::new(Live {
+                config: Mutex::new(LiveConfig::default()),
+                feedback: AtomicBool::new(false),
+            }),
+            open_failed: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// A track's smart controls. Record level, automatic level control and
+    /// the noise gate print into the next take. The compressor, equalizer and
+    /// sends are heard on monitoring, playback and export.
+    pub fn set_strip(&self, id: u64, strip: ChannelStrip) -> Result<(), String> {
+        let strip = strip.sanitized();
+        let mut session = lock(&self.inner);
+        let revision = session.bump();
+        let track = session.track_mut(id)?;
+        let shaped_changed = shaping(&track.strip) != shaping(&strip);
+        if strip.monitor != track.strip.monitor || !strip.feedback_protection {
+            self.live.feedback.store(false, Ordering::Release);
+        }
+        track.strip = strip;
+        if shaped_changed {
+            track.revision = revision;
+        }
+        self.publish(&session);
+        Ok(())
+    }
+
+    /// A track's volume, pan, mute and solo.
+    pub fn set_mix(&self, id: u64, mix: TrackMix) -> Result<(), String> {
+        let mut session = lock(&self.inner);
+        session.track_mut(id)?.mix = mix.sanitized();
+        self.publish(&session);
+        Ok(())
+    }
+
+    /// The track the input is heard through and recorded onto.
+    pub fn arm(&self, id: u64) -> Result<(), String> {
+        let mut session = lock(&self.inner);
+        session.track_mut(id)?;
+        if session.armed != Some(id) {
+            self.live.feedback.store(false, Ordering::Release);
+        }
+        session.armed = Some(id);
+        self.publish(&session);
+        Ok(())
+    }
+
+    /// After feedback protection muted monitoring: carry on monitoring, or
+    /// turn it off on the armed track.
+    pub fn resolve_feedback(&self, keep_monitoring: bool) {
+        let mut session = lock(&self.inner);
+        if !keep_monitoring {
+            if let Some(id) = session.armed {
+                if let Ok(track) = session.track_mut(id) {
+                    track.strip.monitor = false;
+                }
+            }
+        }
+        self.live.feedback.store(false, Ordering::Release);
+        self.publish(&session);
+    }
+
+    /// The input and the speakers are the same device, or the same
+    /// computer's microphone and speakers: monitoring out loud would howl.
+    pub fn feedback_risk(&self) -> bool {
+        let Some(input_id) = lock(&self.inner).input_id.clone() else {
+            return false;
+        };
+        let host = cpal::default_host();
+        let name = |device: &cpal::Device| {
+            device
+                .description()
+                .ok()
+                .map(|description| description.name().trim().to_owned())
+                .unwrap_or_default()
+        };
+        let input = cpal::DeviceId::from_str(&input_id)
+            .ok()
+            .and_then(|parsed| host.device_by_id(&parsed));
+        let Some(output) = host.default_output_device() else {
+            return false;
+        };
+        let output_id = output.id().ok().map(|id| id.to_string());
+        if output_id.as_deref() == Some(input_id.as_str()) {
+            return !headphones(&name(&output));
+        }
+        input.is_some_and(|input| same_source(&name(&input), &name(&output)))
+    }
+
+    /// Hand the armed track's settings to the audio thread.
+    fn publish(&self, session: &Session) {
+        let any_solo = session.tracks.iter().any(|track| track.mix.solo);
+        let armed = session
+            .armed
+            .and_then(|id| session.tracks.iter().find(|track| track.id == id));
+        let config = match armed {
+            Some(track) => LiveConfig {
+                strip: track.strip,
+                monitor: track.strip.monitor && track.mix.audible(any_solo),
+                gain: track.mix.gain(),
+                pan: track.mix.pan,
+            },
+            None => LiveConfig::default(),
+        };
+        *lock(&self.live.config) = config;
+        if let Some(capture) = lock(&self.input).as_ref() {
+            capture
+                .shared
+                .want_speakers
+                .store(config.monitor, Ordering::Release);
         }
     }
 
@@ -223,6 +440,7 @@ impl Recorder {
     pub fn suspend(&self) {
         self.closed.store(true, Ordering::Release);
         self.stop();
+        *lock(&self.input) = None;
     }
 
     /// File ▸ New Recording. A take opened for a window that has since closed
@@ -241,96 +459,146 @@ impl Recorder {
         lock(&self.inner).export_requested = false;
     }
 
-    pub fn snapshot(&self) -> Snapshot {
+    /// Open the chosen input if it is not open. The session lock is not held
+    /// while it opens: the permission dialog can take as long as it likes.
+    fn ensure_input(&self) -> Result<(), String> {
+        let wanted = lock(&self.inner)
+            .input_id
+            .clone()
+            .filter(|id| !id.trim().is_empty());
+        let Some(wanted) = wanted else {
+            *lock(&self.input) = None;
+            return Err("Choose an input before recording.".to_owned());
+        };
+        if lock(&self.input)
+            .as_ref()
+            .is_some_and(|capture| capture.device_id == wanted)
+        {
+            return Ok(());
+        }
+        let capture = Capture::open(&wanted, Arc::clone(&self.live))?;
         let session = lock(&self.inner);
-        let Session {
-            input_id,
-            tracks,
-            recording,
-            paused,
-            warning,
-            export_requested,
-            ..
-        } = &*session;
-        let live = recording.as_ref().map(|recording| {
-            let level = f32::from_bits(recording.capture.peak.swap(0, Ordering::Relaxed));
-            let failed = lock(&recording.capture.failed).clone();
-            (recording.track_id, level, failed)
+        if session.input_id.as_deref() != Some(wanted.as_str())
+            || self.closed.load(Ordering::Acquire)
+        {
+            return Err("The input changed while it was opening.".to_owned());
+        }
+        *lock(&self.input) = Some(capture);
+        self.publish(&session);
+        Ok(())
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        if !self.closed.load(Ordering::Acquire) {
+            let input_id = lock(&self.inner).input_id.clone();
+            let retry = match (&input_id, lock(&self.open_failed).as_ref()) {
+                (Some(id), Some((failed, at))) => {
+                    failed != id || at.elapsed() > Duration::from_secs(4)
+                }
+                _ => true,
+            };
+            if retry {
+                if let Err(error) = self.ensure_input() {
+                    if let Some(id) = input_id {
+                        *lock(&self.open_failed) = Some((id, Instant::now()));
+                        let mut session = lock(&self.inner);
+                        if session.warning.is_none()
+                            && error != "The input changed while it was opening."
+                        {
+                            session.warning = Some(error);
+                        }
+                    }
+                } else {
+                    *lock(&self.open_failed) = None;
+                }
+            }
+        }
+
+        let input = lock(&self.input);
+        let shared = input.as_ref().map(|capture| Arc::clone(&capture.shared));
+        let (capture_channels, capture_rate) = input
+            .as_ref()
+            .map(|capture| (capture.channels, capture.rate))
+            .unwrap_or((1, 48_000));
+        drop(input);
+        let level = shared
+            .as_ref()
+            .map(|shared| f32::from_bits(shared.peak.swap(0, Ordering::Relaxed)))
+            .unwrap_or(0.0);
+        let failed = shared
+            .as_ref()
+            .and_then(|shared| lock(&shared.failed).clone());
+
+        let session = lock(&self.inner);
+        let live_take = session.recording.as_ref().and_then(|recording| {
+            let shared = shared.as_ref()?;
+            let take = lock(&shared.take);
+            Some((
+                recording.track_id,
+                seconds(take.samples.len(), capture_channels, capture_rate),
+                take.drawn(),
+                recording.append,
+                recording.at,
+            ))
         });
         Snapshot {
-            input_id: input_id.clone(),
-            recording_track_id: live.as_ref().map(|live| live.0),
-            paused_track_id: *paused,
-            level: live
-                .as_ref()
-                .map(|live| live.1.clamp(0.0, 1.0))
-                .unwrap_or(0.0),
-            warning: live
-                .as_ref()
-                .and_then(|live| live.2.clone())
-                .or_else(|| warning.clone()),
-            export_requested: *export_requested,
+            input_id: session.input_id.clone(),
+            armed_track_id: session.armed,
+            recording_track_id: session.recording.as_ref().map(|r| r.track_id),
+            paused_track_id: session.paused,
+            level: if session.input_id.is_some() {
+                level.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+            warning: failed.or_else(|| session.warning.clone()),
+            feedback: self.live.feedback.load(Ordering::Acquire),
+            export_requested: session.export_requested,
             formats: export_formats(),
-            tracks: tracks
+            peaks_per_second: PEAKS_PER_SECOND,
+            tracks: session
+                .tracks
                 .iter()
                 .map(|track| {
-                    let active = recording
-                        .as_ref()
-                        .filter(|recording| recording.track_id == track.id);
-                    let (seconds, peaks) = match active {
-                        Some(recording) => {
-                            let samples = lock(&recording.capture.buffer);
-                            let live_seconds = seconds(
-                                samples.len(),
-                                recording.capture.channels,
-                                recording.capture.rate,
-                            );
-                            if recording.append {
-                                (
-                                    seconds_of(track) + live_seconds,
-                                    waveform(&[
-                                        (&track.samples, track.channels, track.rate),
-                                        (
-                                            &samples,
-                                            recording.capture.channels,
-                                            recording.capture.rate,
-                                        ),
-                                    ]),
-                                )
-                            } else {
-                                (
-                                    live_seconds,
-                                    waveform(&[(
-                                        &samples,
-                                        recording.capture.channels,
-                                        recording.capture.rate,
-                                    )]),
-                                )
-                            }
+                    let live = live_take.as_ref().filter(|live| live.0 == track.id);
+                    let (start, seconds, peaks) = match live {
+                        Some((_, live_seconds, live_peaks, true, _)) => {
+                            let mut peaks = track.peaks.clone();
+                            peaks.extend_from_slice(live_peaks);
+                            (track.start, seconds_of(track) + live_seconds, peaks)
                         }
-                        None => (
-                            seconds_of(track),
-                            waveform(&[(&track.samples, track.channels, track.rate)]),
-                        ),
+                        Some((_, live_seconds, live_peaks, false, at)) => {
+                            (*at, *live_seconds, live_peaks.clone())
+                        }
+                        None => (track.start, seconds_of(track), track.peaks.clone()),
                     };
                     TrackView {
                         id: track.id,
                         name: track.name.clone(),
+                        start,
                         seconds,
-                        recording: active.is_some(),
-                        paused: *paused == Some(track.id),
+                        recording: live.is_some(),
+                        paused: session.paused == Some(track.id),
                         peaks,
+                        revision: track.revision,
+                        strip: track.strip,
+                        mix: track.mix,
                     }
                 })
                 .collect(),
         }
     }
 
-    /// `None` follows the system's default microphone.
+    /// `None` is no input: the meter stays at zero and recording is refused.
     pub fn set_input(&self, device_id: Option<String>) -> Result<(), String> {
         let _gate = lock(&self.gate);
         self.commit();
-        lock(&self.inner).input_id = device_id.filter(|id| !id.trim().is_empty());
+        *lock(&self.input) = None;
+        *lock(&self.open_failed) = None;
+        let mut session = lock(&self.inner);
+        session.input_id = device_id.filter(|id| !id.trim().is_empty());
+        session.warning = None;
+        self.live.feedback.store(false, Ordering::Release);
         Ok(())
     }
 
@@ -340,8 +608,11 @@ impl Recorder {
         let id = session.next_id;
         session.next_id += 1;
         let name = next_name(&session.tracks);
-        session.tracks.push(Track::empty(id, name));
-        view(&session.tracks[session.tracks.len() - 1], false, 0.0)
+        let revision = session.bump();
+        let mut track = Track::empty(id, name);
+        track.revision = revision;
+        session.tracks.push(track);
+        view(&session.tracks[session.tracks.len() - 1])
     }
 
     pub fn rename_track(&self, id: u64, name: String) -> Result<(), String> {
@@ -349,28 +620,18 @@ impl Recorder {
         if name.is_empty() {
             return Err("Give the track a name.".to_owned());
         }
-        let mut session = lock(&self.inner);
-        let track = session
-            .tracks
-            .iter_mut()
-            .find(|track| track.id == id)
-            .ok_or_else(|| "That track is no longer there.".to_owned())?;
-        track.name = name.to_owned();
+        lock(&self.inner).track_mut(id)?.name = name.to_owned();
         Ok(())
     }
 
     pub fn remove_track(&self, id: u64) -> Result<(), String> {
         let _gate = lock(&self.gate);
-        {
-            let session = lock(&self.inner);
-            if session
-                .recording
-                .as_ref()
-                .is_some_and(|recording| recording.track_id == id)
-            {
-                drop(session);
-                self.commit();
-            }
+        let recording_it = lock(&self.inner)
+            .recording
+            .as_ref()
+            .is_some_and(|recording| recording.track_id == id);
+        if recording_it {
+            self.commit();
         }
         let mut session = lock(&self.inner);
         session.tracks.retain(|track| track.id != id);
@@ -382,66 +643,120 @@ impl Recorder {
             session.next_id += 1;
             session.tracks.push(Track::empty(id, "Track 1".to_owned()));
         }
+        if session.armed == Some(id) || session.armed.is_none() {
+            session.armed = session.tracks.first().map(|track| track.id);
+        }
+        self.publish(&session);
         Ok(())
     }
 
-    /// Record `id`. A paused take on that track is continued. A finished take
-    /// is replaced once the new one has been read. A take already in progress
-    /// on another track is kept first.
-    pub fn start(&self, id: u64) -> Result<(), String> {
+    pub fn clear_track(&self, id: u64) -> Result<(), String> {
+        let _gate = lock(&self.gate);
+        let mut session = lock(&self.inner);
+        let revision = session.bump();
+        let track = session.track_mut(id)?;
+        track.samples.clear();
+        track.peaks.clear();
+        track.start = 0.0;
+        track.revision = revision;
+        if session.paused == Some(id) {
+            session.paused = None;
+        }
+        Ok(())
+    }
+
+    /// One track as the window plays it: its take through its compressor,
+    /// equalizer and sends, at its own rate and width, as a WAVE. The window
+    /// places it at the track's start and applies volume and pan itself, so
+    /// moving those does not ask for this again.
+    pub fn playback_track(&self, id: u64) -> Result<Vec<u8>, String> {
+        let track = {
+            let _gate = lock(&self.gate);
+            let session = lock(&self.inner);
+            session
+                .tracks
+                .iter()
+                .find(|track| track.id == id)
+                .cloned()
+                .ok_or_else(|| "That track is no longer there.".to_owned())?
+        };
+        if track.samples.is_empty() {
+            return Err("That track has nothing recorded.".to_owned());
+        }
+        let shaped = shape(&track.samples, track.channels, track.rate, &track.strip);
+        encode_wav(&shaped, track.channels, track.rate, 16).map_err(|error| {
+            tracing::warn!(%error, "could not prepare the take for playback");
+            "The recording could not be prepared for playback.".to_owned()
+        })
+    }
+
+    /// Record `id` from `at` seconds. A paused take on that track is
+    /// continued. A finished take is replaced once the new one has been read.
+    /// A take already in progress on another track is kept first.
+    pub fn start(&self, id: u64, at: f64) -> Result<(), String> {
         if self.closed.load(Ordering::Acquire) {
             return Err("Open the recording window and try again.".to_owned());
         }
-        let device_id = {
+        {
             let _gate = lock(&self.gate);
-            {
-                let session = lock(&self.inner);
-                if session
-                    .recording
-                    .as_ref()
-                    .is_some_and(|recording| recording.track_id == id)
-                {
-                    return Ok(());
-                }
-            }
-            self.commit();
             let session = lock(&self.inner);
+            if session
+                .recording
+                .as_ref()
+                .is_some_and(|recording| recording.track_id == id)
+            {
+                return Ok(());
+            }
             if !session.tracks.iter().any(|track| track.id == id) {
                 return Err("That track is no longer there.".to_owned());
             }
-            session.input_id.clone()
-        };
+            if session
+                .input_id
+                .as_deref()
+                .is_none_or(|input| input.trim().is_empty())
+            {
+                return Err("Choose an input before recording.".to_owned());
+            }
+            drop(session);
+            self.commit();
+        }
         // The permission dialog runs on the main thread. The gate is not held
         // across it, or closing the window there would wait forever.
-        let capture = Capture::open(device_id.as_deref())?;
+        self.ensure_input()?;
         let _gate = lock(&self.gate);
         if self.closed.load(Ordering::Acquire) {
             return Ok(());
         }
+        let input = lock(&self.input);
+        let capture = input
+            .as_ref()
+            .ok_or_else(|| "The microphone could not be opened.".to_owned())?;
         let mut session = lock(&self.inner);
         if !session.tracks.iter().any(|track| track.id == id) {
             return Err("That track is no longer there.".to_owned());
         }
         let append = session.paused == Some(id);
+        lock(&capture.shared.take).clear();
+        capture.shared.recording.store(true, Ordering::Release);
         session.paused = None;
         session.warning = None;
+        session.armed = Some(id);
         session.recording = Some(Recording {
             track_id: id,
-            capture,
             append,
+            at: if at.is_finite() { at.max(0.0) } else { 0.0 },
         });
+        drop(input);
+        self.publish(&session);
         Ok(())
     }
 
     /// Hold the take that is in progress. Record again continues it.
     pub fn pause(&self) -> Result<(), String> {
         let _gate = lock(&self.gate);
-        let id = {
-            let session = lock(&self.inner);
-            match session.recording.as_ref() {
-                Some(recording) => recording.track_id,
-                None => return Ok(()),
-            }
+        let id = match lock(&self.inner).recording.as_ref() {
+            Some(recording) => recording.track_id,
+            None => return Ok(()),
         };
         self.commit();
         lock(&self.inner).paused = Some(id);
@@ -458,8 +773,10 @@ impl Recorder {
 
     /// The takes to write, copied so the dialog can wait without holding them.
     ///
-    /// `track` is one take. `None` with `separate` is every take that has
-    /// sound. `None` without `separate` mixes those takes into one.
+    /// `track` is one take. `None` with `separate` is every take that is
+    /// heard. `None` without `separate` mixes those takes into one. Muted
+    /// tracks, and tracks left out by a solo, are not exported: the export is
+    /// what playback sounds like.
     pub fn prepare_export(
         &self,
         format: Format,
@@ -468,26 +785,39 @@ impl Recorder {
         separate: bool,
     ) -> Result<Vec<Prepared>, String> {
         let _gate = lock(&self.gate);
-        let chosen = {
+        let chosen: Vec<Track> = {
             let session = lock(&self.inner);
             if session.recording.is_some() {
                 return Err("Pause or stop the recording before exporting.".to_owned());
             }
-            let tracks: Vec<Track> = match track {
+            let any_solo = session.tracks.iter().any(|track| track.mix.solo);
+            match track {
                 Some(id) => vec![session
                     .tracks
                     .iter()
                     .find(|track| track.id == id)
                     .ok_or_else(|| "That track is no longer there.".to_owned())?
                     .clone()],
-                None => session
-                    .tracks
-                    .iter()
-                    .filter(|track| !track.samples.is_empty())
-                    .cloned()
-                    .collect(),
-            };
-            tracks
+                None => {
+                    let recorded: Vec<&Track> = session
+                        .tracks
+                        .iter()
+                        .filter(|track| !track.samples.is_empty())
+                        .collect();
+                    if !recorded.is_empty()
+                        && recorded.iter().all(|track| !track.mix.audible(any_solo))
+                    {
+                        return Err(
+                            "Every recorded track is muted. Unmute one to export it.".to_owned()
+                        );
+                    }
+                    recorded
+                        .into_iter()
+                        .filter(|track| track.mix.audible(any_solo))
+                        .cloned()
+                        .collect()
+                }
+            }
         };
         if chosen.is_empty() || chosen.iter().all(|track| track.samples.is_empty()) {
             return Err("Record something before exporting.".to_owned());
@@ -508,7 +838,7 @@ impl Recorder {
                 bits,
                 format,
                 bitrate,
-                samples: render(&track.samples, track.channels, track.rate, channels, rate),
+                samples: mixed_down(track, channels, rate),
             })
             .collect();
         if separate || track.is_some() {
@@ -546,33 +876,142 @@ impl Recorder {
         })
     }
 
-    /// Stop, and store what was captured onto its track. The previous take is
-    /// replaced only once this one has been read, so a microphone that never
-    /// starts does not wipe it.
+    /// Stop keeping the input, and store what was captured onto its track.
+    /// The previous take is replaced only once this one has been read, so a
+    /// microphone that never starts does not wipe it.
     fn commit(&self) {
         let recording = lock(&self.inner).recording.take();
         let Some(recording) = recording else {
             return;
         };
-        let finished = recording.capture.finish();
+        let captured = lock(&self.input).as_ref().map(|capture| {
+            capture.shared.recording.store(false, Ordering::Release);
+            let mut take = lock(&capture.shared.take);
+            let peaks = take.drawn();
+            let samples = std::mem::take(&mut take.samples);
+            take.clear();
+            (samples, peaks, capture.channels, capture.rate)
+        });
+        let Some((samples, peaks, channels, rate)) = captured else {
+            return;
+        };
         let mut session = lock(&self.inner);
-        if let Some(warning) = finished.warning {
-            session.warning = Some(warning);
-        }
+        let revision = session.bump();
         if let Some(track) = session
             .tracks
             .iter_mut()
             .find(|track| track.id == recording.track_id)
         {
-            store(
-                track,
-                &finished.samples,
-                finished.channels,
-                finished.rate,
-                recording.append,
-            );
+            if store(track, &samples, channels, rate, recording.append) {
+                if recording.append {
+                    track.peaks.extend_from_slice(&peaks);
+                } else {
+                    track.peaks = peaks;
+                    track.start = recording.at;
+                }
+                track.revision = revision;
+            }
         }
     }
+}
+
+/// The parts of the strip that change what playback sounds like.
+fn shaping(strip: &ChannelStrip) -> ChannelStrip {
+    ChannelStrip {
+        record_level: 0.0,
+        auto_level: false,
+        noise_gate: false,
+        noise_gate_amount: 0.0,
+        monitor: false,
+        feedback_protection: false,
+        ..*strip
+    }
+}
+
+/// One track for export: its take shaped, panned, at the fader's level, and
+/// placed at its start.
+fn mixed_down(track: &Track, channels: u16, rate: u32) -> Vec<f32> {
+    let width = usize::from(track.channels.max(1));
+    let native = render(
+        &track.samples,
+        track.channels,
+        track.rate,
+        track.channels,
+        rate,
+    );
+    let shaped = shape(&native, track.channels, rate, &track.strip);
+    let lead = (track.start.max(0.0) * f64::from(rate)).round() as usize;
+    let out_width = usize::from(channels.max(1));
+    let mut out = Vec::with_capacity((lead + shaped.len() / width) * out_width);
+    out.resize(lead * out_width, 0.0);
+    let gain = track.mix.gain();
+    for frame in shaped.chunks_exact(width) {
+        let (left, right) = pan_frame(frame, track.mix.pan, gain);
+        if out_width == 1 {
+            out.push((left + right) * 0.5);
+        } else {
+            out.push(left);
+            out.push(right);
+            out.extend(std::iter::repeat_n(0.0, out_width - 2));
+        }
+    }
+    out
+}
+
+/// Headphones, earbuds and headsets do not feed back into a microphone.
+fn headphones(name: &str) -> bool {
+    let name = name.to_lowercase();
+    [
+        "headphone",
+        "airpods",
+        "earbud",
+        "buds",
+        "headset",
+        "earphone",
+        "beats",
+    ]
+    .iter()
+    .any(|word| name.contains(word))
+}
+
+/// The microphone and the speakers are one source: the same device, or the
+/// same computer's built-in pair ("MacBook Pro Microphone" and "MacBook Pro
+/// Speakers"), so the speakers' sound comes straight back in.
+fn same_source(input: &str, output: &str) -> bool {
+    if output.trim().is_empty() || headphones(output) {
+        return false;
+    }
+    let base = |name: &str| {
+        let lower = name.to_lowercase();
+        let words: Vec<&str> = lower
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|word| {
+                !word.is_empty()
+                    && ![
+                        "microphone",
+                        "microphones",
+                        "mic",
+                        "mics",
+                        "speaker",
+                        "speakers",
+                        "input",
+                        "output",
+                        "built",
+                        "in",
+                        "internal",
+                        "audio",
+                    ]
+                    .contains(word)
+            })
+            .collect();
+        words.join(" ")
+    };
+    let builtin = |name: &str| {
+        let lower = name.to_lowercase();
+        lower.contains("built-in") || lower.contains("macbook") || lower.contains("imac")
+    };
+    let (input_base, output_base) = (base(input), base(output));
+    (!input_base.is_empty() && input_base == output_base) || (builtin(input) && builtin(output))
 }
 
 impl Session {
@@ -580,12 +1019,26 @@ impl Session {
         Self {
             input_id: None,
             tracks: vec![Track::empty(1, "Track 1".to_owned())],
+            armed: Some(1),
             recording: None,
             paused: None,
             next_id: 2,
+            next_revision: 1,
             warning: None,
             export_requested: false,
         }
+    }
+
+    fn bump(&mut self) -> u64 {
+        self.next_revision += 1;
+        self.next_revision
+    }
+
+    fn track_mut(&mut self, id: u64) -> Result<&mut Track, String> {
+        self.tracks
+            .iter_mut()
+            .find(|track| track.id == id)
+            .ok_or_else(|| "That track is no longer there.".to_owned())
     }
 }
 
@@ -597,6 +1050,11 @@ impl Track {
             samples: Vec::new(),
             channels: 1,
             rate: 48_000,
+            start: 0.0,
+            peaks: Vec::new(),
+            revision: 0,
+            strip: ChannelStrip::default(),
+            mix: TrackMix::default(),
         }
     }
 }
@@ -629,88 +1087,41 @@ fn export_formats() -> Vec<&'static str> {
     }
 }
 
-fn view(track: &Track, recording: bool, seconds: f64) -> TrackView {
+fn view(track: &Track) -> TrackView {
     TrackView {
         id: track.id,
         name: track.name.clone(),
-        seconds: if recording {
-            seconds
-        } else {
-            seconds_of(track)
-        },
-        recording,
+        start: track.start,
+        seconds: seconds_of(track),
+        recording: false,
         paused: false,
-        peaks: Vec::new(),
+        peaks: track.peaks.clone(),
+        revision: track.revision,
+        strip: track.strip,
+        mix: track.mix,
     }
 }
 
-/// How many slices of a take the window draws.
-const PEAKS: usize = 240;
-
-fn waveform(parts: &[(&[f32], u16, u32)]) -> Vec<f32> {
-    let total: f64 = parts
-        .iter()
-        .map(|(samples, channels, rate)| seconds(samples.len(), *channels, *rate))
-        .sum();
-    if total <= 0.0 {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity(PEAKS);
-    for (samples, channels, rate) in parts {
-        if samples.is_empty() {
-            continue;
-        }
-        let share = seconds(samples.len(), *channels, *rate) / total;
-        let count = ((share * PEAKS as f64).round() as usize).max(1);
-        out.extend(peak_buckets(samples, *channels, count));
-    }
-    out
-}
-
-fn peak_buckets(samples: &[f32], channels: u16, count: usize) -> Vec<f32> {
-    let channels = usize::from(channels.max(1));
-    let frames = samples.len() / channels;
-    if frames == 0 || count == 0 {
-        return Vec::new();
-    }
-    let mut out = vec![0.0; count];
-    let step = (frames / (count * 8)).max(1);
-    let mut frame = 0;
-    while frame < frames {
-        let bucket = (frame * count / frames).min(count - 1);
-        let base = frame * channels;
-        let mut peak = 0.0f32;
-        for channel in 0..channels {
-            if let Some(sample) = samples.get(base + channel) {
-                peak = peak.max(sample.abs());
-            }
-        }
-        if peak > out[bucket] {
-            out[bucket] = peak.min(1.0);
-        }
-        frame += step;
-    }
-    out
-}
-
-fn store(track: &mut Track, samples: &[f32], channels: u16, rate: u32, append: bool) {
+/// True when the take changed.
+fn store(track: &mut Track, samples: &[f32], channels: u16, rate: u32, append: bool) -> bool {
     if samples.is_empty() {
-        return;
+        return false;
     }
     let same = track.rate == rate && track.channels == channels;
     if append && !track.samples.is_empty() && same {
         track.samples.extend_from_slice(samples);
-        return;
+        return true;
     }
     if append && !track.samples.is_empty() {
         track
             .samples
             .extend(render(samples, channels, rate, track.channels, track.rate));
-        return;
+        return true;
     }
     track.samples = samples.to_vec();
     track.channels = channels;
     track.rate = rate;
+    true
 }
 
 fn seconds_of(track: &Track) -> f64 {
@@ -742,7 +1153,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl Capture {
-    fn open(device_id: Option<&str>) -> Result<Self, String> {
+    fn open(device_id: &str, live: Arc<Live>) -> Result<Self, String> {
         use crate::services::permissions::{self, MediaKind};
         let access = permissions::request(MediaKind::Microphone);
         if !access.granted {
@@ -753,19 +1164,23 @@ impl Capture {
         }
 
         let stop = Arc::new(AtomicBool::new(false));
-        let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
-        let peak = Arc::new(AtomicU32::new(0));
-        let failed = Arc::new(Mutex::new(None));
+        let shared = Arc::new(CaptureShared {
+            take: Mutex::new(Take::default()),
+            recording: AtomicBool::new(false),
+            peak: AtomicU32::new(0),
+            failed: Mutex::new(None),
+            want_speakers: AtomicBool::new(lock(&live.config).monitor),
+            hear: Mutex::new(None),
+            chunk: AtomicUsize::new(0),
+        });
         let (ready, started) = std::sync::mpsc::channel::<Result<(u16, u32), String>>();
         let stopping = Arc::clone(&stop);
-        let captured = Arc::clone(&buffer);
-        let level = Arc::clone(&peak);
-        let fault = Arc::clone(&failed);
-        let device_id = device_id.map(str::to_owned);
+        let thread_shared = Arc::clone(&shared);
+        let owned_id = device_id.to_owned();
         let thread = std::thread::Builder::new()
             .name("present-recorder".into())
             .spawn(move || {
-                let opened = open_stream(device_id.as_deref(), &captured, &level, &fault);
+                let opened = open_stream(&owned_id, &thread_shared, &live);
                 let (stream, channels, rate) = match opened {
                     Ok(opened) => opened,
                     Err(error) => {
@@ -774,9 +1189,25 @@ impl Capture {
                     }
                 };
                 let _ = ready.send(Ok((channels, rate)));
+                let mut speakers: Option<cpal::Stream> = None;
+                let mut speakers_failed = false;
                 while !stopping.load(Ordering::Acquire) {
-                    std::thread::sleep(Duration::from_millis(50));
+                    let want = thread_shared.want_speakers.load(Ordering::Acquire);
+                    if want && speakers.is_none() && !speakers_failed {
+                        match open_speakers(&thread_shared, channels, rate) {
+                            Ok(stream) => speakers = Some(stream),
+                            Err(error) => {
+                                speakers_failed = true;
+                                *lock(&thread_shared.failed) = Some(error);
+                            }
+                        }
+                    } else if !want {
+                        speakers = None;
+                        speakers_failed = false;
+                    }
+                    std::thread::sleep(Duration::from_millis(15));
                 }
+                drop(speakers);
                 drop(stream);
             })
             .map_err(|error| {
@@ -787,9 +1218,8 @@ impl Capture {
             Ok(Ok((channels, rate))) => Ok(Self {
                 stop,
                 thread: Some(thread),
-                buffer,
-                peak,
-                failed,
+                shared,
+                device_id: device_id.to_owned(),
                 channels,
                 rate,
             }),
@@ -810,17 +1240,18 @@ impl Capture {
 type Opened = (cpal::Stream, u16, u32);
 
 fn open_stream(
-    device_id: Option<&str>,
-    buffer: &Arc<Mutex<Vec<f32>>>,
-    peak: &Arc<AtomicU32>,
-    failed: &Arc<Mutex<Option<String>>>,
+    device_id: &str,
+    shared: &Arc<CaptureShared>,
+    live: &Arc<Live>,
 ) -> Result<Opened, String> {
     let host = cpal::default_host();
-    let device = device_id
-        .and_then(|id| cpal::DeviceId::from_str(id).ok())
-        .and_then(|id| host.device_by_id(&id))
-        .or_else(|| host.default_input_device())
-        .ok_or_else(|| "This computer has no microphone.".to_owned())?;
+    if device_id.trim().is_empty() {
+        return Err("Choose an input before recording.".to_owned());
+    }
+    let device = cpal::DeviceId::from_str(device_id)
+        .ok()
+        .and_then(|parsed| host.device_by_id(&parsed))
+        .ok_or_else(|| "That input is no longer connected.".to_owned())?;
     let config = device
         .default_input_config()
         .map_err(|error| plain_open_error(&error))?;
@@ -829,60 +1260,25 @@ fn open_stream(
     // An interface with many channels records its first pair. The rest is
     // other inputs the operator did not ask to mix in.
     let keep = u16::try_from(device_channels.min(2)).unwrap_or(1);
-    let buffer = Arc::clone(buffer);
-    let peak = Arc::clone(peak);
-    let failed = Arc::clone(failed);
+    let failed = Arc::clone(shared);
     let report = move |error: cpal::StreamError| {
         tracing::warn!(%error, "the recording microphone failed");
-        *lock(&failed) =
+        *lock(&failed.failed) =
             Some("The microphone stopped. Check that it is still connected.".to_owned());
     };
+    let feed = CaptureFeed {
+        shared: Arc::clone(shared),
+        live: Arc::clone(live),
+        rate,
+        keep: usize::from(keep),
+        device_channels,
+    };
     let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build::<f32>(
-            &device,
-            &config,
-            device_channels,
-            keep,
-            buffer,
-            peak,
-            report,
-        ),
-        cpal::SampleFormat::I16 => build::<i16>(
-            &device,
-            &config,
-            device_channels,
-            keep,
-            buffer,
-            peak,
-            report,
-        ),
-        cpal::SampleFormat::I32 => build::<i32>(
-            &device,
-            &config,
-            device_channels,
-            keep,
-            buffer,
-            peak,
-            report,
-        ),
-        cpal::SampleFormat::U16 => build::<u16>(
-            &device,
-            &config,
-            device_channels,
-            keep,
-            buffer,
-            peak,
-            report,
-        ),
-        cpal::SampleFormat::F64 => build::<f64>(
-            &device,
-            &config,
-            device_channels,
-            keep,
-            buffer,
-            peak,
-            report,
-        ),
+        cpal::SampleFormat::F32 => build::<f32>(&device, &config, feed, report),
+        cpal::SampleFormat::I16 => build::<i16>(&device, &config, feed, report),
+        cpal::SampleFormat::I32 => build::<i32>(&device, &config, feed, report),
+        cpal::SampleFormat::U16 => build::<u16>(&device, &config, feed, report),
+        cpal::SampleFormat::F64 => build::<f64>(&device, &config, feed, report),
         other => {
             tracing::warn!(format = %other, "the microphone's samples are not ones this records");
             return Err(
@@ -902,35 +1298,185 @@ fn plain_open_error(error: &impl std::fmt::Display) -> String {
     "The microphone could not be opened. Check that it is connected and that Present is allowed to use it.".to_owned()
 }
 
+struct CaptureFeed {
+    shared: Arc<CaptureShared>,
+    live: Arc<Live>,
+    rate: u32,
+    keep: usize,
+    device_channels: usize,
+}
+
 fn build<T>(
     device: &cpal::Device,
     config: &cpal::SupportedStreamConfig,
-    device_channels: usize,
-    keep: u16,
-    buffer: Arc<Mutex<Vec<f32>>>,
-    peak: Arc<AtomicU32>,
+    feed: CaptureFeed,
     report: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<cpal::Stream, cpal::BuildStreamError>
 where
     T: cpal::SizedSample,
     f32: FromSample<T>,
 {
-    let keep = usize::from(keep);
+    let CaptureFeed {
+        shared,
+        live,
+        rate,
+        keep,
+        device_channels,
+    } = feed;
+    let mut rider = InputRider::new(rate);
+    let mut voice = Voice::new(keep.max(1), rate.max(1));
+    let mut watch = FeedbackWatch::new(rate);
+    let mut config_now = LiveConfig::default();
+    let mut hear: Option<Producer<f32>> = None;
+    // Kept between callbacks: this is the audio device's own thread, which
+    // should not go to the allocator every few milliseconds.
+    let mut printed: Vec<f32> = Vec::new();
+    let mut heard: Vec<f32> = Vec::new();
     device.build_input_stream(
         &config.config(),
         move |data: &[T], _| {
-            let mut guard = lock(&buffer);
-            for frame in data.chunks_exact(device_channels) {
-                for sample in frame.iter().take(keep) {
-                    let value = finite(sample.to_sample::<f32>());
-                    note_peak(&peak, value);
-                    guard.push(value);
+            // Never wait on the window: a setting that is being written is
+            // picked up on the next callback.
+            if let Ok(config) = live.config.try_lock() {
+                config_now = *config;
+            }
+            if let Ok(mut slot) = shared.hear.try_lock() {
+                if let Some(producer) = slot.take() {
+                    hear = Some(producer);
+                }
+            }
+            let strip = config_now.strip;
+            let recording = shared.recording.load(Ordering::Acquire);
+            let protect = strip.feedback_protection;
+            let mut monitoring =
+                config_now.monitor && !live.feedback.load(Ordering::Relaxed) && hear.is_some();
+            if !monitoring {
+                watch.reset();
+            }
+            printed.clear();
+            heard.clear();
+            let mut loudest = 0.0f32;
+            let mut frame = [0.0f32; 2];
+            let frames = data.len() / device_channels.max(1);
+            shared.chunk.store(frames, Ordering::Relaxed);
+            for incoming in data.chunks_exact(device_channels) {
+                for (slot, sample) in frame.iter_mut().zip(incoming.iter().take(keep)) {
+                    *slot = sample.to_sample::<f32>();
+                }
+                let frame = &mut frame[..keep];
+                ride(frame, &mut rider, &strip);
+                for sample in frame.iter() {
+                    loudest = loudest.max(sample.abs());
+                }
+                if recording {
+                    printed.extend_from_slice(frame);
+                }
+                if monitoring {
+                    let mut wet = [0.0f32; 2];
+                    for (channel, sample) in frame.iter().enumerate() {
+                        wet[channel] = voice.process(channel, *sample, &strip);
+                    }
+                    let (left, right) = pan_frame(&wet[..keep], config_now.pan, config_now.gain);
+                    let (left, right) = (left.clamp(-1.0, 1.0), right.clamp(-1.0, 1.0));
+                    if protect && watch.hear(left.abs().max(right.abs())) {
+                        live.feedback.store(true, Ordering::Release);
+                        monitoring = false;
+                        heard.clear();
+                        continue;
+                    }
+                    heard.push(left);
+                    heard.push(right);
+                }
+            }
+            note_peak(&shared.peak, loudest);
+            if recording && !printed.is_empty() {
+                lock(&shared.take).push(&printed, keep, rate);
+            }
+            if let Some(producer) = hear.as_mut() {
+                if !heard.is_empty() {
+                    let room = producer.slots().min(heard.len()) & !1;
+                    if let Ok(chunk) = producer.write_chunk_uninit(room) {
+                        chunk.fill_from_iter(heard.iter().copied());
+                    }
                 }
             }
         },
         report,
         None,
     )
+}
+
+/// The default output, for input monitoring. The input's frames arrive at
+/// the input's rate; this plays them at the output's, and keeps only a few
+/// milliseconds waiting so what is heard stays live.
+fn open_speakers(
+    shared: &Arc<CaptureShared>,
+    _channels: u16,
+    in_rate: u32,
+) -> Result<cpal::Stream, String> {
+    let unavailable = || "The speakers could not be opened for monitoring.".to_owned();
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| "This computer has no speakers to monitor on.".to_owned())?;
+    let config = device.default_output_config().map_err(|_| unavailable())?;
+    let out_rate = config.sample_rate().max(1);
+    let out_channels = usize::from(config.channels().max(1));
+    // Up to half a second of stereo frames. Only a few milliseconds are ever
+    // kept; the rest is room for a callback that ran late.
+    let (producer, mut consumer) = RingBuffer::<f32>::new(in_rate.max(1) as usize);
+    let step = f64::from(in_rate.max(1)) / f64::from(out_rate);
+    let chunk = Arc::clone(shared);
+    let mut position = 1.0f64;
+    let mut current = (0.0f32, 0.0f32);
+    let mut next = (0.0f32, 0.0f32);
+    let stream = device
+        .build_output_stream(
+            &config.config(),
+            move |data: &mut [f32], _| {
+                let frames = data.len() / out_channels;
+                // Drop what is too old: a backlog is a delay the operator hears.
+                let waiting = consumer.slots() / 2;
+                let needed = (frames as f64 * step).ceil() as usize + 2;
+                let input_chunk = chunk.chunk.load(Ordering::Relaxed);
+                let backlog = (input_chunk * 2).max(in_rate as usize / 200);
+                if waiting > needed + backlog {
+                    let excess = (waiting - needed - backlog) * 2;
+                    if let Ok(skip) = consumer.read_chunk(excess) {
+                        skip.commit_all();
+                    }
+                }
+                for out in data.chunks_mut(out_channels) {
+                    while position >= 1.0 {
+                        current = next;
+                        next = match (consumer.pop(), consumer.pop()) {
+                            (Ok(left), Ok(right)) => (left, right),
+                            _ => (0.0, 0.0),
+                        };
+                        position -= 1.0;
+                    }
+                    let t = position as f32;
+                    let left = current.0 + (next.0 - current.0) * t;
+                    let right = current.1 + (next.1 - current.1) * t;
+                    position += step;
+                    match out {
+                        [mono] => *mono = (left + right) * 0.5,
+                        [l, r, rest @ ..] => {
+                            *l = left;
+                            *r = right;
+                            rest.fill(0.0);
+                        }
+                        [] => {}
+                    }
+                }
+            },
+            |error| tracing::warn!(%error, "input monitoring stopped"),
+            None,
+        )
+        .map_err(|_| unavailable())?;
+    stream.play().map_err(|_| unavailable())?;
+    *lock(&shared.hear) = Some(producer);
+    Ok(stream)
 }
 
 fn finite(sample: f32) -> f32 {
@@ -1558,11 +2104,10 @@ mod tests {
 
     fn take(samples: Vec<f32>, channels: u16, rate: u32) -> Track {
         Track {
-            id: 1,
-            name: "Take".into(),
             samples,
             channels,
             rate,
+            ..Track::empty(1, "Take".into())
         }
     }
 
@@ -1708,6 +2253,19 @@ mod tests {
     }
 
     #[test]
+    fn no_input_is_silent_and_recording_is_refused() {
+        let recorder = Recorder::new();
+        let snap = recorder.snapshot();
+        assert_eq!(snap.input_id, None);
+        assert_eq!(snap.level, 0.0);
+        assert!(lock(&recorder.input).is_none());
+        let error = recorder.start(1, 0.0).unwrap_err();
+        assert_eq!(error, "Choose an input before recording.");
+        assert!(lock(&recorder.inner).recording.is_none());
+        assert!(lock(&recorder.input).is_none());
+    }
+
+    #[test]
     fn recording_again_replaces_the_take_only_after_it_is_read() {
         let recorder = Recorder::new();
         {
@@ -1719,5 +2277,86 @@ mod tests {
         // commit with nothing recording leaves the take.
         recorder.commit();
         assert_eq!(lock(&recorder.inner).tracks[0].samples, vec![0.2, 0.2]);
+    }
+
+    #[test]
+    fn a_take_exports_where_it_was_recorded_at_its_volume_and_pan() {
+        let mut track = take(vec![0.5; 4], 1, 8);
+        track.strip.compressor = false;
+        track.strip.eq = false;
+        track.strip.ambience = 0.0;
+        track.strip.reverb = 0.0;
+        track.start = 0.5;
+        track.mix.pan = 1.0;
+        track.mix.volume_db = -6.0;
+        let out = mixed_down(&track, 2, 8);
+        assert_eq!(out.len(), (4 + 4) * 2, "half a second of lead at 8 Hz");
+        assert!(out[..8].iter().all(|sample| *sample == 0.0));
+        let (left, right) = (out[8], out[9]);
+        assert!(
+            left.abs() < 1e-4,
+            "hard right leaves the left empty: {left}"
+        );
+        assert!(
+            (right - 0.5 * std::f32::consts::SQRT_2 * 0.501).abs() < 1e-2,
+            "{right}"
+        );
+    }
+
+    #[test]
+    fn a_muted_track_is_left_out_of_the_export() {
+        let recorder = Recorder::new();
+        let second = recorder.add_track().id;
+        {
+            let mut session = lock(&recorder.inner);
+            for track in &mut session.tracks {
+                track.samples = vec![0.1; 48];
+            }
+            session.tracks[0].mix.mute = true;
+        }
+        let prepared = recorder
+            .prepare_export(Format::Wave, Quality::Medium, None, true)
+            .unwrap();
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].name, "Track 2");
+        recorder
+            .set_mix(
+                second,
+                TrackMix {
+                    mute: true,
+                    ..TrackMix::default()
+                },
+            )
+            .unwrap();
+        let error = recorder
+            .prepare_export(Format::Wave, Quality::Medium, None, false)
+            .err()
+            .unwrap();
+        assert!(error.contains("muted"), "{error}");
+    }
+
+    #[test]
+    fn the_computers_own_microphone_and_speakers_are_one_source() {
+        assert!(same_source(
+            "MacBook Pro Microphone",
+            "MacBook Pro Speakers"
+        ));
+        assert!(same_source("Built-in Microphone", "Built-in Output"));
+        assert!(same_source("Scarlett 2i2 USB", "Scarlett 2i2 USB"));
+        assert!(!same_source(
+            "MacBook Pro Microphone",
+            "External Headphones"
+        ));
+        assert!(!same_source("Cole's AirPods Pro", "Cole's AirPods Pro"));
+        assert!(!same_source("Shure MV7", "MacBook Pro Speakers"));
+    }
+
+    #[test]
+    fn a_take_records_its_peaks_ten_times_a_second() {
+        let mut take = Take::default();
+        take.push(&vec![0.5; 4_800 * 2], 2, 48_000);
+        assert_eq!(take.peaks, vec![128]);
+        take.push(&[1.0, 1.0], 2, 48_000);
+        assert_eq!(take.drawn(), vec![128, 255]);
     }
 }

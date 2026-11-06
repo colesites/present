@@ -1,18 +1,26 @@
 //! What a surface drawn through a look column shows: the audience scene,
 //! through that column. The NDI output in Connections goes through the NDI
-//! column, and each audience screen added in Screen Configuration through its
-//! own; the Screen every setup has is the program column, which the operator
-//! window folds into the scene itself.
+//! column, each audience screen added in Screen Configuration through its
+//! own, and the Screen every setup has through the program column.
+//!
+//! **The scene carries the operator's switches, and nothing of any column**
+//! (owner, 2026-11-03). The switches in the right sidebar used to *be* the
+//! Screen's column, so the Screen's column gated every other screen too:
+//! turning the words off for the Screen in Looks turned them off on Screen 2,
+//! and Screen 2 could never show what the Screen did not. They are their own
+//! now (`LooksConfig::showing`), the operator window folds only them into the
+//! scene, and every audience screen — the Screen as well — applies its own
+//! column here. A layer shows where its column lets it through and its switch
+//! is on.
 //!
 //! Electron's stream is a capture of the audience window, so it shows the
 //! program column, and the NDI column in the Looks window is saved and read by
 //! nothing. The owner's call for the rewrite is that the stream follows the NDI
 //! column — and a screen added beside the Screen follows its own.
 //!
-//! The audience scene arrives with the program column already folded in —
-//! `App.tsx:535-546` turns the live look's program layers into scene fields
-//! before the operator sends it. This replaces those fields with the column's,
-//! derived the same way:
+//! The audience scene arrives with the switches folded in — `App.tsx` turns
+//! them into scene fields before the operator sends it. This gates those
+//! fields by the column:
 //!
 //! | layer                      | scene field       | `App.tsx`                  |
 //! |----------------------------|-------------------|----------------------------|
@@ -26,12 +34,10 @@
 //! | text position              | `text_position`   | `outputTextPosition`       |
 //! | messages or announcements  | `message_overlay` | `isMessageLayerEnabled`    |
 //!
-//! **Messages are the one row that is not a straight copy.** The program side
-//! deliberately does not gate the banner on its flag
-//! (`PresentContainer.tsx:1787-1792`: the gate raced the overlay and dropped
-//! banners); switching the program layer off clears the overlay instead. Nothing
-//! clears anything when another column changes, so a flag that did not gate the
-//! banner would do nothing at all. Here it gates.
+//! **Messages.** The operator window does not gate the banner on its switch
+//! (`PresentContainer.tsx`: the gate raced the overlay and dropped banners);
+//! switching it off clears the overlay instead. A column's flag gates it
+//! here.
 //!
 //! **The operator's quick toggles reach every column too** (owner, 2026-09-17).
 //! A column says which layers its surface may carry; the toggles say what is
@@ -57,27 +63,15 @@ use crate::services::looks::{
 };
 use crate::services::output::{LayerBox, OutputScene, OutputTextPosition, ScreenLayout};
 
-/// The Screen every setup has, through the program column. The operator
-/// window folds that column's layers into the scene before sending it — all
-/// but props, which it leaves to this — so only they and the layout are
-/// applied here. The banner is not gated, as the module's notes say.
-///
-/// The timer is gated here as well. The operator window folds its own copy of
-/// the column, which starts as the shipped look — timer on — until the
-/// app's arrives, so the first scenes it sent after a launch showed the timer
-/// for a moment with the operator's timer off. This copy is the app's own,
-/// read before any window opened.
+/// The Screen every setup has, through the program column: as any other
+/// audience screen through its own, but with the words where the operator
+/// window sent them, which is the program column's text position already.
 pub fn scene_for_program(on_screen: &OutputScene, column: &LookTargetState) -> OutputScene {
-    let scene = OutputScene {
-        props_overlay: if column.layers.props {
-            on_screen.props_overlay.clone()
-        } else {
-            Vec::new()
-        },
-        timer_visible: column.layers.timer && on_screen.timer_visible,
-        ..on_screen.clone()
-    };
-    laid_out(scene, &column.layout)
+    let mut scene = scene_for_look(on_screen, column);
+    if column.layout.words.is_none() {
+        scene.text_position = on_screen.text_position.clone();
+    }
+    scene
 }
 
 pub fn scene_for_look(on_screen: &OutputScene, column: &LookTargetState) -> OutputScene {
@@ -350,12 +344,14 @@ mod tests {
     }
 
     #[test]
-    fn the_screens_column_takes_its_props_and_layout_but_not_its_message_gate() {
+    fn the_screens_column_gates_as_any_other() {
+        // Since the sidebar's switches became their own, the Screen's column
+        // is a column like the rest: it lets through what it has on.
         let mut column = LookPreset::default_preset().targets.program;
         column.layers.props = false;
         assert!(
-            !column.layers.messages,
-            "the program's messages flag is off by default"
+            column.layers.messages,
+            "the Screen lets the banner through by default"
         );
         column.layout = crate::services::looks::normalize_layout(Some(&serde_json::json!({
             "props": { "xPercent": 80, "yPercent": 20, "widthPercent": 30, "heightPercent": 30 },
@@ -366,14 +362,18 @@ mod tests {
         };
         let scene = scene_for_program(&program, &column);
         assert!(scene.props_overlay.is_empty(), "props off on the Screen");
-        assert!(
-            scene.message_overlay.is_some(),
-            "the banner is not gated here"
-        );
+        assert!(scene.message_overlay.is_some(), "the banner on");
         assert_eq!(
             scene.screen_layout.expect("layout").props_box.width_percent,
             30.0
         );
+
+        column.layers.slide = false;
+        column.layers.messages = false;
+        column.layers.announcements = false;
+        let scene = scene_for_program(&program, &column);
+        assert!(!scene.show_text, "the words off on the Screen alone");
+        assert!(scene.message_overlay.is_none(), "and the banner");
     }
 
     #[test]

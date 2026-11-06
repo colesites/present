@@ -13,7 +13,7 @@ import {
 } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { LibraryItem, Category, ContentSource, LibraryItemDraft } from "../../shared/types";
-import type { LibrarySearchMode } from "../library/hooks";
+import { matchLibrarySearch, type LibrarySearchMode } from "../library/hooks";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import { Input } from "../../renderer/shared/components/ui/input";
 import { toast } from "sonner";
@@ -28,8 +28,6 @@ import { Spinner } from "../../renderer/shared/components/ui/spinner";
 import { Skeleton } from "../../renderer/shared/components/ui/skeleton";
 import { useMenuCommand } from "../../renderer/tauri/menu-commands";
 import { cn } from "../../renderer/shared/lib/utils";
-import { useDesktopSessionStore } from "../../renderer/shared/store/desktopSession";
-import { useSpeechRecognition } from "../scripture/hooks/useSpeechRecognition";
 import {
   Search,
   ArrowUpDown,
@@ -44,10 +42,7 @@ import {
   ArrowUpFromLine,
   LayoutGrid,
   List,
-  Loader2,
   Library,
-  Mic,
-  MicOff,
   Music2,
   BookOpenText,
   FileText,
@@ -146,8 +141,6 @@ interface LibrariesPanelProps {
   searchMode: LibrarySearchMode;
   onSearchModeChange: (mode: LibrarySearchMode) => void;
   contentSource: ContentSource;
-  speechLang: string;
-  speechInputDeviceId: string | null;
 }
 
 export interface LibrariesPanelRef {
@@ -183,8 +176,6 @@ export const LibrariesPanel = memo(
       searchMode,
       onSearchModeChange,
       contentSource,
-      speechLang,
-      speechInputDeviceId,
     }: LibrariesPanelProps,
     ref,
   ) {
@@ -218,27 +209,6 @@ export const LibrariesPanel = memo(
 
 
     const searchInputRef = useRef<HTMLInputElement>(null);
-    const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
-
-    const {
-      isListening: isSpeechListening,
-      isStarting: isSpeechStarting,
-      isSupported: isSpeechSupported,
-      error: speechError,
-      startListening,
-      stopListening,
-    } = useSpeechRecognition({
-      sessionToken,
-      lang: speechLang,
-      inputDeviceId: speechInputDeviceId,
-      usageSource: "song",
-      onResult: ({ transcript }) => {
-        onSearchChange(transcript);
-      },
-      onFinalResult: (transcript) => {
-        onSearchChange(transcript);
-      },
-    });
 
     useImperativeHandle(ref, () => ({
       focusSearch: () => searchInputRef.current?.focus(),
@@ -324,21 +294,6 @@ export const LibrariesPanel = memo(
     ]);
 
     const hasActiveSearch = searchQuery.trim().length > 0;
-
-    const handleSpeechToggle = () => {
-      searchInputRef.current?.focus();
-
-      if (isSpeechListening) {
-        stopListening();
-        return;
-      }
-      if (isSpeechStarting) {
-        return;
-      }
-
-      onSearchChange("");
-      void startListening();
-    };
 
     const handleExportLibraries = async () => {
       if (
@@ -730,66 +685,7 @@ export const LibrariesPanel = memo(
                   >
                     Exact
                   </button>
-
-                  <button
-                    type="button"
-                    onClick={handleSpeechToggle}
-                    disabled={!isSpeechSupported || isSpeechStarting}
-                    aria-busy={isSpeechStarting}
-                    className={cn(
-                      "relative h-10 w-10 shrink-0 rounded-xl border transition-colors",
-                      isSpeechListening
-                        ? "border-red-600 bg-red-500 text-white"
-                        : isSpeechStarting
-                          ? "border-amber-500 bg-amber-500/10 text-amber-600"
-                        : "border-input bg-background text-muted-foreground hover:bg-secondary",
-                      (!isSpeechSupported || isSpeechStarting) && "cursor-not-allowed opacity-40",
-                    )}
-                    title={
-                      isSpeechListening
-                        ? "Stop listening"
-                        : isSpeechStarting
-                          ? "Starting microphone"
-                        : "Speak to search libraries"
-                    }
-                  >
-                    {isSpeechListening ? (
-                      <Mic className="mx-auto h-4 w-4 animate-pulse" />
-                    ) : isSpeechStarting ? (
-                      <>
-                        <span className="absolute right-1 top-1 flex h-2.5 w-2.5">
-                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
-                        </span>
-                        <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                      </>
-                    ) : (
-                      <MicOff className="mx-auto h-4 w-4" />
-                    )}
-                  </button>
                 </div>
-
-                {speechError ? (
-                  <p className="mt-2 text-[10px] text-destructive">
-                    {speechError}
-                  </p>
-                ) : isSpeechStarting ? (
-                  <p className="mt-2 flex items-center gap-2 text-[10px] text-amber-600">
-                    <span className="relative flex h-2 w-2">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-400" />
-                    </span>
-                    Starting microphone...
-                  </p>
-                ) : isSpeechListening ? (
-                  <p className="mt-2 text-[10px] text-primary">
-                    Listening for song title or lyrics...
-                  </p>
-                ) : !isSpeechSupported ? (
-                  <p className="mt-2 text-[10px] text-muted-foreground">
-                    Voice search is unavailable in this runtime.
-                  </p>
-                ) : null}
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5">
@@ -1039,6 +935,7 @@ export const LibrariesPanel = memo(
             categories={visibleCategories}
             categoryId={activeCategoryId}
             editItem={composeEditTarget}
+            searchMode={searchMode}
             onClose={() => {
               setShowComposeDialog(false);
               setComposeEditTarget(null);
@@ -1395,6 +1292,7 @@ function ComposeLibrariesDialog({
   categories,
   categoryId,
   editItem,
+  searchMode,
   onClose,
   onCreate,
   onUpdate,
@@ -1404,6 +1302,7 @@ function ComposeLibrariesDialog({
   categories: Category[];
   categoryId: string | null;
   editItem?: LibraryItem | null;
+  searchMode: LibrarySearchMode;
   onClose: () => void;
   onCreate: (
     title: string,
@@ -1472,15 +1371,12 @@ function ComposeLibrariesDialog({
   );
 
   const searchResults = useMemo(() => {
-    const query = search.trim().toLowerCase();
     const available = composeLibraryItems.filter(
       (item) => !pickedIds.has(String(item._id)),
     );
-    if (!query) return available;
-    return available.filter((item) =>
-      item.title.toLowerCase().includes(query),
-    );
-  }, [composeLibraryItems, pickedIds, search]);
+    if (!search.trim()) return available;
+    return matchLibrarySearch(available, search, searchMode);
+  }, [composeLibraryItems, pickedIds, search, searchMode]);
 
   // Keep the title in sync with the picked songs until the user types
   // something themselves — then leave it alone.
@@ -1614,6 +1510,7 @@ function ComposeLibrariesDialog({
       {step === "pick" ? (
         <PickStep
           search={search}
+          searchMode={searchMode}
           onSearchChange={setSearch}
           results={searchResults}
           picked={picked}
@@ -1668,6 +1565,7 @@ function ComposeLibrariesDialog({
 /** Step 1: search + add songs, with a running list of picks below. */
 function PickStep({
   search,
+  searchMode,
   onSearchChange,
   results,
   picked,
@@ -1681,6 +1579,7 @@ function PickStep({
   error,
 }: {
   search: string;
+  searchMode: LibrarySearchMode;
   onSearchChange: (value: string) => void;
   results: LibraryItem[];
   picked: { libraryId: string; slideIndexes: number[] }[];
@@ -1700,7 +1599,11 @@ function PickStep({
         <input
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="Search your library…"
+          placeholder={
+            searchMode === "exact"
+              ? "Search exact phrase..."
+              : "Search title or lyrics..."
+          }
           className="h-10 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
           autoFocus
         />

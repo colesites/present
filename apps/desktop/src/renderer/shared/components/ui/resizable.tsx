@@ -101,8 +101,8 @@ export function ResizablePanelGroup({
   const panelConstraints = useMemo(
     () =>
       panels.map((panel) => ({
-        min: clamp(toNumber(panel.props.minSize, 8), 2, 95),
-        max: clamp(toNumber(panel.props.maxSize, 92), 5, 98),
+        min: clamp(toNumber(panel.props.minSize, 0), 0, 100),
+        max: clamp(toNumber(panel.props.maxSize, 100), 0, 100),
         defaultSize: toNumber(panel.props.defaultSize, Number.NaN),
       })),
     [panels],
@@ -212,17 +212,39 @@ export function ResizablePanelGroup({
 
     const leftBounds = panelConstraints[leftIndex];
     const rightBounds = panelConstraints[rightIndex];
+    const isOpeningFromZero = (baseSizes[leftIndex] ?? 0) <= 0.5;
+    let didMove = false;
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const currentPoint =
         resolvedDirection === "horizontal" ? moveEvent.clientX : moveEvent.clientY;
-      const deltaPercent = ((currentPoint - startPoint) / totalPixels) * 100;
+      const pixelDelta = currentPoint - startPoint;
+      if (Math.abs(pixelDelta) > 3) {
+        didMove = true;
+      }
 
-      let nextLeft = clamp(
-        (baseSizes[leftIndex] ?? 0) + deltaPercent,
-        leftBounds.min,
-        leftBounds.max,
-      );
+      const deltaPercent = (pixelDelta / totalPixels) * 100;
+
+      let nextLeft = (baseSizes[leftIndex] ?? 0) + deltaPercent;
+
+      if (isOpeningFromZero) {
+        // Dragging open from 0 width
+        if (deltaPercent > 0.3) {
+          const defaultSz = toNumber(panels[leftIndex]?.props.defaultSize, 34);
+          const minReadable = Math.min(defaultSz, 20);
+          nextLeft = clamp(Math.max(minReadable, deltaPercent), leftBounds.min, leftBounds.max);
+        } else {
+          nextLeft = 0;
+        }
+      } else {
+        // Resizing open panel
+        nextLeft = clamp(nextLeft, leftBounds.min, leftBounds.max);
+        // Snap to close if dragged near the edge
+        if (leftBounds.min === 0 && nextLeft < 6) {
+          nextLeft = 0;
+        }
+      }
+
       let nextRight = pairTotal - nextLeft;
 
       if (nextRight < rightBounds.min) {
@@ -235,9 +257,6 @@ export function ResizablePanelGroup({
         nextLeft = pairTotal - nextRight;
       }
 
-      nextLeft = clamp(nextLeft, leftBounds.min, leftBounds.max);
-      nextRight = clamp(nextRight, rightBounds.min, rightBounds.max);
-
       setSizes((previous) => {
         const next = [...previous];
         next[leftIndex] = nextLeft;
@@ -247,6 +266,17 @@ export function ResizablePanelGroup({
     };
 
     const stopDrag = () => {
+      // If user clicked without dragging on a collapsed handle, expand it to default size
+      if (!didMove && isOpeningFromZero && leftBounds.min === 0) {
+        const defaultSz = toNumber(panels[leftIndex]?.props.defaultSize, 34);
+        setSizes((previous) => {
+          const next = [...previous];
+          next[leftIndex] = clamp(defaultSz, 15, leftBounds.max);
+          next[rightIndex] = pairTotal - next[leftIndex];
+          return next;
+        });
+      }
+
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", stopDrag);
       window.removeEventListener("pointercancel", stopDrag);
@@ -255,6 +285,31 @@ export function ResizablePanelGroup({
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopDrag);
     window.addEventListener("pointercancel", stopDrag);
+  };
+
+  const handleDoubleClick = (index: number) => {
+    const leftBounds = panelConstraints[index];
+    const rightBounds = panelConstraints[index + 1];
+    if (!leftBounds || !rightBounds) return;
+
+    const baseSizes = [...effectiveSizes];
+    const pairTotal = (baseSizes[index] ?? 0) + (baseSizes[index + 1] ?? 0);
+
+    if (leftBounds.min === 0) {
+      setSizes((previous) => {
+        const next = [...previous];
+        const isClosed = (next[index] ?? 0) <= 0.5;
+        const defaultSz = toNumber(panels[index]?.props.defaultSize, 34);
+        if (isClosed) {
+          next[index] = clamp(defaultSz, 15, leftBounds.max);
+          next[index + 1] = pairTotal - next[index];
+        } else {
+          next[index] = 0;
+          next[index + 1] = pairTotal;
+        }
+        return next;
+      });
+    }
   };
 
   return (
@@ -269,6 +324,7 @@ export function ResizablePanelGroup({
       {panels.map((panel, index) => {
         const size = effectiveSizes[index] ?? initialSizes[index] ?? 0;
         const handle = handles[index];
+        const isCollapsed = size <= 0.5;
 
         return (
           <Fragment key={`panel-${index}`}>
@@ -285,23 +341,35 @@ export function ResizablePanelGroup({
             {index < panels.length - 1 ? (
               <div
                 onPointerDown={(event) => startDrag(index, event)}
+                onDoubleClick={() => handleDoubleClick(index)}
                 className={cn(
-                  // The handle is a single 1px line the panels sit flush
-                  // against. An invisible wider grab zone (the child) keeps it
-                  // easy to drag without introducing a visible gap.
-                  "group relative z-10 shrink-0 bg-border transition-colors hover:bg-primary/60",
+                  "group relative z-30 shrink-0 transition-colors",
                   resolvedDirection === "horizontal"
-                    ? "h-full w-px cursor-col-resize"
-                    : "h-px w-full cursor-row-resize",
+                    ? cn(
+                        "h-full cursor-col-resize",
+                        isCollapsed
+                          ? "w-1 bg-primary/50 hover:bg-primary shadow-[0_0_6px_rgba(99,102,241,0.6)]"
+                          : "w-px bg-border hover:bg-primary/80",
+                      )
+                    : cn(
+                        "w-full cursor-row-resize",
+                        isCollapsed
+                          ? "h-1 bg-primary/50 hover:bg-primary shadow-[0_0_6px_rgba(99,102,241,0.6)]"
+                          : "h-px bg-border hover:bg-primary/80",
+                      ),
                   handle?.props.className,
                 )}
               >
                 <div
                   className={cn(
-                    "absolute",
+                    "absolute z-10",
                     resolvedDirection === "horizontal"
-                      ? "inset-y-0 -left-[3px] -right-[3px]"
-                      : "inset-x-0 -top-[3px] -bottom-[3px]",
+                      ? isCollapsed
+                        ? "inset-y-0 -left-1 -right-4"
+                        : "inset-y-0 -left-2 -right-2"
+                      : isCollapsed
+                        ? "inset-x-0 -top-1 -bottom-4"
+                        : "inset-x-0 -top-2 -bottom-2",
                   )}
                 />
               </div>

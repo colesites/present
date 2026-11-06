@@ -28,19 +28,45 @@ use serde::Serialize;
 
 use crate::services::screen_picture::{arrange, Arrangement};
 
+use self::layered::Overlay;
+
 #[cfg(target_os = "macos")]
-mod iosurface;
+pub mod iosurface;
+pub mod layered;
+#[cfg(target_os = "macos")]
+pub mod layers;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod panel;
 pub mod stream;
 pub mod tap;
 
+/// A screen drawn as layers (`layered.rs`), as its views are handed it.
+#[derive(Clone)]
+pub struct LayeredShow {
+    pub canvas: (u32, u32),
+    /// Under everything: red, green, blue, alpha, 0 to 1.
+    pub base: [f64; 4],
+    pub video: Option<layered::VideoLayer>,
+    /// The slide over the video: premultiplied BGRA at the canvas's size, the
+    /// same `Arc` for as long as it is unchanged. `None`: nothing over it.
+    pub overlay: Option<Arc<Vec<u8>>>,
+}
+
 /// What goes on the native view. Frames are premultiplied BGRA, top row first.
 pub trait Presenter: Send {
     /// Show a frame. The same frame may be shown by every output of a
     /// mirrored screen at once.
     fn present(&mut self, width: u32, height: u32, bgra: Arc<Vec<u8>>) -> Result<(), String>;
+    /// Whether this view can show a screen as layers (`present_layers`).
+    fn shows_layers(&self) -> bool {
+        false
+    }
+    /// Show a screen drawn as layers. Only asked of a view that
+    /// [`shows_layers`](Self::shows_layers).
+    fn present_layers(&mut self, _show: &LayeredShow) -> Result<(), String> {
+        Err("this view shows whole pictures only".to_owned())
+    }
     /// The window's size in its CSS pixels, or `None` if the window has gone.
     fn size(&self) -> Option<(u32, u32)>;
     /// Its pixels to a CSS pixel.
@@ -56,6 +82,8 @@ pub struct OutputView {
     /// In the window's CSS pixels.
     pub size: (u32, u32),
     pub scale: f64,
+    /// It can show the screen as layers (`Presenter::shows_layers`).
+    pub layers: bool,
 }
 
 /// Draws a screen's picture into a buffer it is handed, and says whether it
@@ -69,6 +97,18 @@ pub trait SurfaceSource: Send {
     /// render. `None`: all of it, stretched to the window.
     fn arrangement(&self, _label: &str) -> Option<Arrangement> {
         None
+    }
+    /// The last render drew the screen as layers, not a whole picture: what
+    /// they are. Asked once after each render that returned `true`; `None`
+    /// for a whole picture, in the buffer as ever.
+    fn take_layers(&mut self) -> Option<layered::Layers> {
+        None
+    }
+    /// Whether something on the screen moves — a playing video, a
+    /// transition, a scrolling message — and it is worth checking as often as
+    /// the frame rate allows, rather than as often as a still screen needs.
+    fn busy(&self) -> bool {
+        true
     }
 }
 
@@ -100,6 +140,22 @@ pub const HANDBACK_DELAY: Duration = Duration::from_millis(300);
 /// How many frames already handed to the views are kept to be drawn into
 /// again: the one on screen, and the one before while it is let go of.
 const SPARE_FRAMES: usize = 3;
+
+/// What a screen's views were last handed.
+enum Showing {
+    Whole(Arc<Vec<u8>>),
+    Layers(LayeredShow),
+}
+
+/// The buffer just drawn into, shared out; and a spare the views have let go
+/// of to draw the next into.
+fn adopt(buffer: &mut Vec<u8>, spare: &mut Vec<Arc<Vec<u8>>>) -> Arc<Vec<u8>> {
+    let drawn = Arc::new(std::mem::take(buffer));
+    if let Some(free) = spare.iter().position(|frame| Arc::strong_count(frame) == 1) {
+        *buffer = Arc::try_unwrap(spare.swap_remove(free)).unwrap_or_default();
+    }
+    drawn
+}
 
 /// A screen's output windows, by label, each with its view.
 pub type Presenters = Vec<(String, Box<dyn Presenter>)>;
@@ -172,8 +228,8 @@ pub fn run_tapped(
     // moved on (`macos::image_from`). A full 1080p frame copied every frame
     // was eight megabytes a frame for nothing.
     let mut buffer = Vec::new();
-    // The frame last drawn, as the views were handed it.
-    let mut drawn: Option<Arc<Vec<u8>>> = None;
+    // What the views were last handed: a whole picture, or layers.
+    let mut showing: Option<Showing> = None;
     // Frames handed out before it, kept so one the views have let go of is
     // drawn into again rather than allocated afresh.
     let mut spare: Vec<Arc<Vec<u8>>> = Vec::new();
@@ -222,47 +278,104 @@ pub fn run_tapped(
                     label: label.clone(),
                     size,
                     scale: presenter.scale(),
+                    layers: presenter.shows_layers(),
                 })
             })
             .collect();
 
         let rendered = source.render(&sizes, &mut buffer);
-        if matches!(rendered, Ok(true)) && !buffer.is_empty() {
-            if let Some(previous) = drawn.replace(Arc::new(std::mem::take(&mut buffer))) {
-                spare.push(previous);
-            }
-            if let Some(free) = spare.iter().position(|frame| Arc::strong_count(frame) == 1) {
-                buffer = Arc::try_unwrap(spare.swap_remove(free)).unwrap_or_default();
-            }
-            // Any more than this are still on screen somewhere; they go when
-            // the views let go of them.
-            spare.truncate(SPARE_FRAMES);
-            if let (Some(screen), Some(frame)) = (screen, drawn.as_ref()) {
-                tap::publish(screen, Arc::clone(frame), source.canvas_size());
+        let changed = matches!(rendered, Ok(true));
+        if changed {
+            let next = match source.take_layers() {
+                Some(layers) => {
+                    let overlay = match layers.overlay {
+                        Overlay::Drawn if !buffer.is_empty() => {
+                            Some(adopt(&mut buffer, &mut spare))
+                        }
+                        Overlay::Same => match &showing {
+                            Some(Showing::Layers(show)) => show.overlay.clone(),
+                            _ => None,
+                        },
+                        Overlay::Drawn | Overlay::Empty => None,
+                    };
+                    let show = LayeredShow {
+                        canvas: layers.canvas,
+                        base: layers.base,
+                        video: layers.video,
+                        overlay,
+                    };
+                    if let Some(screen) = screen {
+                        tap::publish_layers(screen, show.clone());
+                    }
+                    Some(Showing::Layers(show))
+                }
+                None if !buffer.is_empty() => {
+                    let frame = adopt(&mut buffer, &mut spare);
+                    if let Some(screen) = screen {
+                        tap::publish(screen, Arc::clone(&frame), source.canvas_size());
+                    }
+                    Some(Showing::Whole(frame))
+                }
+                None => None,
+            };
+            if let Some(next) = next {
+                // What it replaces is drawn into again once the views let go.
+                match showing.replace(next) {
+                    Some(Showing::Whole(frame)) => spare.push(frame),
+                    Some(Showing::Layers(LayeredShow {
+                        overlay: Some(overlay),
+                        ..
+                    })) => {
+                        let kept = matches!(
+                            &showing,
+                            Some(Showing::Layers(LayeredShow { overlay: Some(now), .. }))
+                                if Arc::ptr_eq(now, &overlay)
+                        );
+                        if !kept {
+                            spare.push(overlay);
+                        }
+                    }
+                    _ => {}
+                }
+                // Any more than this are still on screen somewhere; they go
+                // when the views let go of them.
+                spare.truncate(SPARE_FRAMES);
             }
         }
-        match rendered {
-            Ok(changed) if drawn.is_some() => {
+        match (rendered, &showing) {
+            (Ok(_), Some(shown)) => {
                 failures = 0;
                 let canvas = source.canvas_size();
-                let whole = drawn.clone().unwrap_or_default();
                 let mut refused = Vec::new();
                 for (label, presenter) in views.iter_mut() {
                     let state = states.entry(label.clone()).or_default();
                     if !changed && state.first_presented.is_some() {
                         continue;
                     }
-                    let arrangement = source.arrangement(label).filter(|each| !each.is_identity());
-                    let (size, frame) = match (arrangement, presenter.size()) {
-                        (Some(arrangement), Some(size)) => {
-                            arrange(&whole, canvas, &mut state.arranged, size, &arrangement);
-                            // Its own part of the picture, handed over as it
-                            // is; the next is arranged into a fresh buffer.
-                            (size, Arc::new(std::mem::take(&mut state.arranged)))
+                    let result = match shown {
+                        Showing::Layers(show) if presenter.shows_layers() => {
+                            presenter.present_layers(show)
                         }
-                        _ => (canvas, Arc::clone(&whole)),
+                        // Joined since the screen was drawn as layers, and
+                        // cannot show them: it gets the next whole picture.
+                        Showing::Layers(_) => continue,
+                        Showing::Whole(whole) => {
+                            let arrangement =
+                                source.arrangement(label).filter(|each| !each.is_identity());
+                            let (size, frame) = match (arrangement, presenter.size()) {
+                                (Some(arrangement), Some(size)) => {
+                                    arrange(whole, canvas, &mut state.arranged, size, &arrangement);
+                                    // Its own part of the picture, handed over
+                                    // as it is; the next is arranged into a
+                                    // fresh buffer.
+                                    (size, Arc::new(std::mem::take(&mut state.arranged)))
+                                }
+                                _ => (canvas, Arc::clone(whole)),
+                            };
+                            presenter.present(size.0, size.1, frame)
+                        }
                     };
-                    match presenter.present(size.0, size.1, frame) {
+                    match result {
                         Ok(()) => {
                             state.refused = 0;
                             state.first_presented.get_or_insert(started);
@@ -288,8 +401,8 @@ pub fn run_tapped(
                     false
                 });
             }
-            Ok(_) => failures = 0,
-            Err(error) => {
+            (Ok(_), None) => failures = 0,
+            (Err(error), _) => {
                 failures += 1;
                 tracing::error!(%error, "a screen's frame could not be drawn natively");
             }
@@ -311,7 +424,16 @@ pub fn run_tapped(
             break;
         }
 
-        if let Some(rest) = TICK.checked_sub(started.elapsed()) {
+        // As often as the operator's frame rate allows, and the screen needs
+        // (`projection`). A tick that ran over is counted for the automatic
+        // adjustment.
+        let projection = crate::services::projection::settings();
+        let tick = projection.tick(source.busy());
+        let spent = started.elapsed();
+        if projection.auto_adjust {
+            crate::services::projection::adjust::record(spent > tick);
+        }
+        if let Some(rest) = tick.checked_sub(spent) {
             std::thread::sleep(rest);
         }
     }

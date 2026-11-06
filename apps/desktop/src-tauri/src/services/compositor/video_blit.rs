@@ -209,6 +209,7 @@ mod tests {
             height,
             bgra,
             presentation_seconds: 0.0,
+            gpu: None,
         }
     }
 
