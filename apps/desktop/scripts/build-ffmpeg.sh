@@ -31,7 +31,15 @@ set -euo pipefail
 
 VERSION="9.0.1"
 SHA256="cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635"
-URL="https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.xz"
+# Where the source comes from, in turn. ffmpeg.org resets connections from CI
+# runners now and then (curl error 35), so each is tried a few times and then
+# the next; MacPorts' distfiles mirror serves the very same tarball from other
+# servers. Whatever arrives is checked against SHA256 before it is used.
+URLS=(
+  "https://ffmpeg.org/releases/ffmpeg-${VERSION}.tar.xz"
+  "https://www.ffmpeg.org/releases/ffmpeg-${VERSION}.tar.xz"
+  "https://distfiles.macports.org/ffmpeg/ffmpeg-${VERSION}.tar.xz"
+)
 
 DESKTOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="${DESKTOP_DIR}/src-tauri/ffmpeg"
@@ -120,15 +128,31 @@ sha256_of() {
 }
 
 mkdir -p "${CACHE}"
-if [[ ! -f "${TARBALL}" ]]; then
-  log "downloading ${URL}"
-  curl --fail --location --silent --show-error --output "${TARBALL}.part" "${URL}"
-  mv "${TARBALL}.part" "${TARBALL}"
-fi
-ACTUAL="$(sha256_of "${TARBALL}")"
-if [[ "${ACTUAL}" != "${SHA256}" ]]; then
+# A cached tarball that is not the pinned one is downloaded again.
+if [[ -f "${TARBALL}" && "$(sha256_of "${TARBALL}")" != "${SHA256}" ]]; then
+  log "the cached ${TARBALL} is not the pinned source; downloading it again"
   rm -f "${TARBALL}"
-  fail "checksum mismatch for ${TARBALL}: expected ${SHA256}, got ${ACTUAL}"
+fi
+if [[ ! -f "${TARBALL}" ]]; then
+  for url in "${URLS[@]}"; do
+    log "downloading ${url}"
+    rm -f "${TARBALL}.part"
+    if ! curl --fail --location --silent --show-error \
+      --connect-timeout 30 --retry 4 --retry-delay 10 --retry-all-errors \
+      --output "${TARBALL}.part" "${url}"; then
+      log "could not download from ${url}"
+      continue
+    fi
+    ACTUAL="$(sha256_of "${TARBALL}.part")"
+    if [[ "${ACTUAL}" != "${SHA256}" ]]; then
+      log "checksum mismatch from ${url}: expected ${SHA256}, got ${ACTUAL}"
+      continue
+    fi
+    mv "${TARBALL}.part" "${TARBALL}"
+    break
+  done
+  rm -f "${TARBALL}.part"
+  [[ -f "${TARBALL}" ]] || fail "could not download FFmpeg ${VERSION} from any of: ${URLS[*]}"
 fi
 
 rm -rf "${BUILD}" "${PREFIX}"
@@ -190,7 +214,7 @@ cp "${BUILD}/COPYING.LGPLv2.1" "${BUILD}/LICENSE.md" "${PREFIX}/share/licenses/"
   echo "FFmpeg ${VERSION}, built for Present as shared libraries under the"
   echo "GNU Lesser General Public License, version 2.1 or later (COPYING.LGPLv2.1)."
   echo
-  echo "Source: ${URL}"
+  echo "Source: ${URLS[0]}"
   echo "SHA-256: ${SHA256}"
   echo "Unmodified. Configured with:"
   echo "  ${FLAGS[*]}"
