@@ -142,8 +142,13 @@ export function readNewestReference(
     const sentence = sentences[index] ?? "";
     const named = newestReferenceIn(sentence, books);
     if (named) {
+      const isMentionFraming =
+        /\b(?:as\s+(?:\w+\s+){0,3}(?:says?|wrote|said|tells?|reminds?|stated)|as\s+it\s+says?|as\s+we\s+read|as\s+written|as\s+seen|according\s+to|like\s+in|for\s+instance\s+in|for\s+example\s+in)\b/i.test(
+          sentence,
+        );
       const plain =
-        named.verseStart !== null
+        !isMentionFraming
+        && named.verseStart !== null
         && (/\d+\s*:\s*\d+/.test(sentence)
           || (/\bchapters?\b/i.test(sentence) && /\bverses?\b/i.test(sentence)));
       return { reference: named, plain };

@@ -142,3 +142,44 @@ test("a verse or chapter said alone moves within the passage that is open", () =
     "nothing open to move within",
   );
 });
+
+// The streaming transcription writes "John three sixteen" as "john 316" until
+// a turn ends. A number that is no chapter of the book, and splits into a
+// chapter and verse it has exactly one way, is read that way at once.
+test("a chapter and verse heard as one number are read apart where only one split fits", () => {
+  const books = [
+    { pk: "kjv|jhn", version: "kjv", id: "jhn", name: "John", chapters: 21 },
+    { pk: "kjv|rom", version: "kjv", id: "rom", name: "Romans", chapters: 16 },
+    { pk: "kjv|mat", version: "kjv", id: "mat", name: "Matthew", chapters: 28 },
+    { pk: "kjv|isa", version: "kjv", id: "isa", name: "Isaiah", chapters: 66 },
+    { pk: "kjv|1co", version: "kjv", id: "1co", name: "1 Corinthians", chapters: 16 },
+    { pk: "kjv|gen", version: "kjv", id: "gen", name: "Genesis", chapters: 50 },
+    { pk: "kjv|psa", version: "kjv", id: "psa", name: "Psalms", chapters: 150 },
+  ];
+  const read = (input) => {
+    const parsed = parseReference(input, books);
+    return parsed.errors.length ? null : `${parsed.book?.name} ${parsed.chapter}:${parsed.verseStart}`;
+  };
+  assert.equal(read("john 316"), "John 3:16");
+  assert.equal(read("romans 828"), "Romans 8:28");
+  assert.equal(read("matthew 2819"), "Matthew 28:19");
+  assert.equal(read("isaiah 4031"), "Isaiah 40:31", "never a verse with a leading 0");
+  assert.equal(read("1 corinthians 1313"), "1 Corinthians 13:13");
+  assert.equal(read("john 31"), "John 3:1", "two digits that are no chapter");
+  assert.equal(read("genesis 111"), null, "1:11 or 11:1: left for the formatted turn");
+  assert.equal(read("psalms 23"), "Psalms 23:null", "a chapter the book has stays a chapter");
+  assert.equal(
+    findReferenceInSentence("and romans 828 says all things work together", books)?.verseStart,
+    28,
+  );
+
+  // Verse counts settle what chapter counts cannot: Psalm 11 has 7 verses and
+  // Psalm 1 has 6, so "psalm 1191" can only be 119:1.
+  assert.equal(read("psalms 1191"), null, "119:1, 11:91 and 1:191 all fit 150 chapters");
+  module.exports.knowVerseCounts((book, chapter) =>
+    book === "Psalms" ? { 1: 6, 2: 12, 11: 7, 23: 6, 119: 176 }[chapter] ?? null : null,
+  );
+  assert.equal(read("psalms 1191"), "Psalms 119:1");
+  assert.equal(read("psalms 234"), "Psalms 23:4");
+  module.exports.knowVerseCounts(() => null);
+});

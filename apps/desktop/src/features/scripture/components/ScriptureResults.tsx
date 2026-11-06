@@ -13,6 +13,7 @@ import { ChevronLeft, ChevronRight, Monitor, Plus } from "lucide-react";
 import { db, type BibleVerse } from "../lib/db";
 import { referenceText, stepLabel, stepPassage, type Step } from "../lib/step-reference.mjs";
 import { cn } from "../../../renderer/shared/lib/utils";
+import { highlightText } from "../lib/highlighter";
 
 const SLIDE_CONFIG: SlideConfig = {
   maxLines: 100, // Effectively ignored now
@@ -27,6 +28,10 @@ interface ScriptureResultsProps {
   onAddToService?: (ref: string, text: string) => void;
   /** Show another passage: the reference to put in the search. */
   onStep?: (reference: string) => void;
+  /** Search query to highlight matching words in yellow */
+  highlightQuery?: string | null;
+  /** Whether highlight matching is exact phrase */
+  isExactHighlight?: boolean;
 }
 
 export function ScriptureResults({
@@ -35,6 +40,8 @@ export function ScriptureResults({
   onSendToOutput,
   onAddToService,
   onStep,
+  highlightQuery = null,
+  isExactHighlight = false,
 }: ScriptureResultsProps) {
   const { lookupRef, versions } = useScripture();
   const [verses, setVerses] = useState<BibleVerse[]>([]);
@@ -43,6 +50,15 @@ export function ScriptureResults({
   // Stepping from a passage that is live puts the next one live too, once
   // it has loaded, so the operator can read along with Previous and Next.
   const sendWhenLoaded = useRef(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!activeVersePk || !scrollContainerRef.current) return;
+    const liveEl = scrollContainerRef.current.querySelector<HTMLElement>('[aria-current="true"]');
+    if (liveEl) {
+      liveEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [activeVersePk, verses]);
 
   const config = SLIDE_CONFIG;
   // What the lookup reads as of the last render, without refetching when
@@ -187,8 +203,8 @@ export function ScriptureResults({
     ) : null;
 
   return (
-    <div className="space-y-4 border rounded-lg p-4 bg-card shadow-sm">
-      <div className="flex items-center justify-between border-b border-border/40 pb-2">
+    <div className="flex flex-col flex-1 h-full min-h-0 border rounded-lg p-4 bg-card shadow-sm">
+      <div className="flex shrink-0 items-center justify-between border-b border-border/40 pb-2.5 mb-3">
         <div className="flex min-w-0 items-center gap-2">
           {stepButton(steps?.previous ?? null, "previous")}
           <h3 className="truncate text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
@@ -201,7 +217,7 @@ export function ScriptureResults({
         </div>
 
         {verses.length > 0 && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="outline"
               size="sm"
@@ -226,13 +242,13 @@ export function ScriptureResults({
         )}
       </div>
 
-      <div className="max-h-[300px] overflow-y-auto space-y-1 pr-2 custom-scrollbar">
+      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-2 custom-scrollbar pb-6">
         {isLoading ? (
-          <p className="text-xs text-muted-foreground animate-pulse">
+          <p className="text-xs text-muted-foreground animate-pulse py-4">
             Searching verses...
           </p>
         ) : verses.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">
+          <p className="text-xs text-muted-foreground italic py-4">
             No verses found.
           </p>
         ) : (
@@ -258,8 +274,8 @@ export function ScriptureResults({
                     : "border-transparent hover:bg-accent",
                 )}
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
                     <span
                       className={cn(
                         "mr-2 text-[10px] font-bold",
@@ -269,19 +285,23 @@ export function ScriptureResults({
                       {v.verse}
                       {isLive ? " · LIVE" : ""}
                     </span>
-                    <span className="text-sm">{v.text}</span>
+                    <span className="text-sm leading-relaxed">
+                      {highlightText(v.text, highlightQuery, {
+                        isExact: isExactHighlight,
+                      })}
+                    </span>
                   </div>
 
                   {onAddToService && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
+                    <button
+                      type="button"
                       aria-label={`Add ${v.bookName} ${v.chapter}:${v.verse} to service`}
-                      className="h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:text-foreground hover:bg-muted transition"
                       onClick={(e) => handleAddVerseToService(e, v)}
+                      title="Add to service"
                     >
-                      <Plus className="h-3 w-3" />
-                    </Button>
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
                   )}
                 </div>
               </div>
@@ -291,7 +311,7 @@ export function ScriptureResults({
       </div>
 
       {verses.length > 0 && (
-        <div className="text-[10px] text-muted-foreground pt-2 flex justify-between border-t border-border/40">
+        <div className="shrink-0 text-[10px] text-muted-foreground pt-2 flex justify-between border-t border-border/40 mt-auto">
           <span>{verses.length} verses found</span>
           <span className="italic">Click a verse to show live</span>
         </div>

@@ -44,6 +44,7 @@ pub async fn understand_spoken_scripture(
         confidence: understanding.confidence,
         story: understanding.story,
         reference: understanding.reference,
+        intent: understanding.intent,
     }))
 }
 
@@ -69,4 +70,5 @@ pub struct SpokenScripture {
     pub story: bool,
     /// Sure enough, and real enough, to put on the screen without asking.
     pub may_project: bool,
+    pub intent: scripture_agent::SpeechIntent,
 }

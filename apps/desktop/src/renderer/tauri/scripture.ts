@@ -51,6 +51,7 @@ export type SpokenScripture = {
   story: boolean;
   /** Sure enough, and real enough, to go on screen without being asked. */
   mayProject: boolean;
+  intent?: "SCRIPTURE_READING" | "COMMENTARY" | "REFERENCE_MENTION" | "NAVIGATION_REQUEST" | "UNCERTAIN";
 };
 
 /**
@@ -77,6 +78,7 @@ export async function understandSpokenScripture(
     confidence: number;
     story: boolean;
     mayProject: boolean;
+    intent?: SpokenScripture["intent"];
   } | null>("understand_spoken_scripture", {
     sessionToken,
     heard,
@@ -99,5 +101,6 @@ export async function understandSpokenScripture(
     confidence: answer.confidence,
     story: answer.story,
     mayProject: answer.mayProject,
+    intent: answer.intent,
   };
 }

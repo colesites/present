@@ -23,8 +23,18 @@ const load = (path, modules = {}) => {
 
 const parser = load("../src/features/scripture/lib/parser.ts");
 const listening = load("../src/features/scripture/lib/listening.ts", { "./parser": parser });
-const { createHeardScripture } = load("../src/features/scripture/lib/heard-scripture.ts", {
+const transcriptBuffer = load("../src/features/scripture/lib/transcript-buffer.ts");
+const commandParser = load("../src/features/scripture/lib/command-parser.ts", {
+  "./parser": parser,
   "./listening": listening,
+});
+const stepReference = load("../src/features/scripture/lib/step-reference.mjs");
+const { createHeardScripture } = load("../src/features/scripture/lib/heard-scripture.ts", {
+  "./parser": parser,
+  "./listening": listening,
+  "./transcript-buffer": transcriptBuffer,
+  "./command-parser": commandParser,
+  "./step-reference.mjs": stepReference,
 });
 
 const books = [
@@ -59,10 +69,11 @@ const bibleTab = ({
   catalog = [],
   install = async () => false,
   chapters = {},
+  defaultVersion = "KJV",
 } = {}) => {
   const tab = {
     box: "",
-    chosen: "KJV",
+    chosen: defaultVersion,
     screen: [],
     asked: [],
     open: true,
@@ -156,7 +167,7 @@ test("Show it: each passage goes up as it is said, not when the sentence ends", 
   assert.equal(tab.asked.length, asked);
 });
 
-test("Show it: a verse read from another Bible is shown in that Bible", async () => {
+test("Show it: a quote matching another Bible translation does not switch the active Bible", async () => {
   const tab = bibleTab({
     model: measuredModel,
     // John 3:16 as the NIV has it is what was being read.
@@ -169,25 +180,23 @@ test("Show it: a verse read from another Bible is shown in that Bible", async ()
   assert.deepEqual(tab.screen, [
     "John 3:3 KJV",
     "John 3:16 KJV",
-    "John 3:16 NIV (not added again)",
   ]);
-  assert.equal(tab.chosen, "NIV", "the tab is now in the preacher's Bible");
+  assert.equal(tab.chosen, "KJV", "translation invariant: matching score cannot switch active Bible");
 });
 
-test("Show it: a Bible named is the one the passage is shown in", async () => {
+test("Show it: an explicit version command is recognized and switches translation", async () => {
   const tab = bibleTab();
   await tab.hear("Somebody shout amen. Romans 8:28.");
   assert.deepEqual(tab.screen, ["Romans 8:28 KJV"]);
   await tab.hear(
-    "Somebody shout amen! Romans 8:28 in the New International Version says, and we know that in all",
+    "Switch to NIV.",
   );
-  assert.deepEqual(tab.screen, ["Romans 8:28 KJV", "Romans 8:28 NIV (not added again)"]);
   assert.equal(tab.chosen, "NIV");
-  assert.deepEqual(tab.asked, [], "plain references need no model");
 
   await tab.hear(
     "Let's read it in the KJV. 1 John 1:9.",
   );
+  assert.equal(tab.chosen, "KJV");
   assert.equal(tab.screen.at(-1), "1 John 1:9 KJV");
 });
 
@@ -350,6 +359,7 @@ test("Show it: 'give me KJV' shows the passage on screen in the KJV", async () =
   // As it was said in the app, and logged: the quote is the ESV's, word for
   // word; then a verse; then a Bible.
   const tab = bibleTab({
+    defaultVersion: "ESV",
     bibles: installed,
     quotes: ({ query }) =>
       /have mercy on those who doubt\.?$/i.test(query)
@@ -445,11 +455,9 @@ test("a download that failed is not tried again until it is asked for again", as
 });
 
 test("a late answer does not put the verse on screen back into the Bible it was asked in", async () => {
-  // Said in the app, with the KJV in use: Genesis 1:1 went up in the KJV,
-  // then the ESV (the quote finder, on one word's difference, now needing
-  // two: verse-search-index.test.mjs), then the KJV again — the model's
-  // answer to "In the beginning, God created", asked while the KJV was in
-  // use, arriving five seconds late.
+  // With KJV in use: Genesis 1:1 goes up in the KJV. Under the translation lock invariant,
+  // speech matching ESV does not displace KJV.
+  // When an LLM answer arrives 5 seconds late, it is discarded and does not overwrite screen.
   let answerLate = () => undefined;
   const tab = bibleTab({
     model: () =>
@@ -468,13 +476,11 @@ test("a late answer does not put the verse on screen back into the Bible it was 
     ],
   });
   await tab.hear("In the beginning, God created the heavens and the earth.", true);
-  // Asked while the KJV was in use: the quote finder's answer, which comes
-  // first here, moves it to the ESV.
-  assert.deepEqual(tab.screen, ["Genesis 1:1 ESV"]);
+  assert.deepEqual(tab.screen, ["Genesis 1:1 KJV"]);
   answerLate();
   await settle();
   await settle();
-  assert.deepEqual(tab.screen, ["Genesis 1:1 ESV"], "not put back into the KJV");
+  assert.deepEqual(tab.screen, ["Genesis 1:1 KJV"], "not overwritten by late answer");
 });
 
 // The King James, as installed: the chapters read along with below.

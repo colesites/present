@@ -653,8 +653,6 @@ export function MainView({
       searchMode,
       onSearchModeChange: setSearchMode,
       contentSource,
-      speechLang: speechSettings.lang,
-      speechInputDeviceId: speechSettings.inputDeviceId,
     }),
     [
       categories,
@@ -678,8 +676,6 @@ export function MainView({
       selectedCategoryId,
       selectedLibraryId,
       selectedServiceId,
-      speechSettings.inputDeviceId,
-      speechSettings.lang,
       setSearchQuery,
       setSearchMode,
       setSelectedCategoryId,
@@ -943,13 +939,106 @@ export function MainView({
     ],
   );
 
-  const renderShowMode = () => (
-    <ResizablePanelGroup
-      direction="horizontal"
-      className="flex-1 w-full h-full"
-      autoSaveId="present-main-layout-v13"
-    >
-      <ResizablePanel defaultSize="80" order={1}>
+  const renderShowMode = () => {
+    // Dedicated Bible Screen: Services panel and bottom Media panel are hidden
+    // to provide an unobstructed, professional Bible-focused workspace.
+    if (bottomTab === "scripture") {
+      return (
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="flex-1 w-full h-full"
+          autoSaveId="present-bible-layout-v1"
+        >
+          {/* Full-size Bible Workspace */}
+          <ResizablePanel defaultSize="78" minSize="50" order={1}>
+            <PresentCenterArea
+              viewMode={viewMode}
+              bottomTab={bottomTab}
+              slidesForGrid={slidesForGrid}
+              activeSlideId={activeSlideId}
+              selectedIndex={selected?.index ?? null}
+              isGridView={isGridView}
+              onGridViewChange={setIsGridView}
+              selectedLibraryItem={selectedLibraryItem}
+              scriptureEditorItem={scriptureEditorItem}
+              selectedLibraryId={selectedLibraryId}
+              onSelectSlide={handleSelectSlide}
+              onEditSlide={handleEditSlide}
+              onOpenMiniEditor={handleOpenMiniEditorForSlide}
+              onReorderSlides={handleReorderLibrarySlides}
+              editorProps={editorProps}
+              onSaveScriptureEditor={handleSaveScriptureEditor}
+              onUpdateScriptureEditorOutput={
+                handleUpdateScriptureEditedSlideOutput
+              }
+              showViewMedia={showViewMedia}
+              isPreviewOutputting={isPreviewOutputting}
+              videoSettings={videoSettings}
+              onOutputPreviewMedia={handleOutputPreviewMediaClick}
+              liveVideo={liveVideo}
+              onVideoSettingsChange={updateVideoSettings}
+              showsPanelRef={showsPanelRef}
+              scripturePanelRef={scripturePanelRef}
+              showsPanelProps={showsPanelProps}
+              speechLang={speechSettings.lang}
+              speechInputDeviceId={speechSettings.inputDeviceId}
+              bibleAgent={speechSettings.bible}
+              onSendScripture={handleScriptureOutput}
+              selectedServiceId={selectedServiceId}
+              onAddScriptureToService={onAddScriptureToService}
+              importOverlay={presentationImportState}
+            />
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          {/* Right Column: Output Preview on top, workspace rail underneath */}
+          <ResizablePanel defaultSize="22" minSize="20" maxSize="35" order={2}>
+            <ResizablePanelGroup
+              direction="vertical"
+              autoSaveId="present-right-column-v1"
+            >
+              <ResizablePanel defaultSize="45" minSize="25">
+                <PresentOutputSidebar outputPreviewProps={outputPreviewProps} />
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+              <ResizablePanel defaultSize="55" minSize="30">
+                <div className="h-full min-h-0 overflow-hidden">
+                  <SidebarRail
+                    orgId={orgId ?? null}
+                    localOrgId={localOrgId ?? null}
+                    userId={userId}
+                    isTimerLayerEnabled={isTimerLayerEnabled}
+                    onToggleTimerLayer={handleToggleTimerLayer}
+                    isTextLayerEnabled={showTextInOutput}
+                    onToggleTextLayer={handleToggleTextInOutput}
+                    isMessageLayerEnabled={isMessageLayerEnabled}
+                    onSetMessageLayerEnabled={setIsMessageLayerEnabled}
+                    activeMessageOverlay={activeMessageOverlay}
+                    onShowMessageOverlay={onShowMessageOverlay}
+                    onPushMasterSlide={onPushMasterSlide}
+                    mediaItems={mediaState.mediaState.allMediaItems}
+                    activePropIds={activePropIds}
+                    onSetLivePropDraft={onSetLivePropDraft}
+                    onClearLivePropDraft={onClearLivePropDraft}
+                    onSetActivePropIds={onSetActivePropIds}
+                    timers={timers}
+                  />
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      );
+    }
+
+    return (
+      <ResizablePanelGroup
+        direction="horizontal"
+        className="flex-1 w-full h-full"
+        autoSaveId="present-main-layout-v13"
+      >
+        <ResizablePanel defaultSize="80" order={1}>
         <ResizablePanelGroup direction="vertical">
           {/* Top Row: Services (Left) + Center (Workspace) */}
           <ResizablePanel defaultSize="70">
@@ -1075,7 +1164,8 @@ export function MainView({
         </ResizablePanelGroup>
       </ResizablePanel>
     </ResizablePanelGroup>
-  );
+    );
+  };
 
   const renderEditMode = () => (
     <div className="h-full w-full bg-background overflow-hidden">
