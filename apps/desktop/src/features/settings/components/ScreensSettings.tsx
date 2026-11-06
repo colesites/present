@@ -90,11 +90,17 @@ import {
 export type ScreenRole = "audience" | "media" | "worship";
 
 /** The menu items the operator window turns the three built-in screens on and off with. */
+// Each screen's own switch. The Screen's turns only the Screen on or off; the
+// audience group's switch on the left is the Output (`GROUP_COMMAND`), which
+// takes the screens added beside it along.
 const BUILT_IN_COMMAND: Record<string, string> = {
-  audience: "screens.output",
+  audience: "screens.output-screen",
   media: "screens.media-stage",
   worship: "screens.worship-stage",
 };
+
+/** The audience group's switch: the Output, with every screen added beside it. */
+const GROUP_COMMAND = "screens.output";
 
 const TYPES: Array<{ value: ScreenType; label: string; description: string }> = [
   { value: "single", label: "Single", description: "One picture, on one output." },
@@ -1682,13 +1688,13 @@ export function ScreensSettings({
       const members = list.filter((screen) => screen.group === group);
       const output = members.find((screen) => screen.id === "audience");
       // The Output takes the added audience screens with it.
-      if (output && output.open !== on) {
-        turn(output, on);
+      if (output && output.open !== on && inShell()) {
+        run("turn the audience screens on or off", () => emitToOperator(GROUP_COMMAND));
         return;
       }
       for (const screen of members) turn(screen, on);
     },
-    [list, turn],
+    [list, run, turn],
   );
 
   const chooseDisplay = useCallback(

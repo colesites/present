@@ -11,7 +11,8 @@ import {
   useImperativeHandle,
   type ChangeEvent,
 } from "react";
-import { parseReference, type ParsedReference } from "../lib/parser";
+import { knowVerseCounts, parseReference, type ParsedReference } from "../lib/parser";
+import { verseCountOf } from "../lib/canonical-verses";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
 import { cn } from "../../../renderer/shared/lib/utils";
@@ -22,7 +23,7 @@ import {
   getActiveScriptureVersePk,
   type ScriptureSlide,
 } from "../lib/slides";
-import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
+import { useSpeechRecognition, type ScriptRecognitionResult } from "../hooks/useSpeechRecognition";
 import { useHeardScripture } from "../hooks/useHeardScripture";
 import { versionKeyterms } from "../lib/listening";
 import { useScripturePanelStore } from "../lib/panel-state";
@@ -39,10 +40,16 @@ import {
   Trash2,
   Check,
   ChevronDown,
+  BookOpen,
+  Star,
+  X,
 } from "lucide-react";
 import { ScriptureInput, type ScriptureInputRef } from "./ScriptureInput";
 import type { BibleVerse } from "../lib/db";
 import { ScriptureResults } from "./ScriptureResults";
+import { BookChapterBrowser } from "./BookChapterBrowser";
+import { highlightText } from "../lib/highlighter";
+import { toast } from "sonner";
 import { useDesktopSessionStore } from "../../../renderer/shared/store/desktopSession";
 import {
   DropdownMenu,
@@ -51,6 +58,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../../renderer/shared/components/ui/dropdown-menu";
+
+// What lets a reference heard as one number ("psalm 1191") be read at once,
+// before the speech service formats it (`parser.ts`).
+knowVerseCounts(verseCountOf);
 
 interface ScripturePanelProps {
   onSendToOutput: (slides: ScriptureSlide[]) => void;
@@ -112,6 +123,7 @@ export const ScripturePanel = memo(
     const textSearchRequestRef = useRef(0);
     const [downloadingHostedId, setDownloadingHostedId] = useState<string | null>(null);
     const [removingVersionId, setRemovingVersionId] = useState<string | null>(null);
+    const [showBrowser, setShowBrowser] = useState(true);
 
     useImperativeHandle(ref, () => ({
       focusSearch: () => {
@@ -123,6 +135,40 @@ export const ScripturePanel = memo(
     const allBooks = useMemo(() => liveBooks ?? [], [liveBooks]);
     const liveVersions = useLiveQuery(() => db.versions.toArray());
     const availableVersions = useMemo(() => liveVersions ?? [], [liveVersions]);
+
+    const [mainViewMode, setMainViewMode] = useState<"reader" | "search">("reader");
+
+    const [favoriteVersions, setFavoriteVersions] = useState<string[]>(() => {
+      try {
+        const raw = localStorage.getItem("present:favorite_bible_versions");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return parsed.map((s) => String(s).toUpperCase());
+        }
+      } catch {}
+      return [];
+    });
+
+    const toggleFavoriteVersion = useCallback((code: string) => {
+      const upper = code.toUpperCase();
+      setFavoriteVersions((prev) => {
+        const next = prev.includes(upper) ? prev.filter((c) => c !== upper) : [...prev, upper];
+        try {
+          localStorage.setItem("present:favorite_bible_versions", JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+    }, []);
+
+    const sortedInstalledVersions = useMemo(() => {
+      return [...availableVersions].sort((a, b) => {
+        const aFav = favoriteVersions.includes(a.code.toUpperCase());
+        const bFav = favoriteVersions.includes(b.code.toUpperCase());
+        if (aFav && !bFav) return -1;
+        if (!aFav && bFav) return 1;
+        return a.code.localeCompare(b.code);
+      });
+    }, [availableVersions, favoriteVersions]);
 
     const sessionToken = useDesktopSessionStore((state) => state.sessionToken);
 
@@ -193,6 +239,11 @@ export const ScripturePanel = memo(
       errors: [],
     });
     const [isTextSearching, setIsTextSearching] = useState(false);
+    // A word-search row the operator opened. Empty follows the top match.
+    const [pinnedSearchPk, setPinnedSearchPk] = useState<string | null>(null);
+    // Which search last asked the browser to move: the reference box and the
+    // Bible agent, or the word search.
+    const [browserSource, setBrowserSource] = useState<"reference" | "search">("reference");
     const wasActiveRef = useRef(isActive);
     const activeVersePk = getActiveScriptureVersePk(activeSlideId);
 
@@ -311,11 +362,26 @@ export const ScripturePanel = memo(
     );
 
     const getLiveScriptureVerse = useCallback(async () => {
-      if (!activeVersePk) {
-        return null;
+      if (activeVersePk) {
+        const live = await db.verses.get(activeVersePk);
+        if (live) return live;
       }
-      return (await db.verses.get(activeVersePk)) ?? null;
-    }, [activeVersePk]);
+      // Fallback: If no slide is currently live, check the open passage in the panel
+      const open = openPassageRef.current;
+      if (open?.book && open.chapter) {
+        const verseNum = open.verseStart ?? 1;
+        const version = effectiveSelectedVersionCode;
+        if (version) {
+          const match = await db.verses
+            .where("[version+bookId+chapter]")
+            .equals([version, open.book.id, open.chapter])
+            .filter((v) => v.verse === verseNum)
+            .first();
+          if (match) return match;
+        }
+      }
+      return null;
+    }, [activeVersePk, effectiveSelectedVersionCode]);
 
     const handleAiQueryChange = useCallback(
       (value: string) => {
@@ -326,11 +392,14 @@ export const ScripturePanel = memo(
 
     const handleTextSearchQueryChange = useCallback((value: string) => {
       setTextSearchQuery(value);
+      setPinnedSearchPk(null);
       if (!value.trim()) {
         setTextSearchResults([]);
         setIsTextSearching(false);
+        setBrowserSource("reference");
         return;
       }
+      setBrowserSource("search");
       setIsTextSearching(true);
     }, [setTextSearchQuery, setTextSearchResults]);
 
@@ -348,6 +417,11 @@ export const ScripturePanel = memo(
       [onSendToOutput, resolveVersionCode],
     );
 
+    const openSearchVerse = useCallback((verse: BibleVerse) => {
+      setPinnedSearchPk(verse.pk);
+      void handleSendTextVerse(verse);
+    }, [handleSendTextVerse]);
+
     const showAdjacentLiveVerse = useCallback(
       async (direction: "next" | "previous") => {
         const verse = await getLiveScriptureVerse();
@@ -360,14 +434,32 @@ export const ScripturePanel = memo(
           return;
         }
 
+        // 1. Send the adjacent verse live to screen/preview
         void handleSendTextVerse(adjacentVerse);
+
+        // 2. Keep the panel, search input, and reader in sync
+        const open = openPassageRef.current;
+        const isChapterOnly = open?.book && open.chapter && open.verseStart === null;
+
+        if (isChapterOnly && adjacentVerse.chapter === verse.chapter) {
+          // If viewing the entire chapter and staying in the same chapter, keep the chapter view open.
+          // activeVersePk will highlight the adjacent live verse.
+        } else {
+          // Single verse view (e.g. Genesis 1:1) or crossing to a new chapter:
+          // Update the search box and panel view to the new reference.
+          const refString = isChapterOnly
+            ? `${adjacentVerse.bookName} ${adjacentVerse.chapter}`
+            : `${adjacentVerse.bookName} ${adjacentVerse.chapter}:${adjacentVerse.verse}`;
+          setLookupValue(refString);
+        }
+
+        setMainViewMode("reader");
       },
       [
-        formatReference,
         getAdjacentVerse,
         getLiveScriptureVerse,
         handleSendTextVerse,
-        resolveVersionCode,
+        setLookupValue,
       ],
     );
 
@@ -422,7 +514,7 @@ export const ScripturePanel = memo(
     });
 
     const onSpeechResult = useCallback(
-      (result: { transcript: string; isFinal: boolean }) => {
+      (result: ScriptRecognitionResult) => {
         if (!result.transcript) return;
         const transcript = result.transcript.trim();
 
@@ -438,8 +530,28 @@ export const ScripturePanel = memo(
 
         handleAiQueryChange(result.transcript);
 
-        // Every time the words come, not once a sentence is finished.
-        hear(transcript, result.isFinal);
+        // Feed the real-time Bible agent: full transcript event with turns and word timing when available
+        if (result.turn !== undefined || result.words) {
+          hear({
+            session: 1,
+            turn: result.turn ?? 0,
+            transcript,
+            endOfTurn: Boolean(result.endOfTurn ?? result.isFinal),
+            // As the transcript buffer reads them: `final` is what tells a
+            // word still being said from one that will not change.
+            words: result.words?.map((w) => ({
+              text: w.text,
+              start: w.start,
+              end: w.end,
+              confidence: w.confidence,
+              final: w.word_is_final,
+            })),
+            receivedAt: Date.now(),
+          });
+        } else {
+          // Fallback for simple string/final emissions
+          hear(transcript, result.isFinal);
+        }
       },
       [handleAiQueryChange, hear, showAdjacentLiveVerse, voiceCommands],
     );
@@ -482,6 +594,7 @@ export const ScripturePanel = memo(
     useEffect(() => {
       if (!isListening) {
         forgetHeard();
+        setLiveTranscript("");
         return;
       }
       let cancelled = false;
@@ -531,6 +644,7 @@ export const ScripturePanel = memo(
 
     const handleRefChange = useCallback((nextRef: ParsedReference) => {
       setParsedRef(nextRef);
+      if (nextRef.book) setBrowserSource("reference");
     }, []);
 
     const mergedRef = useMemo(
@@ -540,6 +654,17 @@ export const ScripturePanel = memo(
       }),
       [effectiveSelectedVersionCode, parsedRef],
     );
+
+    // Word search opens the top match, or the row that was chosen. The
+    // reference box and the Bible agent both land in mergedRef.
+    const searchFocus = useMemo(() => {
+      const query = textSearchQuery.trim();
+      if (!query || textSearchResults.length === 0) return null;
+      return (
+        textSearchResults.find((verse) => verse.pk === pinnedSearchPk) ??
+        textSearchResults[0]
+      );
+    }, [pinnedSearchPk, textSearchQuery, textSearchResults]);
 
     const handleEnter = useCallback(
       async (val?: string, options?: { addToService?: boolean }) => {
@@ -638,14 +763,73 @@ export const ScripturePanel = memo(
 
     const handleAddTextVerseToService = useCallback(
       async (verse: BibleVerse) => {
-        if (!selectedServiceId) {
-          return;
-        }
         const versionCode = resolveVersionCode(verse.version);
         const reference = `${verse.bookName} ${verse.chapter}:${verse.verse}${versionCode ? ` ${versionCode}` : ""}`;
-        await onAddScriptureToService(selectedServiceId, reference, reference);
+        if (selectedServiceId) {
+          await onAddScriptureToService(selectedServiceId, reference, reference);
+          toast.success(`Added ${reference} to service`);
+        } else {
+          toast.info("Please select a service in the right panel to add scripture to it.");
+        }
       },
       [onAddScriptureToService, resolveVersionCode, selectedServiceId],
+    );
+
+    const handleAddVerseToServiceSafe = useCallback(
+      async (reference: string, text: string) => {
+        if (selectedServiceId) {
+          await onAddScriptureToService(selectedServiceId, reference, text);
+          toast.success(`Added ${reference} to service`);
+        } else {
+          toast.info("Please select a service in the right panel to add scripture to it.");
+        }
+      },
+      [selectedServiceId, onAddScriptureToService],
+    );
+
+    const handleSelectPassageFromBrowser = useCallback(
+      async (bookName: string, chapter: number, verse?: number | null) => {
+        const refString = verse ? `${bookName} ${chapter}:${verse}` : `${bookName} ${chapter}`;
+        setLookupValue(refString);
+        setMainViewMode("reader");
+
+        // When a verse is clicked, send it live to screen immediately!
+        if (verse) {
+          const parsed = parseReference(refString, availableBooks);
+          const version = effectiveSelectedVersionCode;
+          const verses = await lookupRef({
+            ...parsed,
+            versionCode: version,
+          });
+
+          if (verses.length > 0) {
+            const targetVerse = verses.find((v) => v.verse === verse) ?? verses[0];
+            const versionName = version || resolveVersionCode(targetVerse.version);
+            const slides = generateBibleSlides([targetVerse], {
+              verseNumberMode: "inline",
+              maxLines: 40,
+              maxCharsPerLine: 100,
+              versionName,
+            });
+            onSendToOutput(slides);
+
+            if (selectedServiceId && addHeardToService) {
+              const fullRef = `${targetVerse.bookName} ${targetVerse.chapter}:${targetVerse.verse}${versionName ? ` ${versionName}` : ""}`;
+              void onAddScriptureToService(selectedServiceId, fullRef, fullRef);
+            }
+          }
+        }
+      },
+      [
+        availableBooks,
+        effectiveSelectedVersionCode,
+        lookupRef,
+        onSendToOutput,
+        resolveVersionCode,
+        selectedServiceId,
+        addHeardToService,
+        onAddScriptureToService,
+      ],
     );
 
     const handleManualImport = useCallback(
@@ -681,110 +865,193 @@ export const ScripturePanel = memo(
 
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-        {/* One row: which Bible, a reference, a search, and the microphone.
-            The sidebar of versions and books, and the heading that described
-            the row underneath it, took a third of the panel to say what the
-            controls already say. */}
-        <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                title="Bible version"
-                className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-white/5 px-2.5 text-[11px] font-semibold tracking-wide text-foreground ring-1 ring-white/10 transition hover:ring-white/25"
-              >
-                {effectiveSelectedVersionCode || "No version"}
-                <ChevronDown className="h-3 w-3 opacity-50" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-60">
-              {availableVersions.length === 0 ? (
-                <div className="px-2 py-2 text-xs text-muted-foreground">
-                  No versions installed yet.
-                </div>
-              ) : (
-                availableVersions.map((version) => (
-                  <DropdownMenuItem
+        {/* Top Control Bar: Books browser toggle, installed version pills (favorites first), download dropdown, mic */}
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-2 bg-card/40">
+          <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-0.5 min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={() => setShowBrowser((prev) => !prev)}
+              aria-pressed={showBrowser}
+              title={showBrowser ? "Hide Book, Chapter & Verse Browser" : "Show Book, Chapter & Verse Browser"}
+              className={cn(
+                "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold ring-1 transition",
+                showBrowser
+                  ? "bg-primary/20 text-primary ring-primary/40"
+                  : "bg-white/4 text-muted-foreground ring-white/10 hover:text-foreground hover:ring-white/25",
+              )}
+            >
+              <BookOpen className="h-3.5 w-3.5" />
+              <span>Books</span>
+            </button>
+
+            <div className="h-4 w-px bg-border/60 shrink-0 mx-1" />
+
+            {/* Installed Bible Version Pills (Favorites First) */}
+            <div className="flex items-center gap-1 shrink-0">
+              {sortedInstalledVersions.map((version) => {
+                const isSelected =
+                  effectiveSelectedVersionCode?.toUpperCase() === version.code.toUpperCase();
+                return (
+                  <button
                     key={version.id}
+                    type="button"
                     onClick={() => setSelectedVersionCode(version.code)}
-                    className="flex items-center justify-between gap-2"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-xs font-medium">{version.code}</span>
-                      <span className="block truncate text-[10px] text-muted-foreground">
-                        {version.name}
-                      </span>
-                    </span>
-                    <span className="flex items-center gap-1">
-                      {effectiveSelectedVersionCode === version.code ? (
-                        <Check className="h-3.5 w-3.5 text-primary" />
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void handleUninstallVersion(version.id);
-                        }}
-                        title="Remove version"
-                        className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        {removingVersionId === version.id ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3 w-3" />
-                        )}
-                      </button>
-                    </span>
-                  </DropdownMenuItem>
-                ))
-              )}
-              <DropdownMenuSeparator />
-              {isHostedCatalogLoading ? (
-                <div className="px-2 py-2 text-xs text-muted-foreground">Loading versions…</div>
-              ) : installableVersions.length === 0 ? (
-                <div className="px-2 py-2 text-xs text-muted-foreground">
-                  {hostedVersions.length === 0
-                    ? "No other versions available."
-                    : "Every available version is installed."}
-                </div>
-              ) : (
-                installableVersions.map((version) => (
-                  <DropdownMenuItem
-                    key={version.id}
-                    onClick={() => {
-                      void handleDownloadHostedVersion(version);
-                    }}
-                    disabled={downloadingHostedId === version.id}
-                    className="flex items-center justify-between gap-2"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-xs">{version.name}</span>
-                      <span className="block text-[10px] text-muted-foreground">{version.code}</span>
-                    </span>
-                    {downloadingHostedId === version.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Download className="h-3.5 w-3.5 opacity-60" />
+                    title={`${version.name} (${version.code})`}
+                    className={cn(
+                      "inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2.5 text-xs font-semibold ring-1 transition",
+                      isSelected
+                        ? "bg-primary text-primary-foreground ring-primary shadow-xs"
+                        : "bg-white/5 text-muted-foreground ring-white/10 hover:bg-white/10 hover:text-foreground",
                     )}
-                  </DropdownMenuItem>
-                ))
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => importInputRef.current?.click()} className="gap-2">
-                <Upload className="h-3.5 w-3.5" />
-                Import a Bible file
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  void refreshHostedCatalog();
-                }}
-                className="gap-2"
-              >
-                <RefreshCw className={cn("h-3.5 w-3.5", isHostedCatalogLoading && "animate-spin")} />
-                Refresh the list
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  >
+                    <span>{version.code}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Download Bible Version Dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  title="Download more Bible versions or import"
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white/5 px-2.5 text-xs font-medium text-muted-foreground ring-1 ring-white/10 transition hover:bg-white/10 hover:text-foreground"
+                >
+                  <Download className="h-3.5 w-3.5 text-primary" />
+                  <span>Download Version</span>
+                  <ChevronDown className="h-3 w-3 opacity-60" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-72 max-h-[460px] overflow-y-auto custom-scrollbar">
+                {/* Downloaded Versions at Top */}
+                <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Downloaded Versions ({availableVersions.length})
+                </div>
+                {availableVersions.length === 0 ? (
+                  <div className="px-2 py-2 text-xs text-muted-foreground italic">
+                    No versions downloaded yet.
+                  </div>
+                ) : (
+                  availableVersions.map((version) => {
+                    const isFav = favoriteVersions.includes(version.code.toUpperCase());
+                    return (
+                      <div
+                        key={version.id}
+                        className="flex items-center justify-between px-2 py-1.5 text-xs hover:bg-muted/50 rounded-sm group transition"
+                      >
+                        <div
+                          className="flex-1 min-w-0 cursor-pointer pr-1"
+                          onClick={() => setSelectedVersionCode(version.code)}
+                          title={`Switch to ${version.code}`}
+                        >
+                          <span className="font-semibold text-foreground">{version.code}</span>
+                          <span className="text-[10px] text-muted-foreground ml-1.5 truncate">
+                            ({version.name})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavoriteVersion(version.code);
+                            }}
+                            title={
+                              isFav
+                                ? "Remove favorite (starred versions appear first)"
+                                : "Mark as favorite (starred versions appear first)"
+                            }
+                            className={cn(
+                              "p-1 rounded hover:bg-white/10 transition",
+                              isFav
+                                ? "text-amber-400"
+                                : "text-muted-foreground/40 hover:text-foreground",
+                            )}
+                          >
+                            <Star className={cn("h-3.5 w-3.5", isFav && "fill-amber-400 text-amber-400")} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleUninstallVersion(version.id);
+                            }}
+                            title="Uninstall version"
+                            className="p-1 rounded text-muted-foreground/40 hover:bg-destructive/10 hover:text-destructive transition"
+                          >
+                            {removingVersionId === version.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+
+                <DropdownMenuSeparator />
+
+                {/* Available for Download Section */}
+                <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Available for Download
+                </div>
+                {isHostedCatalogLoading ? (
+                  <div className="px-2 py-2 text-xs text-muted-foreground flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Loading available versions…</span>
+                  </div>
+                ) : installableVersions.length === 0 ? (
+                  <div className="px-2 py-2 text-xs text-muted-foreground italic">
+                    {hostedVersions.length === 0
+                      ? "No other versions available."
+                      : "All catalog versions are installed."}
+                  </div>
+                ) : (
+                  installableVersions.map((version) => (
+                    <DropdownMenuItem
+                      key={version.id}
+                      onClick={() => {
+                        void handleDownloadHostedVersion(version);
+                      }}
+                      disabled={downloadingHostedId === version.id}
+                      className="flex items-center justify-between gap-2"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-medium">{version.name}</span>
+                        <span className="block text-[10px] text-muted-foreground">{version.code}</span>
+                      </span>
+                      {downloadingHostedId === version.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5 opacity-60 text-primary" />
+                      )}
+                    </DropdownMenuItem>
+                  ))
+                )}
+
+                <DropdownMenuSeparator />
+                <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Options & Import
+                </div>
+                <DropdownMenuItem onClick={() => importInputRef.current?.click()} className="gap-2">
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>Import a Bible file (.zip, .json, .xml)</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    void refreshHostedCatalog();
+                  }}
+                  className="gap-2"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", isHostedCatalogLoading && "animate-spin")} />
+                  <span>Refresh catalog</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
 
           <input
             ref={importInputRef}
@@ -796,56 +1063,14 @@ export const ScripturePanel = memo(
             }}
           />
 
-          <div className="min-w-0 flex-1">
-            <ScriptureInput
-              ref={inputRef}
-              onRefChange={handleRefChange}
-              value={lookupValue}
-              onValueChange={setLookupValue}
-              availableBooks={availableBooks}
-              availableVersions={availableVersions}
-              placeholder={
-                effectiveSelectedVersionCode
-                  ? `Reference — John 3:16`
-                  : "Reference"
-              }
-              onEnter={handleEnter}
-            />
-          </div>
-
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
-            <input
-              value={textSearchQuery}
-              onChange={(event) => handleTextSearchQueryChange(event.target.value)}
-              placeholder={searchMode === "exact" ? "Search an exact phrase" : "Search words"}
-              className="h-8 w-full rounded-md bg-white/4 pl-8 pr-16 text-xs text-foreground ring-1 ring-white/10 outline-hidden transition focus:ring-primary/50"
-            />
-            {isTextSearching ? (
-              <Loader2 className="absolute right-12 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-primary" />
-            ) : null}
-            <button
-              type="button"
-              aria-pressed={searchMode === "exact"}
-              onClick={() => setSearchMode(searchMode === "exact" ? "broad" : "exact")}
-              title={searchMode === "exact" ? "Matching the exact phrase" : "Matching words and variations"}
-              className={cn(
-                "absolute right-1 top-1/2 h-6 -translate-y-1/2 rounded px-1.5 text-[9px] font-bold uppercase tracking-wide transition",
-                searchMode === "exact"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground/70 hover:bg-white/8 hover:text-foreground",
-              )}
-            >
-              Exact
-            </button>
-          </div>
-
+          {/* Right: Microphone */}
           {isSupported ? (
             <button
               type="button"
               onClick={() => {
                 if (isListening) {
                   stopListening();
+                  handleAiQueryChange("");
                   return;
                 }
                 if (isStarting) {
@@ -860,13 +1085,12 @@ export const ScripturePanel = memo(
               disabled={isStarting}
               aria-busy={isStarting}
               aria-pressed={isListening}
-              // A failure is said in a toast (`useSpeechRecognition`).
               title={
                 isListening
-                    ? "Listening — click to stop"
-                    : isStarting
-                      ? "Starting the microphone…"
-                      : "Listen for a reference"
+                  ? "Listening — click to stop"
+                  : isStarting
+                    ? "Starting the microphone…"
+                    : "Listen for a reference"
               }
               className={cn(
                 "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md ring-1 transition",
@@ -889,6 +1113,85 @@ export const ScripturePanel = memo(
           ) : null}
         </div>
 
+        {/* Search Row: Two side-by-side search boxes (Reference jump on left, Word/Phrase search on right) */}
+        <div className="shrink-0 border-b border-border/50 px-3 py-2 bg-card/20">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 w-full">
+            {/* Box 1: Passage Reference Jump (e.g. Genesis 17, John 3:16) */}
+            <div className="relative min-w-0">
+              <ScriptureInput
+                ref={inputRef}
+                onRefChange={handleRefChange}
+                value={lookupValue}
+                onValueChange={(val) => {
+                  setLookupValue(val);
+                  if (val.trim()) {
+                    setMainViewMode("reader");
+                  }
+                }}
+                availableBooks={availableBooks}
+                availableVersions={availableVersions}
+                placeholder={
+                  effectiveSelectedVersionCode
+                    ? `Reference — e.g. Genesis 17, John 3:16 (${effectiveSelectedVersionCode})`
+                    : "Reference — e.g. Genesis 17, John 3:16"
+                }
+                onEnter={(val) => {
+                  setMainViewMode("reader");
+                  void handleEnter(val);
+                }}
+              />
+            </div>
+
+            {/* Box 2: Verse / Word Search (e.g. "created the", "in the beginning") */}
+            <div className="relative min-w-0">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
+              <input
+                value={textSearchQuery}
+                onChange={(event) => {
+                  handleTextSearchQueryChange(event.target.value);
+                  if (event.target.value.trim()) {
+                    setMainViewMode("search");
+                  }
+                }}
+                placeholder={searchMode === "exact" ? 'Search exact phrase (e.g. "created the")' : 'Search words (e.g. in the beginning)'}
+                autoComplete="off"
+                spellCheck={false}
+                className="h-8 w-full rounded-md bg-white/4 pl-8 pr-20 text-xs text-foreground ring-1 ring-white/10 outline-hidden transition focus:ring-primary/50"
+              />
+              {textSearchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleTextSearchQueryChange("");
+                    setMainViewMode("reader");
+                  }}
+                  title="Clear word search"
+                  className="absolute right-14 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              ) : null}
+              {isTextSearching ? (
+                <Loader2 className="absolute right-14 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-primary" />
+              ) : null}
+              <button
+                type="button"
+                aria-pressed={searchMode === "exact"}
+                onClick={() => setSearchMode(searchMode === "exact" ? "broad" : "exact")}
+                title={searchMode === "exact" ? "Matching exact phrase" : "Matching words and variations"}
+                className={cn(
+                  "absolute right-1 top-1/2 h-6 -translate-y-1/2 rounded px-1.5 text-[9px] font-bold uppercase tracking-wide transition",
+                  searchMode === "exact"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground/70 hover:bg-white/8 hover:text-foreground",
+                )}
+              >
+                Exact
+              </button>
+            </div>
+          </div>
+        </div>
+
         {activeImport ? (
           <div className="shrink-0 px-3 pb-2">
             <div className="mb-1 flex items-center justify-between text-[10px] capitalize text-muted-foreground">
@@ -904,7 +1207,7 @@ export const ScripturePanel = memo(
           </div>
         ) : null}
 
-        {liveTranscript.trim() || isListening ? (
+        {isListening ? (
           <div className="shrink-0 border-b border-border/40 px-3 py-1.5">
             <p className="truncate text-[11px] text-muted-foreground">
               <span className="mr-1.5 text-primary">●</span>
@@ -913,32 +1216,108 @@ export const ScripturePanel = memo(
           </div>
         ) : null}
 
-          <div className="custom-scrollbar flex-1 overflow-y-auto p-4 space-y-6">
-            <ScriptureResults
-              parsedRef={mergedRef}
-              activeVersePk={activeVersePk}
-              onSendToOutput={onSendToOutput}
-              onAddToService={
-                selectedServiceId
-                  ? (reference: string, text: string) =>
-                      onAddScriptureToService(selectedServiceId, reference, text)
-                  : undefined
-              }
-              onStep={setLookupValue}
-            />
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          {showBrowser && (
+            <div className="w-72 sm:w-80 shrink-0 h-full overflow-hidden">
+              <BookChapterBrowser
+                activeBookName={
+                  browserSource === "search" && searchFocus
+                    ? searchFocus.bookName
+                    : mergedRef.book?.name
+                }
+                activeChapter={
+                  browserSource === "search" && searchFocus
+                    ? searchFocus.chapter
+                    : mergedRef.chapter
+                }
+                activeVerse={
+                  browserSource === "search" && searchFocus
+                    ? searchFocus.verse
+                    : mergedRef.verseStart
+                }
+                availableBooks={availableBooks}
+                onSelectPassage={handleSelectPassageFromBrowser}
+              />
+            </div>
+          )}
 
-            {textSearchQuery.trim().length > 0 && (
-              <div className="rounded-lg border border-border bg-card p-3">
-                <div className="mb-2">
-                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
-                    Verse Search Results
-                  </h3>
+          <div className="flex flex-col flex-1 h-full min-h-0 p-3 overflow-hidden">
+            {/* If both a passage is open and a word search query exists, provide quick toggle tabs */}
+            {mergedRef.book && textSearchQuery.trim().length > 0 && (
+              <div className="shrink-0 flex items-center gap-1.5 border-b border-border/50 pb-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => setMainViewMode("reader")}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition",
+                    mainViewMode === "reader"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <BookOpen className="h-3.5 w-3.5" />
+                  <span>
+                    Passage: {mergedRef.book.name} {mergedRef.chapter}
+                    {mergedRef.verseStart ? `:${mergedRef.verseStart}` : ""}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMainViewMode("search")}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold transition",
+                    mainViewMode === "search"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <Search className="h-3.5 w-3.5" />
+                  <span>
+                    Word Matches ({textSearchResults.length})
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {mainViewMode === "search" && textSearchQuery.trim().length > 0 ? (
+              /* Dedicated Word Search Results View */
+              <div className="flex flex-col flex-1 h-full min-h-0 rounded-lg border border-border bg-card p-4 shadow-xs">
+                <div className="shrink-0 flex items-center justify-between border-b border-border/40 pb-2.5 mb-3">
+                  <div className="flex items-center gap-2">
+                    <Search className="h-4 w-4 text-primary" />
+                    <span className="text-xs font-bold text-foreground">
+                      Word Search Results for &ldquo;{textSearchQuery}&rdquo;
+                    </span>
+                    <span className="rounded-xs bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground font-semibold">
+                      {effectiveSelectedVersionCode}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span>
+                      {textSearchResults.length} {textSearchResults.length === 1 ? "match" : "matches"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleTextSearchQueryChange("");
+                        setMainViewMode("reader");
+                      }}
+                      className="text-xs text-primary hover:underline font-medium ml-1"
+                    >
+                      Clear search
+                    </button>
+                  </div>
                 </div>
 
                 {textSearchResults.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No matches found.</p>
+                  <div className="flex-1 flex flex-col items-center justify-center py-12 text-center text-xs text-muted-foreground italic">
+                    No matches found for &ldquo;{textSearchQuery}&rdquo; in {effectiveSelectedVersionCode}.
+                    <p className="mt-1 text-[11px] text-muted-foreground/70">
+                      Try switching to {searchMode === "exact" ? "Broad" : "Exact"} mode or checking your spelling.
+                    </p>
+                  </div>
                 ) : (
-                  <div className="max-h-[320px] space-y-1 overflow-y-auto pr-1 custom-scrollbar">
+                  <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1 custom-scrollbar pb-6">
                     {textSearchResults.map((verse) => {
                       const versionCode = resolveVersionCode(verse.version);
                       const verseRef = `${verse.bookName} ${verse.chapter}:${verse.verse}${versionCode ? ` ${versionCode}` : ""}`;
@@ -946,43 +1325,53 @@ export const ScripturePanel = memo(
                       return (
                         <div
                           key={verse.pk}
+                          role="button"
+                          tabIndex={0}
                           aria-current={isLive ? "true" : undefined}
+                          onClick={() => openSearchVerse(verse)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              openSearchVerse(verse);
+                            }
+                          }}
                           className={cn(
-                            "group rounded-md border px-2 py-1.5 transition [content-visibility:auto] [contain-intrinsic-size:80px]",
+                            "group relative w-full cursor-pointer rounded border p-2 text-left transition-colors select-none",
                             isLive
-                              ? "border-emerald-400/60 bg-emerald-400/8"
-                              : "border-border/60 bg-background/40 hover:border-primary/40 hover:bg-accent/20",
+                              ? "border-emerald-400/50 bg-emerald-400/8"
+                              : "border-transparent hover:bg-accent",
                           )}
                         >
-                          <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className={cn("text-xs font-bold tracking-wide", isLive ? "text-emerald-400" : "text-primary")}>
+                                  {verseRef}
+                                </span>
+                                {isLive && (
+                                  <span className="rounded-xs bg-emerald-500/20 px-1 py-0.2 text-[9px] font-bold text-emerald-400">
+                                    LIVE ON SCREEN
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs leading-relaxed text-foreground">
+                                {highlightText(verse.text, textSearchQuery, {
+                                  isExact: searchMode === "exact",
+                                })}
+                              </p>
+                            </div>
                             <button
                               type="button"
-                              onClick={() => handleSendTextVerse(verse)}
-                              className="flex-1 text-left"
+                              title="Add to service"
+                              aria-label={`Add ${verseRef} to service`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleAddTextVerseToService(verse);
+                              }}
+                              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:text-foreground hover:bg-muted transition"
                             >
-                              <p className={cn("text-[10px] font-semibold uppercase", isLive ? "text-emerald-400" : "text-muted-foreground")}>
-                                {verseRef}{isLive ? " · LIVE" : ""}
-                              </p>
-                              <p className="text-xs text-foreground">{verse.text}</p>
+                              <Plus className="h-3.5 w-3.5" />
                             </button>
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-                              <button
-                                type="button"
-                                onClick={() => handleSendTextVerse(verse)}
-                                className="h-6 w-6 rounded border border-input text-muted-foreground"
-                              >
-                                <Monitor className="mx-auto h-3 w-3" />
-                              </button>
-                              {selectedServiceId && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleAddTextVerseToService(verse)}
-                                  className="h-6 w-6 rounded border border-input text-muted-foreground"
-                                >
-                                  <Plus className="mx-auto h-3 w-3" />
-                                </button>
-                              )}
-                            </div>
                           </div>
                         </div>
                       );
@@ -990,8 +1379,48 @@ export const ScripturePanel = memo(
                   </div>
                 )}
               </div>
+            ) : (
+              /* Passage Reader View */
+              <div className="flex flex-col flex-1 h-full min-h-0">
+                {!mergedRef.book ? (
+                  <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border/70 p-8 text-center bg-card/30">
+                    <div className="rounded-full bg-primary/10 p-3 text-primary mb-3">
+                      <BookOpen className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-base font-semibold text-foreground">
+                      Select a Bible Passage
+                    </h3>
+                    <p className="mt-1 text-xs text-muted-foreground max-w-sm">
+                      Choose a book, chapter, and verse from the browser on the left, type a reference above (e.g. Genesis 1:1, John 3:16), or search for words.
+                    </p>
+                    <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+                      {["Genesis 1", "Psalms 23", "Matthew 5", "John 3", "Romans 8", "1 Corinthians 13"].map((passage) => (
+                        <button
+                          key={passage}
+                          type="button"
+                          onClick={() => {
+                            setLookupValue(passage);
+                            setMainViewMode("reader");
+                          }}
+                          className="rounded-md border border-border/80 bg-background/80 px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary/50 hover:bg-primary/10 hover:text-primary transition"
+                        >
+                          {passage}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <ScriptureResults
+                    parsedRef={mergedRef}
+                    activeVersePk={activeVersePk}
+                    onSendToOutput={onSendToOutput}
+                    onAddToService={handleAddVerseToServiceSafe}
+                    onStep={setLookupValue}
+                  />
+                )}
+              </div>
             )}
-
+          </div>
         </div>
       </div>
     );

@@ -57,6 +57,7 @@ fn main() {
                 height,
                 bgra,
                 presentation_seconds: index as f64 / 30.0,
+                gpu: None,
             }
         })
         .collect();

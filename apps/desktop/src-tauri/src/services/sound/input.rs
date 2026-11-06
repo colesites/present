@@ -5,7 +5,7 @@
 //! own — and WebKit's audio graph to turn it into the 16 kHz, 16-bit samples
 //! the transcription service takes. Now the system's device is opened here,
 //! by the id Settings shows (`output::devices`), and FFmpeg's resampler makes
-//! the samples. The caller gets them about twenty times a second.
+//! the samples. The caller gets them about ten times a second.
 
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,8 +20,9 @@ use rtrb::RingBuffer;
 /// What the transcription service takes: 16 kHz, one channel.
 pub const RATE: u32 = 16_000;
 
-/// How often what has been captured is looked at.
-const CHUNK_EVERY: Duration = Duration::from_millis(50);
+/// How often what has been captured is looked at: often, so a word is on its
+/// way to the transcription service as soon as a chunk of it is whole.
+const CHUNK_EVERY: Duration = Duration::from_millis(20);
 
 /// What is handed on at a time: 100 ms of sound, 1,600 samples.
 ///
@@ -30,6 +31,11 @@ const CHUNK_EVERY: Duration = Duration::from_millis(50);
 /// the clock, a message held only what the device had delivered by then —
 /// four of its 512-frame callbacks, 46 ms — and AssemblyAI ended every
 /// session at its first message ("Input Duration Violation: 46.4375 ms").
+/// Whole chunks are always that long. Shorter ones gained nothing: measured
+/// against the service with a recorded sermon, 60 ms chunks came back about
+/// 50 ms later each than 100 ms ones, which is what they saved; the service
+/// seems to work in steps of about 100 ms. What does help is handing a chunk
+/// on as soon as it is whole (`CHUNK_EVERY`).
 pub const CHUNK_BYTES: usize = (RATE as usize / 10) * 2;
 
 /// Converted sound, gathered into whole chunks of [`CHUNK_BYTES`].
@@ -265,7 +271,7 @@ mod tests {
             assert_eq!(chunk.len(), CHUNK_BYTES, "every message is 100 ms");
         }
         let milliseconds = CHUNK_BYTES as f64 / 2.0 / f64::from(RATE) * 1000.0;
-        assert!((50.0..=1000.0).contains(&milliseconds), "{milliseconds} ms");
+        assert!((55.0..=1000.0).contains(&milliseconds), "{milliseconds} ms");
     }
 
     #[test]

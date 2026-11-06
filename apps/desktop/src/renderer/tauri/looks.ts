@@ -64,6 +64,13 @@ export const setLookLayers = (
   enabled: boolean,
 ): Promise<LooksConfig> => invoke("set_look_layers", { lookId, target, layers, enabled });
 
+/**
+ * The operator's switches in the right sidebar: `layers` showing or not, on
+ * every screen whose own column of the live look lets them through.
+ */
+export const setShowingLayers = (layers: LookLayerKey[], enabled: boolean): Promise<LooksConfig> =>
+  invoke("set_showing_layers", { layers, enabled });
+
 export const setLookTextPosition = (
   lookId: string,
   target: LookTargetKey,

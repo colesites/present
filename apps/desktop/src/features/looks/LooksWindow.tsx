@@ -67,8 +67,9 @@ export function LooksWindow() {
         <div>
           <h1 className="text-lg font-semibold text-foreground">Looks</h1>
           <p className="text-[11px] text-muted-foreground">
-            The layers each audience screen shows, and where each one sits on it. Stage screens show
-            the stage layout chosen for them in Screen Configuration.
+            The layers each audience screen may show, and where each one sits on it. A layer shows
+            when it is on here and its switch in the sidebar is on. Stage screens show the stage
+            layout chosen for them in Screen Configuration.
           </p>
         </div>
       </div>

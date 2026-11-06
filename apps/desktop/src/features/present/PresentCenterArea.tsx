@@ -638,8 +638,8 @@ export function PresentCenterArea({
         </Activity>
       </div>
 
-      {/* Footer Area - Reusable Workspace Footer */}
-      {viewMode === "show" && (
+      {/* Footer Area - Reusable Workspace Footer (hidden in dedicated Scripture mode) */}
+      {viewMode === "show" && bottomTab !== "scripture" && (
         <WorkspaceFooter
           leftContent={<SongAgentControl />}
           showTransitionPicker

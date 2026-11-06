@@ -18,6 +18,7 @@ import type {
   SlideElement,
   SlideElementStyle,
   SlideElementType,
+  SlideShapePreset,
 } from "../../shared/types";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import {
@@ -37,6 +38,15 @@ import {
 } from "../library/lib/library-items";
 import type { LibraryTextStyleDefaults } from "../library/lib/library-items";
 import { normalizeEditableRichTextHtml } from "../../renderer/shared/lib/rich-text";
+import { fitGeometryToBox, presetGeometry, withShapePreset } from "./lib/shapes";
+import { useEditorHistory } from "./hooks/useEditorHistory";
+import { useSlideArrange } from "./hooks/useSlideArrange";
+import { hasCopiedSlides, useSlideCommands } from "./hooks/useSlideCommands";
+import {
+  syncTextBodyWithStyle,
+  withEditedTextBody,
+  type EditableNode,
+} from "./lib/text-body";
 import { breakLyricsIntoChunks } from "../../renderer/shared/lib/lyrics";
 import { Dialog } from "../../renderer/shared/components/Dialog";
 import { EditorHeader } from "./components/EditorHeader";
@@ -81,7 +91,7 @@ interface LyricsEditorProps {
 
 type EditorViewMode = "slides" | "source";
 type GeneralInspectorTab = "presentation" | "slide";
-type ObjectInspectorTab = "text" | "shape" | "image";
+type ObjectInspectorTab = "text" | "shape" | "image" | "video";
 type InspectorTab = GeneralInspectorTab | ObjectInspectorTab;
 
 function isGeneralInspectorTab(tab: InspectorTab): tab is GeneralInspectorTab {
@@ -91,7 +101,7 @@ function isGeneralInspectorTab(tab: InspectorTab): tab is GeneralInspectorTab {
 function getInspectorTabForElementType(
   type: SlideElementType | null | undefined,
 ): ObjectInspectorTab | null {
-  if (type === "text" || type === "shape" || type === "image") {
+  if (type === "text" || type === "shape" || type === "image" || type === "video") {
     return type;
   }
 
@@ -213,6 +223,12 @@ export const LyricsEditor = memo(function LyricsEditor({
       updatedAt: Date.now(),
     }
   );
+  const { undo, redo, canUndo, canRedo } = useEditorHistory(draft, setDraft);
+  // An imported PowerPoint or PDF: slides of objects, not lyrics.
+  const isDeck = libraryItem?.type === "slide";
+  // Which side was pressed last: the slide list's keys act on slides.
+  const focusAreaRef = useRef<"slides" | "canvas">("canvas");
+  const slideKeysRef = useRef<(event: KeyboardEvent) => boolean>(() => false);
   const [editorView, setEditorView] = useState<EditorViewMode>("slides");
   const [inspectorTab, setInspectorTabState] =
     useState<InspectorTab>("presentation");
@@ -577,8 +593,12 @@ export const LyricsEditor = memo(function LyricsEditor({
       if (!slideId || !elementId) return;
 
       updateSlide(slideId, (slide: LibrarySlide) => {
+        // An imported box's words follow a change to its style.
         const nextElements = (slide.elements ?? []).map((el: SlideElement) =>
-          el.id === elementId ? updater(el) : el
+          // A shape's paths follow its box.
+          el.id === elementId
+            ? syncTextBodyWithStyle(el, fitGeometryToBox(el, updater(el)))
+            : el
         );
 
         const primaryText = getPrimarySlideTextFromElements(nextElements, slide.text);
@@ -591,6 +611,32 @@ export const LyricsEditor = memo(function LyricsEditor({
       });
     },
     [updateSlide]
+  );
+
+  /**
+   * Several objects changed in one step. Each one changed keeps its paths
+   * fitted to its box and an imported box's words in step with its style.
+   */
+  const updateElements = useCallback(
+    (slideId: string | null, updater: (elements: SlideElement[]) => SlideElement[]) => {
+      if (!slideId) return;
+      updateSlide(slideId, (slide: LibrarySlide) => {
+        const before = slide.elements ?? [];
+        const previousById = new Map(before.map((element) => [element.id, element]));
+        const nextElements = updater(before).map((element) => {
+          const previous = previousById.get(element.id);
+          return previous && previous !== element
+            ? syncTextBodyWithStyle(previous, fitGeometryToBox(previous, element))
+            : element;
+        });
+        return {
+          ...slide,
+          elements: nextElements,
+          text: getPrimarySlideTextFromElements(nextElements, slide.text),
+        };
+      });
+    },
+    [updateSlide],
   );
 
   const setAllTextElementsFontSize = useCallback(
@@ -620,13 +666,13 @@ export const LyricsEditor = memo(function LyricsEditor({
             }
 
             didChange = true;
-            return {
+            return syncTextBodyWithStyle(element, {
               ...element,
               style: {
                 ...(element.style ?? {}),
                 fontSize: normalizedFontSize,
               },
-            };
+            });
           });
 
           if (!didChange) {
@@ -681,10 +727,10 @@ export const LyricsEditor = memo(function LyricsEditor({
             }
 
             didChange = true;
-            return {
+            return syncTextBodyWithStyle(element, {
               ...element,
               style: { ...(element.style ?? {}), ...stylePatch },
-            };
+            });
           });
 
           if (!didChange) {
@@ -796,8 +842,26 @@ export const LyricsEditor = memo(function LyricsEditor({
     [selectedSlide?.elements, setInspectorTab],
   );
 
+  const {
+    selectedIds: selectedElementIds,
+    selectElements,
+    selectElement,
+    run: runArrange,
+  } = useSlideArrange({
+    slide: selectedSlide,
+    slideId: selectedSlideId,
+    canvas: canvasDimensions,
+    enabled: editorView === "slides",
+    primaryId: selectedElementId,
+    setPrimary: handleSelectElement,
+    updateElements,
+    undo,
+    redo,
+    slideKeys: (event) => slideKeysRef.current(event),
+  });
+
   const addElement = useCallback(
-    (type: SlideElementType) => {
+    (type: SlideElementType, preset?: SlideShapePreset) => {
       if (!selectedSlideId) return;
 
       const newId = `${selectedSlideId}_${type}_${Date.now()}`;
@@ -809,11 +873,13 @@ export const LyricsEditor = memo(function LyricsEditor({
       const height =
         type === "text"
           ? Math.round(canvasDimensions.height * 0.78)
-          : Math.round(canvasDimensions.height * (800 / 1080));
+          : preset === "line"
+            ? 40
+            : Math.round(canvasDimensions.height * (800 / 1080));
       const x = (canvasDimensions.width - width) / 2;
       const y = (canvasDimensions.height - height) / 2;
 
-      const newElement: SlideElement = {
+      const created: SlideElement = {
         id: newId,
         type,
         x,
@@ -839,7 +905,10 @@ export const LyricsEditor = memo(function LyricsEditor({
                   backgroundColor: "#3b82f6",
                   opacity: 1,
                 },
+        ...(type === "shape" ? { geometry: presetGeometry("rect", width, height) } : {}),
       };
+      const newElement =
+        type === "shape" && preset && preset !== "rect" ? withShapePreset(created, preset) : created;
 
       updateSlide(selectedSlideId, (slide) => ({
         ...slide,
@@ -924,12 +993,16 @@ export const LyricsEditor = memo(function LyricsEditor({
       document.execCommand("styleWithCSS", false, "false");
       document.execCommand(command, false);
 
-      updateElement(selectedSlideId, selectedElementId, (element) => ({
-        ...element,
-        content: activeElement.innerText.replace(/\r\n/g, "\n"),
-        richTextHtml: normalizeEditableRichTextHtml(activeElement.innerHTML),
-        isPlaceholder: false,
-      }));
+      updateElement(selectedSlideId, selectedElementId, (element) =>
+        element.textBody
+          ? withEditedTextBody(element, activeElement as unknown as EditableNode)
+          : {
+              ...element,
+              content: activeElement.innerText.replace(/\r\n/g, "\n"),
+              richTextHtml: normalizeEditableRichTextHtml(activeElement.innerHTML),
+              isPlaceholder: false,
+            },
+      );
 
       return true;
     },
@@ -1142,6 +1215,33 @@ export const LyricsEditor = memo(function LyricsEditor({
     setDropSlideIndex(null);
   };
 
+  const runSlideCommand = useSlideCommands({
+    slides: draft.slides,
+    setSlides,
+    selectSlide: handleSelectSlide,
+    removeSlide: handleRemoveSlide,
+  });
+
+  slideKeysRef.current = (event: KeyboardEvent) => {
+    if (focusAreaRef.current !== "slides" || editorView !== "slides") return false;
+    const mod = event.metaKey || event.ctrlKey;
+    const key = event.key.toLowerCase();
+    if (mod && key === "d") return runSlideCommand("duplicate", selectedSlideId);
+    if (mod && key === "c") return runSlideCommand("copy", selectedSlideId);
+    if (mod && key === "x") return runSlideCommand("cut", selectedSlideId);
+    if (mod && key === "v") return runSlideCommand("paste", selectedSlideId);
+    if (mod) return false;
+    if (event.key === "Delete" || event.key === "Backspace") return runSlideCommand("delete", selectedSlideId);
+    if (event.key === "ArrowUp") return runSlideCommand("previous", selectedSlideId);
+    if (event.key === "ArrowDown") return runSlideCommand("next", selectedSlideId);
+    return false;
+  };
+
+  // A deck has no lyrics to edit: its slides are always shown.
+  useEffect(() => {
+    if (isDeck && editorView === "source") setEditorView("slides");
+  }, [editorView, isDeck]);
+
   const handlePresentationCanvasSizeChange = useCallback(
     (nextCanvasSize: CanvasSizePreset) => {
       applyDraft((previous) => {
@@ -1176,6 +1276,7 @@ export const LyricsEditor = memo(function LyricsEditor({
   return (
     <div className="h-full w-full bg-background flex flex-col overflow-hidden">
       <EditorHeader
+        isDeck={isDeck}
         editorView={editorView}
         setEditorView={setEditorView}
         handleFix={handleFix}
@@ -1255,7 +1356,11 @@ export const LyricsEditor = memo(function LyricsEditor({
             maxSize={30}
             className="bg-background border-r border-border"
           >
+            <div className="h-full" onPointerDownCapture={() => (focusAreaRef.current = "slides")}>
             <SlideList
+              isDeck={isDeck}
+              onSlideCommand={runSlideCommand}
+              canPasteSlides={hasCopiedSlides}
               sidebarTab={sidebarTab}
               setSidebarTab={setSidebarTab}
               slides={draft.slides}
@@ -1273,16 +1378,18 @@ export const LyricsEditor = memo(function LyricsEditor({
               onDrop={handleSlideDrop}
               setDropSlideIndex={setDropSlideIndex}
               setDraggedSlideIndex={setDraggedSlideIndex}
-              onSelectElement={handleSelectElement}
+              onSelectElement={selectElement}
               selectedElementId={selectedElementId}
               onUpdateElement={updateElement}
               onReorderElements={reorderSelectedSlideElements}
             />
+            </div>
           </ResizablePanel>
   
           <ResizableHandle withHandle />
   
           <ResizablePanel defaultSize={55} minSize={40}>
+            <div className="h-full" onPointerDownCapture={() => (focusAreaRef.current = "canvas")}>
             <EditorCanvas
               editorView={editorView}
               draftBody={draft.body}
@@ -1295,10 +1402,17 @@ export const LyricsEditor = memo(function LyricsEditor({
               selectedSlideBackground={selectedSlideBackground}
               updateSlide={updateSlide}
               selectedElementId={selectedElementId}
-              onSelectElement={handleSelectElement}
+              selectedElementIds={selectedElementIds}
+              onSelectElement={selectElement}
+              onSelectElements={selectElements}
               onAddElement={addElement}
               onUpdateElement={updateElement}
+              onUpdateElements={updateElements}
               onRemoveElement={removeElement}
+              onUndo={undo}
+              onRedo={redo}
+              canUndo={canUndo}
+              canRedo={canRedo}
               fontFamily={fontFamily}
               fontSize={fontSize}
               fontBold={fontBold}
@@ -1306,6 +1420,7 @@ export const LyricsEditor = memo(function LyricsEditor({
               fontUnderline={fontUnderline}
               onFontStyleChange={onFontStyleChange}
             />
+            </div>
           </ResizablePanel>
   
           <ResizableHandle withHandle />
@@ -1316,7 +1431,10 @@ export const LyricsEditor = memo(function LyricsEditor({
             maxSize={32}
             className="bg-background border-l border-border"
           >
+            <div className="h-full" onPointerDownCapture={() => (focusAreaRef.current = "canvas")}>
             <EditorInspector
+              isDeck={isDeck}
+              onSlideCommand={runSlideCommand}
               inspectorTab={inspectorTab}
               setInspectorTab={(tab) => setInspectorTab(tab as InspectorTab)}
               onPresentationCanvasSizeChange={handlePresentationCanvasSizeChange}
@@ -1325,6 +1443,8 @@ export const LyricsEditor = memo(function LyricsEditor({
               selectedSlideId={selectedSlideId}
               selectedSlide={selectedSlide}
               selectedElementId={selectedElementId}
+              selectedElementIds={selectedElementIds}
+              onArrange={runArrange}
               onUpdateElement={updateElement}
               onMoveElementLayer={moveSelectedElementLayer}
               fontFamily={fontFamily}
@@ -1337,6 +1457,7 @@ export const LyricsEditor = memo(function LyricsEditor({
               onUpdateOutput={handleUpdateOutput}
               onApplyInlineTextFormat={applyInlineTextFormat}
             />
+            </div>
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>

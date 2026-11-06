@@ -15,10 +15,13 @@
 //! fifty times a second. How long it was kept waiting comes back too
 //! (`X-Frame-Waited-Ms`), so the panel does not count it as travel.
 
-use std::sync::{Arc, Condvar, Mutex};
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use tauri::http;
+
+use crate::services::video::VideoFrame;
 
 /// The most a panel may ask to be drawn ahead.
 pub const MAX_LEAD: Duration = Duration::from_millis(250);
@@ -35,6 +38,62 @@ pub struct Latest {
     pub at: Instant,
     /// Counts up with each new frame.
     pub seq: u64,
+}
+
+/// Which frame a JPEG is of: the file, the frame's time and its size.
+type JpegKey = (String, u64, u32, u32);
+
+/// A JPEG made, or being made, by the first panel that asked for it.
+type JpegCell = Arc<OnceLock<Option<Arc<Vec<u8>>>>>;
+
+/// The JPEGs most recently made, for every panel showing the same frame.
+static JPEGS: Mutex<VecDeque<(JpegKey, JpegCell)>> = Mutex::new(VecDeque::new());
+
+/// How many are kept: a few frames of a few sizes.
+const JPEGS_KEPT: usize = 24;
+
+/// `frame` of the video at `source` as a JPEG, made once for every panel that
+/// shows that frame at that size.
+///
+/// On Windows and Linux every picture of a video reaches the webview as a
+/// JPEG: each audience window's, the center pane's, a stage display's.
+/// Measured on the owner's MacBook Pro, a 1080p frame takes 16 ms to encode,
+/// about half a core at 30 frames a second, and each panel encoded its own:
+/// three audience windows of one video were three encodes of every frame.
+/// Every panel of the live video is handed the same frame (`video::live`), so
+/// the first to ask encodes it and the rest wait for that and share it.
+pub fn shared_jpeg(source: &str, frame: &VideoFrame) -> Option<Arc<Vec<u8>>> {
+    let key = (
+        source.to_owned(),
+        frame.presentation_seconds.to_bits(),
+        frame.width,
+        frame.height,
+    );
+    shared(key, || {
+        crate::services::thumbnails::encode_jpeg(frame.width, frame.height, &frame.bgra)
+            .map_err(|error| tracing::debug!(%error, "a video frame could not be encoded"))
+            .ok()
+    })
+}
+
+fn shared(key: JpegKey, encode: impl FnOnce() -> Option<Vec<u8>>) -> Option<Arc<Vec<u8>>> {
+    let cell = {
+        let mut kept = JPEGS.lock().unwrap_or_else(PoisonError::into_inner);
+        match kept.iter().find(|(each, _)| *each == key) {
+            Some((_, cell)) => Arc::clone(cell),
+            None => {
+                let cell = JpegCell::default();
+                kept.push_back((key, Arc::clone(&cell)));
+                while kept.len() > JPEGS_KEPT {
+                    kept.pop_front();
+                }
+                cell
+            }
+        }
+    };
+    // Outside the lock: the other panels asking for other frames carry on,
+    // and those asking for this one wait for it rather than encoding it again.
+    cell.get_or_init(|| encode().map(Arc::new)).clone()
 }
 
 static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -127,6 +186,38 @@ pub fn respond(latest: Option<Latest>, uri: &str, waited: Duration) -> http::Res
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn panels_showing_the_same_frame_share_one_jpeg() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let made = Arc::new(AtomicUsize::new(0));
+        let key = || ("/shared-jpeg-test.mp4".to_owned(), 1.5f64.to_bits(), 64, 36);
+        let panels: Vec<_> = (0..6)
+            .map(|_| {
+                let made = Arc::clone(&made);
+                std::thread::spawn(move || {
+                    shared(key(), || {
+                        made.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(20));
+                        Some(vec![7; 10])
+                    })
+                })
+            })
+            .collect();
+        let jpegs: Vec<_> = panels
+            .into_iter()
+            .map(|panel| panel.join().unwrap().expect("a JPEG"))
+            .collect();
+        assert_eq!(made.load(Ordering::SeqCst), 1, "encoded once for all six");
+        assert!(jpegs.iter().all(|jpeg| Arc::ptr_eq(jpeg, &jpegs[0])));
+        // Another size of the same frame is a JPEG of its own.
+        let other = shared(
+            ("/shared-jpeg-test.mp4".to_owned(), 1.5f64.to_bits(), 32, 18),
+            || Some(vec![1]),
+        );
+        assert!(!Arc::ptr_eq(&other.unwrap(), &jpegs[0]));
+    }
+
     use super::*;
 
     fn latest(seq: u64) -> Latest {

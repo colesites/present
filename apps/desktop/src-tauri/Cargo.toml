@@ -12,7 +12,7 @@ rust-version = "1.83"
 # be reachable from the library, not from `main.rs`.
 [lib]
 name = "present_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -27,6 +27,11 @@ cc = "1.2"
 # a packaged page has already been built solid, and the pictures drawn under it
 # stay hidden: the screen preview, and a video opened in a show. A development
 # page has not loaded yet, so the same call worked there.
+#
+# The Tauri CLI rewrites this list from `tauri.conf.json` on every `tauri dev`
+# and `tauri build`: without `"app": { "macOSPrivateApi": true }` there it
+# silently deletes this feature, and a packaged build is blank again
+# (`tests/macos-private-api.test.mjs`).
 tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: parse floats exactly. The PPTX importer is tested against
@@ -63,9 +68,22 @@ base64 = "0.23.1"
 # `shell.openExternal` for the sign-in flow (`auth.service.ts:71`).
 tauri-plugin-opener = "2.5.5"
 tokio = { version = "1.53.1", features = ["sync", "time", "rt-multi-thread", "net"] }
+# The Bible and song agents' speech, streamed to AssemblyAI from here rather
+# than from the page (`services/speech_stream.rs`). rustls, as reqwest, with
+# the system's own trusted roots.
+tokio-tungstenite = { version = "0.29", default-features = false, features = [
+    "connect",
+    "rustls-tls-native-roots",
+] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 cosmic-text = "0.19"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "tiff"] }
+# Pictures a PowerPoint deck carries that no renderer here can draw (an
+# embedded object's EMF or WMF preview, an SVG): turned into PNG as the deck
+# is imported (`services/pptx/convert_picture.rs`). emf-core reads WMF too.
+emf-core = { version = "0.1.1", default-features = false, features = ["svg"] }
+resvg = { version = "0.49", default-features = false, features = ["text", "system-fonts", "raster-images"] }
 # The JPEGs the operator's panels show a video through (`thumbnails::encode_jpeg`),
 # thirty a second per panel: encoded straight from BGRA, with SIMD where the
 # processor has it. `image`'s encoder took several times as long, after a

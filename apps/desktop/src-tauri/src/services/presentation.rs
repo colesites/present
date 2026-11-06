@@ -49,6 +49,10 @@ pub struct ServicePosition {
 pub struct Deck {
     pub library_id: Option<String>,
     pub slide_count: usize,
+    /// Slides "next" and "previous" pass over: a deck's hidden slides, as
+    /// PowerPoint skips them in a slide show. They can still be clicked.
+    #[serde(default)]
+    pub skipped: Vec<usize>,
 }
 
 /// The whole position.
@@ -59,7 +63,19 @@ pub struct PresentationPosition {
     pub deck: Deck,
     /// The slide on screen. `None` means nothing is selected — not slide zero.
     pub slide_index: Option<usize>,
+    /// How far through its builds the slide on screen is: 0 is what comes
+    /// with the slide, each click one more (`compositor::build`). Past the
+    /// last, as when stepping back onto a slide, is everything built.
+    #[serde(default)]
+    pub build_step: usize,
+    /// How many clicks the slide on screen's builds take; the operator sets it
+    /// as each slide goes up.
+    #[serde(default)]
+    pub click_steps: usize,
 }
+
+/// Everything built: a slide stepped back onto shows whole, as in PowerPoint.
+pub const ALL_BUILT: usize = 1_000_000;
 
 /// Why a navigation request did nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -89,7 +105,21 @@ impl PresentationPosition {
             return Ok(false);
         }
         self.slide_index = Some(bounded);
+        self.build_step = 0;
         Ok(true)
+    }
+
+    /// How many clicks the slide on screen's builds take. A step past them
+    /// (everything built) stays everything built.
+    pub fn set_click_steps(&mut self, steps: usize) -> bool {
+        if self.click_steps == steps {
+            return false;
+        }
+        self.click_steps = steps;
+        if self.build_step != ALL_BUILT && self.build_step > steps {
+            self.build_step = steps;
+        }
+        true
     }
 
     /// The slide after the current one. Holds at the end of the deck.
@@ -98,20 +128,67 @@ impl PresentationPosition {
     /// `(selected?.index ?? 0) + 2` resolves to through the 1-based tool
     /// argument — pressing "next" with nothing up starts the deck.
     pub fn next_slide(&mut self) -> Result<bool, NavigationRefusal> {
-        let target = match self.slide_index {
+        // A build still to come on this slide is what "next" shows.
+        if self.slide_index.is_some() && self.build_step < self.click_steps {
+            self.build_step += 1;
+            return Ok(true);
+        }
+        let count = self.deck.slide_count as i64;
+        let mut target = match self.slide_index {
             Some(current) => current as i64 + 1,
             None => 0,
         };
+        while target < count && self.is_skipped(target) {
+            target += 1;
+        }
+        if target >= count {
+            // Only skipped slides after this one: hold where it is.
+            if let Some(current) = self.slide_index {
+                return self.go_to_slide(current as i64);
+            }
+        }
         self.go_to_slide(target)
     }
 
     /// The slide before the current one. Holds at the start of the deck.
     pub fn previous_slide(&mut self) -> Result<bool, NavigationRefusal> {
-        let target = match self.slide_index {
+        // Back a build before back a slide.
+        if self.slide_index.is_some() && self.build_step > 0 && self.build_step <= self.click_steps
+        {
+            self.build_step -= 1;
+            return Ok(true);
+        }
+        let mut target = match self.slide_index {
             Some(current) => current as i64 - 1,
             None => 0,
         };
-        self.go_to_slide(target)
+        while target >= 0 && self.is_skipped(target) {
+            target -= 1;
+        }
+        if target < 0 {
+            if let Some(current) = self.slide_index {
+                return self.go_to_slide(current as i64);
+            }
+        }
+        let moved = self.go_to_slide(target);
+        if moved == Ok(true) {
+            // The slide before shows with its builds done.
+            self.build_step = ALL_BUILT;
+        }
+        moved
+    }
+
+    fn is_skipped(&self, index: i64) -> bool {
+        usize::try_from(index).is_ok_and(|index| self.deck.skipped.contains(&index))
+    }
+
+    /// Which slides of the live deck "next" and "previous" pass over.
+    pub fn set_skipped(&mut self, skipped: Vec<usize>) -> bool {
+        if self.deck.skipped == skipped {
+            return false;
+        }
+        self.deck.skipped = skipped;
+        true
     }
 
     /// Point at a different deck.
@@ -129,6 +206,11 @@ impl PresentationPosition {
         self.deck = Deck {
             library_id,
             slide_count,
+            skipped: if same_deck {
+                std::mem::take(&mut self.deck.skipped)
+            } else {
+                Vec::new()
+            },
         };
 
         if !same_deck {
@@ -224,6 +306,70 @@ mod tests {
         assert_eq!(position.next_slide(), Err(NavigationRefusal::NoSlides));
         assert_eq!(position.previous_slide(), Err(NavigationRefusal::NoSlides));
         assert_eq!(position.go_to_slide(3), Err(NavigationRefusal::NoSlides));
+    }
+
+    #[test]
+    fn next_shows_a_slides_builds_before_the_next_slide() {
+        let mut position = with_deck(3);
+        position.go_to_slide(0).unwrap();
+        position.set_click_steps(2);
+
+        assert_eq!(position.next_slide(), Ok(true));
+        assert_eq!((position.slide_index, position.build_step), (Some(0), 1));
+        assert_eq!(position.next_slide(), Ok(true));
+        assert_eq!((position.slide_index, position.build_step), (Some(0), 2));
+        assert_eq!(position.previous_slide(), Ok(true), "back a build first");
+        assert_eq!(position.build_step, 1);
+        position.next_slide().unwrap();
+        assert_eq!(
+            position.next_slide(),
+            Ok(true),
+            "builds done: the next slide"
+        );
+        assert_eq!((position.slide_index, position.build_step), (Some(1), 0));
+
+        // Back onto the slide: all of it built, and back again leaves it.
+        position.set_click_steps(0);
+        assert_eq!(position.previous_slide(), Ok(true));
+        assert_eq!(
+            (position.slide_index, position.build_step),
+            (Some(0), ALL_BUILT)
+        );
+        position.set_click_steps(2);
+        assert_eq!(position.build_step, ALL_BUILT, "stays all built");
+        assert_eq!(position.next_slide(), Ok(true));
+        assert_eq!(position.slide_index, Some(1));
+    }
+
+    #[test]
+    fn hidden_slides_are_passed_over_but_can_be_clicked() {
+        let mut position = with_deck(6);
+        position.set_skipped(vec![0, 2, 3, 5]);
+
+        assert_eq!(position.next_slide(), Ok(true));
+        assert_eq!(position.slide_index, Some(1), "the first shown slide");
+        assert_eq!(position.next_slide(), Ok(true));
+        assert_eq!(position.slide_index, Some(4), "over two hidden ones");
+        assert_eq!(
+            position.next_slide(),
+            Ok(false),
+            "only a hidden one after: hold"
+        );
+        assert_eq!(position.slide_index, Some(4));
+        assert_eq!(position.previous_slide(), Ok(true));
+        assert_eq!(position.slide_index, Some(1));
+        assert_eq!(
+            position.previous_slide(),
+            Ok(false),
+            "only a hidden one before: hold"
+        );
+
+        assert_eq!(
+            position.go_to_slide(3),
+            Ok(true),
+            "a hidden slide clicked shows"
+        );
+        assert_eq!(position.slide_index, Some(3));
     }
 
     #[test]

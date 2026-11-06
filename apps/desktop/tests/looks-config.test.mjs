@@ -6,6 +6,7 @@ import {
   createDefaultLookPreset,
   createDefaultLooksConfig,
   normalizeLooksConfig,
+  withShowing,
   withAddedLook,
   withLayerEnabled,
   withLookName,
@@ -43,10 +44,8 @@ test("no stored config yields the defaults", () => {
   assert.equal(config.updatedAt, CLOCK.now);
 });
 
-test("the default program look shows presentation, slide, media, props and the timer", () => {
-  const { layers } = createDefaultLookPreset().targets.program;
-
-  assert.deepEqual(layers, {
+test("a new setup's switches show presentation, slide, media, props and the timer", () => {
+  assert.deepEqual(createDefaultLooksConfig(0).showing, {
     mask: false,
     messages: false,
     props: true,
@@ -57,6 +56,58 @@ test("the default program look shows presentation, slide, media, props and the t
     media: true,
     videoInput: true,
   });
+});
+
+test("the Screen's own column lets everything through: the switches say what shows", () => {
+  const { layers } = createDefaultLookPreset().targets.program;
+  assert.deepEqual(layers, {
+    mask: false,
+    messages: true,
+    props: true,
+    timer: true,
+    announcements: true,
+    presentation: true,
+    slide: true,
+    media: true,
+    videoInput: true,
+  });
+});
+
+test("switches saved inside the Screen's column become their own, and the Screen shows what it did", () => {
+  // Before 2026-11 the sidebar's switches wrote the live look's Screen
+  // column, so that column gated every audience screen. Read from such a
+  // setup, its values are the switches, and the column lets everything
+  // through; other looks keep their Screen columns.
+  const config = normalizeLooksConfig(
+    {
+      version: 2,
+      liveLookId: "sunday",
+      looks: [
+        { id: "default", name: "Default", targets: { program: { layers: { media: false } } } },
+        { id: "sunday", name: "Sunday", targets: { program: { layers: { slide: false, mask: true } } } },
+      ],
+    },
+    CLOCK,
+  );
+  assert.equal(config.showing.slide, false, "the words stay off");
+  assert.equal(config.showing.mask, true, "and the background hidden");
+  assert.equal(config.showing.media, true);
+  assert.equal(config.looks[1].targets.program.layers.slide, true);
+  assert.equal(config.looks[1].targets.program.layers.mask, false);
+  assert.equal(config.looks[0].targets.program.layers.media, false, "another look keeps its column");
+
+  const saved = normalizeLooksConfig({ ...config, showing: { ...config.showing, slide: true } }, CLOCK);
+  assert.equal(saved.showing.slide, true, "stored switches are read as they are");
+  assert.equal(saved.looks[0].targets.program.layers.media, false);
+});
+
+test("a switch turned on or off changes no look", () => {
+  const config = createDefaultLooksConfig(0);
+  const off = withShowing(config, ["media", "videoInput"], false, 5);
+  assert.equal(off.showing.media, false);
+  assert.equal(off.showing.videoInput, false);
+  assert.deepEqual(off.looks, config.looks);
+  assert.equal(off.updatedAt, 5);
 });
 
 test("the default stage look shows messages but not media", () => {
@@ -90,9 +141,11 @@ test("a v1 config is migrated rather than discarded", () => {
   assert.equal(migrated.looks.length, 1);
   assert.equal(migrated.looks[0].name, "Sunday Morning");
   assert.equal(migrated.looks[0].id, "default");
-  assert.equal(migrated.looks[0].targets.program.layers.media, false);
+  // Its Screen column was the switches; they are their own now.
+  assert.equal(migrated.showing.media, false);
   // Layers the v1 config did not mention keep the default.
-  assert.equal(migrated.looks[0].targets.program.layers.slide, true);
+  assert.equal(migrated.showing.slide, true);
+  assert.equal(migrated.looks[0].targets.program.layers.media, true);
   assert.equal(migrated.selectedLookId, "default");
   assert.equal(migrated.liveLookId, "default");
 });
@@ -139,10 +192,13 @@ test("a non-boolean layer value takes the default, never becomes visible by acci
           },
         },
       ],
+      showing: { mask: "yes", messages: 1 },
     },
     CLOCK,
   );
 
+  assert.equal(config.showing.mask, false, "a truthy string must not hide the background");
+  assert.equal(config.showing.messages, false, "a truthy number must not show the banner");
   const { layers } = config.looks[0].targets.program;
   assert.equal(layers.mask, false, "a truthy string must not enable the mask");
   assert.equal(layers.messages, false, "a truthy number must not enable messages");
@@ -403,14 +459,18 @@ test("a copied look carries its added screens' columns, not shared with the sour
 
 test("a column saved before the Timer layer keeps its timer and shows props", () => {
   const config = normalizeLooksConfig(
-    { version: 2, looks: [{ id: "default", targets: { program: { layers: { props: false } } } }] },
+    { version: 2, showing: {}, looks: [{ id: "default", targets: { program: { layers: { props: false } } } }] },
     CLOCK,
   );
   assert.equal(config.looks[0].targets.program.layers.timer, false, "the clock stays off");
   assert.equal(config.looks[0].targets.program.layers.props, true, "and props, which it never hid, show");
 
   const saved = normalizeLooksConfig(
-    { version: 2, looks: [{ id: "default", targets: { program: { layers: { props: false, timer: true } } } }] },
+    {
+      version: 2,
+      showing: {},
+      looks: [{ id: "default", targets: { program: { layers: { props: false, timer: true } } } }],
+    },
     CLOCK,
   );
   assert.equal(saved.looks[0].targets.program.layers.timer, true);

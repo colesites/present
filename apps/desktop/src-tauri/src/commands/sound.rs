@@ -156,9 +156,35 @@ pub struct MicrophoneStarted {
     pub label: String,
 }
 
+/// Whether the app may use the microphone. Asked before the device is
+/// opened: the first time, this is the system's prompt. Opened without it, a
+/// refused microphone gives silence rather than an error, and nothing would
+/// say why. Blocks while the prompt is up.
+pub fn microphone_allowed() -> AppResult<()> {
+    use crate::services::permissions::{self, MediaKind};
+    let access = permissions::request(MediaKind::Microphone);
+    if access.granted {
+        return Ok(());
+    }
+    Err(crate::errors::AppError::User(match access.status.as_str() {
+        "restricted" => "This Mac doesn't allow apps to use the microphone (Screen Time or a device profile).".to_owned(),
+        _ => "Present isn't allowed to use the microphone. Turn it on in System Settings > Privacy & Security > Microphone, then try again.".to_owned(),
+    }))
+}
+
+/// A microphone that would not open, said for the operator; the cause is in
+/// the log.
+pub fn microphone_failed(error: String) -> crate::errors::AppError {
+    tracing::warn!(%error, "the microphone could not be opened");
+    crate::errors::AppError::User(
+        "The microphone couldn't be opened. Check it's connected, or choose another in Settings > Audio."
+            .to_owned(),
+    )
+}
+
 /// Listen to `device_id` (the system's id, from `list_audio_devices`), or the
 /// default microphone. `on_audio` receives the samples as raw bytes, about
-/// twenty times a second, until `stop_microphone`.
+/// ten times a second, until `stop_microphone`.
 #[tauri::command]
 pub async fn start_microphone(
     state: State<'_, MicrophoneState>,
@@ -167,27 +193,11 @@ pub async fn start_microphone(
 ) -> AppResult<MicrophoneStarted> {
     let device_id = device_id.filter(|id| !id.trim().is_empty());
     let microphone = tauri::async_runtime::spawn_blocking(move || {
-        // Asked here, before the device is opened: the first time, this is
-        // the system's prompt. Opened without it, a refused microphone gives
-        // silence rather than an error, and nothing would say why.
-        use crate::services::permissions::{self, MediaKind};
-        let access = permissions::request(MediaKind::Microphone);
-        if !access.granted {
-            return Err(crate::errors::AppError::User(match access.status.as_str() {
-                "restricted" => "This Mac doesn't allow apps to use the microphone (Screen Time or a device profile).".to_owned(),
-                _ => "Present isn't allowed to use the microphone. Turn it on in System Settings > Privacy & Security > Microphone, then try again.".to_owned(),
-            }));
-        }
+        microphone_allowed()?;
         sound::input::Microphone::open(device_id.as_deref(), move |bytes| {
             let _ = on_audio.send(tauri::ipc::InvokeResponseBody::Raw(bytes));
         })
-        .map_err(|error| {
-            tracing::warn!(%error, "the microphone could not be opened");
-            crate::errors::AppError::User(
-                "The microphone couldn't be opened. Check it's connected, or choose another in Settings > Audio."
-                    .to_owned(),
-            )
-        })
+        .map_err(microphone_failed)
     })
     .await
     .map_err(|error| crate::errors::AppError::Invalid(error.to_string()))??;

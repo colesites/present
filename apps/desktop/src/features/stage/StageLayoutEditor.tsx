@@ -18,6 +18,7 @@ import {
   Trash2,
   Type,
   TextQuote,
+  NotebookPen,
 } from "lucide-react";
 import { FontFamilySelect } from "../../renderer/shared/components";
 import { ColorInput, NumberInput, Segmented, SelectInput, StyleRow, StyleSection, Switch } from "../../renderer/shared/components/style-controls";
@@ -61,6 +62,8 @@ const KIND_ICON: Record<StageObjectKind, typeof Type> = {
   "current-text": TextQuote,
   "next-text": ListMusic,
   "current-slide": MonitorPlay,
+  notes: NotebookPen,
+  "next-notes": NotebookPen,
   section: Tag,
   "next-section": Tag,
   timer: Timer,

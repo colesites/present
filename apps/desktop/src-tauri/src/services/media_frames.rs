@@ -148,6 +148,25 @@ impl Player {
     }
 }
 
+impl Player {
+    /// [`frame_shared`](Self::frame_shared), the live video's frame as the
+    /// GPU decoder left it (`VideoFrame::gpu`), with no pixels copied off it:
+    /// for a panel that shows it as it is. A video decoded on the processor,
+    /// or one not live, comes with its pixels.
+    pub fn frame_picture(
+        &mut self,
+        live: &OutputScene,
+        now: Instant,
+        size: (u32, u32),
+        open: &Opener,
+    ) -> Option<std::sync::Arc<VideoFrame>> {
+        self.feed.set_pictures(cfg!(target_os = "macos"));
+        let frame = self.frame_shared(live, now, size, open);
+        self.feed.set_pictures(false);
+        frame
+    }
+}
+
 /// The decoder a clock needs: one that follows the sound for the screens'
 /// video, and one that keeps its own time for anything else.
 fn feed_for(clock: &Clock) -> VideoFeed {

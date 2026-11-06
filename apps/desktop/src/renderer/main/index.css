@@ -114,6 +114,26 @@
   }
 }
 
+/*
+  Pictures drawn under this page (the show video, the screen preview, the
+  audience output). The page marks the box and hides what would paint over it.
+  These rules have to live in this file. A packaged build's content security
+  policy allows this stylesheet and refuses a style tag created from script,
+  which is what used to open the holes: dev has no such policy, so the tag
+  worked there and the same video was black in the build. "Text layer is
+  hidden" staying on the preview is that tag having been refused.
+*/
+html[data-native-panels],
+html[data-native-panels] body {
+  background: transparent !important;
+}
+[data-native-panel] {
+  background: transparent !important;
+}
+[data-native-container] > [data-under-native] {
+  visibility: hidden !important;
+}
+
 /* Custom scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;

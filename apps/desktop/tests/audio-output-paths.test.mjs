@@ -137,10 +137,14 @@ test("the microphone is captured by Rust, not the webview", () => {
   // Speech-to-search used to open the microphone in the webview and route it
   // through a WebKit audio graph whose only guard against feeding the house
   // system was one gain node pinned to zero. Since 0.4.11 Rust opens the
-  // device (`services/sound/input.rs`) and hands the samples over; there is
-  // no graph in the webview to misconnect.
+  // device (`services/sound/input.rs`), and it now also sends it to
+  // AssemblyAI (`services/speech_stream.rs`), so a busy page cannot hold the
+  // sound back. There is no graph in the webview to misconnect.
   const speech = readSource("src/features/scripture/hooks/useSpeechRecognition.ts");
-  assert.ok(speech.includes("startMicrophone("), "speech no longer listens through Rust");
+  assert.ok(speech.includes("openSpeechStream("), "speech no longer listens through Rust");
+  assert.ok(!speech.includes("new WebSocket("), "the page sends the sound itself again");
+  const stream = readSource("src/renderer/tauri/speech-stream.ts");
+  assert.ok(stream.includes('"start_speech_stream"'), "the stream is not Rust's");
   for (const webkit of ["getUserMedia(", "createMediaStreamSource(", "audioContext.destination"]) {
     assert.ok(!speech.includes(webkit), `speech capture uses the webview again: ${webkit}`);
   }

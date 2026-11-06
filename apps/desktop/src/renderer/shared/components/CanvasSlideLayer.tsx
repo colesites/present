@@ -741,8 +741,16 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
     [canvasSize]
   );
 
+  // A movie is drawn as its poster: the still before it plays.
   const visibleElements = useMemo(
-    () => (elements ?? []).filter((element) => element.isVisible !== false),
+    () =>
+      (elements ?? [])
+        .filter((element) => element.isVisible !== false)
+        .map((element) =>
+          element.type === "video" && element.style?.poster
+            ? { ...element, type: "image" as const, content: element.style.poster }
+            : element,
+        ),
     [elements]
   );
 

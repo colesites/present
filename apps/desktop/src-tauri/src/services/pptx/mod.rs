@@ -16,16 +16,21 @@ use serde_json::{json, Value};
 
 use crate::errors::{AppError, AppResult};
 
+pub mod animation;
+pub mod chart;
 mod color;
+pub mod convert_picture;
 pub mod deck;
 pub mod fill;
 pub mod fonts;
 pub mod geometry;
 pub mod media;
+pub mod notes;
 pub mod package;
 mod picture;
 mod text;
 mod theme;
+pub mod transition;
 mod xml;
 
 pub use deck::{DataUrls, EmbeddedFontPart, MediaSink};

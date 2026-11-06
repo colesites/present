@@ -346,6 +346,15 @@ pub struct OutputScene {
     /// it as its Slide switch says, in its slide box rather than its words'.
     #[serde(default)]
     pub presentation_slide: bool,
+    /// Where on the slide its movie plays, while it does: the live media is
+    /// drawn in that box, wherever the slide is on each screen, rather than
+    /// across the screen. A PowerPoint movie (`services/pptx`).
+    #[serde(default)]
+    pub slide_media_box: Option<SlideMediaBox>,
+    /// How far through its builds the live slide is (`compositor::build`);
+    /// `None` for a slide without them.
+    #[serde(default)]
+    pub build_step: Option<usize>,
 
     pub scripture_style: Option<ScriptureStyle>,
     pub library_style: Option<LibraryStyle>,
@@ -379,9 +388,33 @@ pub struct OutputScene {
     pub screen_layout: Option<ScreenLayout>,
 }
 
+/// A box on the slide, as fractions of its canvas from its top-left.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlideMediaBox {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl SlideMediaBox {
+    /// The box on a `width` by `height` frame the slide fills.
+    pub fn on_frame(&self, width: f32, height: f32) -> (f32, f32, f32, f32) {
+        (
+            self.x as f32 * width,
+            self.y as f32 * height,
+            self.width as f32 * width,
+            self.height as f32 * height,
+        )
+    }
+}
+
 impl Default for OutputScene {
     fn default() -> Self {
         Self {
+            slide_media_box: None,
+            build_step: None,
             media_url: None,
             media_id: None,
             media_type: None,
@@ -566,6 +599,11 @@ pub enum OutputUpdate {
         /// the slide arriving and the switch that hides it.
         #[serde(default)]
         show_text: Option<bool>,
+        /// How far through its builds the slide is (`compositor::build`):
+        /// 0 is what comes with the slide, each click one more; past the last
+        /// is everything built. Absent: a slide without builds.
+        #[serde(default)]
+        build_step: Option<usize>,
     },
     #[serde(rename_all = "camelCase")]
     MessageOverlay { overlay: Option<MessageOverlay> },
@@ -624,6 +662,9 @@ pub struct MediaUpdate {
     pub screen_composer_enabled: Option<bool>,
     #[serde(default)]
     pub screen_composer_layout: Option<serde_json::Value>,
+    /// The live slide's movie box; absent when the media is not its movie.
+    #[serde(default)]
+    pub slide_media_box: Option<SlideMediaBox>,
 }
 
 /// Merge an update into the scene.
@@ -653,7 +694,9 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
                 timer_layout,
                 screen_composer_enabled,
                 screen_composer_layout,
+                slide_media_box,
             } = *media;
+            scene.slide_media_box = slide_media_box;
             scene.media_url = media_url;
             scene.media_id = media_id;
             scene.media_type = media_type;
@@ -698,6 +741,7 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
             slide_background_color,
             presentation_slide,
             show_text,
+            build_step,
         } => {
             let incoming = OutputScene {
                 slide_text: slide_text.clone(),
@@ -725,6 +769,7 @@ pub fn apply(scene: &mut OutputScene, update: OutputUpdate) {
             scene.slide_canvas_size = slide_canvas_size;
             scene.slide_background_color = slide_background_color;
             scene.presentation_slide = presentation_slide;
+            scene.build_step = build_step;
             if let Some(show) = show_text {
                 scene.show_text = show;
             }
@@ -840,6 +885,7 @@ mod tests {
             slide_background_color: background.map(str::to_owned),
             presentation_slide: false,
             show_text: None,
+            build_step: None,
         }
     }
 
@@ -1233,6 +1279,7 @@ mod tests {
                 timer_layout: None,
                 screen_composer_enabled: None,
                 screen_composer_layout: None,
+                slide_media_box: None,
             })),
         );
 

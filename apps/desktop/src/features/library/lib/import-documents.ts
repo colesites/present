@@ -7,6 +7,7 @@ import {
   normalizeLibraryContent,
   normalizeLibrarySlide,
 } from "./library-items";
+import { PICTURE_BACKGROUND_ID } from "../../editor/lib/slides";
 
 export interface PresentationImportSource {
   name: string;
@@ -63,6 +64,10 @@ function convertParsedPptxToPresentation(
         backgroundColor: slide.backgroundColor ?? undefined,
         useBackgroundColor: Boolean(slide.backgroundColor),
         elements: slide.elements,
+        transition: slide.transition ?? undefined,
+        advanceAfterMs: slide.advanceAfterMs ?? undefined,
+        hidden: slide.hidden || undefined,
+        notes: slide.notes ?? undefined,
       },
       DEFAULT_CANVAS_SIZE,
     ),
@@ -129,7 +134,10 @@ async function importPptxAsImages(
         label: slide.title,
         elements: [
           {
-            id: `pptx_slide_${index + 1}_image`,
+            // The page is the slide's background: locked, and clicks in the
+            // editor go through it to what is put on top.
+            id: PICTURE_BACKGROUND_ID,
+            isLocked: true,
             type: "image",
             x: 0,
             y: 0,
@@ -243,7 +251,9 @@ async function importPdfFile(
           label: `Page ${pageNumber}`,
           elements: [
             {
-              id: `pdf_page_${pageNumber}_image`,
+              // The page is the slide's background, as above.
+              id: PICTURE_BACKGROUND_ID,
+              isLocked: true,
               type: "image",
               x: 0,
               y: 0,

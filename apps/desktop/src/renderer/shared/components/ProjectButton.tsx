@@ -46,7 +46,9 @@ export function ProjectButton({ className }: ProjectButtonProps) {
     checkScreens();
   }, []);
 
-  const openOnSecondaryScreen = useCallback(async () => {
+  // `alone`: the Screen only. Without it this is the audience group's switch,
+  // and the screens added beside the Screen go on and off with it.
+  const openOnSecondaryScreen = useCallback(async (alone = false) => {
     const api = window.electronAPI;
     if (!api) {
       alert("Failed to open output window: Electron API not available");
@@ -61,7 +63,9 @@ export function ProjectButton({ className }: ProjectButtonProps) {
           ? await api.getPreferredOutputDisplay()
           : null;
       const success = await api.openOutputWindow(
-        preferredDisplayId
+        preferredDisplayId,
+        undefined,
+        alone
       );
       
       if (success) {
@@ -79,10 +83,10 @@ export function ProjectButton({ className }: ProjectButtonProps) {
     setIsLoading(false);
   }, []);
 
-  const closeOutput = useCallback(async () => {
+  const closeOutput = useCallback(async (alone = false) => {
     try {
       if (window.electronAPI) {
-        await window.electronAPI.closeOutputWindow();
+        await window.electronAPI.closeOutputWindow(alone);
       }
     } catch (err) {
       console.error("Failed to close window:", err);
@@ -101,6 +105,11 @@ export function ProjectButton({ className }: ProjectButtonProps) {
   // Screens ▸ Audience Output in the application menu is this button, and its
   // tick is whether the output is open.
   useMenuCommand("screens.output", handleClick);
+  // Screen Configuration's own switch for the Screen: the Screen alone.
+  useMenuCommand("screens.output-screen", () => {
+    if (isLive) void closeOutput(true);
+    else void openOnSecondaryScreen(true);
+  });
   useMenuChecks({ output: isLive });
 
   const handleRightClick = useCallback(

@@ -43,5 +43,7 @@ export {
   withLookName,
   withSelectedLook,
   withSelectedTarget,
+  withShowing,
   withTextPosition,
+  SHOWING_DEFAULT,
 } from "../lib/looks-config.mjs";

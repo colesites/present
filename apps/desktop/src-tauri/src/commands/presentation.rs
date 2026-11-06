@@ -91,8 +91,15 @@ pub async fn set_presentation_deck(
     state: State<'_, PresentationState>,
     library_id: Option<String>,
     slide_count: usize,
+    skipped: Option<Vec<usize>>,
+    click_steps: Option<usize>,
 ) -> AppResult<PresentationPosition> {
-    let changed = state.update(|position| position.set_deck(library_id, slide_count))?;
+    let changed = state.update(|position| {
+        let deck = position.set_deck(library_id, slide_count);
+        let skips = position.set_skipped(skipped.unwrap_or_default());
+        let builds = position.set_click_steps(click_steps.unwrap_or(0));
+        deck || skips || builds
+    })?;
     broadcast(&app, &state, changed)
 }
 

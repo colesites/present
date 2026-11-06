@@ -16,11 +16,15 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
-/// A screen's newest frame: premultiplied BGRA, top row first.
+/// A screen's newest frame: premultiplied BGRA, top row first — or, for a
+/// screen drawn as layers, the layers, which the preview shows as the screen
+/// does (`super::layers`), with nothing copied.
 #[derive(Clone)]
 pub struct Tapped {
     pub frame: Arc<Vec<u8>>,
     pub size: (u32, u32),
+    /// Set for a screen drawn as layers; `frame` is then empty.
+    pub layers: Option<super::LayeredShow>,
     /// Counts up with each frame, so a reader can tell a new one.
     pub seq: u64,
 }
@@ -39,7 +43,29 @@ pub fn publish(screen: &str, frame: Arc<Vec<u8>>, size: (u32, u32)) {
         return;
     }
     let seq = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
-    taps().insert(screen.to_owned(), Tapped { frame, size, seq });
+    taps().insert(
+        screen.to_owned(),
+        Tapped {
+            frame,
+            size,
+            layers: None,
+            seq,
+        },
+    );
+}
+
+/// `screen` has drawn itself as `layers`.
+pub fn publish_layers(screen: &str, layers: super::LayeredShow) {
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    taps().insert(
+        screen.to_owned(),
+        Tapped {
+            frame: Arc::default(),
+            size: layers.canvas,
+            layers: Some(layers),
+            seq,
+        },
+    );
 }
 
 /// `screen` is no longer being drawn.

@@ -576,20 +576,23 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     setSettingsScreenDisplayIds,
     settingsScreenResolutions,
   } = settings;
-  const { looksConfig, liveLook, setLayerEnabledForLook, setLayersEnabledForLook } =
-    useLooksConfig();
+  const { looksConfig, liveLook, setShowing } = useLooksConfig();
   const programLooks = liveLook.targets.program;
+  // The switches in the right sidebar: what is showing, on every screen. They
+  // are their own (`LooksConfig::showing`), not the Screen's column in Looks,
+  // which they once were — so the Screen's column gated every other screen.
+  // Each screen's own column decides what it may show (`look_scene.rs`).
+  //
   // The words, and a presentation's slides (PDF, PowerPoint): one switch
-  // each, as ProPresenter has a Slide layer apart from the media. The look's
-  // keys are older than the names (`looks-config.mjs`).
-  const showTextInOutput = programLooks.layers.slide;
-  const showSlideInOutput = programLooks.layers.presentation;
-  const showMediaInOutput =
-    programLooks.layers.media || programLooks.layers.videoInput;
-  const hideBackgroundInOutput = programLooks.layers.mask;
-  const isTimerLayerEnabled = programLooks.layers.timer;
-  const isMessageLayerEnabled =
-    programLooks.layers.messages || programLooks.layers.announcements;
+  // each, as ProPresenter has a Slide layer apart from the media. The keys
+  // are older than the names (`looks-config.mjs`).
+  const showing = looksConfig.showing;
+  const showTextInOutput = showing.slide;
+  const showSlideInOutput = showing.presentation;
+  const showMediaInOutput = showing.media || showing.videoInput;
+  const hideBackgroundInOutput = showing.mask;
+  const isTimerLayerEnabled = showing.timer;
+  const isMessageLayerEnabled = showing.messages || showing.announcements;
   const outputTextPosition: OutputTextPosition = {
     ...programLooks.textPosition,
   };
@@ -598,55 +601,33 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // one change: two commands were two events, and two events racing could
   // leave one of a pair on, which read as a toggle that would not respond.
   const setShowTextInOutput = useCallback(
-    (show: boolean) => {
-      setLayerEnabledForLook(looksConfig.liveLookId, "program", "slide", show);
-    },
-    [looksConfig.liveLookId, setLayerEnabledForLook]
+    (show: boolean) => setShowing(["slide"], show),
+    [setShowing]
   );
 
   const setShowSlideInOutput = useCallback(
-    (show: boolean) => {
-      setLayerEnabledForLook(looksConfig.liveLookId, "program", "presentation", show);
-    },
-    [looksConfig.liveLookId, setLayerEnabledForLook]
+    (show: boolean) => setShowing(["presentation"], show),
+    [setShowing]
   );
 
   const setShowMediaInOutput = useCallback(
-    (show: boolean) => {
-      setLayersEnabledForLook(
-        looksConfig.liveLookId,
-        "program",
-        ["media", "videoInput"],
-        show
-      );
-    },
-    [looksConfig.liveLookId, setLayersEnabledForLook]
+    (show: boolean) => setShowing(["media", "videoInput"], show),
+    [setShowing]
   );
 
   const setHideBackgroundInOutput = useCallback(
-    (hide: boolean) => {
-      setLayerEnabledForLook(looksConfig.liveLookId, "program", "mask", hide);
-    },
-    [looksConfig.liveLookId, setLayerEnabledForLook]
+    (hide: boolean) => setShowing(["mask"], hide),
+    [setShowing]
   );
 
   const setIsTimerLayerEnabled = useCallback(
-    (show: boolean) => {
-      setLayerEnabledForLook(looksConfig.liveLookId, "program", "timer", show);
-    },
-    [looksConfig.liveLookId, setLayerEnabledForLook]
+    (show: boolean) => setShowing(["timer"], show),
+    [setShowing]
   );
 
   const setIsMessageLayerEnabled = useCallback(
-    (show: boolean) => {
-      setLayersEnabledForLook(
-        looksConfig.liveLookId,
-        "program",
-        ["messages", "announcements"],
-        show
-      );
-    },
-    [looksConfig.liveLookId, setLayersEnabledForLook]
+    (show: boolean) => setShowing(["messages", "announcements"], show),
+    [setShowing]
   );
   const showsPanelRef = useRef<LibrariesPanelRef>(null);
   const mediaPanelRef = useRef<MediaPanelRef>(null);

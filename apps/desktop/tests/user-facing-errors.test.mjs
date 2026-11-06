@@ -37,17 +37,23 @@ test("the voice service is sent its key terms as one JSON array", () => {
   assert.ok(speech.includes('searchParams.set("keyterms_prompt", JSON.stringify('));
 });
 
-test("a turn ends after half a second of quiet, and words come at every short pause", () => {
-  // Accepted by AssemblyAI, checked live: on Universal-3.5 Pro "Romans 8:28"
-  // arrived 0.2 s after it was said, where the default held it back for a
-  // longer pause and once guessed "John, chapter 10" on the way.
+test("a turn ends after half a second of quiet, and words come as they are said", () => {
+  // Checked live against AssemblyAI with a recorded sermon (2026-11-02):
+  // Universal-Streaming English shows each word a median 0.39 s after it is
+  // said, worst 0.55 s, sending words while they are still being said.
+  // Universal-3.5 Pro, used before, sent them only at pauses: a median 0.8 s
+  // and up to 1.8 s late, some words in 0.2 s and others in over a second.
+  // The formatted end of each turn settles references the words could not
+  // ("genesis 111" is "Genesis 1:11." or "Genesis 11:1.").
   const speech = readFileSync(
     path.join(packageRoot, "src/features/scripture/hooks/useSpeechRecognition.ts"),
     "utf8",
   );
   assert.ok(speech.includes("const TURN_SILENCE_MS = 500;"));
   assert.ok(speech.includes('url.searchParams.set("max_turn_silence", String(TURN_SILENCE_MS));'));
-  assert.ok(speech.includes('url.searchParams.set("interruption_delay", "0");'));
+  assert.ok(speech.includes('url.searchParams.set("speech_model", "universal-streaming-english");'));
+  assert.ok(speech.includes("const FORMAT_TURNS = true;"));
+  assert.ok(speech.includes("readTurn(payload, FORMAT_TURNS)"), "the word still being said is shown");
 });
 
 test("a voice failure is said in a toast, not a tooltip", () => {

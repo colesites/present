@@ -10,9 +10,10 @@ import type {
   CanvasSizePreset,
   MessageOverlay,
   SlideElement,
+  SlideTransition,
 } from "../../../shared/types";
 import type { ScreenComposerLayout } from "../../../shared/types/screen-composer";
-import { readTransition, type Transition } from "../../tauri/transitions";
+import { DEFAULT_TRANSITION, readTransition, type Transition } from "../../tauri/transitions";
 
 type MediaItem =
   | {
@@ -49,6 +50,8 @@ type ActiveSlidePayload = {
    * that is off is not on screen until the switch that hides it arrives.
    */
   showText: boolean;
+  /** How far through its builds the slide is; absent without builds. */
+  buildStep?: number;
 };
 
 type Params = {
@@ -133,6 +136,9 @@ export function useOutputBroadcast({
   slideElements,
   slideCanvasSize,
   slideBackgroundColor,
+  slideTransition = null,
+  slideMediaBox = null,
+  slideBuildStep = null,
   presentationSlide = false,
 }: Params & {
   activeSlideId?: string | null;
@@ -141,6 +147,12 @@ export function useOutputBroadcast({
   slideElements?: SlideElement[] | null;
   slideCanvasSize?: CanvasSizePreset | null;
   slideBackgroundColor?: string | null;
+  /** The slide's own transition, over the operator's choice. */
+  slideTransition?: SlideTransition | null;
+  /** Where on the live slide its movie plays, as fractions of the slide. */
+  slideMediaBox?: { x: number; y: number; width: number; height: number } | null;
+  /** How far through its builds the live slide is (`compositor/build.rs`). */
+  slideBuildStep?: number | null;
   presentationSlide?: boolean;
 }) {
   /* Track previous video time to only sync when it actually changes */
@@ -240,6 +252,7 @@ export function useOutputBroadcast({
     // Send media update
     const mediaPayload = {
       type: "media-update",
+      slideMediaBox,
       mediaUrl: activeMediaUrl,
       mediaId: activeMediaId,
       mediaType: activeMediaType,
@@ -314,7 +327,10 @@ export function useOutputBroadcast({
       slideId: activeSlideId,
       // Read per slide rather than held: the operator can change it between
       // one slide and the next, and the next one should arrive the new way.
-      transition: readTransition(),
+      // A slide with its own (an imported deck's) arrives its own way.
+      transition: slideTransition
+        ? ({ ...DEFAULT_TRANSITION, ...slideTransition } as Transition)
+        : readTransition(),
       slideText: slideText,
       slideFooter: slideFooter,
       slideElements,
@@ -322,6 +338,7 @@ export function useOutputBroadcast({
       slideBackgroundColor,
       presentationSlide,
       showText,
+      buildStep: slideBuildStep ?? undefined,
     };
     const previousSlidePayload = lastSlidePayloadRef.current;
     const shouldKeepPreviousSlide =
@@ -451,6 +468,9 @@ export function useOutputBroadcast({
     slideElements,
     slideCanvasSize,
     slideBackgroundColor,
+    slideTransition,
+    slideMediaBox,
+    slideBuildStep,
     presentationSlide,
     syncTrigger,
     worshipStageSyncTrigger,

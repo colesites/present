@@ -52,6 +52,8 @@ export type StageWords = {
   label: string | null;
   repeat: string | null;
   instruction: string | null;
+  /** The slide's speaker notes. */
+  notes?: string | null;
 };
 
 export type StageFeed = {
@@ -267,6 +269,7 @@ export function useStageFeed(): StageFeed {
             label: asText(message.currentLabel),
             repeat: asText(message.currentRepeat),
             instruction: asText(message.currentInlineInstruction),
+            notes: asText(message.currentNotes),
           },
           next: {
             text: asText(message.nextText),
@@ -274,6 +277,7 @@ export function useStageFeed(): StageFeed {
             label: asText(message.nextLabel),
             repeat: asText(message.nextRepeat),
             instruction: asText(message.nextInlineInstruction),
+            notes: asText(message.nextNotes),
           },
         }));
       } else if (message.type === "timer-update") {

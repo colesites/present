@@ -28,10 +28,28 @@ use serde::{Deserialize, Serialize};
 use crate::services::scripture::{self, Book, Reference};
 use crate::services::service_keys;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SpeechIntent {
+    ScriptureReading,
+    Commentary,
+    ReferenceMention,
+    NavigationRequest,
+    Uncertain,
+}
+
+impl Default for SpeechIntent {
+    fn default() -> Self {
+        SpeechIntent::Uncertain
+    }
+}
+
 /// What the model is asked for, and all it may answer with.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Answer {
+    #[serde(default)]
+    pub intent: Option<SpeechIntent>,
     /// The book as the model names it; matched against the operator's books
     /// here rather than trusted.
     pub book: String,
@@ -55,6 +73,7 @@ pub const PROJECT_AT: f64 = 0.9;
 /// What the agent made of an utterance.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Understanding {
+    pub intent: SpeechIntent,
     pub reference: Reference,
     pub confidence: f64,
     /// A story recognised, not a passage named (`Answer::story`).
@@ -82,44 +101,32 @@ impl Understanding {
             && self.reference.chapter.is_some()
             && self.reference.errors.is_empty()
             && self.confidence >= PROJECT_AT
+            && (self.intent == SpeechIntent::ScriptureReading
+                || self.intent == SpeechIntent::NavigationRequest
+                || (self.intent == SpeechIntent::Uncertain
+                    && (self.story || self.confidence >= 0.95)))
     }
 }
 
 /// The instruction the model is given. Short on purpose: it is sent as the
 /// preacher speaks, and what it costs is latency in front of a congregation.
-///
-/// What it is sent is the last few seconds of speech, not one sentence, with
-/// the words new since it was last asked marked apart (`request_body`), so it
-/// is told which to answer. Sent as one, gpt-oss-120b went on answering David
-/// and Goliath through the prodigal son told straight after it, and Gemini
-/// 2.5 Flash-Lite read "John chapter 3 and the 3rd verse … And then look at
-/// verse 16" as John 3:3-16. And it is told that a book can be misheard, which is
-/// much of why it is asked at all: "have a cook chapter two verse three" was
-/// 1 Corinthians 2:3, at confidence 1, without that.
-///
-/// Measured on [`MODEL`] at Groq with eleven things a preacher says — named,
-/// misheard, said within the open passage, two in a row, stories (David's
-/// stones, the Red Sea, "Jesus wept"), and words about no passage — it
-/// answered every passage right, 1.3 to 1.8 seconds each.
-///
-/// What it is not good at: words that name no passage at all, with a passage
-/// open, can come back as the open passage, sure ("the first thing I want to
-/// tell you this morning is that God loves you", John 3:16 open, at 0.95).
-/// The Bible tab ignores that answer (`lib/heard-scripture.ts`).
 pub const INSTRUCTION: &str = "\
-You find the Bible passage a preacher is talking about. The words come from \
-live speech recognition, newest last, and a book name may be misheard as words \
-that sound like it (\"have a cook\" for Habakkuk). The passage may be named \
-(\"John 3:16\", \"the third chapter of John\"), quoted, or a story or event \
-told in the preacher's own words (\"David took five smooth stones\" is 1 Samuel \
-17:40). Reply with JSON only: {\"book\":string,\"chapter\":number,\
+You find the Bible passage a preacher is talking about and classify their speech intent. \
+The words come from live speech recognition, newest last, and a book name may be misheard as words \
+that sound like it (\"have a cook\" for Habakkuk). The intent must be one of: \
+\"SCRIPTURE_READING\" (reading Scripture aloud), \
+\"NAVIGATION_REQUEST\" (explicitly telling congregation or app to turn to/read a passage), \
+\"REFERENCE_MENTION\" (mentioning a reference in passing or commentary without intending to navigate or read), \
+\"COMMENTARY\" (explaining verse meaning, sermon points, reflection, paraphrase), \
+\"UNCERTAIN\" (ambiguous or not about Scripture). \
+Reply with JSON only: {\"intent\":string,\"book\":string,\"chapter\":number,\
 \"verse\":number|null,\"verseEnd\":number|null,\"story\":boolean,\
 \"confidence\":number}. Answer the passage the words heard just now are about; \
 what was heard before is only there to help understand them. When several are \
 named, answer the last one. A verse said after a passage (\"now look at \
 verse 16\") is in that passage; a verse or chapter said with no book means one \
-in the open passage. For a story, give the verse that tells the part being \
-described, and story true. verseEnd only for a range said as one (\"verses 16 \
+in the open passage. For a story or event told in the preacher's own words, give the verse that tells the part being \
+described, with story true and intent SCRIPTURE_READING. verseEnd only for a range said as one (\"verses 16 \
 to 18\"). Use a book name exactly as given in the list. confidence is 0 to 1: 1 \
 when the words can only mean that passage, below 0.5 when you are guessing or \
 the words are not about a passage. Answer with nothing else.";
@@ -144,6 +151,18 @@ pub fn request_body(
     books: &[Book],
     open: Option<&str>,
 ) -> serde_json::Value {
+    request_body_with_fallback(model, heard, earlier, books, open, None)
+}
+
+/// Request body with optional Vercel AI Gateway model fallback configuration.
+pub fn request_body_with_fallback(
+    model: &str,
+    heard: &str,
+    earlier: Option<&str>,
+    books: &[Book],
+    open: Option<&str>,
+    fallback_model: Option<&str>,
+) -> serde_json::Value {
     let names: Vec<&str> = books.iter().map(|book| book.name.as_str()).collect();
     let open = open
         .map(str::trim)
@@ -155,12 +174,11 @@ pub fn request_body(
         .filter(|earlier| !earlier.is_empty())
         .map(|earlier| format!("Heard before: {earlier}\n"))
         .unwrap_or_default();
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "model": model,
         "temperature": 0,
-        // It thinks before it answers, as little as it can: about a hundred
-        // tokens in all, measured. The answer is one short object; a long one
-        // is a wrong one.
+        // Minimal reasoning effort where supported: low reasoning budget
+        // keeps latency within bounds in front of a live congregation.
         "reasoning_effort": "low",
         "max_tokens": 600,
         "response_format": { "type": "json_object" },
@@ -174,7 +192,15 @@ pub fn request_body(
                 ),
             }
         ]
-    })
+    });
+    if let Some(fallback) = fallback_model {
+        body["providerOptions"] = serde_json::json!({
+            "gateway": {
+                "models": [fallback]
+            }
+        });
+    }
+    body
 }
 
 /// Pull the model's answer out of a chat response.
@@ -229,6 +255,7 @@ pub fn understand(answer: &Answer, books: &[Book]) -> Understanding {
         0.0
     };
     Understanding {
+        intent: answer.intent.unwrap_or_default(),
         reference,
         confidence,
         story: answer.story,
@@ -248,33 +275,36 @@ pub struct Service {
     slot: usize,
 }
 
-/// Asked first: the fastest of the services, and the one whose free plan
-/// allows the most (30 requests and 8,000 tokens a minute for [`MODEL`],
-/// where the gateway's allows 5 requests).
-pub const GROQ: Service = Service {
-    name: "Groq",
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    timeout: std::time::Duration::from_secs(3),
-    slot: 0,
-};
+/// Primary model through Vercel AI Gateway: OpenAI's gpt-6-luna-fast.
+pub const PRIMARY_MODEL: &str = "openai/gpt-6-luna-fast";
 
-/// Asked when Groq cannot answer, or this build has no key for it. The same
-/// model, served by whichever of the gateway's providers is up.
+/// Fallback model through Vercel AI Gateway: Google's gemini-3.8-flash.
+/// Hard invariant: Routine intent classification must not use Gemini 4 Argon.
+pub const FALLBACK_MODEL: &str = "google/gemini-3.8-flash";
+
+/// Optional last-resort model for direct Groq API during Vercel AI Gateway outages.
+pub const GROQ_MODEL: &str = "llama-3.3-70b-versatile";
+
+/// Backward-compatible alias for existing references to MODEL.
+pub const MODEL: &str = PRIMARY_MODEL;
+
+/// Asked first: Vercel AI Gateway with primary model (`PRIMARY_MODEL`) and
+/// automatic model-fallback configuration to Gemini (`FALLBACK_MODEL`).
 pub const GATEWAY: Service = Service {
     name: "the AI Gateway",
     url: "https://ai-gateway.vercel.sh/v1/chat/completions",
-    timeout: std::time::Duration::from_secs(4),
-    slot: 1,
+    timeout: std::time::Duration::from_millis(3800),
+    slot: 0,
 };
 
-/// The model asked, on either service: OpenAI's gpt-oss-120b. Measured against
-/// [`INSTRUCTION`] beside the others Groq serves free and the gateway's
-/// Gemini 2.5 Flash-Lite, Llama 4 Maverick and gpt-oss-20b, it was the only
-/// one right about every story and sure of none of the sentences that were
-/// not scripture. gpt-oss-20b put the prodigal son in Genesis, at 0.9;
-/// Flash-Lite was sure "let's welcome our visitors" was John 3:16; Qwen 3.8
-/// 27B ran out of Groq's free tokens for the minute after three questions.
-pub const MODEL: &str = "openai/gpt-oss-120b";
+/// Optional last-resort provider: Direct Groq API, asked only if the Vercel
+/// AI Gateway is unavailable or fails. Improves resilience during Gateway-wide outages.
+pub const GROQ: Service = Service {
+    name: "Groq",
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    timeout: std::time::Duration::from_millis(2500),
+    slot: 1,
+};
 
 /// How long to leave a service alone after it says "too many", when it does
 /// not say for how long.
@@ -327,11 +357,13 @@ fn rest(service: &Service, for_how_long: std::time::Duration) {
     until[service.slot] = Some(std::time::Instant::now() + for_how_long);
 }
 
-/// The services this build can ask, in the order they are asked.
+/// The services this build can ask, in the order they are asked:
+/// 1. Primary: Vercel AI Gateway (`PRIMARY_MODEL` with `FALLBACK_MODEL` fallback)
+/// 2. Optional last-resort provider: Direct Groq API (`GROQ_MODEL`) during Gateway outages
 fn services() -> Vec<(Service, String)> {
     [
-        (GROQ, service_keys::groq()),
         (GATEWAY, service_keys::ai_gateway()),
+        (GROQ, service_keys::groq()),
     ]
     .into_iter()
     .filter_map(|(service, key)| key.map(|key| (service, key)))
@@ -353,14 +385,19 @@ async fn ask_service(
     earlier: Option<&str>,
     books: &[Book],
     open: Option<&str>,
+    model: &str,
+    fallback_model: Option<&str>,
+    custom_timeout: Option<std::time::Duration>,
 ) -> Reply {
-    let Ok(client) = reqwest::Client::builder().timeout(service.timeout).build() else {
+    let timeout = custom_timeout.unwrap_or(service.timeout);
+    let Ok(client) = reqwest::Client::builder().timeout(timeout).build() else {
         return Reply::Failed;
     };
+    let payload = request_body_with_fallback(model, heard, earlier, books, open, fallback_model);
     let response = match client
         .post(service.url)
         .bearer_auth(key)
-        .json(&request_body(MODEL, heard, earlier, books, open))
+        .json(&payload)
         .send()
         .await
     {
@@ -410,9 +447,9 @@ async fn ask_service(
 
 /// Ask what was said, and decide what it is worth.
 ///
-/// `None` when there is nothing to ask about, nobody signed in, no service
-/// could answer, or the model named no passage — all of which are ordinary,
-/// and none of which stop the operator doing it themselves.
+/// Fail-safe invariant: Returns `None` when there is nothing to ask about, nobody signed in,
+/// no service could answer, or the model named no passage. The application fails safely:
+/// current screen and selected translation are strictly preserved.
 pub async fn ask(
     session_token: &str,
     heard: &str,
@@ -420,13 +457,6 @@ pub async fn ask(
     books: &[Book],
     open: Option<&str>,
 ) -> Option<Understanding> {
-    // Everything that was heard, whatever it looks like. What it meant is the
-    // model's question to answer, not this file's to pre-judge.
-    //
-    // Each way of giving up says so out loud. An agent that hears the preacher
-    // and puts nothing on the screen looks identical from the operator's seat
-    // whether it was never asked, was refused, or answered something that did
-    // not resolve — and at `debug!` the log said nothing at all.
     if session_token.trim().is_empty() {
         tracing::info!("heard something, but nobody is signed in to ask about it");
         return None;
@@ -452,27 +482,113 @@ pub async fn ask(
             );
             continue;
         }
-        let Reply::Answered(answer) =
-            ask_service(service, key, heard.trim(), earlier, books, open).await
+
+        let is_gateway = service.slot == GATEWAY.slot;
+        let model = if is_gateway {
+            PRIMARY_MODEL
+        } else {
+            GROQ_MODEL
+        };
+        let fallback = if is_gateway {
+            Some(FALLBACK_MODEL)
+        } else {
+            None
+        };
+
+        let start_time = std::time::Instant::now();
+        let Reply::Answered(mut maybe_answer) = ask_service(
+            service,
+            key,
+            heard.trim(),
+            earlier,
+            books,
+            open,
+            model,
+            fallback,
+            None,
+        )
+        .await
         else {
             continue;
         };
-        let understanding = understand(&answer?, books);
+
+        // If Gateway answered, but primary response is explicitly UNCERTAIN or low-confidence,
+        // and the speech contains candidate cues (chapter/verse or number), perform a safe,
+        // latency-bounded retry using the Gemini fallback directly.
+        if is_gateway {
+            let is_uncertain = match &maybe_answer {
+                Some(ans) => {
+                    ans.intent == Some(SpeechIntent::Uncertain)
+                        || (ans.intent.is_none() && ans.confidence < 0.5)
+                        || ans.book.trim().is_empty()
+                }
+                None => true,
+            };
+
+            let elapsed = start_time.elapsed();
+            let has_cues = heard.chars().any(|c| c.is_ascii_digit())
+                || heard.split_whitespace().any(|w| {
+                    let lower = w.to_ascii_lowercase();
+                    lower == "verse" || lower == "chapter" || lower == "book" || lower == "read"
+                });
+
+            if is_uncertain && has_cues && elapsed < std::time::Duration::from_millis(2000) {
+                tracing::info!(
+                    service = service.name,
+                    elapsed_ms = elapsed.as_millis(),
+                    "primary model returned uncertain with cues present; attempting latency-bounded Gemini fallback"
+                );
+                // Latency-bounded (2.0s) retry
+                let retry_reply = ask_service(
+                    service,
+                    key,
+                    heard.trim(),
+                    earlier,
+                    books,
+                    open,
+                    FALLBACK_MODEL,
+                    None,
+                    Some(std::time::Duration::from_millis(2000)),
+                )
+                .await;
+
+                if let Reply::Answered(Some(gemini_ans)) = retry_reply {
+                    if gemini_ans.confidence >= 0.7
+                        && gemini_ans.intent != Some(SpeechIntent::Uncertain)
+                    {
+                        tracing::info!(
+                            service = service.name,
+                            intent = ?gemini_ans.intent,
+                            "Gemini fallback resolved uncertain classification"
+                        );
+                        maybe_answer = Some(gemini_ans);
+                    }
+                }
+            }
+        }
+
+        let Some(answer) = maybe_answer else {
+            return None;
+        };
+
+        let understanding = understand(&answer, books);
         tracing::info!(
             service = service.name,
             heard,
             book = ?understanding.reference.book,
             chapter = ?understanding.reference.chapter,
             verse = ?understanding.reference.verse_start,
+            intent = ?understanding.intent,
             story = understanding.story,
             will_project = understanding.may_project(),
             "the scripture agent read what was said"
         );
         return Some(understanding);
     }
+
     tracing::warn!(
         heard,
-        "no service could answer; the parser and the operator carry on"
+        "no service could answer; the parser and the operator carry on safely (preserving screen and translation)"
     );
     None
 }
@@ -545,6 +661,7 @@ mod tests {
     #[test]
     fn an_answer_is_read_however_the_model_wrapped_it() {
         let expected = Answer {
+            intent: None,
             book: "John".to_owned(),
             chapter: 3,
             verse: Some(16),
@@ -581,6 +698,7 @@ mod tests {
     #[test]
     fn a_book_the_model_invented_does_not_reach_the_screen() {
         let invented = Answer {
+            intent: None,
             book: "Hezekiah".to_owned(),
             chapter: 2,
             verse: Some(4),
@@ -596,6 +714,7 @@ mod tests {
     #[test]
     fn a_chapter_that_does_not_exist_does_not_reach_the_screen() {
         let beyond = Answer {
+            intent: None,
             book: "John".to_owned(),
             chapter: 40,
             verse: None,
@@ -610,6 +729,7 @@ mod tests {
     fn only_a_reading_the_model_is_sure_of_goes_up_by_itself() {
         // "God is good all the time": the model named Psalm 107:1 at 0.8.
         let allusion = Answer {
+            intent: None,
             book: "Psalms".to_owned(),
             chapter: 107,
             verse: Some(1),
@@ -622,6 +742,7 @@ mod tests {
         assert!(!understanding.may_project(), "found, not shown");
 
         let plain = Answer {
+            intent: Some(SpeechIntent::ScriptureReading),
             book: "John".to_owned(),
             chapter: 3,
             verse: Some(16),
@@ -641,8 +762,40 @@ mod tests {
     }
 
     #[test]
+    fn commentary_and_reference_mentions_do_not_project() {
+        let mention = Answer {
+            intent: Some(SpeechIntent::ReferenceMention),
+            book: "Romans".to_owned(),
+            chapter: 8,
+            verse: Some(28),
+            verse_end: None,
+            story: false,
+            confidence: 1.0,
+        };
+        assert!(
+            !understand(&mention, &books()).may_project(),
+            "passing reference mention must never project"
+        );
+
+        let commentary = Answer {
+            intent: Some(SpeechIntent::Commentary),
+            book: "Romans".to_owned(),
+            chapter: 8,
+            verse: Some(28),
+            verse_end: None,
+            story: false,
+            confidence: 1.0,
+        };
+        assert!(
+            !understand(&commentary, &books()).may_project(),
+            "commentary must never project"
+        );
+    }
+
+    #[test]
     fn a_range_that_runs_backwards_is_dropped_rather_than_shown() {
         let backwards = Answer {
+            intent: None,
             book: "John".to_owned(),
             chapter: 3,
             verse: Some(16),
@@ -685,25 +838,47 @@ mod tests {
     }
 
     #[test]
-    fn groq_is_asked_first_and_the_gateway_after_it() {
-        assert!(GROQ.url.starts_with("https://api.groq.com/"));
+    fn gateway_is_asked_first_with_gemini_fallback_and_groq_is_last_resort() {
         assert!(GATEWAY.url.starts_with("https://ai-gateway.vercel.sh/"));
+        assert!(GROQ.url.starts_with("https://api.groq.com/"));
         assert!(
-            GROQ.timeout + GATEWAY.timeout <= std::time::Duration::from_secs(7),
+            GATEWAY.timeout + GROQ.timeout <= std::time::Duration::from_secs(7),
             "both, one after the other, still answer before the preacher has moved on"
         );
-        let body = request_body(MODEL, "John 3 16", None, &books(), None);
-        assert_eq!(body["model"], MODEL);
+        let body = request_body_with_fallback(
+            PRIMARY_MODEL,
+            "John 3 16",
+            None,
+            &books(),
+            None,
+            Some(FALLBACK_MODEL),
+        );
+        assert_eq!(body["model"], "openai/gpt-6-luna-fast");
+        assert_eq!(
+            body["providerOptions"]["gateway"]["models"][0],
+            "google/gemini-3.8-flash"
+        );
         assert_eq!(body["reasoning_effort"], "low", "it thinks, but briefly");
     }
 
     #[test]
+    fn argon_is_not_used_for_routine_intent_classification() {
+        assert_ne!(PRIMARY_MODEL, "google/gemini-4-argon");
+        assert_ne!(FALLBACK_MODEL, "google/gemini-4-argon");
+        assert!(!PRIMARY_MODEL.contains("argon"));
+        assert!(!FALLBACK_MODEL.contains("argon"));
+    }
+
+    #[test]
     fn a_service_that_refused_is_left_alone_and_the_other_is_not() {
-        rest(&GROQ, std::time::Duration::from_secs(30));
-        assert!(resting(&GROQ));
-        assert!(!resting(&GATEWAY), "the backup is still asked");
-        rest(&GROQ, std::time::Duration::ZERO);
-        assert!(!resting(&GROQ), "and Groq again once its wait is over");
+        rest(&GATEWAY, std::time::Duration::from_secs(30));
+        assert!(resting(&GATEWAY));
+        assert!(!resting(&GROQ), "the last-resort backup is still asked");
+        rest(&GATEWAY, std::time::Duration::ZERO);
+        assert!(
+            !resting(&GATEWAY),
+            "and Gateway again once its wait is over"
+        );
     }
 
     #[test]
@@ -781,6 +956,7 @@ mod tests {
         // must not travel any further, and is read as not sure at all.
         for confidence in [f64::NAN, f64::INFINITY, -5.0] {
             let answer = Answer {
+                intent: None,
                 book: "John".to_owned(),
                 chapter: 3,
                 verse: Some(16),

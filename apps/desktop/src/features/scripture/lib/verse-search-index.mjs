@@ -264,15 +264,10 @@ function sharedInOrder(a, b) {
 export const OTHER_BIBLE_BY = 2;
 
 /**
- * Of one quote matched in several Bibles, the one it is being read from.
+ * Of one quote matched in several Bibles, select the match.
  *
- * `matches`: `{ versionId, verse, run, shared }` for each Bible it was found
- * in; `preferredId`: the Bible in use. That one stands unless another shares
- * [OTHER_BIBLE_BY] or more words more with the quote, counted over all of it:
- * "In the beginning, God created the heavens and the earth" is the ESV's word
- * for word and the KJV's but for "heaven", which is too little to switch
- * Bibles on — it did, and back, three times over one verse. John 3:16 read
- * from the NIV shares fourteen words with it and twelve with the NKJV.
+ * Hard invariant: The preferred (active) Bible translation remains active and
+ * is NEVER displaced merely because a rival Bible shares more words with a quote.
  */
 export function chooseAcrossBibles(matches, preferredId) {
   const preferred = matches.find((match) => match.versionId === preferredId) ?? null;

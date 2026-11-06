@@ -154,6 +154,29 @@ pub struct LookLayers {
 }
 
 impl LookLayers {
+    /// Every layer on but the mask: a column that lets everything through,
+    /// leaving what shows to the operator's switches.
+    pub const ALL: Self = Self {
+        mask: false,
+        messages: true,
+        props: true,
+        timer: true,
+        announcements: true,
+        presentation: true,
+        slide: true,
+        media: true,
+        video_input: true,
+    };
+
+    /// The operator's switches as a new setup has them: the words, slides,
+    /// media and timer showing, no banner, the background not hidden. What the
+    /// Screen's column started as when the switches were that column.
+    pub const SHOWING: Self = Self {
+        messages: false,
+        announcements: false,
+        ..Self::ALL
+    };
+
     pub fn get(&self, layer: LookLayer) -> bool {
         match layer {
             LookLayer::Mask => self.mask,
@@ -462,17 +485,7 @@ impl LookTargets {
     /// added mid-service shows what the Screen shows.
     pub fn screen_default(&self) -> LookTargetState {
         LookTargetState {
-            layers: LookLayers {
-                mask: false,
-                messages: true,
-                props: true,
-                timer: true,
-                announcements: true,
-                presentation: true,
-                slide: true,
-                media: true,
-                video_input: true,
-            },
+            layers: LookLayers::ALL,
             text_position: self.program.text_position,
             layout: LookLayout::default(),
         }
@@ -498,18 +511,10 @@ impl LookPreset {
             id: "default".to_owned(),
             name: "Default".to_owned(),
             targets: LookTargets {
+                // The Screen lets everything through: what shows on it is the
+                // operator's switches (`LooksConfig::showing`).
                 program: LookTargetState {
-                    layers: LookLayers {
-                        mask: false,
-                        messages: false,
-                        props: true,
-                        timer: true,
-                        announcements: false,
-                        presentation: true,
-                        slide: true,
-                        media: true,
-                        video_input: true,
-                    },
+                    layers: LookLayers::ALL,
                     text_position: LookTextPosition::DEFAULT,
                     layout: LookLayout::default(),
                 },
@@ -562,7 +567,18 @@ pub struct LooksConfig {
     pub selected_look_id: String,
     pub live_look_id: String,
     pub looks: Vec<LookPreset>,
+    /// The operator's switches in the right sidebar: what is showing this
+    /// minute, on every screen. A screen shows a layer when its own column of
+    /// the live look lets it through *and* the switch is on; the background is
+    /// hidden if either asks (`services/look_scene.rs`). Not part of any look:
+    /// changing looks changes what each screen may show, not what is showing.
+    #[serde(default = "showing_default")]
+    pub showing: LookLayers,
     pub updated_at: i64,
+}
+
+fn showing_default() -> LookLayers {
+    LookLayers::SHOWING
 }
 
 impl LooksConfig {
@@ -573,6 +589,7 @@ impl LooksConfig {
             selected_look_id: "default".to_owned(),
             live_look_id: "default".to_owned(),
             looks: vec![LookPreset::default_preset()],
+            showing: LookLayers::SHOWING,
             updated_at: now,
         }
     }
@@ -661,14 +678,17 @@ pub fn normalize(
                     .unwrap_or_else(|| first_id.clone())
             };
 
-            return LooksConfig {
+            let mut config = LooksConfig {
                 version: CURRENT_VERSION,
                 selected_target,
                 selected_look_id: resolve("selectedLookId"),
                 live_look_id: resolve("liveLookId"),
                 looks,
+                showing: LookLayers::SHOWING,
                 updated_at,
             };
+            settle_showing(&mut config, candidate.get("showing"));
+            return config;
         }
     }
 
@@ -693,14 +713,17 @@ pub fn normalize(
                 new_id,
             );
 
-            return LooksConfig {
+            let mut config = LooksConfig {
                 version: CURRENT_VERSION,
                 selected_target,
                 selected_look_id: migrated.id.clone(),
                 live_look_id: migrated.id.clone(),
                 looks: vec![migrated],
+                showing: LookLayers::SHOWING,
                 updated_at,
             };
+            settle_showing(&mut config, None);
+            return config;
         }
     }
 
@@ -710,8 +733,29 @@ pub fn normalize(
         selected_look_id: fallback.selected_look_id,
         live_look_id: fallback.live_look_id,
         looks: fallback.looks,
+        showing: fallback.showing,
         updated_at,
     }
+}
+
+/// The operator's switches, as stored — or, from a setup saved before they
+/// were their own, taken from the live look's Screen column, which is where
+/// the switches used to write. That column then lets everything through, so
+/// the Screen shows exactly what it did, and a switch turned back on shows
+/// its layer again. The other looks keep their Screen columns, as the
+/// operator set them up.
+fn settle_showing(config: &mut LooksConfig, stored: Option<&serde_json::Value>) {
+    if let Some(stored) = stored.filter(|value| value.is_object()) {
+        config.showing = normalize_layers(LookLayers::SHOWING, Some(stored));
+        return;
+    }
+    let live = config.live_look_id.clone();
+    let Some(look) = config.look_mut(&live) else {
+        return;
+    };
+    let switches = look.targets.program.layers;
+    look.targets.program.layers = LookLayers::ALL;
+    config.showing = switches;
 }
 
 fn normalize_preset(
@@ -763,7 +807,16 @@ fn normalize_preset(
     };
 
     let mut normalized = LookTargets {
-        program: target_state("program", default_preset.targets.program.clone()),
+        // A Screen column saved before the switches were their own *was* the
+        // switches, and may become them (`settle_showing`): what it does not
+        // say falls back to what they started as, never to "on".
+        program: target_state(
+            "program",
+            LookTargetState {
+                layers: LookLayers::SHOWING,
+                ..default_preset.targets.program.clone()
+            },
+        ),
         stage: target_state("stage", default_preset.targets.stage.clone()),
         ndi: target_state("ndi", default_preset.targets.ndi.clone()),
         screens: BTreeMap::new(),
@@ -1061,6 +1114,25 @@ pub fn set_layer_enabled(
     config.updated_at = now;
 }
 
+/// Turn the operator's switch for `layers` on or off. Whether anything
+/// changed.
+pub fn set_showing(
+    config: &mut LooksConfig,
+    layers: &[LookLayer],
+    enabled: bool,
+    now: i64,
+) -> bool {
+    let before = config.showing;
+    for layer in layers {
+        config.showing.set(*layer, enabled);
+    }
+    if config.showing == before {
+        return false;
+    }
+    config.updated_at = now;
+    true
+}
+
 pub fn set_text_position(
     config: &mut LooksConfig,
     look_id: &str,
@@ -1125,8 +1197,8 @@ mod tests {
     }
 
     #[test]
-    fn the_default_program_look_shows_presentation_slide_media_and_props() {
-        let layers = LookPreset::default_preset().targets.program.layers;
+    fn a_new_setups_switches_show_presentation_slide_media_and_props() {
+        let layers = LooksConfig::default_config(NOW).showing;
 
         assert!(!layers.mask);
         assert!(!layers.messages);
@@ -1136,6 +1208,60 @@ mod tests {
         assert!(layers.slide);
         assert!(layers.media);
         assert!(layers.video_input);
+    }
+
+    #[test]
+    fn the_screens_own_column_lets_everything_through() {
+        assert_eq!(
+            LookPreset::default_preset().targets.program.layers,
+            LookLayers::ALL
+        );
+    }
+
+    #[test]
+    fn switches_saved_inside_the_screens_column_become_their_own() {
+        // Before 2026-11 the sidebar's switches wrote the live look's Screen
+        // column, which so gated every audience screen.
+        let config = normalize_value(serde_json::json!({
+            "version": 2,
+            "liveLookId": "sunday",
+            "looks": [
+                { "id": "default", "targets": { "program": { "layers": { "media": false } } } },
+                { "id": "sunday", "targets": { "program": { "layers": { "slide": false, "mask": true } } } },
+            ],
+        }));
+        assert!(!config.showing.slide, "the words stay off");
+        assert!(config.showing.mask, "and the background hidden");
+        assert!(config.showing.media);
+        assert_eq!(config.looks[1].targets.program.layers, LookLayers::ALL);
+        assert!(
+            !config.looks[0].targets.program.layers.media,
+            "another look keeps its column"
+        );
+
+        let mut stored = serde_json::to_value(&config).expect("json");
+        stored["showing"]["slide"] = serde_json::json!(true);
+        let reread = normalize_value(stored);
+        assert!(reread.showing.slide, "stored switches are read as they are");
+        assert_eq!(reread.looks, config.looks);
+    }
+
+    #[test]
+    fn a_switch_changes_no_look() {
+        let mut config = LooksConfig::default_config(NOW);
+        let looks = config.looks.clone();
+        assert!(set_showing(
+            &mut config,
+            &[LookLayer::Media, LookLayer::VideoInput],
+            false,
+            NOW + 1
+        ));
+        assert!(!config.showing.media && !config.showing.video_input);
+        assert_eq!(config.looks, looks);
+        assert!(
+            !set_showing(&mut config, &[LookLayer::Media], false, NOW + 2),
+            "already off: nothing changed"
+        );
     }
 
     #[test]
@@ -1164,9 +1290,11 @@ mod tests {
         assert_eq!(migrated.looks.len(), 1);
         assert_eq!(migrated.looks[0].name, "Sunday Morning");
         assert_eq!(migrated.looks[0].id, "default");
-        assert!(!migrated.looks[0].targets.program.layers.media);
+        // Its Screen column was the switches; they are their own now.
+        assert!(!migrated.showing.media);
         // Layers the v1 config did not mention keep the default.
-        assert!(migrated.looks[0].targets.program.layers.slide);
+        assert!(migrated.showing.slide);
+        assert!(migrated.looks[0].targets.program.layers.media);
         assert_eq!(migrated.selected_look_id, "default");
         assert_eq!(migrated.live_look_id, "default");
     }
@@ -1215,8 +1343,17 @@ mod tests {
                     "ndi": { "layers": {}, "textPosition": {} },
                 },
             }],
+            "showing": { "mask": "yes", "messages": 1 },
         }));
 
+        assert!(
+            !config.showing.mask,
+            "a truthy string must not hide the background"
+        );
+        assert!(
+            !config.showing.messages,
+            "a truthy number must not show the banner"
+        );
         let layers = config.looks[0].targets.program.layers;
         assert!(!layers.mask, "a truthy string must not enable the mask");
         assert!(!layers.messages, "a truthy number must not enable messages");
@@ -1825,6 +1962,7 @@ mod tests {
         // Its Props switch was the timer's: off meant no clock.
         let config = normalize_value(serde_json::json!({
             "version": 2,
+            "showing": {},
             "looks": [{
                 "id": "default",
                 "targets": { "program": { "layers": { "props": false } } }
@@ -1836,6 +1974,7 @@ mod tests {
 
         let saved = normalize_value(serde_json::json!({
             "version": 2,
+            "showing": {},
             "looks": [{
                 "id": "default",
                 "targets": { "program": { "layers": { "props": false, "timer": true } } }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ComponentType } from "react";
-import { AudioLines, Cable, Monitor, Sparkles, Timer, Type } from "lucide-react";
+import { AudioLines, Cable, Gauge, Monitor, Sparkles, Timer, Type } from "lucide-react";
 import type { AgentSettings as AgentSettingsValue } from "../lib/constants";
 import { cn } from "../../../renderer/shared/lib/utils";
 import { MediaItem, MediaFolder } from "../../media/hooks/useMediaFolders";
@@ -15,6 +15,7 @@ import { AgentSettings } from "./AgentSettings";
 import { AudioSettings } from "./AudioSettings";
 import { ControlSurfacesSettings } from "./ControlSurfacesSettings";
 import { PhoneRemoteSettings } from "./PhoneRemoteSettings";
+import { ProjectionSettings } from "./ProjectionSettings";
 import { ScreensSettings, type ScreenRole } from "./ScreensSettings";
 import { SlidesSettings } from "./SlidesSettings";
 import { TimerSettings } from "./TimerSettings";
@@ -30,7 +31,7 @@ import {
   SettingsSwitch,
 } from "./settings-ui";
 
-type SectionKey = "screens" | "audio" | "agent" | "slides" | "timer" | "connections";
+type SectionKey = "screens" | "projection" | "audio" | "agent" | "slides" | "timer" | "connections";
 
 /** What NDI can be sent at. */
 const NDI_SIZES = ["3840x2160", "2560x1440", "1920x1080", "1600x900", "1280x720", "1024x768", "800x600"];
@@ -42,6 +43,7 @@ const SECTIONS: Array<{
   tile: string;
 }> = [
   { key: "screens", label: "Screens", icon: Monitor, tile: "bg-sky-500" },
+  { key: "projection", label: "Projection", icon: Gauge, tile: "bg-indigo-500" },
   { key: "audio", label: "Audio", icon: AudioLines, tile: "bg-rose-500" },
   { key: "agent", label: "Agent", icon: Sparkles, tile: "bg-violet-500" },
   { key: "slides", label: "Slides", icon: Type, tile: "bg-amber-500" },
@@ -397,6 +399,8 @@ export function SettingsScreen({
         return (
           <ScreensSettings onScreenDisplayChange={handleScreenDisplayChange} />
         );
+      case "projection":
+        return <ProjectionSettings />;
       case "audio":
         return (
           <AudioSettings

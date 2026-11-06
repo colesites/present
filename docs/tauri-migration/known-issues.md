@@ -759,6 +759,13 @@ during `build`, before the background was turned off. Development's page
 loads afterwards, so the same call was in time there. The background is now
 turned off on the webview's configuration, before the page exists.
 
+The first attempt did not hold: `macos-private-api` was added to Cargo.toml
+but `tauri.conf.json` did not set `app.macOSPrivateApi`, and the Tauri CLI
+rewrites the `tauri` features from the config on every `tauri dev` and
+`tauri build` — it removed the feature before compiling, so a packaged
+preview and show grid stayed blank. Both now agree, and
+`tests/macos-private-api.test.mjs` fails if either goes missing.
+
 ## 24. Video started black, skipped frames at 4K, and the operator window hung — FIXED
 
 The owner's report, on 0.4.14 in development: a video put on screen showed

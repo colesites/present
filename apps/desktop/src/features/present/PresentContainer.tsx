@@ -22,6 +22,7 @@ import type {
   CanvasSizePreset,
   MessageOverlay,
   SlideElement,
+  SlideTransition,
   LibraryContent,
   LibrarySlide,
   ServicePresentation,
@@ -39,6 +40,8 @@ import {
 } from "../../renderer/shared/hooks";
 import type { useAppSettings } from "../../renderer/shared/hooks/useAppSettings";
 import { useWindowOpen } from "../../renderer/tauri/runtime";
+import type { PresentationPosition } from "../../renderer/tauri/presentation";
+import { clickStepsOf, hasBuilds } from "../editor/lib/builds";
 import {
   filtersToCSS,
   MediaState,
@@ -235,6 +238,8 @@ type OutputSlideContent = {
   elements?: SlideElement[] | null;
   canvasSize?: CanvasSizePreset | null;
   backgroundColor?: string | null;
+  /** The slide's own transition (an imported deck's), over the operator's. */
+  transition?: SlideTransition | null;
 };
 
 type PresentationImportUiState = {
@@ -716,6 +721,22 @@ export function PresentContainer({
   // commands, rather than the operator panel reaching into React setters.
   // React stays the sender here; the reverse direction lands with the slide
   // rendering in Stage 5.
+  // How far through its builds the live slide is, as the core last said.
+  const [liveBuild, setLiveBuild] = useState<{ key: string | null; step: number }>({ key: null, step: 0 });
+
+  // What the core needs of the deck besides its length: hidden slides, and
+  // the live slide's builds.
+  const deckShape = useMemo(
+    () =>
+      JSON.stringify([
+        slidesForGrid.flatMap((entry, index) => ((entry.slide as { hidden?: boolean }).hidden ? [index] : [])),
+        selected && selected.index >= 0
+          ? clickStepsOf((slidesForGrid[selected.index]?.slide as { elements?: SlideElement[] } | undefined)?.elements)
+          : 0,
+      ]),
+    [selected, slidesForGrid],
+  );
+
   useEffect(() => {
     let cancelled = false;
     const libraryId = selected?.libraryId ?? null;
@@ -724,7 +745,16 @@ export function PresentContainer({
     void import("../../renderer/tauri/presentation")
       .then(async (core) => {
         if (cancelled) return;
-        await core.setDeck(libraryId, slidesForGrid.length);
+        // Hidden slides: pedals, remotes and "next" pass over them.
+        const skipped = slidesForGrid.flatMap((entry, index) =>
+          (entry.slide as { hidden?: boolean }).hidden ? [index] : [],
+        );
+        // The live slide's builds: "next" shows them before the next slide.
+        const clickSteps =
+          slideIndex !== null && slideIndex >= 0
+            ? clickStepsOf((slidesForGrid[slideIndex]?.slide as { elements?: SlideElement[] }).elements)
+            : 0;
+        await core.setDeck(libraryId, slidesForGrid.length, skipped, clickSteps);
         if (cancelled) return;
         // `index: -1` is how this component says "deck open, nothing showing".
         if (slideIndex !== null && slideIndex >= 0) {
@@ -738,7 +768,9 @@ export function PresentContainer({
     return () => {
       cancelled = true;
     };
-  }, [selected, slidesForGrid.length]);
+    // `deckShape`: a slide hidden or its builds changed, sent again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, slidesForGrid.length, deckShape]);
 
   const scriptureEditorItem = useMemo(
     () =>
@@ -821,6 +853,7 @@ export function PresentContainer({
           activeLibrarySlide.slide,
           activeLibrarySlide.item.content,
         ),
+        transition: activeLibrarySlide.slide.transition ?? null,
       };
     }
     const text = getActiveSlideText(activeSlideId, availableSlideDeckItems);
@@ -956,6 +989,7 @@ export function PresentContainer({
         label: entry.slide.label ?? null,
         repeat: ('sectionRepeat' in entry.slide ? entry.slide.sectionRepeat : undefined) ?? null,
         inlineInstruction: ('modifier' in entry.slide ? entry.slide.modifier : undefined) ?? null,
+        notes: ('notes' in entry.slide ? entry.slide.notes : undefined) ?? null,
       })),
     [slidesForGrid],
   );
@@ -1019,9 +1053,54 @@ export function PresentContainer({
     [allMediaItems, liveSlideBackgroundId, liveSlideKey, operatorMediaForSlide],
   );
 
+  // A deck slide's movie (an imported PowerPoint's): the media layer while
+  // its slide is live, played by the one decoder inside the movie's box on
+  // the slide (`OutputScene.slideMediaBox`). Media chosen while the slide is
+  // live wins over it, as over a slide's background.
+  const liveSlideMovie = useMemo(() => {
+    if (isScriptureActive || !selected?.libraryId) return null;
+    const item = availableSlideDeckItems.find(
+      (candidate) => String(candidate._id) === selected.libraryId,
+    );
+    const slide = item?.slides[selected.index];
+    const movie = slide?.elements?.find(
+      (element) => element.type === "video" && element.content && element.isVisible !== false,
+    );
+    if (!movie) return null;
+    const canvas = getCanvasSizeDimensions(item?.content?.presentation?.canvasSize);
+    return {
+      url: movie.content,
+      sound: movie.style?.mediaKind === "audio",
+      box: {
+        x: movie.x / canvas.width,
+        y: movie.y / canvas.height,
+        width: movie.width / canvas.width,
+        height: movie.height / canvas.height,
+      },
+    };
+  }, [availableSlideDeckItems, isScriptureActive, selected]);
+  const slideMovieMediaItem = useMemo<MediaItem | null>(
+    () =>
+      liveSlideMovie && !(liveSlideKey && operatorMediaForSlide === liveSlideKey)
+        ? {
+            id: `slide-movie:${liveSlideMovie.url}`,
+            name: liveSlideMovie.sound ? "Sound" : "Movie",
+            type: "video",
+            url: liveSlideMovie.url,
+            path: "",
+            folderId: "",
+            lastModified: 0,
+          }
+        : null,
+    [liveSlideKey, liveSlideMovie, operatorMediaForSlide],
+  );
+  // The box only while the movie is what plays; a sound has none.
+  const slideMediaBox =
+    slideMovieMediaItem && liveSlideMovie && !liveSlideMovie.sound ? liveSlideMovie.box : null;
+
   const effectiveActiveMediaItem = isScriptureActive
     ? (scriptureBackgroundMediaItem ?? activeMediaItem)
-    : (slideBackgroundMediaItem ?? activeMediaItem);
+    : (slideMovieMediaItem ?? slideBackgroundMediaItem ?? activeMediaItem);
   const effectiveMediaFilters = useMemo<MediaFilters>(
     () => getMediaFiltersForItem(effectiveActiveMediaItem),
     [effectiveActiveMediaItem, getMediaFiltersForItem],
@@ -1704,7 +1783,7 @@ export function PresentContainer({
     shouldAutoPlay,
     onAutoPlayConsumed: () => setShouldAutoPlay(false),
     forcePlay:
-      (isScriptureActive || Boolean(slideBackgroundMediaItem)) &&
+      (isScriptureActive || Boolean(slideMovieMediaItem) || Boolean(slideBackgroundMediaItem)) &&
       effectiveActiveMediaItem?.type === "video",
   });
 
@@ -1856,6 +1935,8 @@ export function PresentContainer({
     nextLabel: stageNextSlide?.label ?? null,
     nextRepeat: stageNextSlide?.repeat ?? null,
     nextInlineInstruction: stageNextSlide?.inlineInstruction ?? null,
+    currentNotes: stageCurrentSlide?.notes ?? null,
+    nextNotes: stageNextSlide?.notes ?? null,
   });
 
   useEffect(() => {
@@ -2104,8 +2185,52 @@ export function PresentContainer({
     slideElements: outputSlideContent?.elements ?? null,
     slideCanvasSize: outputSlideContent?.canvasSize ?? null,
     slideBackgroundColor: outputSlideContent?.backgroundColor ?? null,
+    slideTransition: outputSlideContent?.transition ?? null,
+    slideMediaBox,
+    // How far through its builds the live slide is; none without builds.
+    slideBuildStep:
+      isPresentationSlideLive && hasBuilds(outputSlideContent?.elements ?? undefined)
+        ? liveBuild.key === liveSlideKey
+          ? liveBuild.step
+          : 0
+        : null,
     presentationSlide: isPresentationSlideLive,
   });
+
+  // The core owns where the deck is: a pedal, a remote, the arrow keys and
+  // "next" all move it there, through its builds and past hidden slides.
+  // The window follows: the slide it names goes live, at its build step.
+  const followPosition = useRef<((position: PresentationPosition) => void) | null>(null);
+  useEffect(() => {
+    followPosition.current = (position) => {
+      const libraryId = selected?.libraryId ?? null;
+      const index = position.slideIndex;
+      if (!libraryId || position.deck.libraryId !== libraryId || index === null || index < 0) return;
+      setLiveBuild({ key: `${libraryId}:${index}`, step: position.buildStep ?? 0 });
+      if (index === selected?.index) return;
+      const entry = slidesForGrid[index];
+      if (!entry) return;
+      const slideId =
+        entry.id ??
+        (entry.libraryItem ? `${entry.libraryItem._id}:${entry.index}` : `scripture:${entry.index}`);
+      void handleLiveSlideSelect(slideId, entry.slide.text, (entry.slide as { footer?: string }).footer);
+    };
+  });
+  useEffect(() => {
+    let detach: (() => void) | null = null;
+    let cancelled = false;
+    void import("../../renderer/tauri/presentation")
+      .then((core) => core.onPresentationChanged((position) => followPosition.current?.(position)))
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else detach = unlisten;
+      })
+      .catch((): undefined => undefined);
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, []);
 
   useAppNavigation({
     viewMode,

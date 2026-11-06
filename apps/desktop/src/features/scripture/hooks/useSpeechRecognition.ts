@@ -11,11 +11,21 @@ import {
 import { toast } from "sonner";
 import { useSpeechUsageStore } from "../../../renderer/shared/store/speechUsage";
 import { logFault, rawText, userMessage, UserFacingError } from "../../../renderer/shared/lib/user-error";
-import type { ListeningMicrophone } from "../../../renderer/tauri/sound";
+import type { SpeechStream } from "../../../renderer/tauri/speech-stream";
+import { readTurn } from "../lib/assemblyai-turn";
 
-interface ScriptRecognitionResult {
+export interface ScriptRecognitionResult {
   transcript: string;
   isFinal: boolean;
+  turn?: number;
+  endOfTurn?: boolean;
+  words?: Array<{
+    text: string;
+    start?: number;
+    end?: number;
+    confidence?: number;
+    word_is_final?: boolean;
+  }>;
 }
 
 interface UseSpeechRecognitionOptions {
@@ -109,6 +119,14 @@ interface AssemblyAiMessage {
   utterance?: string;
   end_of_turn?: boolean;
   turn_is_formatted?: boolean;
+  turn_order?: number;
+  words?: Array<{
+    text: string;
+    start?: number;
+    end?: number;
+    confidence?: number;
+    word_is_final?: boolean;
+  }>;
   error?: string;
   message?: string;
 }
@@ -121,9 +139,12 @@ interface AssemblyAiUsageResponse {
 
 interface StreamingSession {
   billingSessionId: string | null;
-  socket: WebSocket;
-  /** The microphone, listened to by Rust (`services/sound/input.rs`). */
-  microphone: ListeningMicrophone;
+  /**
+   * The microphone and the connection to AssemblyAI, both Rust's
+   * (`services/speech_stream.rs`): the sound goes out as it is captured,
+   * whatever the page is doing.
+   */
+  stream: SpeechStream;
   startedAtMs: number;
   maxDurationSeconds: number;
 }
@@ -133,6 +154,12 @@ const ASSEMBLYAI_STREAM_URL = "wss://streaming.assemblyai.com/v3/ws";
 const TURN_SILENCE_MS = 500;
 /** The least quiet after which a turn that sounds finished may end. */
 const SHORTEST_TURN_SILENCE_MS = 160;
+/**
+ * Each turn ends with a formatted copy ("Romans 8:28.") after the words came
+ * unformatted as they were said ("romans 828"): the words are read at once,
+ * and the formatting settles what they could not (`assemblyai-turn.ts`).
+ */
+const FORMAT_TURNS = true;
 const SPEECH_QUOTA_EXHAUSTED_MESSAGE =
   "You've used all of your speech-to-search time for this billing period. Upgrade your plan or wait for the next billing period to continue using voice search.";
 
@@ -149,34 +176,34 @@ const sanitizeKeyterms = (value: string[] | undefined): string[] =>
 
 const buildAssemblyAiSocketUrl = (input: {
   token: string;
-  sampleRate: number;
   lang: string;
   keyterms: string[];
 }): string => {
   const url = new URL(ASSEMBLYAI_STREAM_URL);
   url.searchParams.set("token", input.token);
-  url.searchParams.set("sample_rate", String(input.sampleRate));
-  url.searchParams.set("encoding", "pcm_s16le");
-  url.searchParams.set("format_turns", "false");
+  // The sound's rate and encoding are added by Rust, which captures it.
+  url.searchParams.set("format_turns", String(FORMAT_TURNS));
 
-  // Preachers do not stop for long. A turn ends after half a second of
-  // quiet (AssemblyAI's default is about 1.5s), and the words heard so far
-  // are sent at every short pause rather than held back for a longer one
-  // (`interruption_delay`, Universal-3.5 Pro only). The Bible tab reads them
-  // as they come either way (`useHeardScripture`); this is how often they come.
+  // The words as they are said. Universal-Streaming sends each word while it
+  // is still being said, a median 0.39 s after it (worst 0.55 s), measured
+  // against a recorded sermon. Universal-3.5 Pro, used before, sent words only
+  // at pauses: a median 0.8 s and up to 1.8 s late, which is what an operator
+  // saw as the agent lagging the preacher. It formatted references itself
+  // ("Romans 8:28"); here the formatted turn does that, and the parser reads
+  // the unformatted numbers in the meantime ("romans 828", `parser.ts`).
+  //
+  // Preachers do not stop for long: a turn ends after half a second of quiet
+  // (AssemblyAI's default is about 1.5 s), or sooner when it sounds finished.
   url.searchParams.set("max_turn_silence", String(TURN_SILENCE_MS));
+  url.searchParams.set(
+    "min_end_of_turn_silence_when_confident",
+    String(SHORTEST_TURN_SILENCE_MS),
+  );
   if (input.lang.toLowerCase().startsWith("en")) {
-    url.searchParams.set("speech_model", "universal-3-5-pro");
-    url.searchParams.set("language_code", "en");
-    url.searchParams.set("min_turn_silence", String(SHORTEST_TURN_SILENCE_MS));
-    url.searchParams.set("interruption_delay", "0");
+    url.searchParams.set("speech_model", "universal-streaming-english");
   } else {
     url.searchParams.set("speech_model", "universal-streaming-multilingual");
     url.searchParams.set("language_detection", "true");
-    url.searchParams.set(
-      "min_end_of_turn_silence_when_confident",
-      String(SHORTEST_TURN_SILENCE_MS),
-    );
   }
 
   // One JSON array, not a parameter per term: sent one by one, AssemblyAI
@@ -298,12 +325,9 @@ export function useSpeechRecognition(
   const isElectronRuntime =
     typeof window !== "undefined" && Boolean(window.electronAPI);
 
-  // The microphone is Rust's (`services/sound/input.rs`); the webview only
-  // needs to reach the transcription service.
+  // The microphone and the connection are Rust's (`services/speech_stream.rs`).
   const hasStreamingSupport =
-    typeof window !== "undefined" &&
-    typeof WebSocket !== "undefined" &&
-    "__TAURI_INTERNALS__" in window;
+    typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
   // WebKit's own recognizer, outside the app only. In the app it can never
   // listen: it needs a speech-recognition grant the app does not ask for, so
@@ -433,7 +457,6 @@ export function useSpeechRecognition(
       return;
     }
 
-    session.microphone.stop();
     const endedAtMs = Date.now();
     const localUsedSeconds = computeBoundedSessionUsageSeconds({
       startedAtMs: session.startedAtMs,
@@ -467,19 +490,10 @@ export function useSpeechRecognition(
     setActiveSessionStartedAtMs(null);
     setSharedActiveSessionStartedAtMs(null);
 
-    try {
-      if (session.socket.readyState === WebSocket.OPEN) {
-        session.socket.send(JSON.stringify({ type: "Terminate" }));
-      }
-    } catch {
-      // Ignore shutdown send failures.
-    }
-
-    try {
-      session.socket.close();
-    } catch {
-      // Ignore close errors.
-    }
+    // The service is told the session is over, then the microphone stops
+    // and the connection closes; its last words still come.
+    session.stream.send(JSON.stringify({ type: "Terminate" }));
+    session.stream.close();
 
   }, [
     completeUsageSession,
@@ -544,94 +558,58 @@ export function useSpeechRecognition(
       console.warn("[Speech] OS reports microphone access is not granted:", osPermission);
     }
 
-    // The socket the samples go to, once it is open: until then they are
-    // dropped, as the webview's capture dropped them.
-    let socket: WebSocket | null = null;
-    const [microphoneResult, tokenResult] = await Promise.allSettled([
-      import("../../../renderer/tauri/sound").then(({ startMicrophone }) =>
-        startMicrophone(inputDeviceId?.trim() || null, (pcm) => {
-          if (socket?.readyState === WebSocket.OPEN) socket.send(pcm);
-        }),
-      ),
-      fetchAssemblyAiToken(),
-    ]);
+    const tokenResult = await fetchAssemblyAiToken();
+    const { token } = tokenResult;
 
-    if (microphoneResult.status === "rejected") {
-      if (!osPermission.granted) {
+    let stream: SpeechStream;
+    try {
+      // The connection and the microphone open together, in Rust.
+      const { openSpeechStream } = await import("../../../renderer/tauri/speech-stream");
+      stream = await openSpeechStream(
+        buildAssemblyAiSocketUrl({ token, lang, keyterms: sanitizeKeyterms(keyterms) }),
+        inputDeviceId?.trim() || null,
+      );
+    } catch (error) {
+      // The usage session was started for a stream that never opened: end it
+      // now, so it costs nothing.
+      if (tokenResult.sessionId) {
+        void completeUsageSession({
+          sessionId: tokenResult.sessionId as Id<"speechUsageSessions">,
+          endedAtMs: Date.now(),
+        }).catch((): void => undefined);
+      }
+      if (!osPermission.granted && osPermission.status !== "not-determined") {
         throw new UserFacingError(
           "Present isn't allowed to use the microphone. Turn it on in System Settings > Privacy & Security > Microphone, then try again.",
         );
       }
-      throw microphoneResult.reason instanceof Error
-        ? microphoneResult.reason
-        : new Error(String(microphoneResult.reason));
+      throw error;
     }
 
-    const microphone = microphoneResult.value;
+    const session: StreamingSession = {
+      billingSessionId: tokenResult.sessionId ?? null,
+      stream,
+      startedAtMs: Date.now(),
+      maxDurationSeconds: tokenResult.allowedDurationSeconds ?? Number.MAX_SAFE_INTEGER,
+    };
 
-    if (tokenResult.status === "rejected") {
-      microphone.stop();
-      throw tokenResult.reason;
-    }
+    streamingSessionRef.current = session;
+    activeModeRef.current = "assemblyai";
+    setActiveSessionStartedAtMs(session.startedAtMs);
+    setSharedActiveSessionStartedAtMs(session.startedAtMs);
 
-    const { token } = tokenResult.value;
-
-    try {
-      const socketUrl = buildAssemblyAiSocketUrl({
-        token,
-        sampleRate: microphone.sampleRate,
-        lang,
-        keyterms: sanitizeKeyterms(keyterms),
-      });
-
-      const openedSocket = new WebSocket(socketUrl);
-      openedSocket.binaryType = "arraybuffer";
-      socket = openedSocket;
-
-      const session: StreamingSession = {
-        billingSessionId: tokenResult.value.sessionId ?? null,
-        socket: openedSocket,
-        microphone,
-        startedAtMs: Date.now(),
-        maxDurationSeconds:
-          tokenResult.value.allowedDurationSeconds ?? Number.MAX_SAFE_INTEGER,
-      };
-
-      streamingSessionRef.current = session;
-      activeModeRef.current = "assemblyai";
-      setActiveSessionStartedAtMs(session.startedAtMs);
-      setSharedActiveSessionStartedAtMs(session.startedAtMs);
-
-      await new Promise<void>((resolve, reject) => {
-        const handleOpen = () => {
-          openedSocket.removeEventListener("open", handleOpen);
-          openedSocket.removeEventListener("error", handleSocketOpenError);
-          resolve();
-        };
-
-        const handleSocketOpenError = () => {
-          openedSocket.removeEventListener("open", handleOpen);
-          openedSocket.removeEventListener("error", handleSocketOpenError);
-          reject(new Error("AssemblyAI connection failed."));
-        };
-
-        openedSocket.addEventListener("open", handleOpen, { once: true });
-        openedSocket.addEventListener("error", handleSocketOpenError, { once: true });
-      });
-
-      openedSocket.onmessage = (event) => {
+    stream.listen({
+      onMessage: (data) => {
         let payload: AssemblyAiMessage;
 
         try {
-          payload = JSON.parse(String(event.data)) as AssemblyAiMessage;
+          payload = JSON.parse(data) as AssemblyAiMessage;
         } catch {
           return;
         }
 
         if (payload.type === "Begin") {
-          console.info("[AssemblyAI] streaming session started", {
-            sessionId: typeof event.data === "string" ? payload["id"] : undefined,
-          });
+          console.info("[AssemblyAI] streaming session started", { sessionId: payload["id"] });
           setIsStarting(false);
           setIsListening(true);
           setError(null);
@@ -661,12 +639,11 @@ export function useSpeechRecognition(
           return;
         }
 
-        const runningTranscript = String(payload.transcript ?? "").trim();
-        const utterance = String(payload.utterance ?? "").trim();
-        const isFinalTurn =
-          Boolean(payload.end_of_turn) ||
-          Boolean(utterance) ||
-          Boolean(payload.turn_is_formatted);
+        // Every word so far, the one still being said included; final only
+        // once the turn is formatted (`assemblyai-turn.ts`).
+        const heard = readTurn(payload, FORMAT_TURNS);
+        const runningTranscript = heard.text;
+        const isFinalTurn = heard.isFinal;
 
         if (runningTranscript && shouldEmitTranscriptForLanguage(runningTranscript, lang)) {
           setTranscript(runningTranscript);
@@ -674,35 +651,28 @@ export function useSpeechRecognition(
           onResultRef.current?.({
             transcript: runningTranscript,
             isFinal: isFinalTurn,
+            turn: typeof payload.turn_order === "number" ? payload.turn_order : undefined,
+            endOfTurn: isFinalTurn,
+            words: Array.isArray(payload.words) ? payload.words : undefined,
           });
         }
 
-        const finalTranscript = utterance || (isFinalTurn ? runningTranscript : "");
+        const finalTranscript = isFinalTurn ? runningTranscript : "";
         if (finalTranscript && shouldEmitTranscriptForLanguage(finalTranscript, lang)) {
           finalTranscriptRef.current = finalTranscript;
           onFinalResultRef.current?.(finalTranscript);
         }
-      };
-
-      openedSocket.onerror = (event) => {
-        console.error("[AssemblyAI] websocket error", event);
-        setIsStarting(false);
-        setError(VOICE_DISCONNECTED);
-        setActiveSessionStartedAtMs(null);
-        setSharedActiveSessionStartedAtMs(null);
-        setPendingCommittedUsageSeconds(0);
-      };
-
-      openedSocket.onclose = (event) => {
+      },
+      onClose: (event) => {
         if (!isStoppingRef.current && !(event.wasClean && event.code === 1005)) {
-          console.error("[AssemblyAI] websocket closed", {
+          console.error("[AssemblyAI] stream closed", {
             code: event.code,
             reason: event.reason,
             wasClean: event.wasClean,
           });
         }
 
-        if (streamingSessionRef.current?.socket === socket) {
+        if (streamingSessionRef.current?.stream === stream) {
           stopStreamingSession();
         }
         setIsStarting(false);
@@ -717,20 +687,15 @@ export function useSpeechRecognition(
           // what to do.
           const closeMessage = /quota|limit|duration/i.test(event.reason)
             ? SPEECH_QUOTA_EXHAUSTED_MESSAGE
-            : VOICE_STOPPED;
+            : event.wasClean
+              ? VOICE_STOPPED
+              : VOICE_DISCONNECTED;
           setError((currentError) => currentError ?? closeMessage);
         }
-      };
-    } catch (error) {
-      const partialSession = streamingSessionRef.current;
-      if (partialSession) {
-        stopStreamingSession();
-      } else {
-        microphone.stop();
-      }
-      throw error;
-    }
+      },
+    });
   }, [
+    completeUsageSession,
     fetchAssemblyAiToken,
     hasStreamingSupport,
     inputDeviceId,

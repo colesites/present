@@ -279,6 +279,59 @@ function parseChapterVerseTail(tail: string): {
   return result;
 }
 
+/** The most verses any chapter has (Psalm 119), for a chapter whose count is not known. */
+const MOST_VERSES = 176;
+
+/** How many verses a chapter has, where the app knows (`knowVerseCounts`). */
+let versesIn: (book: string, chapter: number) => number | null = () => null;
+
+/**
+ * Tell the parser how many verses each chapter has: what lets "psalm 1191"
+ * be read as Psalm 119:1 alone, since Psalm 11 has seven verses and Psalm 1
+ * six. Without it, chapter counts decide, and a number that could be split
+ * more than one way is not read until the speech service formats it.
+ */
+export function knowVerseCounts(lookup: (book: string, chapter: number) => number | null): void {
+  versesIn = lookup;
+}
+
+/**
+ * Whether a verse number still being said could become another verse of the
+ * chapter with one more digit: "3:1" of John on its way to "3:16" (John 3 has
+ * 36 verses), where "23:1" of Psalms cannot (Psalm 23 has 6). Without the
+ * chapter's count, as long as Psalm 119's.
+ */
+export function verseCouldGrow(book: BibleBookRecord, chapter: number, verse: number): boolean {
+  return verse * 10 <= (versesIn(book.name, chapter) ?? MOST_VERSES);
+}
+
+/**
+ * A chapter and verse said together and written as one number: "John three
+ * sixteen" heard as "john 316", "Romans eight twenty-eight" as "romans 828".
+ * The streaming transcription writes numbers that way until a turn ends, and
+ * the Bible agent reads the words as they come. Only a number that is no
+ * chapter of the book, and splits into a chapter and verse it has exactly
+ * one way: "genesis 111" could be 1:11 or 11:1, so it waits for the
+ * formatted turn, which says which.
+ */
+export function splitRunTogether(
+  digits: string,
+  book: BibleBookRecord,
+): { chapter: number; verse: number } | null {
+  if (!/^\d{2,4}$/.test(digits) || Number(digits) <= book.chapters) return null;
+  const found: Array<{ chapter: number; verse: number }> = [];
+  for (let at = 1; at < digits.length; at += 1) {
+    const tail = digits.slice(at);
+    if (tail.startsWith("0")) continue;
+    const chapter = Number(digits.slice(0, at));
+    const verse = Number(tail);
+    if (chapter < 1 || chapter > book.chapters) continue;
+    if (verse < 1 || verse > (versesIn(book.name, chapter) ?? MOST_VERSES)) continue;
+    found.push({ chapter, verse });
+  }
+  return found.length === 1 ? found[0] : null;
+}
+
 export function parseReference(
   input: string,
   availableBooks: BibleBookRecord[],
@@ -314,6 +367,13 @@ export function parseReference(
       ? `1${bookMatch.tail}`
       : bookMatch.tail;
   const parsedTail = parseChapterVerseTail(tail);
+  if (parsedTail.chapter !== null && parsedTail.verseStart === null) {
+    const split = splitRunTogether(String(parsedTail.chapter), bookMatch.book);
+    if (split) {
+      parsedTail.chapter = split.chapter;
+      parsedTail.verseStart = split.verse;
+    }
+  }
   const chapter = parsedTail.chapter;
   if (!chapter) {
     result.errors.push("Missing chapter number.");

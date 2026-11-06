@@ -199,9 +199,23 @@ fn draw_element_into_mut(
             );
             true
         }
-        // A video element's own frames are the background media path; an
-        // inline video element is not composited yet.
-        SlideElementType::Video => false,
+        // A video element's frames are the background media path, in its box
+        // while its slide is live (`OutputScene::slide_media_box`). Here it is
+        // its poster: the still PowerPoint shows before the movie plays.
+        SlideElementType::Video => {
+            let Some(poster) = element
+                .style
+                .as_ref()
+                .and_then(|style| style.extra.get("poster"))
+                .and_then(|poster| poster.as_str())
+            else {
+                return false;
+            };
+            let mut still = element.clone();
+            still.element_type = SlideElementType::Image;
+            still.content = Some(poster.to_owned());
+            draw_element_into_mut(pixmap, &still, viewport, loader)
+        }
         SlideElementType::Web | SlideElementType::Unknown => false,
     }
 }

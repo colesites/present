@@ -1,7 +1,20 @@
 "use client";
 
-import { memo, type ReactNode } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
+import { getTransitions, type TransitionPreset } from "../../../renderer/tauri/transitions";
 import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalDistributeCenter,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalDistributeCenter,
+  CopyPlus,
+  Group,
+  Trash2,
+  Ungroup,
   AlignVerticalJustifyCenter,
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
@@ -11,6 +24,8 @@ import {
   ChevronDown,
   ChevronsDown,
   ChevronsUp,
+  FlipHorizontal2,
+  FlipVertical2,
   Italic,
   Palette,
   Radio,
@@ -46,17 +61,44 @@ import {
 } from "../../../renderer/shared/hooks/useFontCatalog";
 import { normalizeCapitalizationMode } from "../../../renderer/shared/lib/capitalization";
 import { editableFill, readFill } from "../../../renderer/shared/lib/slide-fill";
+import {
+  choosePicture,
+  cropOf,
+  loadPictureSize,
+  startCrop,
+  withCrop,
+  withPicture,
+  withoutCrop,
+  type Crop,
+} from "../lib/pictures";
+import {
+  SHAPE_PRESETS,
+  cornerRadius,
+  hasCorners,
+  shapeOutline,
+  withCornerRadius,
+  withShapeOutline,
+  withShapePreset,
+  type OutlineStyle,
+} from "../lib/shapes";
 import { BackgroundEditor, type Background } from "../../../renderer/shared/components/BackgroundEditor";
 import { useMediaLibraryStore } from "../../../renderer/shared/store/mediaLibrary";
 import type { MediaItem } from "../../media/hooks/useMediaFolders";
 import { cn } from "../../../renderer/shared/lib/utils";
 import { useThemesModalStore } from "../../../renderer/shared/store/themesModal";
+import type { ArrangeAction } from "../hooks/useSlideArrange";
+import type { SlideCommand } from "../hooks/useSlideCommands";
+import { isPictureBackground, pictureBackgroundOf, withPictureBackground } from "../lib/slides";
+import type { Alignment } from "../lib/arrange";
+import { BUILD_EFFECTS, BUILD_STARTS, buildTimeline, withBuildOrder } from "../lib/builds";
 import type {
   CanvasSizePreset,
   LibraryItemDraft,
   LibrarySlide,
   SlideElement,
   SlideElementStyle,
+  SlideShapePreset,
+  SlideBuild,
 } from "../../../shared/types";
 import {
   getCanvasSizeDimensions,
@@ -71,7 +113,7 @@ import {
 } from "../../themes/theme-look.mjs";
 
 type GeneralInspectorTab = "presentation" | "slide";
-type ObjectInspectorTab = "text" | "shape" | "image";
+type ObjectInspectorTab = "text" | "shape" | "image" | "video" | "arrange" | "build";
 type InspectorTab = GeneralInspectorTab | ObjectInspectorTab;
 
 const PRESENTATION_SIZE_OPTIONS = [
@@ -82,6 +124,8 @@ const PRESENTATION_SIZE_OPTIONS = [
 ] as const;
 
 const UNTITLED_SLIDE_LABEL_VALUE = "__present_untitled_slide_label__";
+/** The shape picker's value for a shape a deck drew itself. */
+const IMPORTED_SHAPE = "__imported__";
 
 const SLIDE_LABEL_OPTIONS = [
   { value: UNTITLED_SLIDE_LABEL_VALUE, label: "Untitled" },
@@ -133,6 +177,9 @@ const TAB_LABELS: Record<InspectorTab, string> = {
   text: "Text",
   shape: "Shape",
   image: "Image",
+  video: "Movie",
+  arrange: "Arrange",
+  build: "Build",
 };
 
 function getDecorationTokens(value: SlideElementStyle["textDecoration"]) {
@@ -156,7 +203,7 @@ function withDecoration(
 }
 
 function getObjectInspectorTab(type: SlideElement["type"] | undefined): ObjectInspectorTab | null {
-  if (type === "text" || type === "shape" || type === "image") {
+  if (type === "text" || type === "shape" || type === "image" || type === "video") {
     return type;
   }
   return null;
@@ -183,6 +230,9 @@ function slideBackground(slide: LibrarySlide, mediaItems: MediaItem[]): Backgrou
 }
 
 interface EditorInspectorProps {
+  /** An imported deck: no song details, slide titles, picture backgrounds. */
+  isDeck?: boolean;
+  onSlideCommand: (command: SlideCommand, slideId: string | null) => boolean;
   inspectorTab: InspectorTab;
   setInspectorTab: (tab: InspectorTab) => void;
   onPresentationCanvasSizeChange: (canvasSize: CanvasSizePreset) => void;
@@ -191,6 +241,9 @@ interface EditorInspectorProps {
   selectedSlideId: string | null;
   selectedSlide: LibrarySlide | null;
   selectedElementId: string | null;
+  /** Everything picked; more than one shows the Arrange tab. */
+  selectedElementIds: string[];
+  onArrange: (action: ArrangeAction) => boolean;
   onUpdateElement: (
     slideId: string | null,
     elementId: string | null,
@@ -216,6 +269,8 @@ interface EditorInspectorProps {
  * designer uses.
  */
 export const EditorInspector = memo(function EditorInspector({
+  isDeck = false,
+  onSlideCommand,
   inspectorTab,
   setInspectorTab,
   onPresentationCanvasSizeChange,
@@ -224,6 +279,8 @@ export const EditorInspector = memo(function EditorInspector({
   selectedSlideId,
   selectedSlide,
   selectedElementId,
+  selectedElementIds,
+  onArrange,
   onUpdateElement,
   onMoveElementLayer,
   fontFamily,
@@ -240,12 +297,24 @@ export const EditorInspector = memo(function EditorInspector({
   const canvas = getCanvasSizeDimensions(presentation.canvasSize);
   const selectedElement =
     selectedSlide?.elements?.find((element) => element.id === selectedElementId) ?? null;
-  const selectedObjectTab = getObjectInspectorTab(selectedElement?.type);
+  const isMultiSelection = selectedElementIds.length > 1;
+  const selectedObjectTab: ObjectInspectorTab | null = isMultiSelection
+    ? "arrange"
+    : getObjectInspectorTab(selectedElement?.type);
+  // Build: how one object arrives and leaves, beside its own tab.
+  const canBuild = Boolean(selectedElement) && !isMultiSelection;
   const activeTab: InspectorTab =
     inspectorTab === "presentation" || inspectorTab === "slide"
       ? inspectorTab
-      : selectedObjectTab ?? "slide";
-  const tabs: InspectorTab[] = ["presentation", "slide", ...(selectedObjectTab ? [selectedObjectTab] : [])];
+      : inspectorTab === "build" && canBuild
+        ? "build"
+        : selectedObjectTab ?? "slide";
+  const tabs: InspectorTab[] = [
+    "presentation",
+    "slide",
+    ...(selectedObjectTab ? [selectedObjectTab] : []),
+    ...(canBuild ? (["build"] as InspectorTab[]) : []),
+  ];
 
   const updateSelectedSlide = (updater: (slide: LibrarySlide) => LibrarySlide) => {
     if (!selectedSlideId) return;
@@ -276,7 +345,10 @@ export const EditorInspector = memo(function EditorInspector({
 
   const setSlideBackground = (fill: Background | null) =>
     updateSelectedSlide((current) => {
-      const elements = (current.elements ?? []).filter((element) => !element.id.endsWith("__theme-bg"));
+      // One background at a time: a colour or media takes the picture's place.
+      const elements = (current.elements ?? []).filter(
+        (element) => !element.id.endsWith("__theme-bg") && !isPictureBackground(element),
+      );
       const slide: LibrarySlide = { ...current, elements };
       delete slide.backgroundId;
       if (!fill) return { ...slide, useBackgroundColor: false };
@@ -309,17 +381,18 @@ export const EditorInspector = memo(function EditorInspector({
           value={activeTab}
           label="Edit"
           onChange={(tab) => setInspectorTab(tab as InspectorTab)}
-          options={tabs.map((tab) => ({ value: tab, label: TAB_LABELS[tab] }))}
+          options={tabs.map((tab) => ({ value: tab, label: tab === "presentation" && isDeck ? "Deck" : TAB_LABELS[tab] }))}
         />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
         {activeTab === "presentation" ? (
           <>
-            <StyleSection title="Song">
+            <StyleSection title={isDeck ? "Deck" : "Song"}>
               <StyleRow label="Title">
-                <TextField value={draft.title} placeholder="Song title" onChange={(title) => applyDraft((previous) => ({ ...previous, title }))} />
+                <TextField value={draft.title} placeholder={isDeck ? "Deck title" : "Song title"} onChange={(title) => applyDraft((previous) => ({ ...previous, title }))} />
               </StyleRow>
+              {isDeck ? null : (<>
               <StyleRow label="Artist">
                 <TextField
                   value={draft.content?.presentation?.artist ?? ""}
@@ -332,6 +405,7 @@ export const EditorInspector = memo(function EditorInspector({
                   onChange={(author) => updatePresentation((current) => ({ ...current, author }))}
                 />
               </StyleRow>
+              </>)}
             </StyleSection>
             <StyleSection title="Slides">
               <StyleRow label="Size">
@@ -382,7 +456,14 @@ export const EditorInspector = memo(function EditorInspector({
           ) : (
             <>
               <StyleSection title="Slide">
-                <StyleRow label="Label">
+                <StyleRow label={isDeck ? "Title" : "Label"}>
+                  {isDeck ? (
+                    <TextField
+                      value={selectedSlide.label ?? ""}
+                      placeholder="Untitled"
+                      onChange={(label) => updateSelectedSlide((slide) => ({ ...slide, label: label || undefined }))}
+                    />
+                  ) : (
                   <SelectInput
                     label="Slide label"
                     value={selectedSlide.label ?? UNTITLED_SLIDE_LABEL_VALUE}
@@ -398,6 +479,7 @@ export const EditorInspector = memo(function EditorInspector({
                       }))
                     }
                   />
+                  )}
                   <label
                     className="relative h-8 w-8 flex-none cursor-pointer overflow-hidden rounded-md border border-border"
                     title="Label colour"
@@ -412,6 +494,7 @@ export const EditorInspector = memo(function EditorInspector({
                     />
                   </label>
                 </StyleRow>
+                {isDeck ? null : (
                 <StyleRow label="Modifier">
                   <TextField
                     value={selectedSlide.modifier ?? ""}
@@ -419,6 +502,7 @@ export const EditorInspector = memo(function EditorInspector({
                     onChange={(modifier) => updateSelectedSlide((slide) => ({ ...slide, modifier }))}
                   />
                 </StyleRow>
+                )}
               </StyleSection>
               <StyleSection title="Background">
                 <BackgroundEditor
@@ -435,7 +519,42 @@ export const EditorInspector = memo(function EditorInspector({
                       ? "Covers the media behind this slide."
                       : "None: the song's background, or the media behind it, shows."}
                 </p>
+                <PictureBackgroundRow
+                  url={pictureBackgroundOf(selectedSlide)?.content ?? null}
+                  onChange={(url) => updateSelectedSlide((slide) => withPictureBackground(slide, url, canvas))}
+                />
+                <button
+                  type="button"
+                  onClick={() => onSlideCommand("backgroundToAll", selectedSlideId)}
+                  className="h-8 w-full rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:bg-foreground/5"
+                >
+                  Give every slide this background
+                </button>
               </StyleSection>
+              {isDeck ? (
+                <StyleSection title="Speaker notes">
+                  <textarea
+                    value={selectedSlide.notes ?? ""}
+                    placeholder="What to say on this slide. Shown on a stage display's Speaker Notes, never to the room."
+                    onChange={(event) => {
+                      const notes = event.target.value;
+                      updateSelectedSlide((slide) => {
+                        const next = { ...slide, notes };
+                        if (!notes.trim()) delete next.notes;
+                        return next;
+                      });
+                    }}
+                    rows={5}
+                    className="min-h-24 w-full resize-y rounded-md border border-border bg-background/40 px-2 py-1.5 text-[12px] leading-5 text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary/60"
+                  />
+                </StyleSection>
+              ) : null}
+              {isDeck ? (
+                <SlideTimingSection
+                  slide={selectedSlide}
+                  onChange={(updater) => updateSelectedSlide(updater)}
+                />
+              ) : null}
               <ThemeSection name={theme?.name ?? null} onOpen={openThemes} />
             </>
           )
@@ -457,8 +576,55 @@ export const EditorInspector = memo(function EditorInspector({
           />
         ) : null}
 
+        {activeTab === "build" && selectedElement && selectedSlide ? (
+          <BuildSections
+            element={selectedElement}
+            slide={selectedSlide}
+            onChange={updateSelectedElement}
+            onChangeSlide={updateSelectedSlide}
+          />
+        ) : null}
+
+        {activeTab === "video" && selectedElement?.type === "video" ? (
+          <>
+            <MovieSection element={selectedElement} mediaItems={mediaItems} onChange={updateSelectedElement} />
+            <GeometrySections
+              element={selectedElement}
+              elements={selectedSlide?.elements ?? []}
+              onChange={updateSelectedElement}
+              onMoveLayer={onMoveElementLayer}
+              onAlign={(alignment) => onArrange({ kind: "align", alignment })}
+            />
+          </>
+        ) : null}
+
+        {activeTab === "arrange" && isMultiSelection ? (
+          <ArrangeSection
+            count={selectedElementIds.length}
+            grouped={(selectedSlide?.elements ?? []).some(
+              (element) => selectedElementIds.includes(element.id) && element.groupId,
+            )}
+            onArrange={onArrange}
+          />
+        ) : null}
+
         {activeTab === "shape" && selectedElement?.type === "shape" ? (
           <>
+            <StyleSection title="Shape">
+              <SelectInput
+                label="Shape"
+                value={selectedElement.geometry ? (selectedElement.geometry.preset ?? IMPORTED_SHAPE) : "rect"}
+                options={
+                  selectedElement.geometry && !selectedElement.geometry.preset
+                    ? [{ value: IMPORTED_SHAPE, label: "As imported" }, ...SHAPE_PRESETS]
+                    : SHAPE_PRESETS
+                }
+                onChange={(value) => {
+                  if (value === IMPORTED_SHAPE) return;
+                  updateSelectedElement((element) => withShapePreset(element, value as SlideShapePreset));
+                }}
+              />
+            </StyleSection>
             <StyleSection title="Fill">
               <FillEditor
                 label="Shape fill"
@@ -491,94 +657,26 @@ export const EditorInspector = memo(function EditorInspector({
                 />
               </StyleRow>
             </StyleSection>
-            <StyleSection title="Border and corners">
-              <StyleRow label="Border">
-                <ColorInput
-                  label="Border colour"
-                  alpha
-                  value={selectedElement.style?.borderColor ?? "#000000"}
-                  onChange={(borderColor) => updateSelectedElementStyle((style) => ({ ...style, borderColor }))}
-                />
-                <NumberInput
-                  value={selectedElement.style?.borderWidth ?? 0}
-                  min={0}
-                  max={100}
-                  suffix="px"
-                  label="Border width"
-                  onChange={(borderWidth) => updateSelectedElementStyle((style) => ({ ...style, borderWidth }))}
-                  className="w-[64px] flex-none"
-                />
-              </StyleRow>
-              <StyleRow label="Corners">
-                <SliderInput
-                  value={selectedElement.style?.borderRadius ?? 0}
-                  min={0}
-                  max={400}
-                  suffix="px"
-                  label="Corner radius"
-                  onChange={(borderRadius) => updateSelectedElementStyle((style) => ({ ...style, borderRadius }))}
-                />
-              </StyleRow>
-            </StyleSection>
+            <ShapeOutlineSection element={selectedElement} onChange={updateSelectedElement} />
             <GeometrySections
               element={selectedElement}
               elements={selectedSlide?.elements ?? []}
               onChange={updateSelectedElement}
               onMoveLayer={onMoveElementLayer}
+              onAlign={(alignment) => onArrange({ kind: "align", alignment })}
             />
           </>
         ) : null}
 
         {activeTab === "image" && selectedElement?.type === "image" ? (
           <>
-            <StyleSection title="Image">
-              <StyleRow label="Source">
-                <TextField
-                  value={selectedElement.content}
-                  placeholder="Paste an image URL"
-                  onChange={(content) => updateSelectedElement((element) => ({ ...element, content }))}
-                />
-              </StyleRow>
-              <StyleRow label="Fit">
-                <Segmented
-                  value={selectedElement.style?.objectFit ?? "cover"}
-                  label="Fit"
-                  onChange={(objectFit) =>
-                    updateSelectedElementStyle((style) => ({ ...style, objectFit: objectFit as SlideElementStyle["objectFit"] }))
-                  }
-                  options={[
-                    { value: "cover", label: "Fill" },
-                    { value: "contain", label: "Fit" },
-                    { value: "fill", label: "Stretch" },
-                  ]}
-                />
-              </StyleRow>
-              <StyleRow label="Opacity">
-                <SliderInput
-                  value={Math.round((selectedElement.style?.opacity ?? 1) * 100)}
-                  min={0}
-                  max={100}
-                  suffix="%"
-                  label="Opacity"
-                  onChange={(percent) => updateSelectedElementStyle((style) => ({ ...style, opacity: percent / 100 }))}
-                />
-              </StyleRow>
-              <StyleRow label="Corners">
-                <SliderInput
-                  value={selectedElement.style?.borderRadius ?? 0}
-                  min={0}
-                  max={400}
-                  suffix="px"
-                  label="Corner radius"
-                  onChange={(borderRadius) => updateSelectedElementStyle((style) => ({ ...style, borderRadius }))}
-                />
-              </StyleRow>
-            </StyleSection>
+            <PictureSections element={selectedElement} onChange={updateSelectedElement} />
             <GeometrySections
               element={selectedElement}
               elements={selectedSlide?.elements ?? []}
               onChange={updateSelectedElement}
               onMoveLayer={onMoveElementLayer}
+              onAlign={(alignment) => onArrange({ kind: "align", alignment })}
             />
           </>
         ) : null}
@@ -589,6 +687,7 @@ export const EditorInspector = memo(function EditorInspector({
             elements={selectedSlide?.elements ?? []}
             onChange={updateSelectedElement}
             onMoveLayer={onMoveElementLayer}
+            onAlign={(alignment) => onArrange({ kind: "align", alignment })}
           />
         ) : null}
       </div>
@@ -993,11 +1092,13 @@ function GeometrySections({
   elements,
   onChange,
   onMoveLayer,
+  onAlign,
 }: {
   element: SlideElement;
   elements: SlideElement[];
   onChange: (updater: (element: SlideElement) => SlideElement) => void;
   onMoveLayer: (elementId: string, toIndex: number) => void;
+  onAlign: (alignment: Alignment) => void;
 }) {
   const index = elements.findIndex((each) => each.id === element.id);
   const last = elements.length - 1;
@@ -1041,9 +1142,730 @@ function GeometrySections({
           </label>
         ))}
       </div>
+      <div className="flex items-center gap-1.5">
+        <label className="flex flex-1 flex-col gap-0.5">
+          <span className="text-[9px] font-semibold uppercase text-muted-foreground">Rotate</span>
+          <NumberInput
+            value={Math.round((element.style?.rotation ?? 0) * 10) / 10}
+            min={-180}
+            max={180}
+            suffix="°"
+            label="Rotation"
+            onChange={(rotation) => onChange((current) => ({ ...current, style: { ...(current.style ?? {}), rotation } }))}
+          />
+        </label>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[9px] font-semibold uppercase text-muted-foreground">Flip</span>
+          <div className="flex gap-1">
+            <IconToggle
+              pressed={Boolean(element.style?.flipX)}
+              label="Flip horizontally"
+              onChange={(flipX) => onChange((current) => ({ ...current, style: { ...(current.style ?? {}), flipX } }))}
+            >
+              <FlipHorizontal2 className="h-3.5 w-3.5" />
+            </IconToggle>
+            <IconToggle
+              pressed={Boolean(element.style?.flipY)}
+              label="Flip vertically"
+              onChange={(flipY) => onChange((current) => ({ ...current, style: { ...(current.style ?? {}), flipY } }))}
+            >
+              <FlipVertical2 className="h-3.5 w-3.5" />
+            </IconToggle>
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <span className="text-[9px] font-semibold uppercase text-muted-foreground">Align on the slide</span>
+        <AlignButtons onAlign={onAlign} />
+      </div>
       <p className="text-[10px] text-muted-foreground">
         {index === last ? "In front of everything" : index === 0 ? "Behind everything" : `Layer ${index + 1} of ${elements.length}`}
       </p>
+    </StyleSection>
+  );
+}
+
+const ALIGN_BUTTONS: Array<{ alignment: Alignment; label: string; icon: ReactNode }> = [
+  { alignment: "left", label: "Align left edges", icon: <AlignStartVertical className="h-3.5 w-3.5" /> },
+  { alignment: "center", label: "Align centres across", icon: <AlignCenterVertical className="h-3.5 w-3.5" /> },
+  { alignment: "right", label: "Align right edges", icon: <AlignEndVertical className="h-3.5 w-3.5" /> },
+  { alignment: "top", label: "Align top edges", icon: <AlignStartHorizontal className="h-3.5 w-3.5" /> },
+  { alignment: "middle", label: "Align middles", icon: <AlignCenterHorizontal className="h-3.5 w-3.5" /> },
+  { alignment: "bottom", label: "Align bottom edges", icon: <AlignEndHorizontal className="h-3.5 w-3.5" /> },
+];
+
+function AlignButtons({ onAlign }: { onAlign: (alignment: Alignment) => void }) {
+  return (
+    <div className="flex gap-0.5">
+      {ALIGN_BUTTONS.map((button) => (
+        <ArrangeButton key={button.alignment} label={button.label} onClick={() => onAlign(button.alignment)}>
+          {button.icon}
+        </ArrangeButton>
+      ))}
+    </div>
+  );
+}
+
+function ArrangeButton({
+  label,
+  onClick,
+  disabled = false,
+  children,
+  wide = false,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={wide ? undefined : label}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:bg-foreground/5 disabled:opacity-30",
+        wide ? "flex-1 px-2" : "w-8",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+const NO_BUILD = "__none__";
+
+/** A short name for an object in the build order: its words, or its kind. */
+function objectName(element: SlideElement): string {
+  const words = element.type === "text" ? element.content.replace(/\s+/g, " ").trim() : "";
+  if (words) return words.length > 28 ? `${words.slice(0, 27)}…` : words;
+  return { text: "Text", shape: "Shape", image: "Picture", video: "Movie", web: "Web" }[element.type] ?? "Object";
+}
+
+/** One build's controls: its effect, where from, how long, after what. */
+function BuildControls({
+  title,
+  build,
+  onChange,
+}: {
+  title: string;
+  build: SlideBuild | undefined;
+  onChange: (build: SlideBuild | undefined) => void;
+}) {
+  const effect = BUILD_EFFECTS.find((each) => each.value === build?.effect);
+  return (
+    <StyleSection title={title}>
+      <StyleRow label="Effect">
+        <SelectInput
+          label={`${title} effect`}
+          value={build?.effect ?? NO_BUILD}
+          options={[{ value: NO_BUILD, label: "None" }, ...BUILD_EFFECTS.map(({ value, label }) => ({ value, label }))]}
+          onChange={(value) =>
+            onChange(
+              value === NO_BUILD
+                ? undefined
+                : { durationMs: 500, start: "on-click", ...build, effect: value as SlideBuild["effect"] },
+            )
+          }
+        />
+      </StyleRow>
+      {build ? (
+        <>
+          {effect?.directed ? (
+            <StyleRow label={build.effect === "fly" ? "From" : "Wipe from"}>
+              <Segmented
+                value={build.direction ?? (build.effect === "fly" ? "bottom" : "left")}
+                label="Direction"
+                onChange={(direction) => onChange({ ...build, direction: direction as SlideBuild["direction"] })}
+                options={[
+                  { value: "left", label: "Left" },
+                  { value: "right", label: "Right" },
+                  { value: "top", label: "Top" },
+                  { value: "bottom", label: "Bottom" },
+                ]}
+              />
+            </StyleRow>
+          ) : null}
+          <StyleRow label="Start">
+            <SelectInput
+              label="Start"
+              value={build.start ?? "on-click"}
+              options={BUILD_STARTS.map(({ value, label }) => ({ value: value ?? "on-click", label }))}
+              onChange={(start) => onChange({ ...build, start: start as SlideBuild["start"] })}
+            />
+          </StyleRow>
+          {build.effect === "appear" ? null : (
+            <StyleRow label="Length">
+              <NumberInput
+                value={build.durationMs ?? 500}
+                min={0}
+                max={10000}
+                suffix="ms"
+                label="Build length"
+                onChange={(durationMs) => onChange({ ...build, durationMs })}
+              />
+            </StyleRow>
+          )}
+          <StyleRow label="Delay">
+            <NumberInput
+              value={build.delayMs ?? 0}
+              min={0}
+              max={60000}
+              suffix="ms"
+              label="Build delay"
+              onChange={(delayMs) => onChange({ ...build, delayMs })}
+            />
+          </StyleRow>
+        </>
+      ) : null}
+    </StyleSection>
+  );
+}
+
+/**
+ * Builds: how the object arrives and leaves, and the order of every build on
+ * the slide. On a click, a build waits for Next; with or after the previous
+ * one, it follows by itself. What runs before the first click comes with
+ * the slide.
+ */
+function BuildSections({
+  element,
+  slide,
+  onChange,
+  onChangeSlide,
+}: {
+  element: SlideElement;
+  slide: LibrarySlide;
+  onChange: (updater: (element: SlideElement) => SlideElement) => void;
+  onChangeSlide: (updater: (slide: LibrarySlide) => LibrarySlide) => void;
+}) {
+  const setBuild = (phase: "in" | "out", build: SlideBuild | undefined) =>
+    onChange((current) => {
+      const builds = { ...(current.builds ?? {}) };
+      if (build) {
+        // A new build goes after every one already on the slide (those without
+        // an order of their own are numbered by layer, well below this).
+        const order = builds[phase]?.order ?? 100_000 + buildTimeline(slide.elements ?? []).placed.length;
+        builds[phase] = { ...build, order };
+      } else {
+        delete builds[phase];
+      }
+      const next = { ...current, builds };
+      if (!builds.in && !builds.out) delete next.builds;
+      return next;
+    });
+  const { placed, clickSteps } = buildTimeline(slide.elements ?? []);
+  const names = new Map((slide.elements ?? []).map((each) => [each.id, objectName(each)]));
+  const move = (index: number, by: -1 | 1) => {
+    const order = placed.map((entry) => ({ elementId: entry.elementId, phase: entry.phase }));
+    const to = index + by;
+    if (to < 0 || to >= order.length) return;
+    [order[index], order[to]] = [order[to], order[index]];
+    onChangeSlide((current) => ({ ...current, elements: withBuildOrder(current.elements ?? [], order) }));
+  };
+  return (
+    <>
+      <BuildControls title="Build in" build={element.builds?.in} onChange={(build) => setBuild("in", build)} />
+      <BuildControls title="Build out" build={element.builds?.out} onChange={(build) => setBuild("out", build)} />
+      <StyleSection title="Build order">
+        {placed.length === 0 ? (
+          <p className="text-[10px] leading-4 text-muted-foreground">No builds on this slide yet.</p>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {placed.map((entry, index) => (
+              <div
+                key={`${entry.elementId}:${entry.phase}`}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]",
+                  entry.elementId === element.id ? "border-primary/60 bg-primary/10" : "border-border",
+                )}
+              >
+                <span className="w-4 shrink-0 text-muted-foreground">{index + 1}</span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate">{names.get(entry.elementId) ?? "Object"}</span>
+                  <span className="truncate text-[10px] text-muted-foreground">
+                    {entry.phase === "in" ? "In" : "Out"}: {BUILD_EFFECTS.find((e) => e.value === entry.build.effect)?.label}
+                    {" · "}
+                    {entry.step === 0 ? "with the slide" : `click ${entry.step}`}
+                  </span>
+                </span>
+                <LayerButton label="Earlier" disabled={index === 0} onClick={() => move(index, -1)}>
+                  <ArrowUp className="h-3 w-3" />
+                </LayerButton>
+                <LayerButton label="Later" disabled={index === placed.length - 1} onClick={() => move(index, 1)}>
+                  <ArrowDown className="h-3 w-3" />
+                </LayerButton>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-[10px] leading-4 text-muted-foreground">
+          {clickSteps === 0
+            ? "Everything here comes with the slide."
+            : `${clickSteps} ${clickSteps === 1 ? "click" : "clicks"}: Next shows each before going to the next slide.`}
+        </p>
+      </StyleSection>
+    </>
+  );
+}
+
+const SHOW_TRANSITION = "__show__";
+
+/**
+ * A deck's slide timing, as PowerPoint keeps it: its own transition (or the
+ * one chosen in Show's footer), moving on by itself after a time, and
+ * hidden from the slide show.
+ */
+function SlideTimingSection({
+  slide,
+  onChange,
+}: {
+  slide: LibrarySlide;
+  onChange: (updater: (slide: LibrarySlide) => LibrarySlide) => void;
+}) {
+  const [presets, setPresets] = useState<TransitionPreset[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void getTransitions()
+      .then((library) => {
+        if (!cancelled) setPresets(library.presets);
+      })
+      .catch((): undefined => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const current = slide.transition ?? null;
+  const options = [
+    { value: SHOW_TRANSITION, label: "As chosen in Show" },
+    ...presets.map((preset) => ({ value: preset.id, label: preset.name })),
+  ];
+  if (current && !presets.some((preset) => preset.id === current.type)) {
+    options.push({ value: current.type, label: current.type });
+  }
+  const without = <K extends keyof LibrarySlide>(value: LibrarySlide, key: K) => {
+    const next = { ...value };
+    delete next[key];
+    return next;
+  };
+  return (
+    <StyleSection title="Timing">
+      <StyleRow label="Transition">
+        <SelectInput
+          label="Transition"
+          value={current?.type ?? SHOW_TRANSITION}
+          options={options}
+          onChange={(type) =>
+            onChange((value) => {
+              if (type === SHOW_TRANSITION) return without(value, "transition");
+              const preset = presets.find((each) => each.id === type);
+              return {
+                ...value,
+                transition: {
+                  type,
+                  durationMs: value.transition?.durationMs ?? preset?.defaultDurationMs ?? 700,
+                  easing: "ease-in-out",
+                  direction: preset?.direction ?? "left",
+                  mode: "full-slide",
+                },
+              };
+            })
+          }
+        />
+      </StyleRow>
+      {current ? (
+        <StyleRow label="Length">
+          <NumberInput
+            value={current.durationMs}
+            min={0}
+            max={5000}
+            suffix="ms"
+            label="Transition length"
+            onChange={(durationMs) =>
+              onChange((value) =>
+                value.transition ? { ...value, transition: { ...value.transition, durationMs } } : value,
+              )
+            }
+          />
+        </StyleRow>
+      ) : null}
+      <StyleRow label="Move on">
+        <NumberInput
+          value={Math.round((slide.advanceAfterMs ?? 0) / 100) / 10}
+          min={0}
+          max={3600}
+          suffix="s"
+          label="Move on by itself after"
+          onChange={(seconds) =>
+            onChange((value) =>
+              seconds > 0 ? { ...value, advanceAfterMs: Math.round(seconds * 1000) } : without(value, "advanceAfterMs"),
+            )
+          }
+        />
+      </StyleRow>
+      <StyleRow label="In show">
+        <Segmented
+          value={slide.hidden ? "hidden" : "shown"}
+          label="In the slide show"
+          onChange={(shown) => onChange((value) => (shown === "hidden" ? { ...value, hidden: true } : without(value, "hidden")))}
+          options={[
+            { value: "shown", label: "Shown" },
+            { value: "hidden", label: "Skipped" },
+          ]}
+        />
+      </StyleRow>
+      <p className="text-[10px] leading-4 text-muted-foreground">
+        Move on: 0 waits for you. A skipped slide is passed over by Next, a pedal or a remote, and still shows when clicked.
+      </p>
+    </StyleSection>
+  );
+}
+
+/**
+ * A movie (or a sound) on the slide: it plays in its box when the slide is
+ * live, through the same player as the media layer. Another video from the
+ * media library can take its place; its poster is the still shown before.
+ */
+function MovieSection({
+  element,
+  mediaItems,
+  onChange,
+}: {
+  element: SlideElement;
+  mediaItems: MediaItem[];
+  onChange: (updater: (element: SlideElement) => SlideElement) => void;
+}) {
+  const sound = element.style?.mediaKind === "audio";
+  const videos = mediaItems.filter((item) => item.type === "video");
+  const name = decodeURIComponent(element.content.split("/").pop() ?? "").replace(/\?.*$/, "") || "Movie";
+  const choosePoster = async () => {
+    const chosen = await choosePicture();
+    if (chosen) onChange((current) => ({ ...current, style: { ...(current.style ?? {}), poster: chosen.url } }));
+  };
+  return (
+    <StyleSection title={sound ? "Sound" : "Movie"}>
+      <p className="truncate text-[11px] text-foreground/80" title={name}>{name}</p>
+      {videos.length > 0 ? (
+        <StyleRow label="Replace">
+          <SelectInput
+            label="Replace the movie"
+            value=""
+            options={[
+              { value: "", label: "A video from Media…" },
+              ...videos.map((item) => ({ value: item.url, label: item.name })),
+            ]}
+            onChange={(url) => {
+              if (url) onChange((current) => ({ ...current, content: url, style: { ...(current.style ?? {}), mediaKind: "video" } }));
+            }}
+          />
+        </StyleRow>
+      ) : null}
+      {sound ? null : (
+        <StyleRow label="Poster">
+          <button
+            type="button"
+            onClick={() => void choosePoster()}
+            className="h-8 flex-1 rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:bg-foreground/5"
+          >
+            {element.style?.poster ? "Replace…" : "Choose a picture…"}
+          </button>
+        </StyleRow>
+      )}
+      <p className="text-[10px] leading-4 text-muted-foreground">
+        {sound
+          ? "Plays when the slide is live."
+          : "Plays in its box when the slide is live; the poster shows until then. Media chosen while the slide is live takes its place."}
+      </p>
+    </StyleSection>
+  );
+}
+
+/** A picture behind the slide, from this computer: choose, replace or remove. */
+function PictureBackgroundRow({ url, onChange }: { url: string | null; onChange: (url: string | null) => void }) {
+  const choose = async () => {
+    const chosen = await choosePicture();
+    if (chosen) onChange(chosen.url);
+  };
+  return (
+    <StyleRow label="Picture">
+      {url ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <img src={url} alt="" className="h-8 w-14 flex-none rounded border border-border object-cover" />
+          <button
+            type="button"
+            onClick={() => void choose()}
+            className="h-8 flex-1 rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:bg-foreground/5"
+          >
+            Replace…
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            className="h-8 rounded-md border border-border bg-background/40 px-2 text-[12px] font-medium text-muted-foreground transition hover:bg-foreground/5 hover:text-foreground"
+          >
+            Remove
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => void choose()}
+          className="h-8 flex-1 rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:bg-foreground/5"
+        >
+          Choose a picture…
+        </button>
+      )}
+    </StyleRow>
+  );
+}
+
+/**
+ * Several objects picked: line them up with each other, spread them out,
+ * group or ungroup them, duplicate or delete them. Each is one step to undo.
+ */
+function ArrangeSection({
+  count,
+  grouped,
+  onArrange,
+}: {
+  count: number;
+  grouped: boolean;
+  onArrange: (action: ArrangeAction) => boolean;
+}) {
+  return (
+    <>
+      <StyleSection title={`${count} objects`}>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[9px] font-semibold uppercase text-muted-foreground">Align with each other</span>
+          <AlignButtons onAlign={(alignment) => onArrange({ kind: "align", alignment })} />
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[9px] font-semibold uppercase text-muted-foreground">Space evenly (three or more)</span>
+          <div className="flex gap-1.5">
+            <ArrangeButton wide label="Space evenly across" disabled={count < 3} onClick={() => onArrange({ kind: "distribute", axis: "horizontal" })}>
+              <AlignHorizontalDistributeCenter className="h-3.5 w-3.5" /> Across
+            </ArrangeButton>
+            <ArrangeButton wide label="Space evenly down" disabled={count < 3} onClick={() => onArrange({ kind: "distribute", axis: "vertical" })}>
+              <AlignVerticalDistributeCenter className="h-3.5 w-3.5" /> Down
+            </ArrangeButton>
+          </div>
+        </div>
+      </StyleSection>
+      <StyleSection title="Group">
+        <div className="flex gap-1.5">
+          <ArrangeButton wide label="Group (⌘G)" onClick={() => onArrange({ kind: "group" })}>
+            <Group className="h-3.5 w-3.5" /> Group
+          </ArrangeButton>
+          <ArrangeButton wide label="Ungroup (⇧⌘G)" disabled={!grouped} onClick={() => onArrange({ kind: "ungroup" })}>
+            <Ungroup className="h-3.5 w-3.5" /> Ungroup
+          </ArrangeButton>
+        </div>
+        <div className="flex gap-1.5">
+          <ArrangeButton wide label="Duplicate (⌘D)" onClick={() => onArrange({ kind: "duplicate" })}>
+            <CopyPlus className="h-3.5 w-3.5" /> Duplicate
+          </ArrangeButton>
+          <ArrangeButton wide label="Delete" onClick={() => onArrange({ kind: "delete" })}>
+            <Trash2 className="h-3.5 w-3.5" /> Delete
+          </ArrangeButton>
+        </div>
+        <p className="text-[10px] leading-4 text-muted-foreground">
+          Shift-click to pick more, or drag across the slide. ⌘C, ⌘V and ⌘D copy, paste and duplicate; the arrows nudge.
+        </p>
+      </StyleSection>
+    </>
+  );
+}
+
+/**
+ * A picture: which one, how it fits its box, its crop, opacity and corners.
+ * A crop replaces the fit: the part left is the box.
+ */
+function PictureSections({
+  element,
+  onChange,
+}: {
+  element: SlideElement;
+  onChange: (updater: (element: SlideElement) => SlideElement) => void;
+}) {
+  const hasPicture = Boolean(element.content?.trim());
+  const crop = element.style?.crop ?? null;
+  const choose = async () => {
+    const chosen = await choosePicture();
+    if (chosen) onChange((current) => withPicture(current, chosen.url, chosen.size));
+  };
+  const beginCrop = async () => {
+    const size = await loadPictureSize(element.content);
+    if (size) onChange((current) => startCrop(current, size));
+  };
+  const setSide = (side: keyof Crop, percent: number) =>
+    onChange((current) => withCrop(current, { ...cropOf(current), [side]: percent / 100 }));
+
+  return (
+    <>
+      <StyleSection title="Picture">
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => void choose()}
+            className="h-8 flex-1 rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:bg-foreground/5"
+          >
+            {hasPicture ? "Replace…" : "Choose a picture…"}
+          </button>
+        </div>
+        {crop ? (
+          <p className="text-[10px] leading-4 text-muted-foreground">Cropped: the box shows the part kept.</p>
+        ) : (
+          <StyleRow label="Fit">
+            <Segmented
+              value={element.style?.objectFit ?? "cover"}
+              label="Fit"
+              onChange={(objectFit) =>
+                onChange((current) => ({
+                  ...current,
+                  style: { ...(current.style ?? {}), objectFit: objectFit as SlideElementStyle["objectFit"] },
+                }))
+              }
+              options={[
+                { value: "cover", label: "Fill" },
+                { value: "contain", label: "Fit" },
+                { value: "fill", label: "Stretch" },
+              ]}
+            />
+          </StyleRow>
+        )}
+        <StyleRow label="Opacity">
+          <SliderInput
+            value={Math.round((element.style?.opacity ?? 1) * 100)}
+            min={0}
+            max={100}
+            suffix="%"
+            label="Opacity"
+            onChange={(percent) => onChange((current) => ({ ...current, style: { ...(current.style ?? {}), opacity: percent / 100 } }))}
+          />
+        </StyleRow>
+        <StyleRow label="Corners">
+          <SliderInput
+            value={element.style?.borderRadius ?? 0}
+            min={0}
+            max={Math.max(1, Math.round(Math.min(element.width, element.height) / 2))}
+            suffix="px"
+            label="Corner radius"
+            onChange={(borderRadius) => onChange((current) => ({ ...current, style: { ...(current.style ?? {}), borderRadius } }))}
+          />
+        </StyleRow>
+        <StyleRow label="Link">
+          <TextField
+            value={element.content}
+            placeholder="Or paste a picture's address"
+            onChange={(content) => onChange((current) => ({ ...current, content }))}
+          />
+        </StyleRow>
+      </StyleSection>
+      {hasPicture ? (
+        <StyleSection
+          title="Crop"
+          aside={
+            crop ? (
+              <button
+                type="button"
+                onClick={() => onChange((current) => withoutCrop(current))}
+                className="rounded px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+              >
+                Reset
+              </button>
+            ) : null
+          }
+        >
+          {crop ? (
+            (["left", "right", "top", "bottom"] as const).map((side) => (
+              <StyleRow key={side} label={side[0].toUpperCase() + side.slice(1)}>
+                <SliderInput
+                  value={Math.round(crop[side] * 100)}
+                  min={0}
+                  max={90}
+                  suffix="%"
+                  label={`Crop ${side}`}
+                  onChange={(percent) => setSide(side, percent)}
+                />
+              </StyleRow>
+            ))
+          ) : (
+            <button
+              type="button"
+              onClick={() => void beginCrop()}
+              className="h-8 w-full rounded-md border border-border bg-background/40 text-[12px] font-medium text-foreground transition hover:bg-foreground/5"
+            >
+              Crop the picture
+            </button>
+          )}
+        </StyleSection>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * A shape's outline and corners. An imported shape keeps its outline on its
+ * paths (`style.line`), a plain box in its border: `shapes.ts` reads and
+ * writes either, so the controls work the same on both.
+ */
+function ShapeOutlineSection({
+  element,
+  onChange,
+}: {
+  element: SlideElement;
+  onChange: (updater: (element: SlideElement) => SlideElement) => void;
+}) {
+  const outline = shapeOutline(element);
+  const corners = hasCorners(element);
+  return (
+    <StyleSection title="Outline">
+      <StyleRow label="Line">
+        <ColorInput
+          label="Outline colour"
+          alpha
+          value={outline.color}
+          onChange={(color) => onChange((current) => withShapeOutline(current, { color, width: Math.max(shapeOutline(current).width, 1) }))}
+        />
+        <NumberInput
+          value={Math.round(outline.width * 10) / 10}
+          min={0}
+          max={100}
+          suffix="px"
+          label="Outline width"
+          onChange={(width) => onChange((current) => withShapeOutline(current, { width }))}
+          className="w-[64px] flex-none"
+        />
+      </StyleRow>
+      {outline.width > 0 ? (
+        <StyleRow label="Style">
+          <Segmented
+            value={outline.style}
+            label="Outline style"
+            onChange={(style) => onChange((current) => withShapeOutline(current, { style: style as OutlineStyle }))}
+            options={[
+              { value: "solid", label: "Solid" },
+              { value: "dashed", label: "Dashed" },
+              { value: "dotted", label: "Dotted" },
+            ]}
+          />
+        </StyleRow>
+      ) : null}
+      {corners ? (
+        <StyleRow label="Corners">
+          <SliderInput
+            value={Math.round(cornerRadius(element))}
+            min={0}
+            max={Math.max(1, Math.round(Math.min(element.width, element.height) / 2))}
+            suffix="px"
+            label="Corner radius"
+            onChange={(radius) => onChange((current) => withCornerRadius(current, radius))}
+          />
+        </StyleRow>
+      ) : null}
     </StyleSection>
   );
 }

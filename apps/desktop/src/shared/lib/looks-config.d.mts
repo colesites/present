@@ -100,6 +100,11 @@ export type LooksConfig = {
   selectedLookId: string;
   liveLookId: string;
   looks: LookPreset[];
+  /**
+   * The operator's switches in the right sidebar: what is showing on every
+   * screen whose own column lets it through. Not part of any look.
+   */
+  showing: Record<LookLayerKey, boolean>;
   updatedAt: number;
 };
 
@@ -151,6 +156,13 @@ export declare const withLookName: (
   now?: number,
 ) => LooksConfig;
 
+export declare const SHOWING_DEFAULT: Record<LookLayerKey, boolean>;
+export declare const withShowing: (
+  config: LooksConfig,
+  layers: LookLayerKey[],
+  enabled: boolean,
+  now?: number,
+) => LooksConfig;
 export declare const withLayerEnabled: (
   config: LooksConfig,
   lookId: string,

@@ -133,6 +133,12 @@ export type SlideElementStyle = {
   line?: SlideLine;
   /** How much of a picture is cut from each side, as fractions of it. */
   crop?: { left: number; top: number; right: number; bottom: number };
+  /** A movie's still, shown until it plays: a picture's URL. */
+  poster?: string;
+  /** A `video` element that is only sound (a PowerPoint sound). */
+  mediaKind?: "video" | "audio";
+  /** A movie that starts again when it ends. */
+  loop?: boolean;
   capitalization?:
   | "none"
   | "allCaps"
@@ -190,7 +196,28 @@ export type SlideLine = {
  */
 export type SlideGeometry = {
   paths: Array<{ d: string; fill?: boolean; stroke?: boolean }>;
+  /**
+   * A shape made in the editor: which one, so it is drawn again at a new
+   * size rather than stretched. An imported shape has none and stretches.
+   */
+  preset?: SlideShapePreset;
+  /** A rectangle's corner radius, in canvas pixels. */
+  radius?: number;
 };
+
+export type SlideShapePreset =
+  | "rect"
+  | "roundRect"
+  | "ellipse"
+  | "triangle"
+  | "rightTriangle"
+  | "diamond"
+  | "pentagon"
+  | "hexagon"
+  | "star"
+  | "arrow"
+  | "chevron"
+  | "line";
 
 export type SlideTextRun = {
   text: string;
@@ -248,6 +275,25 @@ export type SlideElement = {
   geometry?: SlideGeometry;
   isLocked?: boolean;
   isVisible?: boolean;
+  /**
+   * Objects grouped in the editor share one: picked, moved and resized
+   * together. The renderers draw each on its own and ignore it.
+   */
+  groupId?: string;
+  /** How it arrives and leaves, step by step (`compositor/build.rs`). */
+  builds?: { in?: SlideBuild; out?: SlideBuild };
+};
+
+/** One build: an effect, when it starts, and how long it takes. */
+export type SlideBuild = {
+  effect: "appear" | "fade" | "wipe" | "fly" | "zoom";
+  durationMs?: number;
+  delayMs?: number;
+  start?: "on-click" | "with-previous" | "after-previous";
+  /** Where it comes from (fly) or wipes from: left, right, top or bottom. */
+  direction?: "left" | "right" | "top" | "bottom";
+  /** Its place among the slide's builds; layer order when absent. */
+  order?: number;
 };
 
 export type CanvasSizePreset =
@@ -267,6 +313,26 @@ export type LibrarySlide = {
   backgroundId?: string;
   backgroundColor?: string;
   useBackgroundColor?: boolean;
+  /** How this slide arrives, in place of the operator's choice: a deck's own. */
+  transition?: SlideTransition;
+  /** Moves on to the next slide by itself, this long after it shows. */
+  advanceAfterMs?: number;
+  /** Passed over by "next" and "previous", as PowerPoint's hidden slides are. */
+  hidden?: boolean;
+  /** Speaker notes: for the stage display and the operator, never the room. */
+  notes?: string;
+};
+
+/**
+ * A transition a slide carries (`compositor/transition/config.rs`): a
+ * registry id, how long, and the rest as the transition picker writes them.
+ */
+export type SlideTransition = {
+  type: string;
+  durationMs: number;
+  easing?: string;
+  direction?: string;
+  mode?: "changed-elements" | "full-slide";
 };
 
 export type LibraryPresentationSettings = {

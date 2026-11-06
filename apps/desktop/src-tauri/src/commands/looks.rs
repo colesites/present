@@ -139,6 +139,21 @@ pub async fn set_look_layer(
     broadcast(&app, &state, changed)
 }
 
+/// The operator's switches in the right sidebar: `layers` shown or not, on
+/// every screen whose own column of the live look lets them through. One
+/// change for the pair a switch covers ("media" is the media layer and the
+/// video input), for the reason [`set_look_layers`] gives.
+#[tauri::command]
+pub async fn set_showing_layers(
+    app: AppHandle,
+    state: State<'_, LooksState>,
+    layers: Vec<LookLayer>,
+    enabled: bool,
+) -> AppResult<LooksConfig> {
+    let changed = state.update(|config| looks::set_showing(config, &layers, enabled, now_ms()))?;
+    broadcast(&app, &state, changed)
+}
+
 /// Turn several layers on or off together, as one change.
 ///
 /// The quick toggles are not one layer each: "words" is the slide layer and

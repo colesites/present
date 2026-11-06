@@ -137,6 +137,32 @@ const scoreExactLibrarySearchMatch = (
   return 0;
 };
 
+/** The same ranking the library list uses: title and lyrics, exact or broad. */
+export function matchLibrarySearch<
+  T extends Pick<LibraryItem, "title" | "body" | "_creationTime">,
+>(items: readonly T[], rawQuery: string, mode: LibrarySearchMode): T[] {
+  const query = rawQuery.trim();
+  if (!query) {
+    return [...items];
+  }
+
+  const scoreMatch =
+    mode === "exact" ? scoreExactLibrarySearchMatch : scoreLibrarySearchMatch;
+
+  return items
+    .map((item) => ({
+      item,
+      score: scoreMatch(item, query),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.item._creationTime - left.item._creationTime,
+    )
+    .map((entry) => entry.item);
+}
+
 export function useLibrary(
   input: { orgId: string | null; userId: string | null },
   contentSource: ContentSource,
@@ -216,22 +242,7 @@ export function useLibrary(
 
     // Filter by search query
     if (searchQuery.trim()) {
-      const scoreMatch =
-        searchMode === "exact"
-          ? scoreExactLibrarySearchMatch
-          : scoreLibrarySearchMatch;
-      result = result
-        .map((item) => ({
-          item,
-          score: scoreMatch(item, searchQuery),
-        }))
-        .filter((entry) => entry.score > 0)
-        .sort(
-          (left, right) =>
-            right.score - left.score ||
-            right.item._creationTime - left.item._creationTime,
-        )
-        .map((entry) => entry.item);
+      result = matchLibrarySearch(result, searchQuery, searchMode);
     }
 
     // Filter by content source

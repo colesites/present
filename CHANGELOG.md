@@ -8,6 +8,91 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ### Added
 
+- Speaker notes. An imported PowerPoint keeps each slide's notes; in the
+  editor a deck's Slide tab has a Speaker notes box to write or change them.
+  A stage display shows them with the new Speaker Notes object (and Next
+  Notes for the slide after), or the new Presenter layout: the slide as the
+  room sees it, its notes beside it, the next slide's words, the timer and
+  the clock. Notes never show on the audience screens; in Show a slide with
+  notes has a small notebook mark, and its notes on hover.
+- Builds: objects arriving and leaving step by step, as PowerPoint's
+  animations and Keynote's builds do. In the editor, select an object and
+  open Build: a Build In and a Build Out, each Appear, Fade, Wipe, Fly or
+  Zoom, from a side where it moves, starting on a click, with the previous
+  build or after it, with a length and a delay; Build order lists every build
+  on the slide and moves them earlier or later. In Show, Next (the arrow
+  keys, a pedal, a remote) plays a slide's builds before going to the next
+  slide, and Previous steps back through them; a slide stepped back onto
+  shows whole. Builds before the first click play as the slide comes up.
+  Slides with builds show a dot for each click in the slide grid.
+- An imported PowerPoint's animations: entrance and exit effects become
+  builds, in their order and with their timing — fly in from its side,
+  wipe, fade, zoom, appear and the rest as the nearest of those.
+- Movies and sounds in an imported PowerPoint. A movie is an object on its
+  slide, showing its poster frame; when the slide goes live it plays in its
+  box, through the same player as the media layer, and stops when the slide
+  changes. Media chosen while the slide is live takes its place. Select it
+  in the editor to choose another video from Media or another poster.
+- Charts in an imported PowerPoint. Column, bar, line, area, pie, doughnut
+  and scatter charts (stacked and 100% too, and 3-D ones drawn flat) are
+  drawn from the numbers the deck carries: title, legend, gridlines, axis
+  labels, the bars, lines and slices in the theme's colours, and the values
+  where the chart shows them. They were left out. Each chart is one group of
+  ordinary shapes and words, so it shows on every screen and can be moved,
+  recoloured and edited.
+- An imported PowerPoint's transitions. Each slide arrives the way it does in
+  PowerPoint — fade, push, wipe, cover, split, zoom, shapes, blinds, vortex,
+  curtains and the rest, as the nearest of Present's transitions, at the
+  deck's speed — in place of the one chosen in Show. Slide ▸ Timing changes
+  it, or sets it back to the one chosen in Show.
+- Slides that move on by themselves: "After 5 seconds" in PowerPoint goes on
+  to the next slide after five seconds in Show, for announcement loops.
+  Slide ▸ Timing ▸ Move on sets it on any slide of a deck; the slide shows
+  its time in the slide grid.
+- Hidden slides. A slide hidden in PowerPoint is passed over by Next, the
+  arrow keys, a pedal and a remote, and still shows when clicked; it is
+  dimmed and marked Skipped in the slide grid. Slide ▸ Timing ▸ In show
+  hides or shows any slide of a deck.
+- Shapes in the editor. The shape button opens twelve: rectangle, rounded
+  rectangle, oval, triangles, diamond, pentagon, hexagon, star, arrow,
+  chevron and line, and the inspector changes one shape into another,
+  keeping its fill and outline.
+- Outlines on any shape, an imported one too: colour, width, and solid,
+  dashed or dotted. The corners slider shows on rectangles.
+- Rotate and flip. Drag the dot above an object to turn it (Shift turns it
+  in 15° steps), or type the angle; the flip buttons mirror it either way.
+- Undo and redo in the editor: ⌘Z and ⇧⌘Z, or the arrows at the left of
+  the toolbar. A drag, a slider or a run of arrow presses is one step.
+- Several objects at once. Shift-click (or ⌘-click) to pick more, or drag
+  across the empty slide; drag any of them to move them all, or the frame
+  round them to resize them together. The Arrange tab lines them up with
+  each other, spaces three or more evenly, groups and ungroups them (⌘G,
+  ⇧⌘G), duplicates and deletes them. A group is picked, moved and resized
+  as one.
+- Copy, cut, paste and duplicate objects (⌘C, ⌘X, ⌘V, ⌘D), on the same
+  slide or another; the arrows nudge what is picked (Shift: 10 pixels);
+  ⌘A picks everything on the slide and Escape picks nothing.
+- Snapping: a dragged object snaps to the slide's edges and centre and to
+  other objects' edges and centres, with a guide where it lines up. Hold ⌘
+  to move freely. One object picked can be aligned on the slide from the
+  inspector.
+- Slides in the editor's list: right-click one to duplicate, copy, cut,
+  paste after it, move it up or down, give every slide its background, or
+  delete it. With the list last clicked, ⌘D, ⌘C, ⌘X, ⌘V and Delete do the
+  same, and the up and down arrows go from slide to slide. A copied slide
+  pastes into any deck or song open in the editor.
+- A picture as a slide's background: Slide ▸ Background ▸ Choose a
+  picture… fills the slide with one from this computer, behind everything
+  on it. "Give every slide this background" gives the rest of the deck the
+  same colour, gradient, media or picture.
+- An imported PowerPoint or PDF opens in the editor as a deck: no Lyrics
+  view and no Fix / Break Lyrics, which would have rebuilt its slides from
+  their words. Its first tab is Deck, its slides have titles rather than
+  song labels, and its list is Slides rather than Playlist.
+- Pictures: Replace… chooses one from this computer, as does double-clicking
+  a picture. Crop cuts each side, the picture staying where it is; Reset
+  brings the whole picture back. Dragging a picture's corner keeps its
+  shape (Shift lets it stretch); Shift keeps a shape's.
 - Recording. File ▸ New Recording opens a window — it is not a tab — to record
   the microphone into tracks. Pause holds the take and record continues it;
   stopping finishes it, and recording that track again replaces it. Share ▸
@@ -18,6 +103,33 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ### Fixed
 
+- Next and Previous from a foot pedal, a remote or a lighting desk change
+  the slide on the screens again. They moved the slide in the app's core
+  and the operator window never followed, so nothing changed.
+- Pictures in an imported PowerPoint that no screen could draw now show: an
+  embedded object's preview (a workbook's icon and name, an equation, old
+  clip art), kept as a Windows metafile (EMF or WMF), and BMP and TIFF
+  pictures. They were blank. A metafile is drawn in a process of its own, so
+  one that cannot be read costs that picture and never the import.
+- A PDF page, or a PowerPoint slide imported as a picture, is the slide's
+  background in the editor: clicking it no longer picks the page up and
+  drags it off the slide, and text or shapes added on top are picked
+  instead. Pages imported before work the same way.
+- Editing an imported PowerPoint slide changes what the screens show. The
+  editor changed a copy of the words the screens never draw, so a deck's
+  text looked edited in the editor and stayed as it was everywhere else.
+  Typing in a box keeps each line's font, size, colour and bullets; Return
+  starts a new line in the same style, and Bold, Italic, Underline and
+  Strikethrough work on the words selected. Font, size, colour, alignment
+  and spacing in the inspector change the whole box, and a new size keeps a
+  title larger than the words under it.
+- The editor draws a slide as the screens do: imported shapes with their
+  outlines and gradients, cropped pictures, and the deck's text where the
+  screens put it.
+- Resizing an imported shape resizes the shape. Its box changed size and the
+  shape inside it stayed as it was, on the screens and in the editor.
+- A turned or flipped object resizes from the handle you drag, its far side
+  staying where it was. The box moved as if it were upright.
 - The packaged app's screen preview, and a video opened in a show, stayed
   blank. Both are drawn under the page, and a packaged page is already in the
   app, so it had been built solid before the webview was told to let them

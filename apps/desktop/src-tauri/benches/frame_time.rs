@@ -73,6 +73,7 @@ fn video_frame_at(index: u32, width: u32, height: u32) -> VideoFrame {
         height,
         bgra,
         presentation_seconds: f64::from(index) / 30.0,
+        gpu: None,
     }
 }
 

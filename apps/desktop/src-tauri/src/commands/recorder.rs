@@ -8,7 +8,9 @@ use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::errors::{AppError, AppResult};
 use crate::services::dialog;
-use crate::services::recorder::{Format, Quality, Recorder, Snapshot, TrackView};
+use crate::services::recorder::{
+    ChannelStrip, Format, Quality, Recorder, Snapshot, TrackMix, TrackView,
+};
 use crate::state::FileState;
 
 fn user(error: String) -> AppError {
@@ -37,9 +39,57 @@ fn format(name: &str) -> AppResult<Format> {
     }
 }
 
+/// The snapshot can open the chosen input, which can wait on the microphone
+/// permission dialog, so it runs off the async runtime's threads.
 #[tauri::command]
 pub async fn recorder_snapshot(recorder: State<'_, Recorder>) -> AppResult<Snapshot> {
-    Ok(recorder.snapshot())
+    let recorder = recorder.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || recorder.snapshot())
+        .await
+        .map_err(|_| AppError::User("The recording could not be read.".to_owned()))
+}
+
+#[tauri::command]
+pub async fn recorder_set_strip(
+    recorder: State<'_, Recorder>,
+    track_id: u64,
+    strip: ChannelStrip,
+) -> AppResult<()> {
+    recorder.set_strip(track_id, strip).map_err(user)
+}
+
+#[tauri::command]
+pub async fn recorder_set_mix(
+    recorder: State<'_, Recorder>,
+    track_id: u64,
+    mix: TrackMix,
+) -> AppResult<()> {
+    recorder.set_mix(track_id, mix).map_err(user)
+}
+
+#[tauri::command]
+pub async fn recorder_arm(recorder: State<'_, Recorder>, track_id: u64) -> AppResult<()> {
+    recorder.arm(track_id).map_err(user)
+}
+
+/// The input and the speakers are one source, so monitoring out loud would
+/// feed back.
+#[tauri::command]
+pub async fn recorder_feedback_risk(recorder: State<'_, Recorder>) -> AppResult<bool> {
+    let recorder = recorder.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || recorder.feedback_risk())
+        .await
+        .map_err(|_| AppError::User("The speakers could not be checked.".to_owned()))
+}
+
+/// After feedback protection muted monitoring.
+#[tauri::command]
+pub async fn recorder_resolve_feedback(
+    recorder: State<'_, Recorder>,
+    keep_monitoring: bool,
+) -> AppResult<()> {
+    recorder.resolve_feedback(keep_monitoring);
+    Ok(())
 }
 
 #[tauri::command]
@@ -78,9 +128,39 @@ pub async fn recorder_remove_track(recorder: State<'_, Recorder>, track_id: u64)
 }
 
 #[tauri::command]
-pub async fn recorder_start(recorder: State<'_, Recorder>, track_id: u64) -> AppResult<()> {
+pub async fn recorder_clear_track(recorder: State<'_, Recorder>, track_id: u64) -> AppResult<()> {
     let recorder = recorder.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || recorder.start(track_id))
+    tauri::async_runtime::spawn_blocking(move || recorder.clear_track(track_id))
+        .await
+        .map_err(|_| AppError::User("The recording could not be cleared.".to_owned()))?
+        .map_err(user)
+}
+
+/// One track's take as a WAVE, sent as bytes rather than a list of numbers.
+#[tauri::command]
+pub async fn recorder_playback_track(
+    recorder: State<'_, Recorder>,
+    track_id: u64,
+) -> AppResult<tauri::ipc::Response> {
+    let recorder = recorder.inner().clone();
+    let bytes = tauri::async_runtime::spawn_blocking(move || recorder.playback_track(track_id))
+        .await
+        .map_err(|_| {
+            AppError::User("The recording could not be prepared for playback.".to_owned())
+        })?
+        .map_err(user)?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn recorder_start(
+    recorder: State<'_, Recorder>,
+    track_id: u64,
+    at: Option<f64>,
+) -> AppResult<()> {
+    let recorder = recorder.inner().clone();
+    let at = at.unwrap_or(0.0);
+    tauri::async_runtime::spawn_blocking(move || recorder.start(track_id, at))
         .await
         .map_err(|_| AppError::User("The microphone could not be opened.".to_owned()))?
         .map_err(user)

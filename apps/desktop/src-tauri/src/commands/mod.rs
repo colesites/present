@@ -29,6 +29,7 @@ pub mod permissions;
 pub mod playback;
 pub mod pptx;
 pub mod presentation;
+pub mod projection;
 pub mod recorder;
 pub mod remote;
 pub mod screens;

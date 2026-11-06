@@ -20,7 +20,6 @@ use crate::services::frame_delivery::{self, Latest};
 use crate::services::media_frames::{Clock, Player};
 use crate::services::preview::scoped_opener;
 use crate::services::surface::panel::NativePanel;
-use crate::services::thumbnails;
 use crate::state::OutputState;
 
 /// How often a player looks for its next frame: a 60 fps video's rate.
@@ -151,7 +150,7 @@ fn decode_until_idle(app: &AppHandle, entry: &Entry) {
         match &mut player {
             Some(current) if current.url == url => current.set_clock(clock),
             _ => {
-                player = Some(Player::new(url, clock));
+                player = Some(Player::new(url.clone(), clock));
                 last = None;
             }
         }
@@ -168,17 +167,17 @@ fn decode_until_idle(app: &AppHandle, entry: &Entry) {
         }) {
             let key = (frame.presentation_seconds, (frame.width, frame.height));
             if last != Some(key) {
-                match thumbnails::encode_jpeg(frame.width, frame.height, &frame.bgra) {
-                    Ok(jpeg) => {
-                        *lock(&entry.latest) = Some(Latest {
-                            jpeg: Arc::new(jpeg),
-                            at: Instant::now(),
-                            seq: frame_delivery::next_seq(),
-                        });
-                        entry.fresh.notify_all();
-                        last = Some(key);
-                    }
-                    Err(error) => tracing::debug!(%error, "a video frame could not be encoded"),
+                // Encoded once for every panel showing this frame at this
+                // size: the audience windows of a screen, a stage display
+                // (`frame_delivery::shared_jpeg`).
+                if let Some(jpeg) = frame_delivery::shared_jpeg(&url, frame) {
+                    *lock(&entry.latest) = Some(Latest {
+                        jpeg,
+                        at: Instant::now(),
+                        seq: frame_delivery::next_seq(),
+                    });
+                    entry.fresh.notify_all();
+                    last = Some(key);
                 }
             }
         }
@@ -254,13 +253,17 @@ fn present_until_stopped(app: &AppHandle, panel: &NativePanel, media: &NativeMed
                 .unwrap_or_default();
             // At the same moment the audience view draws, with no lead: the
             // panel's frames reach the screen as quickly as its do.
-            let frame = current.frame_shared(&live, Instant::now(), panel.pixel_size(), &open);
+            let frame = current.frame_picture(&live, Instant::now(), panel.pixel_size(), &open);
             if let Some(frame) = frame {
                 if !shown
                     .as_ref()
                     .is_some_and(|shown| Arc::ptr_eq(shown, &frame))
                 {
-                    panel.show_video(&frame);
+                    // On the GPU as the decoder left it where it can be;
+                    // its pixels otherwise.
+                    if !panel.show_video_picture(&frame) && frame.is_well_formed() {
+                        panel.show_video(&frame);
+                    }
                     shown = Some(frame);
                 }
             }

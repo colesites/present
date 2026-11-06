@@ -42,6 +42,11 @@ pub struct OpenOptions {
     pub display_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "present_field")]
     pub resolution: Option<Option<String>>,
+    /// Just this screen. The Output is otherwise the audience group's
+    /// switch, and the screens added beside it go on with it; Screen
+    /// Configuration's switch for the Screen itself turns only the Screen on.
+    #[serde(default)]
+    pub alone: bool,
 }
 
 /// Deserialise a field into `Some(_)` whenever it was present at all, so an
@@ -154,9 +159,9 @@ pub async fn open_window(
     )?;
     // A built-in screen's other outputs go on with it, and the audience is a
     // group: every audience screen added in Screen Configuration goes on with
-    // the Output.
+    // the Output, unless only the Screen was asked for.
     if let Some(screen) = built_in_screen(role) {
-        crate::commands::screens::follow_built_in(&app, screen, true);
+        crate::commands::screens::follow_built_in(&app, screen, true, !options.alone);
     }
     Ok(true)
 }
@@ -176,7 +181,11 @@ fn built_in_screen(role: WindowRole) -> Option<&'static str> {
 /// Close a window. `false` when it was not open — matching the Electron
 /// handlers, which return a boolean rather than failing.
 #[tauri::command]
-pub async fn close_window(app: AppHandle, role: WindowRole) -> AppResult<bool> {
+pub async fn close_window(
+    app: AppHandle,
+    role: WindowRole,
+    alone: Option<bool>,
+) -> AppResult<bool> {
     if role == WindowRole::MiniLyrics {
         return Err(AppError::Invalid(
             "Mini lyrics windows are closed with close_mini_lyrics_window.".to_owned(),
@@ -188,7 +197,8 @@ pub async fn close_window(app: AppHandle, role: WindowRole) -> AppResult<bool> {
         ));
     }
     if let Some(screen) = built_in_screen(role) {
-        crate::commands::screens::follow_built_in(&app, screen, false);
+        let group = !alone.unwrap_or(false);
+        crate::commands::screens::follow_built_in(&app, screen, false, group);
     }
     window::close(&app, role.label())
 }

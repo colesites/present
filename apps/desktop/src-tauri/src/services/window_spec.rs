@@ -359,9 +359,9 @@ pub fn spec_for(role: WindowRole) -> WindowSpec {
             title: "Recording".to_owned(),
             url: "index.html?window=recorder".to_owned(),
             placement: Placement::Windowed {
-                width: 960.0,
-                height: 540.0,
-                min: Some((760.0, 420.0)),
+                width: 1680.0,
+                height: 1000.0,
+                min: Some((1200.0, 760.0)),
                 max: None,
             },
             background: Rgb::APP_CHROME,
