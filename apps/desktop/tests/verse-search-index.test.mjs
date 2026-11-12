@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildVerseSearchIndex, chooseAcrossBibles, findQuotedVerse, quotedVerseMatch, searchVerseIndex } from "../src/features/scripture/lib/verse-search-index.mjs";
+import { buildVerseSearchIndex, buildVerseSearchIndexInSteps, chooseAcrossBibles, findQuotedVerse, quotedVerseMatch, searchVerseIndex } from "../src/features/scripture/lib/verse-search-index.mjs";
 
 const verses = [
   { pk: "1", text: "For God so loved the world that he gave his one and only Son" },
@@ -128,6 +128,49 @@ test("only a quote being read now counts, not one the preacher has moved on from
     "verse 16 is named after it",
   );
   assert.equal(findQuotedVerse(bornAgain, `${read}. And then look at verse 16.`)?.pk, "jhn|3|3", "unless asked about any");
+});
+
+test("a quote being read now is found however much was said before it, and its tie still ties", () => {
+  const verses = buildVerseSearchIndex([
+    { pk: "jhn|3|16", text: "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life." },
+    { pk: "jhn|11|35", text: "Jesus wept." },
+    { pk: "psa|136|1", text: "O give thanks unto the LORD; for he is good: for his mercy endureth for ever." },
+    { pk: "psa|136|2", text: "O give thanks unto the God of gods: for his mercy endureth for ever." },
+  ]);
+  const before = "so this morning I want us to think about the father who runs to meet his boy and that is the heart of God";
+  const found = (heard) => quotedVerseMatch(verses, heard, { commonAfter: 2, endingWithin: 3 })?.verse.pk ?? null;
+  assert.equal(found(`${before} for God so loved the world that he gave his only begotten son`), "jhn|3|16");
+  assert.equal(found(`${before} and Jesus wept`), "jhn|11|35", "a verse of two words, read whole");
+  assert.equal(found(`${before} his mercy endureth for ever`), null, "two verses end alike");
+  assert.equal(found(`for God so loved the world that he gave his only begotten son ${before}`), null, "moved on from");
+});
+
+test("a quote being read now is found when its last words are one letter, which the index does not hold", () => {
+  const verses = buildVerseSearchIndex([
+    { pk: "isa|9|6", text: "For unto us a child is born, unto us a son is given." },
+    { pk: "psa|23|1", text: "The LORD is my shepherd; I shall not want." },
+    { pk: "jhn|10|11", text: "I am the good shepherd: the good shepherd giveth his life for the sheep." },
+  ]);
+  const found = (heard) => quotedVerseMatch(verses, heard, { commonAfter: 2, endingWithin: 3 })?.verse.pk ?? null;
+  assert.equal(found("and the prophet says for unto us a child is born unto us a"), "isa|9|6", "ends on \"a\"");
+  assert.equal(found("listen to this. The LORD is my shepherd I"), "psa|23|1", "ends on \"I\"");
+  assert.equal(found("and he said I am the good shepherd"), "jhn|10|11");
+  assert.equal(found("I am the good shepherd. Now turn with me to the book of Acts"), null, "moved on from");
+});
+
+test("an index built a step at a time is the index built at once", async () => {
+  const verses = Array.from({ length: 4_500 }, (_, at) => ({
+    pk: `v|${at}`,
+    text: `Verse ${at} speaks of word${at % 97} and word${at % 13}.`,
+  }));
+  let pauses = 0;
+  const stepped = await buildVerseSearchIndexInSteps(verses, async () => {
+    pauses += 1;
+  });
+  const whole = buildVerseSearchIndex(verses);
+  assert.ok(pauses >= 3, "it stops between steps");
+  assert.deepEqual(stepped.entries, whole.entries);
+  assert.deepEqual([...stepped.postings], [...whole.postings]);
 });
 
 test("four words are enough when no other verse has them, said as a quote", () => {

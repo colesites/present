@@ -7,6 +7,7 @@ import { type ParsedReference } from "../lib/parser";
 import { toast } from "sonner";
 import {
   buildVerseSearchIndex,
+  buildVerseSearchIndexInSteps,
   chooseAcrossBibles,
   quotedVerseMatch,
   normalizeVerseSearchText,
@@ -356,7 +357,7 @@ export function useScripture() {
     const nextPending = (async () => {
       const versesForVersion = await db.verses.where("version").equals(versionId).toArray();
       await yieldToRenderer();
-      const index = buildVerseSearchIndex(versesForVersion);
+      const index = await buildVerseSearchIndexInSteps(versesForVersion, yieldToRenderer);
       verseSearchIndexCacheRef.current.set(versionId, index);
       return index;
     })();
@@ -430,8 +431,12 @@ export function useScripture() {
                   || verseSearchIndexCacheRef.current.has(version.id)),
             );
       const matches: { versionId: string; verse: BibleVerse; run: number; shared: number }[] = [];
-      for (const version of [chosen, ...others]) {
+      for (const [at, version] of [chosen, ...others].entries()) {
         if (!version) continue;
+        // An index already built comes back without letting the tab draw or
+        // take a click; every Bible read straight after another, at each word
+        // heard, was the Bible tab frozen while the agent listened.
+        if (at > 0) await yieldToRenderer();
         const match = quotedVerseMatch(await getSearchIndex(version.id), input.query, {
           endingWithin: input.endingWithin,
         });
