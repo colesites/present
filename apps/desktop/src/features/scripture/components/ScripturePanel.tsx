@@ -587,28 +587,15 @@ export const ScripturePanel = memo(
         usageSource: "bible",
       });
 
-    // A verse read aloud is looked for in every installed Bible, to find the
-    // one it is being read from. Each Bible's words are indexed once, a few
-    // hundred milliseconds apiece, so it is done as listening starts, one at
-    // a time with a pause between, rather than in front of the first quote.
+    // A verse read aloud is looked for in the Bible in use only, which is
+    // indexed whenever it is chosen (below): no other Bible is read while
+    // listening.
     useEffect(() => {
       if (!isListening) {
         forgetHeard();
         setLiveTranscript("");
-        return;
       }
-      let cancelled = false;
-      void (async () => {
-        for (const version of availableVersions) {
-          await new Promise((resolve) => window.setTimeout(resolve, 150));
-          if (cancelled) return;
-          await prewarmSearchPool(version.code).catch((): void => undefined);
-        }
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [availableVersions, forgetHeard, isListening, prewarmSearchPool]);
+    }, [forgetHeard, isListening]);
 
     useEffect(() => {
       if (isActive) {

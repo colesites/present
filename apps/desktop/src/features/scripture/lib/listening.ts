@@ -363,6 +363,22 @@ function saidInFull({ code }: NamedVersion): RegExp[] {
 }
 
 /**
+ * Every pattern a Bible is said by, made once: they are matched at every word
+ * heard, against every Bible installed and in the catalog. `matchAll` copies
+ * a pattern before it matches, so one kept here is never left part-way.
+ */
+const namedPatternCache = new Map<string, RegExp[]>();
+function namedPatterns(version: NamedVersion): RegExp[] {
+  const key = JSON.stringify([version.code, version.name]);
+  let patterns = namedPatternCache.get(key);
+  if (!patterns) {
+    patterns = [...patternsFor(version), ...saidInFull(version)];
+    namedPatternCache.set(key, patterns);
+  }
+  return patterns;
+}
+
+/**
  * The installed Bible the words name last, or `null`: "in the New
  * International Version", "the KJV says", "K J V". Of two names ending in
  * the same place the longer wins, so "New King James Version" is the NKJV and
@@ -371,7 +387,7 @@ function saidInFull({ code }: NamedVersion): RegExp[] {
 export function findNamedVersion(text: string, versions: NamedVersion[]): string | null {
   let best: { code: string; end: number; length: number } | null = null;
   for (const version of versions) {
-    for (const pattern of [...patternsFor(version), ...saidInFull(version)]) {
+    for (const pattern of namedPatterns(version)) {
       for (const match of text.matchAll(pattern)) {
         const end = (match.index ?? 0) + match[0].length;
         if (

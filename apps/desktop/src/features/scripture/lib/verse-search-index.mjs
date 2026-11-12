@@ -24,20 +24,40 @@ function tokenize(value, includeStopWords = false) {
   return tokens;
 }
 
-export function buildVerseSearchIndex(verses) {
-  const entries = verses.map((verse) => ({
-    normalizedText: normalizeVerseSearchText(verse.text),
-    verse,
-  }));
-  const postings = new Map();
-  entries.forEach((entry, index) => {
+function addToIndex(index, verses) {
+  for (const verse of verses) {
+    const at = index.entries.length;
+    const entry = { normalizedText: normalizeVerseSearchText(verse.text), verse };
+    index.entries.push(entry);
     for (const token of tokenize(entry.normalizedText, true)) {
-      const list = postings.get(token);
-      if (list) list.push(index);
-      else postings.set(token, [index]);
+      const list = index.postings.get(token);
+      if (list) list.push(at);
+      else index.postings.set(token, [at]);
     }
-  });
-  return { entries, postings };
+  }
+}
+
+export function buildVerseSearchIndex(verses) {
+  const index = { entries: [], postings: new Map() };
+  addToIndex(index, verses);
+  return index;
+}
+
+/** Verses indexed between pauses: a few milliseconds' work each. */
+const INDEX_STEP = 2_000;
+
+/**
+ * `buildVerseSearchIndex`, a step at a time with `pause` between: a whole
+ * Bible at once held the tab still for a few hundred milliseconds, once for
+ * every Bible installed as listening started.
+ */
+export async function buildVerseSearchIndexInSteps(verses, pause) {
+  const index = { entries: [], postings: new Map() };
+  for (let from = 0; from < verses.length; from += INDEX_STEP) {
+    addToIndex(index, verses.slice(from, from + INDEX_STEP));
+    await pause();
+  }
+  return index;
 }
 
 function collectCandidateIndexes(index, tokens, mode) {
@@ -157,6 +177,87 @@ function longestSharedRun(a, b) {
   return best;
 }
 
+/** Whether the ascending `list` holds `value`. */
+function holds(list, value) {
+  let low = 0;
+  let high = list.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (list[middle] === value) return true;
+    if (list[middle] < value) low = middle + 1;
+    else high = middle - 1;
+  }
+  return false;
+}
+
+/**
+ * The `candidates` that could hold a quote still being read: two words or
+ * more of it, ending within the last `endingWithin` words heard. Such a verse
+ * has the last two words of that run in it, so it is in the postings of the
+ * rarer of them, for one of the places the run can end.
+ *
+ * Only ever leaves out a verse `endsWithPhraseOf` would turn away. Every
+ * word of a quote in an uncommon word's verses, in every Bible installed, at
+ * every word a preacher says, was most of the Bible screen's time while the
+ * agent listened to a live sermon: some 1,900 verses a Bible at each word.
+ */
+function stillBeingRead(index, candidates, heardWords, endingWithin) {
+  const lists = [];
+  for (let end = heardWords.length; end >= Math.max(2, heardWords.length - endingWithin); end -= 1) {
+    // One letter is not indexed (`tokenize`): those words cannot narrow it.
+    const indexed = [heardWords[end - 2], heardWords[end - 1]].filter((word) => word.length >= 2);
+    if (indexed.length === 0) return candidates;
+    const rarest = indexed
+      .map((word) => index.postings.get(word) ?? [])
+      .reduce((rarer, list) => (list.length < rarer.length ? list : rarer));
+    lists.push(rarest);
+  }
+  const listed = lists.reduce((total, list) => total + list.length, 0);
+  if (listed < candidates.size) {
+    const kept = new Set();
+    for (const list of lists) {
+      for (const entryIndex of list) if (candidates.has(entryIndex)) kept.add(entryIndex);
+    }
+    return kept;
+  }
+  const kept = [];
+  for (const entryIndex of candidates) {
+    if (lists.some((list) => holds(list, entryIndex))) kept.push(entryIndex);
+  }
+  return kept;
+}
+
+function countSpaces(text) {
+  let spaces = 0;
+  for (let at = text.indexOf(" "); at !== -1; at = text.indexOf(" ", at + 1)) spaces += 1;
+  return spaces;
+}
+
+/**
+ * Whether the verse's normalized `text` holds, as whole words, the `length`
+ * words `a` ends with, give or take its last `endingWithin` — what a quote
+ * being read now must have.
+ *
+ * Looked for in the text as it is, unsplit. Splitting every candidate into
+ * words to compare them, at every word a preacher says, in every Bible
+ * installed, held the Bible screen still while the agent listened to a live
+ * sermon.
+ */
+function endsWithPhraseOf(a, text, length, endingWithin) {
+  for (let end = a.length; end >= Math.max(length, a.length - endingWithin); end -= 1) {
+    const phrase = a.slice(end - length, end).join(" ");
+    if (
+      text === phrase
+      || text.startsWith(`${phrase} `)
+      || text.endsWith(` ${phrase}`)
+      || text.includes(` ${phrase} `)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Where each sentence begins, as word positions in `wordsOf(normalize(text))`. */
 function sentenceStarts(text) {
   const starts = new Set([0]);
@@ -218,10 +319,24 @@ export function quotedVerseMatch(index, heard, { commonAfter, endingWithin } = {
   let bestRun = 0;
   let bestWords = [];
   let tied = false;
-  for (const entryIndex of candidates) {
+  const reading =
+    endingWithin === undefined
+      ? candidates
+      : stillBeingRead(index, candidates, heardWords, endingWithin);
+  for (const entryIndex of reading) {
     const entry = index.entries[entryIndex];
-    const verseWords = wordsOf(entry.normalizedText);
-    const needed = Math.max(2, Math.min(verseWords.length, QUOTE_MIN_RUN));
+    const text = entry.normalizedText;
+    // Normalized text is words with one space between: no need to split it
+    // to count them.
+    const count = text ? countSpaces(text) + 1 : 0;
+    const needed = Math.max(2, Math.min(count, QUOTE_MIN_RUN));
+    // Turned away below anyway; this only does it before the long part. The
+    // phrase is looked for in the verse's text as it is: most candidates go
+    // here, every one of them, at every word heard, in every Bible installed.
+    if (endingWithin !== undefined && !endsWithPhraseOf(heardWords, text, needed, endingWithin)) {
+      continue;
+    }
+    const verseWords = wordsOf(text);
     const run = longestSharedRun(heardWords, verseWords);
     if (run.length < needed) continue;
     if (

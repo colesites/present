@@ -171,7 +171,34 @@ function normalizeReferenceInput(input: string): string {
     .trim();
 }
 
+// The Bible agent reads every sentence heard from each of its words in turn
+// (`listening.ts`): each book's aliases and their patterns are made once,
+// not at every word.
+const bookAliases = new WeakMap<BibleBookRecord, string[]>();
+const aliasPatterns = new Map<string, RegExp>();
+
 function getBookAliases(book: BibleBookRecord): string[] {
+  let aliases = bookAliases.get(book);
+  if (!aliases) {
+    aliases = readBookAliases(book);
+    bookAliases.set(book, aliases);
+  }
+  return aliases;
+}
+
+function aliasPattern(alias: string): RegExp {
+  let pattern = aliasPatterns.get(alias);
+  if (!pattern) {
+    // A colon ends the name as surely as a space does: normalising
+    // "2 John verse 5" leaves "2 john:5", and a book of one chapter is
+    // said that way more often than not.
+    pattern = new RegExp(`(^|\\s)(${escapeRegex(alias)})(?=[\\s:]|$)`, "i");
+    aliasPatterns.set(alias, pattern);
+  }
+  return pattern;
+}
+
+function readBookAliases(book: BibleBookRecord): string[] {
   const named = [book.name, book.id, book.abbreviation]
     .filter((value): value is string => Boolean(value?.trim()))
     .map(normalizeBookLookup);
@@ -204,10 +231,7 @@ function findReferencedBook(
     for (const alias of getBookAliases(book)) {
       if (!alias) continue;
 
-      // A colon ends the name as surely as a space does: normalising
-      // "2 John verse 5" leaves "2 john:5", and a book of one chapter is
-      // said that way more often than not.
-      const match = new RegExp(`(^|\\s)(${escapeRegex(alias)})(?=[\\s:]|$)`, "i").exec(input);
+      const match = aliasPattern(alias).exec(input);
       if (!match || match.index === undefined) continue;
 
       const start = match.index + (match[1]?.length ?? 0);

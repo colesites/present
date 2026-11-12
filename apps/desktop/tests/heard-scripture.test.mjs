@@ -184,6 +184,25 @@ test("Show it: a quote matching another Bible translation does not switch the ac
   assert.equal(tab.chosen, "KJV", "translation invariant: matching score cannot switch active Bible");
 });
 
+test("a quote is looked for in the Bible in use only, and in another once it is asked for", async () => {
+  const looked = [];
+  const tab = bibleTab({
+    quotes: ({ versionCode, versions }) => {
+      looked.push(`${versions} ${versionCode}`);
+      return null;
+    },
+  });
+  await tab.hear("For God so loved the world that he gave");
+  assert.ok(looked.length > 0, "a quote was looked for");
+  assert.deepEqual([...new Set(looked)], ["chosen KJV"], "never every Bible installed");
+  looked.length = 0;
+  await tab.hear("Switch to NIV.");
+  await tab.hear("For God so loved the world that he gave his one and only");
+  assert.equal(tab.chosen, "NIV");
+  assert.deepEqual([...new Set(looked)].at(-1), "chosen NIV", "the next quote is looked for there");
+  assert.ok(looked.every((each) => each.startsWith("chosen ")));
+});
+
 test("Show it: an explicit version command is recognized and switches translation", async () => {
   const tab = bibleTab();
   await tab.hear("Somebody shout amen. Romans 8:28.");
