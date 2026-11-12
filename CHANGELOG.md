@@ -14,12 +14,14 @@ All notable desktop changes are documented here. Present follows Semantic Versio
   straight after another, comparing the words with some 1,900 verses a Bible:
   with thirteen Bibles, about 0.2 s of work a word, more than the page had to
   give while the preacher spoke without a pause. A microphone that heard only
-  a few words now and then, as in a test at home, never showed it. Now only the
-  verses that hold the last words heard are compared, the screen draws between
-  one Bible and the next, each Bible's words are indexed a step at a time as
-  listening starts, and book and Bible names are not rebuilt at every word:
-  about a twelfth of the work, measured on a recorded sermon. What is found is
-  unchanged.
+  a few words now and then, as in a test at home, never showed it. Now a quote
+  is looked for in the Bible in use only — another is read once the operator
+  chooses it or the preacher asks for it ("switch to the NIV") — and only its
+  verses that hold the last words heard are compared. Book and Bible names are
+  not rebuilt at every word, and a Bible's words are indexed a step at a time
+  when it is chosen. About a thirtieth of the work, measured on a recorded
+  sermon. A verse read from another translation's wording than the one in use
+  is no longer recognised by its words; said by its reference, it still is.
 
 ## [0.4.15] - 2026-10-18
 

@@ -109,7 +109,8 @@ export type HeardScriptureInput = {
   findQuotedVerse: (input: {
     query: string;
     versionCode: string | null;
-    versions: "indexed" | "all";
+    /** The Bible in use only: the agent never reads the others (`quote`). */
+    versions: "chosen";
     endingWithin: number;
   }) => Promise<BibleVerse | null>;
   /** The code of an installed Bible, from its id. */
@@ -415,7 +416,13 @@ export function createHeardScripture(first: HeardScriptureInput): {
       });
   };
 
-  /** Match spoken text against Bible verses. */
+  /**
+   * Match spoken text against the verses of the Bible in use, and no other.
+   * It changes only when the operator chooses another, or the preacher asks
+   * for one ("switch to the NIV"); the next quote is looked for there.
+   * Every Bible installed, at every word heard, held the Bible screen still
+   * through a live sermon, to find a verse that is shown in this one anyway.
+   */
   const quote = (s: State, first: QuoteCheck) => {
     const look = (check: QuoteCheck) => {
       s.quoting = true;
@@ -424,7 +431,7 @@ export function createHeardScripture(first: HeardScriptureInput): {
         .findQuotedVerse({
           query: check.text,
           versionCode: now.chosenVersionCode,
-          versions: check.final ? "all" : "indexed",
+          versions: "chosen",
           endingWithin: QUOTE_ENDS_WITHIN,
         })
         .then((verse) => {
