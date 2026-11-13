@@ -4,6 +4,44 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.17] - 2026-11-13
+
+### Added
+
+- Slides in the Media panel, beside Images and Videos: PowerPoints and PDFs
+  kept in a media folder, each shown with its first slide and a PPTX or PDF
+  badge. Opened, a deck's slides can be looked through and the whole deck, or
+  the slides picked, added to any service. A deck is converted once and every
+  service that uses it reads that one copy. File ▸ Import still puts a deck
+  straight into the open service.
+- Builds play on the screens for every slide, as ProPresenter's do: Build In
+  and Build Out on any object, starting with the slide, on a click, with or
+  after the one before, with a delay. Rise, Drop, Pop and Grow join the
+  effects. The Build tab previews a slide's builds, or one build, on the
+  editor's canvas, and numbers each object in the build order.
+- Show is ⌘1 and Edit ⌘E (or ⌘2), in the View menu.
+
+### Changed
+
+- Add Media takes any number of files at once, and PowerPoints and PDFs.
+
+### Fixed
+
+- The screens flipped between two slides by themselves when one took clicks
+  for its builds and the other none.
+- Next waited a click for each build of a song's slide while nothing showed:
+  builds played only on a service's imported decks.
+- A slide arriving by a transition showed what was meant to wait for a click,
+  and took it away again.
+- Resizing an object in Edit picked the one beneath it: its handles could be
+  covered by another object, were cut off at the slide's edge, and were small
+  enough to miss.
+- A theme chosen from Edit could not be applied: the Themes panel lost the
+  song open in the editor.
+- With the Themes panel or a dialog open over Edit, ⌘Z, Delete and the arrows
+  also undid, deleted and nudged on the slide behind it.
+- ⌘B jumped to the Bible while typing in a text box; it is bold there.
+
 ## [0.4.16] - 2026-11-12
 
 ### Fixed
