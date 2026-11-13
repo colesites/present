@@ -29,6 +29,7 @@ import {
   FolderPlus as FolderPlusIcon,
   Pencil,
   Gauge,
+  Presentation,
 } from "lucide-react";
 import { Input } from "../../renderer/shared/components/ui/input";
 import {
@@ -38,7 +39,8 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "../../renderer/shared/components/ui/dropdown-menu";
-import type { MediaState, MediaItem, MediaFolder } from "./hooks";
+import type { MediaState, MediaItem, MediaFolder, SlidesItem } from "./hooks";
+import type { ServicePresentation } from "../../shared/types";
 import { useVideoSupport } from "../../renderer/shared/hooks/useVideoSupport";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
@@ -75,8 +77,34 @@ import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFoote
 import { VideoThumbnail } from "./components/VideoThumbnail";
 import { useMenuCommand } from "../../renderer/tauri/menu-commands";
 import { VIDEO_SPEEDS } from "./speeds";
+import { SlidesItemCard } from "./components/SlidesItemCard";
+import { SlidesBrowserDialog } from "./components/SlidesBrowserDialog";
+import {
+  createMediaSlidesPresentation,
+  isSlidesDocument,
+  prepareMediaSlides,
+} from "./lib/media-slides";
 
-type MediaFilter = "all" | "images" | "videos";
+type MediaFilter = "all" | "images" | "videos" | "slides";
+
+const isSlidesItem = (item: MediaItem | SlidesItem): item is SlidesItem =>
+  "sourceType" in item;
+
+const fileStem = (name: string) => name.replace(/\.[^.]+$/, "").trim() || name;
+
+const sortByChoice = <T extends { name: string; lastModified: number }>(
+  items: T[],
+  sortBy: "recent" | "name",
+  sortOrder: "asc" | "desc",
+) =>
+  items.sort((a, b) => {
+    if (sortBy === "name") {
+      return sortOrder === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+    }
+    return sortOrder === "asc"
+      ? (a.lastModified || 0) - (b.lastModified || 0)
+      : (b.lastModified || 0) - (a.lastModified || 0);
+  });
 
 // Memoized media item card component
 const MediaItemCard = memo(function MediaItemCard({
@@ -277,6 +305,8 @@ interface MediaPanelProps {
     nextMedia: { id: string; name: string },
   ) => Promise<void>;
   onRemoveFromServices: (mediaId: string) => Promise<void>;
+  /** A Slides deck into the chosen service, as a reference to the Media copy. */
+  onAddSlidesToService?: (presentation: ServicePresentation) => Promise<void>;
   orgId: Id<"organizations"> | null;
   /** How fast the live video plays: 1 as recorded. */
   liveVideoRate?: number;
@@ -299,6 +329,7 @@ export const MediaPanel = memo(
       onAddToService,
       onRenameInServices,
       onRemoveFromServices,
+      onAddSlidesToService,
       orgId,
       liveVideoRate = 1,
       onSetVideoRate,
@@ -315,21 +346,26 @@ export const MediaPanel = memo(
       removeFolder,
       refreshMedia,
       activeMediaItem,
-      addMediaFile,
+      addMediaFiles,
       createFolder,
       renameFolder,
       renameMediaItem,
       deleteMediaItem,
+      slidesItems,
+      renameSlidesItem,
+      deleteSlidesItem,
     } = mediaState;
     const outputMediaItem = liveMediaItem ?? activeMediaItem;
 
     const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
     const [editName, setEditName] = useState("");
-    const [renameMediaTarget, setRenameMediaTarget] = useState<MediaItem | null>(
-      null,
-    );
+    const [renameMediaTarget, setRenameMediaTarget] = useState<
+      MediaItem | SlidesItem | null
+    >(null);
     const [renameMediaName, setRenameMediaName] = useState("");
-    const [mediaToRemove, setMediaToRemove] = useState<MediaItem | null>(null);
+    const [mediaToRemove, setMediaToRemove] = useState<MediaItem | SlidesItem | null>(null);
+    const [slidesToBrowse, setSlidesToBrowse] = useState<SlidesItem | null>(null);
+    const [isAddingMedia, setIsAddingMedia] = useState(false);
 
     const [filter, setFilter] = useState<MediaFilter>("all");
     const [folderToRemove, setFolderToRemove] = useState<MediaFolder | null>(
@@ -367,20 +403,20 @@ export const MediaPanel = memo(
         items = items.filter((item) => item.name.toLowerCase().includes(q));
       }
 
-      // Sort
-      return items.sort((a, b) => {
-        if (sortBy === "name") {
-          return sortOrder === "asc"
-            ? a.name.localeCompare(b.name)
-            : b.name.localeCompare(a.name);
-        } else {
-          // Recent using lastModified
-          return sortOrder === "asc"
-            ? (a.lastModified || 0) - (b.lastModified || 0)
-            : (b.lastModified || 0) - (a.lastModified || 0);
-        }
-      });
+      return sortByChoice(items, sortBy, sortOrder);
     }, [allMediaItems, selectedFolderId, searchQuery, sortBy, sortOrder]);
+
+    // The PowerPoints and PDFs, by the same folder, search and order.
+    const filteredSlides = useMemo(() => {
+      let items = selectedFolderId
+        ? slidesItems.filter((item) => item.folderId === selectedFolderId)
+        : [...slidesItems];
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        items = items.filter((item) => item.name.toLowerCase().includes(q));
+      }
+      return sortByChoice(items, sortBy, sortOrder);
+    }, [slidesItems, selectedFolderId, searchQuery, sortBy, sortOrder]);
 
     const imageCount = filteredItems.filter(
       (item) => item.type === "image"
@@ -388,6 +424,7 @@ export const MediaPanel = memo(
     const videoCount = filteredItems.filter(
       (item) => item.type === "video"
     ).length;
+    const slidesCount = filteredSlides.length;
     const visibleMediaItems = useMemo(() => {
       if (filter === "images") {
         return filteredItems.filter((item) => item.type === "image");
@@ -395,8 +432,13 @@ export const MediaPanel = memo(
       if (filter === "videos") {
         return filteredItems.filter((item) => item.type === "video");
       }
+      if (filter === "slides") {
+        return [];
+      }
       return filteredItems;
     }, [filter, filteredItems]);
+    const visibleSlides = filter === "all" || filter === "slides" ? filteredSlides : [];
+    const hasAnyMedia = allMediaItems.length > 0 || slidesItems.length > 0;
 
     // Which of the visible videos will not play in the app (ADR-003).
     // Asked about what is on screen rather than the whole library, so a folder
@@ -420,6 +462,102 @@ export const MediaPanel = memo(
         toast.success(`Added "${item.name}" to service`);
       } catch (error) {
         toast.error("Failed to add to service");
+      }
+    };
+
+    /** Into the folder chosen, or the only one there is. */
+    const addMediaFolderId =
+      selectedFolderId ?? (folders.length === 1 ? folders[0].id : null);
+
+    /**
+     * Add Media: any number of images, videos, PowerPoints and PDFs, copied
+     * into the folder. Each PowerPoint and PDF is then converted into slides
+     * by the importer File ▸ Import uses, with its progress in a toast, and
+     * kept in the Media panel's Slides — not put into any service.
+     */
+    const handleAddMedia = async () => {
+      if (!addMediaFolderId || isAddingMedia) return;
+      setIsAddingMedia(true);
+      try {
+        const result = await addMediaFiles(addMediaFolderId);
+        if (!result) return; // Cancelled
+
+        const slidesFiles = result.added.filter((file) => isSlidesDocument(file.name));
+        const others = result.added.filter((file) => !isSlidesDocument(file.name));
+        if (others.length > 0) {
+          toast.success(others.length === 1 ? `Added ${others[0].name}` : `Added ${others.length} files`);
+        }
+        if (result.failed.length > 0) {
+          toast.error(
+            result.failed.length === 1
+              ? `${result.failed[0]} couldn't be added.`
+              : `${result.failed.length} files couldn't be added: ${result.failed.join(", ")}`,
+          );
+        }
+        if (slidesFiles.length === 0) return;
+
+        setFilter("slides");
+        let ready = 0;
+        for (const [index, file] of slidesFiles.entries()) {
+          const label =
+            slidesFiles.length > 1 ? `${file.name} (${index + 1} of ${slidesFiles.length})` : file.name;
+          const toastId = toast.loading(`Preparing slides: ${label}`);
+          try {
+            const { deck } = await prepareMediaSlides(file, (progress) => {
+              toast.loading(`Preparing slides: ${label}`, {
+                id: toastId,
+                description:
+                  progress.percent !== null
+                    ? `${progress.detail ?? "Working"} · ${Math.round(progress.percent)}%`
+                    : progress.detail,
+              });
+            });
+            ready += 1;
+            toast.success(`"${fileStem(file.name)}" is in Slides`, {
+              id: toastId,
+              description: `${deck.slides.length} ${deck.slides.length === 1 ? "slide" : "slides"}, ready to add to any service.`,
+            });
+          } catch (error) {
+            toast.error(
+              userMessage(error, `${file.name} couldn't be turned into slides.`, "Media"),
+              { id: toastId, description: undefined },
+            );
+          }
+        }
+        if (ready > 1) toast.success(`${ready} presentations added to Slides`);
+      } catch (error) {
+        toast.error(userMessage(error, "Those files couldn't be added. Try again.", "Media"));
+      } finally {
+        setIsAddingMedia(false);
+      }
+    };
+
+    const handleAddSlidesToService = async (
+      item: SlidesItem,
+      slideIndices: number[] | undefined,
+    ): Promise<boolean> => {
+      if (!onAddSlidesToService || !selectedServiceId) {
+        toast.error("Please select a service first");
+        return false;
+      }
+      try {
+        const { deckId } = await prepareMediaSlides(item);
+        await onAddSlidesToService(
+          createMediaSlidesPresentation(fileStem(item.name), item.sourceType, {
+            deckId,
+            path: item.path,
+            ...(slideIndices ? { slideIndices } : {}),
+          }),
+        );
+        toast.success(
+          slideIndices
+            ? `Added ${slideIndices.length} ${slideIndices.length === 1 ? "slide" : "slides"} from "${fileStem(item.name)}" to service`
+            : `Added "${fileStem(item.name)}" to service`,
+        );
+        return true;
+      } catch (error) {
+        toast.error(userMessage(error, "Those slides couldn't be added to the service.", "Media"));
+        return false;
       }
     };
 
@@ -486,13 +624,27 @@ export const MediaPanel = memo(
       if (outputMediaItem?.id !== item.id) onSelectForOutput(item);
     };
 
-    const openRenameMedia = (item: MediaItem) => {
+    const openRenameMedia = (item: MediaItem | SlidesItem) => {
       setRenameMediaTarget(item);
       setRenameMediaName(item.name);
     };
 
     const handleConfirmRenameMedia = async () => {
       if (!renameMediaTarget || !renameMediaName.trim()) return;
+      // A deck's services find it by its content, so a rename leaves them be.
+      if (isSlidesItem(renameMediaTarget)) {
+        try {
+          const nextItem = await renameSlidesItem(renameMediaTarget, renameMediaName.trim());
+          toast.success(`Renamed to "${nextItem.name}"`);
+          setRenameMediaTarget(null);
+          setRenameMediaName("");
+        } catch (error) {
+          toast.error(
+            userMessage(error, "That file couldn't be renamed. Try again.", "Media"),
+          );
+        }
+        return;
+      }
       try {
         const oldMediaId = renameMediaTarget.id;
         const nextItem = await renameMediaItem(
@@ -518,6 +670,20 @@ export const MediaPanel = memo(
 
     const handleConfirmRemoveMedia = async () => {
       if (!mediaToRemove) return;
+      // Services that use a deck keep its slides: they read the converted
+      // copy, which is not the file.
+      if (isSlidesItem(mediaToRemove)) {
+        try {
+          await deleteSlidesItem(mediaToRemove);
+          toast.success(`Removed "${mediaToRemove.name}" from media`);
+          setMediaToRemove(null);
+        } catch (error) {
+          toast.error(
+            userMessage(error, "That file couldn't be removed. Try again.", "Media"),
+          );
+        }
+        return;
+      }
       try {
         const mediaId = mediaToRemove.id;
         await deleteMediaItem(mediaToRemove);
@@ -722,7 +888,7 @@ export const MediaPanel = memo(
                   >
                     All
                     <span className="text-[10px] opacity-60">
-                      {filteredItems.length}
+                      {filteredItems.length + slidesCount}
                     </span>
                   </button>
                   <button
@@ -752,6 +918,20 @@ export const MediaPanel = memo(
                     <Video className="h-3 w-3" />
                     Videos
                     <span className="text-[10px] opacity-60">{videoCount}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilter("slides")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition",
+                      filter === "slides"
+                        ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <Presentation className="h-3 w-3" />
+                    Slides
+                    <span className="text-[10px] opacity-60">{slidesCount}</span>
                   </button>
                 </div>
 
@@ -817,7 +997,7 @@ export const MediaPanel = memo(
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                     Loading media...
                   </div>
-                ) : allMediaItems.length === 0 ? (
+                ) : !hasAnyMedia && filter !== "slides" ? (
                   <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
                     <FolderPlus className="h-8 w-8" />
                     <span>Add a folder to see media</span>
@@ -850,22 +1030,62 @@ export const MediaPanel = memo(
                           />
                         </div>
                       ))}
+                      {visibleSlides.map((item) => (
+                        <div key={item.id}>
+                          <SlidesItemCard
+                            item={item}
+                            isGridView={isGridView}
+                            isInsideService={isInsideService}
+                            onOpen={setSlidesToBrowse}
+                            onAddToService={(slides) => void handleAddSlidesToService(slides, undefined)}
+                            onRename={openRenameMedia}
+                            onDelete={setMediaToRemove}
+                          />
+                        </div>
+                      ))}
                     </div>
-                    {visibleMediaItems.length === 0 ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                        {filter === "videos" ? (
-                          <Video className="h-8 w-8" />
-                        ) : (
-                          <Image className="h-8 w-8" />
-                        )}
-                        <span>
-                          {filter === "images"
-                            ? "No images found"
-                            : filter === "videos"
-                              ? "No videos found"
-                              : "No items found"}
-                        </span>
-                      </div>
+                    {visibleMediaItems.length === 0 && visibleSlides.length === 0 ? (
+                      filter === "slides" && !searchQuery.trim() ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+                          <Presentation className="h-8 w-8" />
+                          <span className="font-medium text-foreground/80">No slides yet</span>
+                          <span className="max-w-xs text-xs">
+                            {folders.length === 0
+                              ? "Add a folder, then use Add Media to bring in PowerPoint or PDF files. They stay here, ready for any service."
+                              : "Use Add Media to bring in PowerPoint or PDF files. They stay here, ready for any service."}
+                          </span>
+                          {addMediaFolderId ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleAddMedia()}
+                              disabled={isAddingMedia}
+                              className="mt-1 flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-primary transition hover:bg-primary/20 disabled:opacity-30"
+                            >
+                              <FilePlus className="h-3.5 w-3.5" />
+                              Add Media
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                          {filter === "videos" ? (
+                            <Video className="h-8 w-8" />
+                          ) : filter === "slides" ? (
+                            <Presentation className="h-8 w-8" />
+                          ) : (
+                            <Image className="h-8 w-8" />
+                          )}
+                          <span>
+                            {filter === "images"
+                              ? "No images found"
+                              : filter === "videos"
+                                ? "No videos found"
+                                : filter === "slides"
+                                  ? "No slides found"
+                                  : "No items found"}
+                          </span>
+                        </div>
+                      )
                     ) : null}
                   </div>
                 )}
@@ -880,10 +1100,14 @@ export const MediaPanel = memo(
                 leftContent={
                   <button
                     type="button"
-                    onClick={() => selectedFolderId && addMediaFile(selectedFolderId)}
-                    disabled={!selectedFolderId}
+                    onClick={() => void handleAddMedia()}
+                    disabled={!addMediaFolderId || isAddingMedia}
                     className="flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-primary transition hover:bg-primary/20 disabled:pointer-events-none disabled:opacity-30 antialiased"
-                    title="Add Media File to current folder"
+                    title={
+                      addMediaFolderId
+                        ? "Add images, videos, PowerPoints and PDFs to this folder"
+                        : "Choose a folder to add media to"
+                    }
                   >
                     <FilePlus className="h-3.5 w-3.5" />
                     Add Media
@@ -959,8 +1183,17 @@ export const MediaPanel = memo(
             <AlertDialogHeader>
               <AlertDialogTitle>Remove media file?</AlertDialogTitle>
               <AlertDialogDescription>
-                This deletes &quot;{mediaToRemove?.name}&quot; from disk and
-                removes it from any services that use it.
+                {mediaToRemove && isSlidesItem(mediaToRemove) ? (
+                  <>
+                    This deletes &quot;{mediaToRemove.name}&quot; from disk.
+                    Services that already use its slides keep them.
+                  </>
+                ) : (
+                  <>
+                    This deletes &quot;{mediaToRemove?.name}&quot; from disk and
+                    removes it from any services that use it.
+                  </>
+                )}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -974,6 +1207,13 @@ export const MediaPanel = memo(
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <SlidesBrowserDialog
+          item={slidesToBrowse}
+          onClose={() => setSlidesToBrowse(null)}
+          canAddToService={Boolean(isInsideService && selectedServiceId && onAddSlidesToService)}
+          onAddToService={handleAddSlidesToService}
+        />
 
         {/* Remove folder confirmation dialog */}
         <AlertDialog

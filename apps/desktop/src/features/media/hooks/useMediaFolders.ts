@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 import { createLocalMediaUrl } from "../../../shared/lib/local-media-url.mjs";
 import { safelyUnlisten } from "../../../renderer/tauri/electron-bridge";
+import { isSlidesDocument, slidesSourceType } from "../lib/media-slides";
 
 // Types for media items
 export type MediaItem = {
@@ -15,6 +16,26 @@ export type MediaItem = {
   path: string;
   folderId: string;
   lastModified: number;
+};
+
+/**
+ * A PowerPoint or PDF in a media folder: the Media panel's Slides. Kept apart
+ * from `MediaItem`, which everything that plays media reads as a picture or a
+ * video; a deck is shown through its slides (`../lib/media-slides.ts`).
+ */
+export type SlidesItem = {
+  id: string;
+  name: string;
+  sourceType: "pptx" | "pdf";
+  path: string;
+  folderId: string;
+  lastModified: number;
+};
+
+/** What Add Media copied into the folder, and what it could not. */
+export type AddedMediaFiles = {
+  added: Array<{ name: string; path: string; lastModified: number }>;
+  failed: string[];
 };
 
 export type MediaFolder = {
@@ -135,6 +156,7 @@ export async function blobUrlToDataUrl(blobUrl: string): Promise<string> {
 export function useMediaFolders() {
   const [folders, setFolders] = useState<MediaFolder[]>([]);
   const [allMediaItems, setAllMediaItems] = useState<MediaItem[]>([]);
+  const [slidesItems, setSlidesItems] = useState<SlidesItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   // A re-read after a folder changed keeps showing what is there until the new
   // list is ready; only the first load shows the loading state.
@@ -161,6 +183,7 @@ export function useMediaFolders() {
     async function loadAllMedia() {
       if (folders.length === 0) {
         setAllMediaItems([]);
+        setSlidesItems([]);
         setIsLoading(false);
         return;
       }
@@ -169,11 +192,23 @@ export function useMediaFolders() {
         setIsLoading(true);
       }
       const items: MediaItem[] = [];
+      const slides: SlidesItem[] = [];
 
       for (const folder of folders) {
         try {
           const files = await window.electronAPI.readFolder(folder.path);
           for (const file of files) {
+            if (isSlidesDocument(file.name)) {
+              slides.push({
+                id: createMediaId(folder.id, file.name),
+                name: file.name,
+                sourceType: slidesSourceType(file.name),
+                path: `${folder.path}/${file.name}`,
+                folderId: folder.id,
+                lastModified: file.lastModified || 0,
+              });
+              continue;
+            }
             const mediaType = getMediaType(file.name);
             if (mediaType) {
               const fullPath = `${folder.path}/${file.name}`;
@@ -194,7 +229,9 @@ export function useMediaFolders() {
       }
 
       items.sort((a, b) => a.name.localeCompare(b.name));
+      slides.sort((a, b) => a.name.localeCompare(b.name));
       setAllMediaItems(items);
+      setSlidesItems(slides);
       hasLoadedMediaRef.current = true;
       setIsLoading(false);
     }
@@ -258,6 +295,7 @@ export function useMediaFolders() {
     async (folderId: string) => {
       await removeMediaFolder(folderId);
       setAllMediaItems((prev) => prev.filter((item) => item.folderId !== folderId));
+      setSlidesItems((prev) => prev.filter((item) => item.folderId !== folderId));
       setFolders((prev) => prev.filter((f) => f.id !== folderId));
       if (selectedFolderId === folderId) {
         setSelectedFolderId(null);
@@ -382,28 +420,68 @@ export function useMediaFolders() {
 
   const mediaFilterCSS = useMemo(() => filtersToCSS(mediaFilters), [mediaFilters]);
 
-  const addMediaFile = useCallback(async (folderId: string) => {
-    try {
-      const folder = folders.find(f => f.id === folderId);
+  /**
+   * Add Media: copy every file the operator picked — images, videos,
+   * PowerPoints and PDFs — into the folder. `null` when they cancelled.
+   *
+   * A file that cannot be copied is reported and the rest still are. Falls
+   * back to the one-file picker on a core that predates the plural one.
+   */
+  const addMediaFiles = useCallback(
+    async (folderId: string): Promise<AddedMediaFiles | null> => {
+      const folder = folders.find((f) => f.id === folderId);
       if (!folder) throw new Error("Folder not found");
 
-      const fileSelection = await window.electronAPI.selectMediaFile();
-      if (!fileSelection) return null;
+      const picked = window.electronAPI.selectMediaFiles
+        ? await window.electronAPI.selectMediaFiles()
+        : [await window.electronAPI.selectMediaFile()].filter(
+            (file): file is { name: string; path: string } => Boolean(file),
+          );
+      if (!picked || picked.length === 0) return null;
 
-      const targetPath = `${folder.path}/${fileSelection.name}`;
-      const success = await window.electronAPI.copyMediaFile(fileSelection.path, targetPath);
-      
-      if (success) {
-        // Trigger a refresh/reload by creating a new identity for the folders array
-        setFolders(prev => [...prev]);
-        return true;
+      const result: AddedMediaFiles = { added: [], failed: [] };
+      for (const file of picked) {
+        const targetPath = `${folder.path}/${file.name}`;
+        try {
+          if (await window.electronAPI.copyMediaFile(file.path, targetPath)) {
+            result.added.push({ name: file.name, path: targetPath, lastModified: Date.now() });
+          } else {
+            result.failed.push(file.name);
+          }
+        } catch (error) {
+          console.error(`Failed to add ${file.name}:`, error);
+          result.failed.push(file.name);
+        }
       }
-      return false;
-    } catch (error) {
-      console.error("Failed to add media file:", error);
-      throw error;
-    }
-  }, [folders]);
+
+      if (result.added.length > 0) {
+        // Read the folders again for what was copied in.
+        setFolders((prev) => [...prev]);
+      }
+      return result;
+    },
+    [folders],
+  );
+
+  const renameSlidesItem = useCallback(async (item: SlidesItem, newName: string) => {
+    const result = await window.electronAPI.renameMediaFile(item.path, newName);
+    const nextItem: SlidesItem = {
+      ...item,
+      id: createMediaId(item.folderId, result.name),
+      name: result.name,
+      path: result.path,
+      lastModified: Date.now(),
+    };
+    setSlidesItems((prev) =>
+      prev.map((current) => (current.id === item.id ? nextItem : current)),
+    );
+    return nextItem;
+  }, []);
+
+  const deleteSlidesItem = useCallback(async (item: SlidesItem) => {
+    await window.electronAPI.deleteMediaFile(item.path);
+    setSlidesItems((prev) => prev.filter((current) => current.id !== item.id));
+  }, []);
 
   const createFolder = useCallback(async (name: string, parentPath?: string) => {
     try {
@@ -514,10 +592,13 @@ export function useMediaFolders() {
     resetMediaFilters,
     resetMediaFiltersForItem,
     mediaFilterCSS,
-    addMediaFile,
+    addMediaFiles,
     createFolder,
     renameFolder,
     renameMediaItem,
     deleteMediaItem,
+    slidesItems,
+    renameSlidesItem,
+    deleteSlidesItem,
   };
 }

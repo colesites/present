@@ -183,12 +183,20 @@ pub enum WipeFrom {
     Bottom,
 }
 
+/// How far, as a fraction of the slide, a rise or a drop travels.
+const RISE_DISTANCE: f32 = 0.06;
+
 fn ease_out(p: f64) -> f64 {
     1.0 - (1.0 - p).powi(3)
 }
 
 fn ease_in(p: f64) -> f64 {
     p.powi(3)
+}
+
+/// From 0 to 1, going a little past 1 and back on the way.
+fn back_out(p: f64) -> f64 {
+    1.0 + 2.70158 * (p - 1.0).powi(3) + 1.70158 * (p - 1.0).powi(2)
 }
 
 /// An effect at `shown` (0 nothing of it, 1 all of it) as a pose.
@@ -242,6 +250,38 @@ fn pose_of(effect: &str, direction: Option<&str>, shown: f64) -> Pose {
             dx: 0.0,
             dy: 0.0,
             scale: (0.3 + 0.7 * shown) as f32,
+            wipe: None,
+        },
+        // Up a little from below, fading in: a lyric line arriving.
+        "rise" => Pose::Moving {
+            opacity: shown as f32,
+            dx: 0.0,
+            dy: RISE_DISTANCE * away,
+            scale: 1.0,
+            wipe: None,
+        },
+        // Down a little from above, fading in.
+        "drop" => Pose::Moving {
+            opacity: shown as f32,
+            dx: 0.0,
+            dy: -RISE_DISTANCE * away,
+            scale: 1.0,
+            wipe: None,
+        },
+        // Grows past its size and settles back, fading in quickly.
+        "pop" => Pose::Moving {
+            opacity: (shown * 2.0).min(1.0) as f32,
+            dx: 0.0,
+            dy: 0.0,
+            scale: (0.5 + 0.5 * back_out(shown)) as f32,
+            wipe: None,
+        },
+        // From nothing to its size, solid all the way.
+        "grow" => Pose::Moving {
+            opacity: 1.0,
+            dx: 0.0,
+            dy: 0.0,
+            scale: (0.02 + 0.98 * shown) as f32,
             wipe: None,
         },
         // A fade, and anything this build does not know.
@@ -412,6 +452,38 @@ mod tests {
         assert_eq!(all.get("b"), Some(&Pose::Hidden), "built out at the end");
         assert!(!all.contains_key("a"));
         assert!(!moving);
+    }
+
+    #[test]
+    fn each_effect_starts_hidden_and_ends_as_made() {
+        for effect in [
+            "appear", "fade", "wipe", "fly", "zoom", "rise", "drop", "pop", "grow",
+        ] {
+            assert_eq!(
+                pose_of(effect, None, 0.0),
+                Pose::Hidden,
+                "{effect} starts hidden"
+            );
+            match pose_of(effect, None, 1.0) {
+                Pose::Moving {
+                    opacity,
+                    dx,
+                    dy,
+                    scale,
+                    wipe,
+                } => {
+                    assert!((opacity - 1.0).abs() < 1e-4, "{effect} ends opaque");
+                    assert!(dx.abs() < 1e-4 && dy.abs() < 1e-4, "{effect} ends in place");
+                    assert!((scale - 1.0).abs() < 1e-4, "{effect} ends its own size");
+                    assert!(wipe.map_or(true, |(_, shown)| (shown - 1.0).abs() < 1e-4));
+                }
+                Pose::Hidden => panic!("{effect} ends shown"),
+            }
+        }
+        // Pop goes past its size on the way.
+        assert!(matches!(pose_of("pop", None, 0.8), Pose::Moving { scale, .. } if scale > 1.0));
+        // Rise comes from below.
+        assert!(matches!(pose_of("rise", None, 0.5), Pose::Moving { dy, .. } if dy > 0.0));
     }
 
     #[test]

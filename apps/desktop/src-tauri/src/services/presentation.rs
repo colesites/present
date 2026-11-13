@@ -109,6 +109,29 @@ impl PresentationPosition {
         Ok(true)
     }
 
+    /// The deck, its hidden slides, the slide up and that slide's build
+    /// count, as one change: nothing between them is ever announced.
+    /// `slide_index` is the slide up, or `None` to leave the selection as it
+    /// is. Returns whether anything changed.
+    pub fn set_deck_at(
+        &mut self,
+        library_id: Option<String>,
+        slide_count: usize,
+        skipped: Vec<usize>,
+        click_steps: usize,
+        slide_index: Option<i64>,
+    ) -> bool {
+        let deck = self.set_deck(library_id, slide_count);
+        let skips = self.set_skipped(skipped);
+        // The slide before its build count, so the count is the new slide's.
+        let moved = match slide_index {
+            Some(index) => self.go_to_slide(index).unwrap_or(false),
+            None => false,
+        };
+        let builds = self.set_click_steps(click_steps);
+        deck || skips || moved || builds
+    }
+
     /// How many clicks the slide on screen's builds take. A step past them
     /// (everything built) stays everything built.
     pub fn set_click_steps(&mut self, steps: usize) -> bool {
@@ -306,6 +329,32 @@ mod tests {
         assert_eq!(position.next_slide(), Err(NavigationRefusal::NoSlides));
         assert_eq!(position.previous_slide(), Err(NavigationRefusal::NoSlides));
         assert_eq!(position.go_to_slide(3), Err(NavigationRefusal::NoSlides));
+    }
+
+    #[test]
+    /// The owner's report: projecting, the screens flipped between two slides
+    /// by themselves. Slide 1 took a click for its builds, slide 2 none.
+    /// Choosing slide 2 must land on it, with its own build count, at once.
+    #[test]
+    fn choosing_a_slide_with_another_build_count_lands_on_it_in_one_change() {
+        let mut position = PresentationPosition::default();
+        position.set_deck_at(Some("song".to_owned()), 3, Vec::new(), 1, Some(1));
+        assert_eq!((position.slide_index, position.click_steps), (Some(1), 1));
+
+        assert!(position.set_deck_at(Some("song".to_owned()), 3, Vec::new(), 0, Some(2)));
+        assert_eq!(
+            (
+                position.slide_index,
+                position.click_steps,
+                position.build_step
+            ),
+            (Some(2), 0, 0),
+            "the new slide with its own count, never the old slide with the new count"
+        );
+        assert!(
+            !position.set_deck_at(Some("song".to_owned()), 3, Vec::new(), 0, Some(2)),
+            "sent again, nothing changes and nothing is announced"
+        );
     }
 
     #[test]

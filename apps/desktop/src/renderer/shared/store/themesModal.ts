@@ -53,6 +53,11 @@ interface ThemesModalState {
   close: () => void;
   toggle: () => void;
   setTarget: (surface: ThemeSurface, target: ThemeTarget | null) => void;
+  /**
+   * Take `target` back, if it is still the one published. A view leaving
+   * never clears a newer song published after it.
+   */
+  withdrawTarget: (surface: ThemeSurface, target: ThemeTarget) => void;
   dispatchApply: (request: Omit<ThemeApplication, "nonce">) => void;
   consumePending: (nonce: number) => void;
 }
@@ -83,6 +88,13 @@ export const useThemesModalStore = create<ThemesModalState>()((set) => ({
       const targets = { ...state.targets };
       if (target) targets[surface] = target;
       else delete targets[surface];
+      return { targets };
+    }),
+  withdrawTarget: (surface, target) =>
+    set((state) => {
+      if (state.targets[surface] !== target) return state;
+      const targets = { ...state.targets };
+      delete targets[surface];
       return { targets };
     }),
   dispatchApply: (request) => set({ pending: { ...request, nonce: ++requests } }),

@@ -1,4 +1,4 @@
-import { userMessage } from "../../renderer/shared/lib/user-error";
+import { UserFacingError, userMessage } from "../../renderer/shared/lib/user-error";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
@@ -754,12 +754,15 @@ export function PresentContainer({
           slideIndex !== null && slideIndex >= 0
             ? clickStepsOf((slidesForGrid[slideIndex]?.slide as { elements?: SlideElement[] }).elements)
             : 0;
-        await core.setDeck(libraryId, slidesForGrid.length, skipped, clickSteps);
-        if (cancelled) return;
+        // The deck, the slide up and that slide's builds in one change.
         // `index: -1` is how this component says "deck open, nothing showing".
-        if (slideIndex !== null && slideIndex >= 0) {
-          await core.goToSlide(slideIndex);
-        }
+        await core.setDeck(
+          libraryId,
+          slidesForGrid.length,
+          skipped,
+          clickSteps,
+          slideIndex !== null && slideIndex >= 0 ? slideIndex : null,
+        );
       })
       .catch((error: unknown) => {
         console.error("[Present] could not mirror the position to the Rust core", error);
@@ -2188,8 +2191,10 @@ export function PresentContainer({
     slideTransition: outputSlideContent?.transition ?? null,
     slideMediaBox,
     // How far through its builds the live slide is; none without builds.
+    // Any slide's: a song's, a library deck's or an imported one's. Next
+    // waits for every click a slide's builds take, so they must show.
     slideBuildStep:
-      isPresentationSlideLive && hasBuilds(outputSlideContent?.elements ?? undefined)
+      hasBuilds(outputSlideContent?.elements ?? undefined)
         ? liveBuild.key === liveSlideKey
           ? liveBuild.step
           : 0
@@ -2359,6 +2364,21 @@ export function PresentContainer({
       setSelectedLibraryId,
       setSelectedPresentationLibraryId,
     ],
+  );
+
+  // A deck from the Media panel's Slides, into the service that is chosen.
+  // The service keeps a reference to the one converted copy, not the slides.
+  const handleAddSlidesToService = useCallback(
+    async (presentation: ServicePresentation) => {
+      if (!selectedServiceId) {
+        throw new UserFacingError("Choose a service first.");
+      }
+      const refId = await addPresentationToService(selectedServiceId, presentation);
+      if (!refId) {
+        throw new UserFacingError("Those slides couldn't be added to the service.");
+      }
+    },
+    [addPresentationToService, selectedServiceId],
   );
 
   // One import at a time: asked again while its dialog is open or its files
@@ -2546,6 +2566,7 @@ export function PresentContainer({
           handleAddMediaToService,
           handleRenameMediaInServices: updateMediaInServices,
           handleRemoveMediaFromServices: removeMediaFromServices,
+          handleAddSlidesToService,
           updateVideoSettings,
           showMediaInOutput,
           setShowMediaInOutput,

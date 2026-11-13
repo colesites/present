@@ -149,7 +149,7 @@ export const safelyUnlisten = (unlisten: (() => void) | null | undefined): void 
 };
 
 /** Base64 to bytes, for the presentation files the picker returns. */
-const decodeBase64 = (encoded: string): Uint8Array => {
+export const decodeBase64 = (encoded: string): Uint8Array => {
   const binary = atob(encoded);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
@@ -304,6 +304,7 @@ const bridge = {
   readFolder: (folderPath: string) =>
     invoke<{ name: string; lastModified: number }[]>("read_folder", { folderPath }),
   selectMediaFile: () => invoke("select_media_file"),
+  selectMediaFiles: () => invoke<{ name: string; path: string }[]>("select_media_files"),
   selectAudioFiles: () => invoke("select_audio_files"),
   selectPropImage: () => invoke("select_prop_image"),
   selectPropMedia: () => invoke("select_prop_media"),

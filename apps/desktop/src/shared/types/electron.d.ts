@@ -334,6 +334,8 @@ interface ElectronAPI {
 
   // Media & Filesystem
   selectMediaFile: () => Promise<{ name: string; path: string } | null>;
+  /** Add Media: any number of images, videos, PowerPoints and PDFs. Empty when cancelled. */
+  selectMediaFiles?: () => Promise<Array<{ name: string; path: string }>>;
   selectAudioFiles: () => Promise<Array<{ name: string; path: string }>>;
   selectPropImage: () => Promise<
     { name: string; path: string; dataUrl: string } | null

@@ -286,7 +286,7 @@ export type SlideElement = {
 
 /** One build: an effect, when it starts, and how long it takes. */
 export type SlideBuild = {
-  effect: "appear" | "fade" | "wipe" | "fly" | "zoom";
+  effect: "appear" | "fade" | "wipe" | "fly" | "zoom" | "rise" | "drop" | "pop" | "grow";
   durationMs?: number;
   delayMs?: number;
   start?: "on-click" | "with-previous" | "after-previous";
@@ -401,6 +401,21 @@ export type ServicePresentation = {
   sourceType: "pdf" | "pptx";
   slides: LibrarySlide[];
   content?: LibraryContent;
+  /**
+   * Set when the deck is a Slides document in the Media panel. The service
+   * keeps only this reference, with `slides` empty, and reads the slides from
+   * the one converted copy every service shares (`features/media/lib/media-slides.ts`).
+   */
+  media?: MediaSlidesReference;
+};
+
+export type MediaSlidesReference = {
+  /** The document's content hash: the converted deck's name. */
+  deckId: string;
+  /** Where the document was in its media folder when it was added. */
+  path: string;
+  /** The slides of the deck this service uses, in order; absent is all of them. */
+  slideIndices?: number[];
 };
 
 export type ServiceGroup = {

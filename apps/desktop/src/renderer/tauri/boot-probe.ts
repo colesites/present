@@ -172,6 +172,7 @@ if (shouldProbe) {
     (window as unknown as { __presentFiles?: unknown }).__presentFiles = {
       selectFolder: () => invoke("select_folder"),
       selectMediaFile: () => invoke("select_media_file"),
+      selectMediaFiles: () => invoke("select_media_files"),
       selectAudioFiles: () => invoke("select_audio_files"),
       selectPropImage: () => invoke("select_prop_image"),
       selectPropMedia: () => invoke("select_prop_media"),

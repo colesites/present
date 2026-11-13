@@ -80,11 +80,17 @@ pub async fn set_presentation_service_group(
     broadcast(&app, &state, changed)
 }
 
-/// Tell the core which deck is live and how many slides it has.
+/// Tell the core which deck is live and how many slides it has — and, with
+/// `slide_index`, which slide is up, in the same change.
 ///
 /// The count comes from the frontend because it is the frontend that knows how
 /// a library item expands into slides. Rust needs only the number, and that is
 /// enough to bound navigation.
+///
+/// The slide comes with the deck because `click_steps` is that slide's. Sent
+/// apart, the core announced the new slide's build count with the old slide
+/// still up; the window followed the announcement back to the old slide, whose
+/// count was different again, and the two flipped between slides for ever.
 #[tauri::command]
 pub async fn set_presentation_deck(
     app: AppHandle,
@@ -93,12 +99,16 @@ pub async fn set_presentation_deck(
     slide_count: usize,
     skipped: Option<Vec<usize>>,
     click_steps: Option<usize>,
+    slide_index: Option<i64>,
 ) -> AppResult<PresentationPosition> {
     let changed = state.update(|position| {
-        let deck = position.set_deck(library_id, slide_count);
-        let skips = position.set_skipped(skipped.unwrap_or_default());
-        let builds = position.set_click_steps(click_steps.unwrap_or(0));
-        deck || skips || builds
+        position.set_deck_at(
+            library_id,
+            slide_count,
+            skipped.unwrap_or_default(),
+            click_steps.unwrap_or(0),
+            slide_index,
+        )
     })?;
     broadcast(&app, &state, changed)
 }

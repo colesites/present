@@ -177,6 +177,8 @@ const toSyncableServiceItems = (
           ? {
               title: item.presentation.title,
               sourceType: item.presentation.sourceType,
+              // A Media deck's reference, so the service still finds its slides.
+              ...(item.presentation.media ? { media: item.presentation.media } : {}),
             }
           : item.presentation,
     }));

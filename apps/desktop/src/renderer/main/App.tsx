@@ -941,6 +941,7 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   // own: reporting from there would clear the ticks while they are open.
   useMenuChecks({ mediaStage: isMediaStageLive, worshipStage: isWorshipStageLive }, !isSettingsWindow);
 
+  const openEditView = useCallback(() => setViewMode("edit"), [setViewMode]);
   useGlobalShortcuts({
     enabled: !isSettingsWindow && effectiveViewMode !== "browser",
     setBottomTab,
@@ -949,6 +950,7 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     scripturePanelRef,
     showTextInOutput,
     setShowTextInOutput,
+    onEdit: openEditView,
   });
 
   const renderPresentContainer = (mode: ViewMode) => (

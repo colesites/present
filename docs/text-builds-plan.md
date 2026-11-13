@@ -6,6 +6,12 @@ previous), delay and length; build order; Next/Previous through the core
 (`services/presentation.rs`, `build_step`); poses drawn by the compositor
 (`compositor/build.rs`); dots on thumbnails; the editor's Build tab; and
 PowerPoint entrance/exit animations imported (`services/pptx/animation.rs`).
+Since 2026-11-13: builds play on every live slide (songs and library decks,
+not only a service's imported decks); rise, drop, pop and grow effects; the
+Build tab shows ProPresenter's names (With Slide for the first build, times in
+seconds, Add Build), numbers each object on the canvas in build order, and
+previews the slide's builds — or one build — on the editor's canvas
+(`BuildPreviewLayer.tsx`, poses mirrored in `lib/builds.ts`).
 Builds are kept on the element (`builds.in`, `builds.out`, each with an
 `order`) rather than a slide-level `buildOrder`: the steps are worked out from
 the elements alone. Phases 2–5 (text by line/word/letter, presets, …) are not

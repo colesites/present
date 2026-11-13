@@ -25,6 +25,11 @@ import {
   upsertService,
 } from "../../../renderer/shared/offline/localData";
 import { useFirstLoad } from "../../../renderer/shared/hooks/useFirstLoad";
+import {
+  resolveServicePresentation,
+  toStoredServicePresentation,
+  useMediaSlidesVersion,
+} from "../../media/lib/media-slides";
 
 const LEGACY_SERVICE_TEMPLATE_KEY = "present-service-template-groups-v1";
 const SERVICE_TEMPLATES_KEY = "present-service-templates-v1";
@@ -643,7 +648,10 @@ export function useServices(
     };
   };
 
-  // Service items with resolved library items
+  // A Media deck a service uses arriving from disk draws the service again.
+  const mediaSlidesVersion = useMediaSlidesVersion();
+
+  // Service items with resolved library items, and Media decks' slides
   const serviceItems = useMemo<ServiceItem[]>(() => {
     if (!selectedService) return [];
     return selectedService.items
@@ -656,10 +664,16 @@ export function useServices(
           );
           return { ...item, libraryItem, presentation: null, index };
         }
-        return { ...item, libraryItem: null, presentation: item.presentation ?? null, index };
+        return {
+          ...item,
+          libraryItem: null,
+          presentation: item.presentation ? resolveServicePresentation(item.presentation) : null,
+          index,
+        };
       },
     );
-  }, [selectedService, libraryItems]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `mediaSlidesVersion` is what says a deck arrived
+  }, [selectedService, libraryItems, mediaSlidesVersion]);
 
   const createNewService = async (name: string, templateId?: string | null) => {
     if (!name.trim()) return null;
@@ -1636,12 +1650,14 @@ export function useServices(
       return;
     }
 
+    // A Media deck's slides stay shared until they are edited here.
+    const stored = toStoredServicePresentation(presentation);
     const nextItems = service.items.map((item, index) =>
       index === presentationIndex
         ? {
             ...item,
-            label: presentation.title,
-            presentation,
+            label: stored.title,
+            presentation: stored,
           }
         : item,
     );

@@ -243,9 +243,10 @@ fn build(app: &AppHandle, checks: &mut Checks) -> AppResult<Menu<Wry>> {
         .item(&item("view.sidebar.masters", "Masters")?)
         .build()?;
     let view = SubmenuBuilder::new(app, "View")
-        .item(&item("view.show", "Show")?)
+        // ⌘1 is ProPresenter's Show; ⌘S stays Save.
+        .item(&keyed("view.show", "Show", "CmdOrCtrl+1")?)
         .item(&keyed("view.libraries", "Libraries", "CmdOrCtrl+L")?)
-        .item(&item("view.edit", "Edit")?)
+        .item(&keyed("view.edit", "Edit", "CmdOrCtrl+E")?)
         .item(&keyed("view.bible", "Bible", "CmdOrCtrl+B")?)
         .item(&item("view.browser", "Browser")?)
         .separator()
