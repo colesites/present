@@ -14,6 +14,8 @@ type Params = {
   scripturePanelRef: RefObject<ScripturePanelRef | null>;
   showTextInOutput: boolean;
   setShowTextInOutput: (show: boolean) => void;
+  /** ⌘2: Edit, as in ProPresenter (the menu's Edit is ⌘E). */
+  onEdit?: () => void;
 };
 
 // Don't fire global shortcuts while the user is typing — otherwise Cmd+T
@@ -36,6 +38,7 @@ export function useGlobalShortcuts({
   scripturePanelRef,
   showTextInOutput,
   setShowTextInOutput,
+  onEdit,
 }: Params) {
   useEffect(() => {
     if (!enabled) {
@@ -76,8 +79,16 @@ export function useGlobalShortcuts({
         return;
       }
 
-      // Cmd/Ctrl + B: Scripture
+      // Cmd/Ctrl + 2: Edit, ProPresenter's key for it.
+      if (e.key === "2" && !e.shiftKey && !e.altKey && onEdit) {
+        e.preventDefault();
+        onEdit();
+        return;
+      }
+
+      // Cmd/Ctrl + B: Scripture — but bold while typing in a text box.
       if (e.key.toLowerCase() === "b") {
+        if (isTypingInEditableField(e.target)) return;
         e.preventDefault();
         setBottomTab("scripture");
         requestAnimationFrame(() => {
@@ -96,5 +107,6 @@ export function useGlobalShortcuts({
     scripturePanelRef,
     showTextInOutput,
     setShowTextInOutput,
+    onEdit,
   ]);
 }

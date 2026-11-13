@@ -28,6 +28,8 @@ import {
   FlipVertical2,
   Italic,
   Palette,
+  Play,
+  Plus,
   Radio,
   Strikethrough,
   TextAlignCenter,
@@ -88,6 +90,7 @@ import { cn } from "../../../renderer/shared/lib/utils";
 import { useThemesModalStore } from "../../../renderer/shared/store/themesModal";
 import type { ArrangeAction } from "../hooks/useSlideArrange";
 import type { SlideCommand } from "../hooks/useSlideCommands";
+import { useBuildPreviewStore } from "../lib/build-preview";
 import { isPictureBackground, pictureBackgroundOf, withPictureBackground } from "../lib/slides";
 import type { Alignment } from "../lib/arrange";
 import { BUILD_EFFECTS, BUILD_STARTS, buildTimeline, withBuildOrder } from "../lib/builds";
@@ -261,6 +264,8 @@ interface EditorInspectorProps {
   onApplyInlineTextFormat: (
     command: "bold" | "italic" | "underline" | "strikeThrough",
   ) => boolean;
+  /** Pick an object: from the build order. */
+  onSelectElement?: (id: string | null) => void;
 }
 
 /**
@@ -292,6 +297,7 @@ export const EditorInspector = memo(function EditorInspector({
   onSetAllTextStyle,
   onUpdateOutput,
   onApplyInlineTextFormat,
+  onSelectElement,
 }: EditorInspectorProps) {
   const presentation = normalizePresentationSettings(draft.content?.presentation);
   const canvas = getCanvasSizeDimensions(presentation.canvasSize);
@@ -580,8 +586,10 @@ export const EditorInspector = memo(function EditorInspector({
           <BuildSections
             element={selectedElement}
             slide={selectedSlide}
+            slideId={selectedSlideId ?? ""}
             onChange={updateSelectedElement}
             onChangeSlide={updateSelectedSlide}
+            onSelectElement={onSelectElement}
           />
         ) : null}
 
@@ -1236,8 +1244,6 @@ function ArrangeButton({
   );
 }
 
-const NO_BUILD = "__none__";
-
 /** A short name for an object in the build order: its words, or its kind. */
 function objectName(element: SlideElement): string {
   const words = element.type === "text" ? element.content.replace(/\s+/g, " ").trim() : "";
@@ -1245,110 +1251,165 @@ function objectName(element: SlideElement): string {
   return { text: "Text", shape: "Shape", image: "Picture", video: "Movie", web: "Web" }[element.type] ?? "Object";
 }
 
-/** One build's controls: its effect, where from, how long, after what. */
+/** Seconds, as the controls show them, from the milliseconds kept. */
+const seconds = (ms: number | undefined, fallback: number) => (ms ?? fallback) / 1000;
+
+/**
+ * One build's controls, as ProPresenter lays them out: Add Build until there
+ * is one; then its effect, where from, when it starts, how long and how long
+ * after, with a preview of it alone and a way to take it off.
+ */
 function BuildControls({
   title,
   build,
+  isFirst,
+  onAdd,
   onChange,
+  onPreview,
 }: {
   title: string;
   build: SlideBuild | undefined;
+  /** First in the slide's build order: it starts with the slide or on a click. */
+  isFirst: boolean;
+  onAdd: () => void;
   onChange: (build: SlideBuild | undefined) => void;
+  onPreview: () => void;
 }) {
   const effect = BUILD_EFFECTS.find((each) => each.value === build?.effect);
+  if (!build) {
+    return (
+      <StyleSection title={title}>
+        <button
+          type="button"
+          onClick={onAdd}
+          className="flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border text-[11px] text-muted-foreground transition hover:border-primary/50 hover:text-foreground"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add Build
+        </button>
+      </StyleSection>
+    );
+  }
   return (
-    <StyleSection title={title}>
+    <StyleSection
+      title={title}
+      aside={
+        <span className="flex items-center gap-0.5">
+          <LayerButton label={`Preview ${title.toLowerCase()}`} disabled={false} onClick={onPreview}>
+            <Play className="h-3 w-3" />
+          </LayerButton>
+          <LayerButton label={`Remove ${title.toLowerCase()}`} disabled={false} onClick={() => onChange(undefined)}>
+            <Trash2 className="h-3 w-3" />
+          </LayerButton>
+        </span>
+      }
+    >
       <StyleRow label="Effect">
         <SelectInput
           label={`${title} effect`}
-          value={build?.effect ?? NO_BUILD}
-          options={[{ value: NO_BUILD, label: "None" }, ...BUILD_EFFECTS.map(({ value, label }) => ({ value, label }))]}
-          onChange={(value) =>
-            onChange(
-              value === NO_BUILD
-                ? undefined
-                : { durationMs: 500, start: "on-click", ...build, effect: value as SlideBuild["effect"] },
-            )
-          }
+          value={build.effect}
+          options={BUILD_EFFECTS.map(({ value, label }) => ({ value, label }))}
+          onChange={(value) => onChange({ ...build, effect: value as SlideBuild["effect"] })}
         />
       </StyleRow>
-      {build ? (
-        <>
-          {effect?.directed ? (
-            <StyleRow label={build.effect === "fly" ? "From" : "Wipe from"}>
-              <Segmented
-                value={build.direction ?? (build.effect === "fly" ? "bottom" : "left")}
-                label="Direction"
-                onChange={(direction) => onChange({ ...build, direction: direction as SlideBuild["direction"] })}
-                options={[
-                  { value: "left", label: "Left" },
-                  { value: "right", label: "Right" },
-                  { value: "top", label: "Top" },
-                  { value: "bottom", label: "Bottom" },
-                ]}
-              />
-            </StyleRow>
-          ) : null}
-          <StyleRow label="Start">
-            <SelectInput
-              label="Start"
-              value={build.start ?? "on-click"}
-              options={BUILD_STARTS.map(({ value, label }) => ({ value: value ?? "on-click", label }))}
-              onChange={(start) => onChange({ ...build, start: start as SlideBuild["start"] })}
-            />
-          </StyleRow>
-          {build.effect === "appear" ? null : (
-            <StyleRow label="Length">
-              <NumberInput
-                value={build.durationMs ?? 500}
-                min={0}
-                max={10000}
-                suffix="ms"
-                label="Build length"
-                onChange={(durationMs) => onChange({ ...build, durationMs })}
-              />
-            </StyleRow>
-          )}
-          <StyleRow label="Delay">
-            <NumberInput
-              value={build.delayMs ?? 0}
-              min={0}
-              max={60000}
-              suffix="ms"
-              label="Build delay"
-              onChange={(delayMs) => onChange({ ...build, delayMs })}
-            />
-          </StyleRow>
-        </>
+      {effect?.directed ? (
+        <StyleRow label={build.effect === "fly" ? "From" : "Wipe from"}>
+          <Segmented
+            value={build.direction ?? (build.effect === "fly" ? "bottom" : "left")}
+            label="Direction"
+            onChange={(direction) => onChange({ ...build, direction: direction as SlideBuild["direction"] })}
+            options={[
+              { value: "left", label: "Left" },
+              { value: "right", label: "Right" },
+              { value: "top", label: "Top" },
+              { value: "bottom", label: "Bottom" },
+            ]}
+          />
+        </StyleRow>
       ) : null}
+      <StyleRow label="Start">
+        <SelectInput
+          label={`${title} start`}
+          value={build.start ?? "on-click"}
+          options={BUILD_STARTS.map(({ value, label, firstLabel }) => ({
+            value,
+            label: isFirst ? firstLabel : label,
+          }))}
+          onChange={(start) => onChange({ ...build, start: start as SlideBuild["start"] })}
+        />
+      </StyleRow>
+      {build.effect === "appear" ? null : (
+        <StyleRow label="Duration">
+          <NumberInput
+            value={seconds(build.durationMs, 500)}
+            min={0}
+            max={10}
+            step={0.1}
+            suffix="s"
+            label={`${title} duration`}
+            onChange={(value) => onChange({ ...build, durationMs: Math.round(value * 1000) })}
+          />
+        </StyleRow>
+      )}
+      <StyleRow label="Delay">
+        <NumberInput
+          value={seconds(build.delayMs, 0)}
+          min={0}
+          max={960}
+          step={0.1}
+          suffix="s"
+          label={`${title} delay`}
+          onChange={(value) => onChange({ ...build, delayMs: Math.round(value * 1000) })}
+        />
+      </StyleRow>
     </StyleSection>
   );
 }
 
+/** What each step waits for, in words, for the build order. */
+function startWords(entry: { step: number; beginMs: number; build: SlideBuild }, index: number) {
+  const start = entry.build.start ?? "on-click";
+  const delay = entry.build.delayMs ? ` +${seconds(entry.build.delayMs, 0)}s` : "";
+  if (start === "on-click") return `On click ${entry.step}${delay}`;
+  if (index === 0 || entry.step === 0) {
+    return start === "after-previous" && index > 0 ? `After previous${delay}` : `With slide${delay}`;
+  }
+  return `${start === "with-previous" ? "With previous" : "After previous"}${delay}`;
+}
+
 /**
- * Builds: how the object arrives and leaves, and the order of every build on
- * the slide. On a click, a build waits for Next; with or after the previous
- * one, it follows by itself. What runs before the first click comes with
- * the slide.
+ * Builds: how the object arrives and leaves, and the slide's build order —
+ * ProPresenter's Build tab. A build on a click waits for Next; with or after
+ * the previous one it follows by itself. Preview plays the slide's builds on
+ * the canvas as the screens will.
  */
 function BuildSections({
   element,
   slide,
+  slideId,
   onChange,
   onChangeSlide,
+  onSelectElement,
 }: {
   element: SlideElement;
   slide: LibrarySlide;
+  slideId: string;
   onChange: (updater: (element: SlideElement) => SlideElement) => void;
   onChangeSlide: (updater: (slide: LibrarySlide) => LibrarySlide) => void;
+  onSelectElement?: (id: string | null) => void;
 }) {
+  const play = useBuildPreviewStore((state) => state.play);
+  const { placed, clickSteps } = buildTimeline(slide.elements ?? []);
+  const indexOf = (phase: "in" | "out") =>
+    placed.findIndex((entry) => entry.elementId === element.id && entry.phase === phase);
+
   const setBuild = (phase: "in" | "out", build: SlideBuild | undefined) =>
     onChange((current) => {
       const builds = { ...(current.builds ?? {}) };
       if (build) {
         // A new build goes after every one already on the slide (those without
         // an order of their own are numbered by layer, well below this).
-        const order = builds[phase]?.order ?? 100_000 + buildTimeline(slide.elements ?? []).placed.length;
+        const order = builds[phase]?.order ?? 100_000 + placed.length;
         builds[phase] = { ...build, order };
       } else {
         delete builds[phase];
@@ -1357,7 +1418,18 @@ function BuildSections({
       if (!builds.in && !builds.out) delete next.builds;
       return next;
     });
-  const { placed, clickSteps } = buildTimeline(slide.elements ?? []);
+
+  // A new build: in with the slide when it is the slide's first, after the
+  // one before otherwise, so a slide plays by itself until a click is asked
+  // for; out on a click. A dissolve, as ProPresenter starts.
+  const addBuild = (phase: "in" | "out") => {
+    setBuild(phase, {
+      effect: "fade",
+      durationMs: 600,
+      start: phase === "out" ? "on-click" : placed.length === 0 ? "with-previous" : "after-previous",
+    });
+  };
+
   const names = new Map((slide.elements ?? []).map((each) => [each.id, objectName(each)]));
   const move = (index: number, by: -1 | 1) => {
     const order = placed.map((entry) => ({ elementId: entry.elementId, phase: entry.phase }));
@@ -1368,44 +1440,84 @@ function BuildSections({
   };
   return (
     <>
-      <BuildControls title="Build in" build={element.builds?.in} onChange={(build) => setBuild("in", build)} />
-      <BuildControls title="Build out" build={element.builds?.out} onChange={(build) => setBuild("out", build)} />
-      <StyleSection title="Build order">
+      <BuildControls
+        title="Build In"
+        build={element.builds?.in}
+        isFirst={indexOf("in") <= 0}
+        onAdd={() => addBuild("in")}
+        onChange={(build) => setBuild("in", build)}
+        onPreview={() => play(slideId, { elementId: element.id, phase: "in" })}
+      />
+      <BuildControls
+        title="Build Out"
+        build={element.builds?.out}
+        isFirst={indexOf("out") === 0}
+        onAdd={() => addBuild("out")}
+        onChange={(build) => setBuild("out", build)}
+        onPreview={() => play(slideId, { elementId: element.id, phase: "out" })}
+      />
+      <StyleSection
+        title="Build Order"
+        aside={
+          placed.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => play(slideId)}
+              className="flex h-6 items-center gap-1 rounded-md bg-primary/15 px-2 text-[10px] font-semibold text-primary transition hover:bg-primary/25"
+            >
+              <Play className="h-3 w-3" />
+              Preview Slide
+            </button>
+          ) : null
+        }
+      >
         {placed.length === 0 ? (
-          <p className="text-[10px] leading-4 text-muted-foreground">No builds on this slide yet.</p>
+          <p className="text-[10px] leading-4 text-muted-foreground">
+            No builds on this slide yet. Pick an object and add a Build In to animate it.
+          </p>
         ) : (
           <div className="flex flex-col gap-1">
             {placed.map((entry, index) => (
               <div
                 key={`${entry.elementId}:${entry.phase}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectElement?.(entry.elementId)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") onSelectElement?.(entry.elementId);
+                }}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]",
+                  "flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition hover:border-primary/40",
                   entry.elementId === element.id ? "border-primary/60 bg-primary/10" : "border-border",
                 )}
               >
-                <span className="w-4 shrink-0 text-muted-foreground">{index + 1}</span>
+                <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-black">
+                  {index + 1}
+                </span>
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{names.get(entry.elementId) ?? "Object"}</span>
                   <span className="truncate text-[10px] text-muted-foreground">
                     {entry.phase === "in" ? "In" : "Out"}: {BUILD_EFFECTS.find((e) => e.value === entry.build.effect)?.label}
                     {" · "}
-                    {entry.step === 0 ? "with the slide" : `click ${entry.step}`}
+                    {startWords(entry, index)}
                   </span>
                 </span>
-                <LayerButton label="Earlier" disabled={index === 0} onClick={() => move(index, -1)}>
-                  <ArrowUp className="h-3 w-3" />
-                </LayerButton>
-                <LayerButton label="Later" disabled={index === placed.length - 1} onClick={() => move(index, 1)}>
-                  <ArrowDown className="h-3 w-3" />
-                </LayerButton>
+                <span onClick={(event) => event.stopPropagation()} className="flex">
+                  <LayerButton label="Earlier" disabled={index === 0} onClick={() => move(index, -1)}>
+                    <ArrowUp className="h-3 w-3" />
+                  </LayerButton>
+                  <LayerButton label="Later" disabled={index === placed.length - 1} onClick={() => move(index, 1)}>
+                    <ArrowDown className="h-3 w-3" />
+                  </LayerButton>
+                </span>
               </div>
             ))}
           </div>
         )}
         <p className="text-[10px] leading-4 text-muted-foreground">
           {clickSteps === 0
-            ? "Everything here comes with the slide."
-            : `${clickSteps} ${clickSteps === 1 ? "click" : "clicks"}: Next shows each before going to the next slide.`}
+            ? "Plays by itself when the slide comes up."
+            : `Takes ${clickSteps} ${clickSteps === 1 ? "click" : "clicks"}: Next plays each one before moving to the next slide. The slide grid shows a dot for each.`}
         </p>
       </StyleSection>
     </>

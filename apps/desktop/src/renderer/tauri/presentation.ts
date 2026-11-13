@@ -49,6 +49,13 @@ export const setServiceItem = (index: number | null): Promise<PresentationPositi
 export const setServiceGroup = (groupId: string | null): Promise<PresentationPosition> =>
   invoke("set_presentation_service_group", { groupId });
 
+/**
+ * Deck updates, one at a time and in order. Tauri runs async commands
+ * concurrently, so two quick changes of slide could reach the core the wrong
+ * way round and leave it on the earlier one.
+ */
+let deckUpdates: Promise<unknown> = Promise.resolve();
+
 export const setDeck = (
   libraryId: string | null,
   slideCount: number,
@@ -56,8 +63,25 @@ export const setDeck = (
   skipped: number[] = [],
   /** How many clicks the slide on screen's builds take. */
   clickSteps = 0,
-): Promise<PresentationPosition> =>
-  invoke("set_presentation_deck", { libraryId, slideCount, skipped, clickSteps });
+  /**
+   * The slide up (0-based), set in the same change as `clickSteps`, which is
+   * its count; `null` leaves the selection as it is. Sent apart, the core
+   * announced one slide with the other's count and the two flipped for ever.
+   */
+  slideIndex: number | null = null,
+): Promise<PresentationPosition> => {
+  const update = deckUpdates.then(() =>
+    invoke<PresentationPosition>("set_presentation_deck", {
+      libraryId,
+      slideCount,
+      skipped,
+      clickSteps,
+      slideIndex,
+    }),
+  );
+  deckUpdates = update.catch((): undefined => undefined);
+  return update;
+};
 
 /** 0-based, unlike the AI Operator's tool argument. */
 export const goToSlide = (index: number): Promise<PresentationPosition> =>

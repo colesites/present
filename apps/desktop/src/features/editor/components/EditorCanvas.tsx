@@ -46,6 +46,9 @@ import {
   type Bounds,
   type Guide,
 } from "../lib/arrange";
+import { buildTimeline } from "../lib/builds";
+import { useBuildPreviewStore } from "../lib/build-preview";
+import { BuildPreviewLayer } from "./BuildPreviewLayer";
 import {
   SLIDE_PX_VAR,
   textBodyToEditableHtml,
@@ -68,6 +71,27 @@ function drawnByRenderer(element: SlideElement, editingElementId: string | null)
 /** A theme's or a picture background, behind the slide's objects. */
 const isSlideBackground = (element: SlideElement) =>
   isPictureBackground(element) || element.id.endsWith("__theme-bg");
+
+/**
+ * The object drawn on top at a point on screen: the first of the slide's
+ * boxes under it that takes the pointer. Backgrounds and hidden objects do
+ * not, so they are passed over.
+ */
+function elementOnTopAt(
+  canvas: HTMLElement | null,
+  elements: SlideElement[],
+  clientX: number,
+  clientY: number,
+): SlideElement | null {
+  if (!canvas) return null;
+  for (const node of document.elementsFromPoint(clientX, clientY)) {
+    const host = node instanceof HTMLElement ? node.closest<HTMLElement>("[data-element-id]") : null;
+    if (host && canvas.contains(host)) {
+      return elements.find((each) => each.id === host.dataset.elementId) ?? null;
+    }
+  }
+  return null;
+}
 
 /** Bullets for an imported box while it is typed in, hung as the slide draws them. */
 const EDITABLE_TEXT_CSS = `
@@ -115,6 +139,8 @@ interface EditorCanvasProps {
     fontItalic?: boolean;
     fontUnderline?: boolean;
   }) => void;
+  /** The Build tab is open: each object with builds shows its place in the order. */
+  showBuildOrder?: boolean;
 }
 
 type InteractionMode = "none" | "dragging" | "resizing" | "rotating" | "groupResizing" | "marquee";
@@ -172,6 +198,7 @@ export const EditorCanvas = memo(function EditorCanvas({
   fontBold,
   fontItalic,
   fontUnderline,
+  showBuildOrder = false,
 }: EditorCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const sourceTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -230,6 +257,13 @@ export const EditorCanvas = memo(function EditorCanvas({
   } | null>(null);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [marquee, setMarquee] = useState<Bounds | null>(null);
+  /**
+   * Where a press on the selected object's frame began. Released without
+   * moving, it was a click, and picks whatever is on top there — so a drag
+   * anywhere in the frame moves the selected object, even under another,
+   * while a click still reaches the one in front.
+   */
+  const clickThroughRef = useRef<{ x: number; y: number } | null>(null);
 
   // Auto-focus text element when entering edit mode
   // useLayoutEffect prevents visual flash (runs before paint)
@@ -289,6 +323,31 @@ export const EditorCanvas = memo(function EditorCanvas({
   // More than one object picked, or a group: one frame for them all.
   const isMultiSelection = selectedElementIds.length > 1;
   const selectionBounds = isMultiSelection ? boundsOf(elements, selectedElementIds) : null;
+  const selectedElement = isMultiSelection
+    ? null
+    : (elements.find((each) => each.id === selectedElementId) ?? null);
+
+  // A build preview for this slide, played over it.
+  const buildPreview = useBuildPreviewStore((state) => state.preview);
+  const stopBuildPreview = useBuildPreviewStore((state) => state.stop);
+  const previewing = buildPreview && buildPreview.slideId === selectedSlideId ? buildPreview : null;
+  // Another slide chosen, or the editor left: the preview ends.
+  useEffect(() => {
+    if (buildPreview && buildPreview.slideId !== selectedSlideId) stopBuildPreview();
+  }, [buildPreview, selectedSlideId, stopBuildPreview]);
+  useEffect(() => () => useBuildPreviewStore.getState().stop(), []);
+
+  // Each object's builds, numbered as the build order lists them.
+  const buildBadges = useMemo(() => {
+    if (!showBuildOrder) return new Map<string, string>();
+    const badges = new Map<string, string[]>();
+    buildTimeline(elements).placed.forEach((placed, index) => {
+      const list = badges.get(placed.elementId) ?? [];
+      list.push(`${index + 1}${placed.phase === "out" ? "↑" : ""}`);
+      badges.set(placed.elementId, list);
+    });
+    return new Map([...badges].map(([id, list]) => [id, list.join(" ")]));
+  }, [elements, showBuildOrder]);
   const percentBox = (bounds: Bounds) => ({
     left: `${(bounds.left / canvasDimensions.width) * 100}%`,
     top: `${(bounds.top / canvasDimensions.height) * 100}%`,
@@ -364,6 +423,54 @@ export const EditorCanvas = memo(function EditorCanvas({
       onSelectElements(ids, element.id);
     }
     beginInteraction(e, "dragging", element, ids);
+  };
+
+  const topElementAt = (clientX: number, clientY: number) =>
+    elementOnTopAt(canvasRef.current, elements, clientX, clientY);
+
+  /** A double-click on an object: type in a text box, choose a picture. */
+  const openElement = (e: React.MouseEvent, element: SlideElement) => {
+    if (element.type === "image" && !element.isLocked) {
+      e.stopPropagation();
+      void choosePicture().then((chosen) => {
+        if (chosen) {
+          onUpdateElement(selectedSlideId, element.id, (prev) =>
+            withPicture(prev, chosen.url, chosen.size),
+          );
+        }
+      });
+      return;
+    }
+    if (element.type === "text" && !element.isLocked) {
+      e.stopPropagation();
+      editingContentRef.current = element.textBody
+        ? textBodyToEditableHtml(element.textBody, fontStack)
+        : element.isPlaceholder
+          ? ""
+          : element.richTextHtml?.trim() || plainTextToHtml(element.content || "");
+      setEditingElementId(element.id);
+    }
+  };
+
+  /**
+   * A press inside the selected object's frame: moves it, whatever is drawn
+   * over it there. With Shift or ⌘ it is a press on the object on top.
+   */
+  const handleSelectedFramePointerDown = (e: React.PointerEvent, element: SlideElement) => {
+    if (e.button !== 0) return;
+    if (e.shiftKey || e.metaKey) {
+      const onTop = topElementAt(e.clientX, e.clientY);
+      if (onTop) handleElementPointerDown(e, onTop);
+      return;
+    }
+    e.stopPropagation();
+    clickThroughRef.current = { x: e.clientX, y: e.clientY };
+    beginInteraction(
+      e,
+      "dragging",
+      element,
+      selectedElementIds.includes(element.id) ? selectedElementIds : withGroups(elements, [element.id]),
+    );
   };
 
   /** A press on the empty slide: draws a box to pick what it touches. */
@@ -555,6 +662,16 @@ export const EditorCanvas = memo(function EditorCanvas({
         }
         setMarquee(null);
       }
+      // A click, not a drag, inside the selected object's frame: the object
+      // on top there is picked, as a click anywhere else picks it.
+      const clickedAt = clickThroughRef.current;
+      clickThroughRef.current = null;
+      if (clickedAt && interaction.mode === "dragging" && !interaction.moved) {
+        const onTop = elementOnTopAt(canvasRef.current, elements, clickedAt.x, clickedAt.y);
+        if (onTop && onTop.id !== interaction.elementId && !isSlideBackground(onTop)) {
+          onSelectElements(withGroups(elements, [onTop.id]), onTop.id);
+        }
+      }
       setGuides([]);
       setInteraction(null);
     };
@@ -697,15 +814,21 @@ export const EditorCanvas = memo(function EditorCanvas({
         onPointerDown={handleBackgroundPointerDown}
       >
         {/* Slide Canvas */}
-        <div 
+        <div
           ref={canvasRef}
-          className="relative w-full max-h-full max-w-full overflow-hidden bg-black shadow-none ring-0 outline-none"
-          style={{ 
+          className="relative w-full max-h-full max-w-full shadow-none ring-0 outline-none"
+          style={{
             aspectRatio: `${canvasDimensions.width} / ${canvasDimensions.height}`,
-            backgroundColor: selectedSlideBackground ?? "#000000",
             [SLIDE_PX_VAR as string]: `${slidePx}px`,
           }}
         >
+          {/* The slide, cut to its edges. The selection's frame and handles
+              are drawn outside it, below, so they are never covered by
+              another object or cut off at the slide's edge. */}
+          <div
+            className="isolate absolute inset-0 overflow-hidden bg-black"
+            style={{ backgroundColor: selectedSlideBackground ?? "#000000" }}
+          >
           <style>{EDITABLE_TEXT_CSS}</style>
           <SlideMediaBackdrop backgroundId={selectedSlide?.backgroundId} />
           {/* The slide as the screens draw it; the boxes below are for
@@ -720,6 +843,7 @@ export const EditorCanvas = memo(function EditorCanvas({
           {selectedSlide?.elements?.map((element, elementIndex) => (
             <div
               key={element.id}
+              data-element-id={element.id}
               onPointerDown={(e) => {
                 if (element.type === "text" && editingElementId === element.id) {
                   e.stopPropagation();
@@ -727,28 +851,7 @@ export const EditorCanvas = memo(function EditorCanvas({
                 }
                 handleElementPointerDown(e, element);
               }}
-              onDoubleClick={(e) => {
-                if (element.type === "image" && !element.isLocked) {
-                  e.stopPropagation();
-                  void choosePicture().then((chosen) => {
-                    if (chosen) {
-                      onUpdateElement(selectedSlideId, element.id, (prev) =>
-                        withPicture(prev, chosen.url, chosen.size),
-                      );
-                    }
-                  });
-                  return;
-                }
-                if (element.type === "text" && !element.isLocked) {
-                  e.stopPropagation();
-                  editingContentRef.current = element.textBody
-                    ? textBodyToEditableHtml(element.textBody, fontStack)
-                    : element.isPlaceholder
-                      ? ""
-                      : element.richTextHtml?.trim() || plainTextToHtml(element.content || "");
-                  setEditingElementId(element.id);
-                }
-              }}
+              onDoubleClick={(e) => openElement(e, element)}
               onClick={(e) => e.stopPropagation()} // Prevent deselection when clicking inside an element
               className={cn(
                 "absolute transition-none group",
@@ -793,54 +896,6 @@ export const EditorCanvas = memo(function EditorCanvas({
               {isMultiSelection && selectedElementIds.includes(element.id) ? (
                 <div className="pointer-events-none absolute -inset-px z-50 border border-primary/70" />
               ) : null}
-              {!isMultiSelection && selectedElementId === element.id && (
-                <div className="absolute -inset-x-px -inset-y-px z-50 pointer-events-none ring-0 border border-primary/90">
-                  {/* Selector lines provided in the border-primary above */}
-                  
-                  {/* Rotate: drag the dot above the box; Shift turns in 15° steps. */}
-                  {!element.isLocked ? (
-                    <>
-                      <div className="pointer-events-none absolute left-1/2 -top-5 h-5 w-px -translate-x-1/2 bg-primary/70" />
-                      <div
-                        title="Rotate (Shift: 15° steps)"
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          handleInteractionStart(e, element, "rotating");
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="pointer-events-auto absolute left-1/2 -top-[26px] z-100 h-2.5 w-2.5 -translate-x-1/2 cursor-grab rounded-full border border-primary bg-white shadow-sm"
-                      />
-                    </>
-                  ) : null}
-                  {/* 8 Handles */}
-                  {!element.isLocked &&
-                    [
-                      "top-left", "top-middle", "top-right",
-                      "mid-left", "mid-right",
-                      "bottom-left", "bottom-middle", "bottom-right"
-                    ].map(handle => (
-                      <div
-                        key={handle}
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          handleInteractionStart(e, element, "resizing", handle);
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        className={cn(
-                          "absolute h-1.5 w-1.5 bg-white border border-primary pointer-events-auto shadow-sm z-100",
-                          handle === "top-left" && "-left-[3.5px] -top-[3.5px] cursor-nw-resize",
-                          handle === "top-middle" && "left-1/2 -top-[3.5px] -translate-x-1/2 cursor-n-resize",
-                          handle === "top-right" && "-right-[3.5px] -top-[3.5px] cursor-ne-resize",
-                          handle === "mid-left" && "-left-[3.5px] top-1/2 -translate-y-1/2 cursor-w-resize",
-                          handle === "mid-right" && "-right-[3.5px] top-1/2 -translate-y-1/2 cursor-e-resize",
-                          handle === "bottom-left" && "-left-[3.5px] -bottom-[3.5px] cursor-sw-resize",
-                          handle === "bottom-middle" && "left-1/2 -bottom-[3.5px] -translate-x-1/2 cursor-s-resize",
-                          handle === "bottom-right" && "-right-[3.5px] -bottom-[3.5px] cursor-se-resize"
-                        )}
-                      />
-                    ))}
-                </div>
-              )}
 
               {element.type === "text" && element.textBody ? (
                 editingElementId === element.id ? (
@@ -1061,24 +1116,6 @@ export const EditorCanvas = memo(function EditorCanvas({
               ) : null}
             </div>
           ))}
-          {isMultiSelection && selectionBounds ? (
-            <div
-              className="pointer-events-none absolute border border-dashed border-primary"
-              style={{ ...percentBox(selectionBounds), zIndex: elements.length + 60 }}
-            >
-              {RESIZE_HANDLES.map((handle) => (
-                <div
-                  key={handle}
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    const primary = elements.find((each) => each.id === selectedElementId) ?? null;
-                    beginInteraction(e, "groupResizing", primary, selectedElementIds, handle);
-                  }}
-                  className={cn("absolute h-1.5 w-1.5 border border-primary bg-white shadow-sm pointer-events-auto", HANDLE_PLACES[handle])}
-                />
-              ))}
-            </div>
-          ) : null}
           {guides.map((guide) => (
             <div
               key={`${guide.axis}${guide.at}`}
@@ -1096,25 +1133,148 @@ export const EditorCanvas = memo(function EditorCanvas({
               style={{ ...percentBox(marquee), zIndex: elements.length + 80 }}
             />
           ) : null}
+          {previewing && selectedSlide ? (
+            <BuildPreviewLayer
+              preview={previewing}
+              elements={selectedSlide.elements ?? []}
+              canvasSize={canvasSize}
+              libraryStyle={libraryStyle}
+              backgroundColor={selectedSlideBackground ?? "#000000"}
+              onDone={stopBuildPreview}
+            />
+          ) : null}
+          </div>
+
+          {/* Where each object comes in the build order, while building. */}
+          {!previewing
+            ? elements.map((element) => {
+                const badge = buildBadges.get(element.id);
+                if (!badge || element.isVisible === false) return null;
+                return (
+                  <div
+                    key={`build-${element.id}`}
+                    className="pointer-events-none absolute z-40 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-400 px-1.5 text-[10px] font-bold leading-4 text-black shadow"
+                    style={{
+                      left: `${(element.x / canvasDimensions.width) * 100}%`,
+                      top: `${(element.y / canvasDimensions.height) * 100}%`,
+                    }}
+                  >
+                    {badge}
+                  </div>
+                );
+              })
+            : null}
+
+          {/* The selected object's frame, above everything on the slide. */}
+          {!previewing && !isMultiSelection && selectedElement && selectedElement.isVisible !== false ? (
+            <div
+              className="pointer-events-none absolute z-40 border border-primary/90"
+              style={{
+                left: `${(selectedElement.x / canvasDimensions.width) * 100}%`,
+                top: `${(selectedElement.y / canvasDimensions.height) * 100}%`,
+                width: `${(selectedElement.width / canvasDimensions.width) * 100}%`,
+                height: `${(selectedElement.height / canvasDimensions.height) * 100}%`,
+                transform: `rotate(${selectedElement.style?.rotation ?? 0}deg) scaleX(${selectedElement.style?.flipX ? -1 : 1}) scaleY(${selectedElement.style?.flipY ? -1 : 1})`,
+              }}
+            >
+              {/* Inside the frame, a press moves the selected object even
+                  where another is drawn over it; a click still picks the
+                  one on top. Not while typing in it, nor for a background. */}
+              {!selectedElement.isLocked &&
+              !isSlideBackground(selectedElement) &&
+              editingElementId !== selectedElement.id ? (
+                <div
+                  className="pointer-events-auto absolute inset-0 cursor-move"
+                  onPointerDown={(e) => handleSelectedFramePointerDown(e, selectedElement)}
+                  onDoubleClick={(e) => openElement(e, selectedElement)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : null}
+              {!selectedElement.isLocked ? (
+                <>
+                  {/* Rotate: drag the dot above the box; Shift turns in 15° steps. */}
+                  <div className="pointer-events-none absolute left-1/2 -top-5 h-5 w-px -translate-x-1/2 bg-primary/70" />
+                  <div
+                    title="Rotate (Shift: 15° steps)"
+                    onPointerDown={(e) => handleInteractionStart(e, selectedElement, "rotating")}
+                    onClick={(e) => e.stopPropagation()}
+                    className="pointer-events-auto absolute left-1/2 -top-[29px] flex h-4 w-4 -translate-x-1/2 cursor-grab items-center justify-center"
+                  >
+                    <span className="h-2.5 w-2.5 rounded-full border border-primary bg-white shadow-sm" />
+                  </div>
+                  {RESIZE_HANDLES.map((handle) => (
+                    <ResizeHandle
+                      key={handle}
+                      handle={handle}
+                      onPointerDown={(e) => handleInteractionStart(e, selectedElement, "resizing", handle)}
+                    />
+                  ))}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+          {!previewing && isMultiSelection && selectionBounds ? (
+            <div
+              className="pointer-events-none absolute z-40 border border-dashed border-primary"
+              style={percentBox(selectionBounds)}
+            >
+              {RESIZE_HANDLES.map((handle) => (
+                <ResizeHandle
+                  key={handle}
+                  handle={handle}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    const primary = elements.find((each) => each.id === selectedElementId) ?? null;
+                    beginInteraction(e, "groupResizing", primary, selectedElementIds, handle);
+                  }}
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
   );
 });
 
+/**
+ * A resize handle: a small square, in a larger target that is easy to hit.
+ */
+function ResizeHandle({
+  handle,
+  onPointerDown,
+}: {
+  handle: (typeof RESIZE_HANDLES)[number];
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onClick={(e) => e.stopPropagation()}
+      className={cn(
+        "pointer-events-auto absolute flex h-4 w-4 items-center justify-center",
+        HANDLE_PLACES[handle],
+      )}
+    >
+      <span className="h-2 w-2 border border-primary bg-white shadow-sm" />
+    </div>
+  );
+}
+
 const RESIZE_HANDLES = [
   "top-left", "top-middle", "top-right", "mid-left", "mid-right", "bottom-left", "bottom-middle", "bottom-right",
 ] as const;
 
+/** Where each handle's 16px target sits: centred on the frame's corner or edge. */
 const HANDLE_PLACES: Record<(typeof RESIZE_HANDLES)[number], string> = {
-  "top-left": "-left-[3.5px] -top-[3.5px] cursor-nw-resize",
-  "top-middle": "left-1/2 -top-[3.5px] -translate-x-1/2 cursor-n-resize",
-  "top-right": "-right-[3.5px] -top-[3.5px] cursor-ne-resize",
-  "mid-left": "-left-[3.5px] top-1/2 -translate-y-1/2 cursor-w-resize",
-  "mid-right": "-right-[3.5px] top-1/2 -translate-y-1/2 cursor-e-resize",
-  "bottom-left": "-left-[3.5px] -bottom-[3.5px] cursor-sw-resize",
-  "bottom-middle": "left-1/2 -bottom-[3.5px] -translate-x-1/2 cursor-s-resize",
-  "bottom-right": "-right-[3.5px] -bottom-[3.5px] cursor-se-resize",
+  "top-left": "-left-2 -top-2 cursor-nw-resize",
+  "top-middle": "left-1/2 -top-2 -translate-x-1/2 cursor-n-resize",
+  "top-right": "-right-2 -top-2 cursor-ne-resize",
+  "mid-left": "-left-2 top-1/2 -translate-y-1/2 cursor-w-resize",
+  "mid-right": "-right-2 top-1/2 -translate-y-1/2 cursor-e-resize",
+  "bottom-left": "-left-2 -bottom-2 cursor-sw-resize",
+  "bottom-middle": "left-1/2 -bottom-2 -translate-x-1/2 cursor-s-resize",
+  "bottom-right": "-right-2 -bottom-2 cursor-se-resize",
 };
 
 /** A preset shape, small, for the shape menu and the inspector. */

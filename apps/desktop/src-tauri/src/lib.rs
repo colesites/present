@@ -325,6 +325,11 @@ pub fn run() {
             commands::file::select_library_export_destination,
             commands::file::select_library_import_source,
             commands::file::select_media_file,
+            commands::file::select_media_files,
+            commands::media_slides::media_slides_id,
+            commands::media_slides::read_media_slides,
+            commands::media_slides::write_media_slides,
+            commands::media_slides::read_media_presentation,
             commands::file::select_audio_files,
             commands::file::select_prop_image,
             commands::file::select_prop_media,
@@ -537,6 +542,11 @@ pub fn run() {
                 }
                 app.manage(services::pptx::media::ImportedMedia(imported));
             }
+            // The Media panel's PowerPoints and PDFs, converted once each and
+            // read by every service that uses them.
+            app.manage(services::media_slides::MediaSlides(
+                data_dir.join(services::media_slides::FOLDER),
+            ));
             {
                 // The fonts installed in the app — picked in Settings, or
                 // embedded in an imported deck — drawn on the screens too.

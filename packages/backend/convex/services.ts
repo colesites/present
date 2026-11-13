@@ -142,6 +142,26 @@ export const create = mutation({
   },
 });
 
+/**
+ * The reference a service keeps to a PowerPoint or PDF in the desktop's Media
+ * panel: the deck's id, where the file was, and which slides. The slides
+ * themselves stay on the machine.
+ */
+function normalizeMediaSlidesReference(media: unknown) {
+  if (!media || typeof media !== "object") return null;
+  const { deckId, path, slideIndices } = media as Record<string, unknown>;
+  if (typeof deckId !== "string" || typeof path !== "string") return null;
+  return {
+    media: {
+      deckId,
+      path,
+      ...(Array.isArray(slideIndices) && slideIndices.every((index) => Number.isInteger(index))
+        ? { slideIndices: slideIndices as number[] }
+        : {}),
+    },
+  };
+}
+
 export const addItem = mutation({
   args: {
     workspaceId: v.optional(v.string()),
@@ -183,6 +203,8 @@ export const addItem = mutation({
               (args.presentation as { sourceType?: unknown }).sourceType === "pptx"
                 ? ((args.presentation as { sourceType: "pdf" | "pptx" }).sourceType)
                 : "pptx",
+            // A Media panel deck the service reads its slides from.
+            ...(normalizeMediaSlidesReference((args.presentation as { media?: unknown }).media) ?? {}),
           }
         : undefined;
 

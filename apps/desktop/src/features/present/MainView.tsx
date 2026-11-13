@@ -36,6 +36,7 @@ import type {
   Service,
   PlaybackState,
   ServiceItem,
+  ServicePresentation,
   ContentSource,
   MessageOverlay,
   SlideElement,
@@ -120,6 +121,8 @@ export interface MainViewMediaState {
     nextMedia: { id: string; name: string },
   ) => Promise<void>;
   handleRemoveMediaFromServices: (mediaId: string) => Promise<void>;
+  /** A deck from the Media panel's Slides, into the chosen service. */
+  handleAddSlidesToService: (presentation: ServicePresentation) => Promise<void>;
   updateVideoSettings: (s: Partial<VideoSettings>) => void | Promise<void>;
   showMediaInOutput: boolean;
   setShowMediaInOutput: (show: boolean) => void;
@@ -420,6 +423,7 @@ export function MainView({
     handleAddMediaToService,
     handleRenameMediaInServices,
     handleRemoveMediaFromServices,
+    handleAddSlidesToService,
     updateVideoSettings,
     showMediaInOutput,
     setShowMediaInOutput,
@@ -1112,6 +1116,7 @@ export function MainView({
                   onAddToService={handleAddMediaToService}
                   onRenameInServices={handleRenameMediaInServices}
                   onRemoveFromServices={handleRemoveMediaFromServices}
+                  onAddSlidesToService={handleAddSlidesToService}
                   orgId={orgId ?? null}
                   liveVideoRate={videoRate}
                   onSetVideoRate={liveVideoControls.setRate}

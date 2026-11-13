@@ -92,7 +92,7 @@ interface LyricsEditorProps {
 type EditorViewMode = "slides" | "source";
 type GeneralInspectorTab = "presentation" | "slide";
 type ObjectInspectorTab = "text" | "shape" | "image" | "video";
-type InspectorTab = GeneralInspectorTab | ObjectInspectorTab;
+type InspectorTab = GeneralInspectorTab | ObjectInspectorTab | "arrange" | "build";
 
 function isGeneralInspectorTab(tab: InspectorTab): tab is GeneralInspectorTab {
   return tab === "presentation" || tab === "slide";
@@ -749,21 +749,27 @@ export const LyricsEditor = memo(function LyricsEditor({
   );
 
   // The song open here is what the Themes panel applies to while the editor
-  // is in front. Hidden (Show view), the effect is cleaned up and the entry
-  // goes, so the panel turns to Show's song instead.
+  // is in front. Published afresh on every change, and taken back only if it
+  // is still this one, so a clean-up from an earlier render — the editor
+  // hidden and shown again, or the song switched — never leaves the panel
+  // with no song while one is open. Hidden (Show view), the entry goes and
+  // the panel turns to Show's song instead.
   const setThemeTarget = useThemesModalStore((state) => state.setTarget);
+  const withdrawThemeTarget = useThemesModalStore((state) => state.withdrawTarget);
   const themeTargetId = libraryItem && libraryItem.type !== "scripture" ? String(libraryItem._id) : null;
   useEffect(() => {
     if (!themeTargetId) return;
-    setThemeTarget("editor", {
-      surface: "editor",
+    const target = {
+      surface: "editor" as const,
       libraryId: themeTargetId,
       title: draft.title.trim() || "this song",
       slides: draft.slides,
       slideIndex: selectedSlideIndex >= 0 ? selectedSlideIndex : null,
       canvasSize: currentCanvasSize,
       themeId: draft.content?.theme?.id ?? null,
-    });
+    };
+    setThemeTarget("editor", target);
+    return () => withdrawThemeTarget("editor", target);
   }, [
     currentCanvasSize,
     draft.content?.theme?.id,
@@ -772,11 +778,8 @@ export const LyricsEditor = memo(function LyricsEditor({
     selectedSlideIndex,
     setThemeTarget,
     themeTargetId,
+    withdrawThemeTarget,
   ]);
-  useEffect(() => {
-    if (!themeTargetId) return;
-    return () => setThemeTarget("editor", null);
-  }, [setThemeTarget, themeTargetId]);
 
   // A theme chosen in the panel, for this song: onto the draft, which saves
   // as any edit does. The whole song records it, so slides rebuilt from the
@@ -1419,6 +1422,7 @@ export const LyricsEditor = memo(function LyricsEditor({
               fontItalic={fontItalic}
               fontUnderline={fontUnderline}
               onFontStyleChange={onFontStyleChange}
+              showBuildOrder={inspectorTab === "build"}
             />
             </div>
           </ResizablePanel>
@@ -1456,6 +1460,7 @@ export const LyricsEditor = memo(function LyricsEditor({
               onSetAllTextStyle={setAllTextElementsStyle}
               onUpdateOutput={handleUpdateOutput}
               onApplyInlineTextFormat={applyInlineTextFormat}
+              onSelectElement={selectElement}
             />
             </div>
           </ResizablePanel>

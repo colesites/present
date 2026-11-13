@@ -309,6 +309,13 @@ impl SceneCompositor {
     /// The live slide's builds at this moment: which slide and step, how
     /// long since that step began, and so each object's pose.
     fn update_builds(&mut self, scene: &OutputScene) {
+        self.update_builds_arriving(scene, None);
+    }
+
+    /// As [`update_builds`](Self::update_builds), for a slide arriving by a
+    /// transition that ends at `arrives`: its builds begin once it is in, so
+    /// what comes with the slide is not spent behind the transition.
+    fn update_builds_arriving(&mut self, scene: &OutputScene, arrives: Option<Instant>) {
         let now = Instant::now();
         let Some(step) = scene.build_step.filter(|_| scene.show_text) else {
             self.build_clock = None;
@@ -328,10 +335,10 @@ impl SceneCompositor {
             _ => BuildClock {
                 slide,
                 step,
-                since: now,
+                since: arrives.unwrap_or(now),
             },
         };
-        let elapsed_ms = now.duration_since(clock.since).as_secs_f64() * 1000.0;
+        let elapsed_ms = now.saturating_duration_since(clock.since).as_secs_f64() * 1000.0;
         self.build_clock = Some(clock);
         let elements = scene.slide_elements().unwrap_or_default();
         let timeline = super::build::timeline(&elements);
@@ -990,7 +997,19 @@ impl SceneCompositor {
         };
         // Nothing to show is nothing at all: not a lower third's empty band.
         let layer = slide_text::layer_for(scene);
-        let elements = scene.slide_elements().unwrap_or_default();
+        let all = scene.slide_elements().unwrap_or_default();
+        // Objects not built in yet, or built out, are not on the slide: their
+        // words are left out of a words-only box.
+        let elements: Vec<_> = all
+            .iter()
+            .filter(|element| {
+                !matches!(
+                    self.build_poses.get(&element.id),
+                    Some(super::build::Pose::Hidden)
+                )
+            })
+            .cloned()
+            .collect();
         let has_words = match layer {
             // Only chosen with words to show.
             SlideTextLayer::Scripture | SlideTextLayer::PlainText => true,
@@ -1061,7 +1080,7 @@ impl SceneCompositor {
             SlideTextLayer::Elements if layout.words_text_only => {
                 // The words are laid out together, so they move together: on
                 // the side of a transition any one of them is on.
-                let mut texts = elements
+                let mut texts = all
                     .iter()
                     .enumerate()
                     .filter(|(_, element)| element.element_type == SlideElementType::Text);
@@ -1099,12 +1118,21 @@ impl SceneCompositor {
                     frame_width: slide_w,
                     frame_height: slide_h,
                 };
-                for (index, element) in elements.iter().enumerate() {
+                // Every object, in its own place, so a transition matches
+                // them as change detection did; a hidden pose draws nothing.
+                for (index, element) in all.iter().enumerate() {
                     if !element.is_visible() || !keep.wants(index, element) {
                         continue;
                     }
                     if !element.element_type.is_composited() {
                         report.elements_deferred += 1;
+                        continue;
+                    }
+                    // Part-way through a build: drawn as the full screen draws it.
+                    if let Some(pose) = self.build_poses.get(&element.id) {
+                        if draw_posed(&mut slide, element, &inner, loader, *pose) {
+                            report.elements_drawn += 1;
+                        }
                         continue;
                     }
                     if super::scene::draw_element_into(&mut slide, element, &inner, loader) {
@@ -1431,6 +1459,15 @@ impl SceneCompositor {
         };
         self.running = transition::Running::begin(from, wanted, changes, now)
             .map(|running| (running, previous));
+        // The arriving slide's builds, before any of it is drawn: what waits
+        // for a click stays hidden through the transition — not drawn as made
+        // and then taken away — and what comes with the slide starts once the
+        // slide is in. Its layers were drawn from the last slide's until now.
+        if self.running.is_some() {
+            let arrives = now + wanted.duration();
+            self.build_clock = None;
+            self.update_builds_arriving(scene, Some(arrives));
+        }
         // Which elements move depends on where the slide arrives from as well
         // as where it arrives, so a new transition never inherits the last
         // one's layers even when it lands on the same slide.
@@ -3112,6 +3149,102 @@ mod tests {
             .expect("frame");
         assert_eq!(frame.pixel_at(80, 45).map(|p| p.1), Some(255), "all built");
         assert!(!compositor.is_animating());
+    }
+
+    /// The owner's report: in Show the slides just switched. A song's slide
+    /// arriving by a transition was drawn with the last slide's builds, so
+    /// what waits for its click came in with the slide.
+    #[test]
+    fn a_build_waiting_for_its_click_stays_hidden_through_the_slides_transition() {
+        let video = frame_of(100, 100, [0, 0, 0, 255]);
+        let first = OutputScene {
+            active_slide_id: Some("song:0".to_owned()),
+            slide_elements: Some(json!([{
+                "id": "one", "type": "shape",
+                "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0,
+                "style": { "backgroundColor": "#ffffff" }
+            }])),
+            ..video_scene()
+        };
+        let second = |step: usize| OutputScene {
+            active_slide_id: Some("song:1".to_owned()),
+            build_step: Some(step),
+            slide_elements: Some(json!([{
+                "id": "two", "type": "shape",
+                "x": 50.0, "y": 20.0, "width": 40.0, "height": 60.0,
+                "style": { "backgroundColor": "#00ff00" },
+                "builds": { "in": { "effect": "appear", "start": "on-click" } }
+            }])),
+            transition: Some(transition::Transition {
+                kind: "fade".to_owned(),
+                duration_ms: 300,
+                easing: transition::Easing::Linear,
+                ..transition::Transition::none()
+            }),
+            ..video_scene()
+        };
+
+        let mut compositor = SceneCompositor::new(100, 100);
+        compositor
+            .render(&first, Some(&video), &NoMedia)
+            .expect("the first slide");
+        compositor
+            .render(&second(0), Some(&video), &NoMedia)
+            .expect("the transition begins");
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let (frame, _) = compositor
+            .render(&second(0), Some(&video), &NoMedia)
+            .expect("part way through");
+        assert_eq!(
+            frame.pixel_at(70, 50).map(|p| p.1),
+            Some(0),
+            "not during the transition"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let (frame, _) = compositor
+            .render(&second(0), Some(&video), &NoMedia)
+            .expect("the slide is in");
+        assert_eq!(frame.pixel_at(70, 50).map(|p| p.1), Some(0), "nor after it");
+
+        let (frame, _) = compositor
+            .render(&second(1), Some(&video), &NoMedia)
+            .expect("the click");
+        assert_eq!(
+            frame.pixel_at(70, 50).map(|p| p.1),
+            Some(255),
+            "on its click"
+        );
+    }
+
+    /// A lower third shows a designed slide's words alone: the words of an
+    /// object not built in yet are not among them until its click.
+    #[test]
+    fn a_words_only_band_leaves_out_words_not_built_in_yet() {
+        let built = |step: usize| OutputScene {
+            active_slide_id: Some("song:0".to_owned()),
+            build_step: Some(step),
+            slide_canvas_size: Some("1920x1080".to_owned()),
+            slide_elements: Some(json!([{
+                "id": "later", "type": "text",
+                "x": 100.0, "y": 100.0, "width": 1720.0, "height": 300.0,
+                "content": "It is finished",
+                "style": { "fontSize": 90, "color": "#ffffff" },
+                "builds": { "in": { "effect": "appear", "start": "on-click" } }
+            }])),
+            screen_layout: Some(ScreenLayout {
+                words_text_only: true,
+                ..lower_third()
+            }),
+            ..scene()
+        };
+        let mut compositor = SceneCompositor::new(640, 360);
+        let (frame, _) = compositor.render(&built(0), None, &NoMedia).expect("frame");
+        assert!(
+            rows_with_words(frame).is_empty(),
+            "nothing before its click"
+        );
+        let (frame, _) = compositor.render(&built(1), None, &NoMedia).expect("frame");
+        assert!(!rows_with_words(frame).is_empty(), "the words on its click");
     }
 
     #[test]

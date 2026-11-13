@@ -89,6 +89,17 @@ pub async fn select_media_file(
     dialog::select_media_file(&app, &state, Some(&window))
 }
 
+/// The Media panel's Add Media: any number of images, videos, PowerPoints
+/// and PDFs.
+#[tauri::command]
+pub async fn select_media_files(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, FileState>,
+) -> AppResult<Vec<PickedFile>> {
+    dialog::select_media_files(&app, &state, Some(&window))
+}
+
 #[tauri::command]
 pub async fn select_audio_files(
     app: AppHandle,

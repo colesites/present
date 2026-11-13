@@ -25,6 +25,8 @@ const PROP_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "s
 const PROP_VIDEO_EXTENSIONS: &[&str] = &["mp4", "webm", "mov", "avi", "mkv", "m4v"];
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp"];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "webm", "mov", "avi", "mkv", "m4v"];
+/// The documents the Media panel keeps as Slides.
+const SLIDES_EXTENSIONS: &[&str] = &["pptx", "pdf"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "m4a", "aac", "ogg", "flac"];
 /// Font files to install (`font.ipc.ts:21-37`).
 const FONT_EXTENSIONS: &[&str] = &["ttf", "otf", "woff", "woff2"];
@@ -215,6 +217,50 @@ pub fn select_media_file(
     };
     let path = state.grant_picked_file(&to_path(picked)?)?;
     Ok(Some(described(&path)))
+}
+
+/// Files to add to a media folder: images, videos, and the PowerPoint and PDF
+/// documents the Media panel keeps as Slides. Multi-select; empty when
+/// cancelled.
+pub fn select_media_files(
+    app: &AppHandle,
+    state: &FileState,
+    requester: Option<&WebviewWindow>,
+) -> AppResult<Vec<PickedFile>> {
+    let mut combined = IMAGE_EXTENSIONS.to_vec();
+    combined.extend_from_slice(VIDEO_EXTENSIONS);
+    combined.extend_from_slice(SLIDES_EXTENSIONS);
+
+    let Some(picked) = builder(app, requester)
+        .add_filter("Media Files", &combined)
+        .add_filter("Images", IMAGE_EXTENSIONS)
+        .add_filter("Videos", VIDEO_EXTENSIONS)
+        .add_filter("Slides (PowerPoint, PDF)", SLIDES_EXTENSIONS)
+        .blocking_pick_files()
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut files = Vec::with_capacity(picked.len());
+    for entry in picked {
+        let path = state.grant_picked_file(&to_path(entry)?)?;
+        files.push(described(&path));
+    }
+    Ok(files)
+}
+
+/// A PowerPoint or PDF already in a media folder, read as the presentation
+/// picker reads one, for the Media panel to convert into slides.
+pub fn read_presentation_file(state: &FileState, path: &str) -> AppResult<PickedPresentation> {
+    let path = state.resolve_existing(path)?;
+    let bytes = std::fs::read(&path)?;
+    let metadata = std::fs::metadata(&path)?;
+    Ok(PickedPresentation {
+        name: file_name(&path),
+        path: path.display().to_string(),
+        bytes: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        last_modified: modified_ms(&metadata),
+    })
 }
 
 /// A PowerPoint file to import (`pptx.ipc.ts:6-24`): its path, granted to the

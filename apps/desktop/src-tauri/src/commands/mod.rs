@@ -19,6 +19,7 @@ pub mod fonts;
 pub mod looks;
 pub mod media;
 pub mod media_frames;
+pub mod media_slides;
 pub mod menu;
 pub mod mini_lyrics;
 pub mod native_panels;

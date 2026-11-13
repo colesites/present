@@ -25,6 +25,7 @@ pub mod look_scene;
 pub mod looks;
 pub mod media_frames;
 pub mod media_protocol;
+pub mod media_slides;
 pub mod media_watch;
 pub mod mini_lyrics;
 pub mod monitors;

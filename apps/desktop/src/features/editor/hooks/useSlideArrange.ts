@@ -12,6 +12,7 @@ import {
   withGroups,
   type Alignment,
 } from "../lib/arrange";
+import { useThemesModalStore } from "../../../renderer/shared/store/themesModal";
 
 export type ArrangeAction =
   | { kind: "align"; alignment: Alignment }
@@ -41,6 +42,16 @@ const isTyping = (target: EventTarget | null) => {
   const tag = target.tagName.toLowerCase();
   return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
 };
+
+/**
+ * Something in front of the editor takes the keys: the Themes panel, or a
+ * dialog. Its ⌘Z, Delete and arrows are its own, not the slide's behind it.
+ */
+const isCoveredByDialog = () =>
+  useThemesModalStore.getState().isOpen ||
+  Boolean(
+    document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]'),
+  );
 
 /**
  * Several objects picked at once, and everything done to them: align,
@@ -186,7 +197,7 @@ export function useSlideArrange({
   useEffect(() => {
     if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isTyping(event.target)) return;
+      if (event.defaultPrevented || isTyping(event.target) || isCoveredByDialog()) return;
       const mod = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
       const handled = (() => {
