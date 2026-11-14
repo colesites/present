@@ -93,7 +93,14 @@ import type { SlideCommand } from "../hooks/useSlideCommands";
 import { useBuildPreviewStore } from "../lib/build-preview";
 import { isPictureBackground, pictureBackgroundOf, withPictureBackground } from "../lib/slides";
 import type { Alignment } from "../lib/arrange";
-import { BUILD_EFFECTS, BUILD_STARTS, buildTimeline, withBuildOrder } from "../lib/builds";
+import {
+  BUILD_DELIVERIES,
+  BUILD_EFFECTS,
+  BUILD_STARTS,
+  buildTimeline,
+  canDeliverByPiece,
+  withBuildOrder,
+} from "../lib/builds";
 import type {
   CanvasSizePreset,
   LibraryItemDraft,
@@ -1262,6 +1269,7 @@ const seconds = (ms: number | undefined, fallback: number) => (ms ?? fallback) /
 function BuildControls({
   title,
   build,
+  byPiece,
   isFirst,
   onAdd,
   onChange,
@@ -1269,6 +1277,8 @@ function BuildControls({
 }: {
   title: string;
   build: SlideBuild | undefined;
+  /** A text box of its own words: it can be built a line, word or letter at a time. */
+  byPiece: boolean;
   /** First in the slide's build order: it starts with the slide or on a click. */
   isFirst: boolean;
   onAdd: () => void;
@@ -1313,9 +1323,9 @@ function BuildControls({
         />
       </StyleRow>
       {effect?.directed ? (
-        <StyleRow label={build.effect === "fly" ? "From" : "Wipe from"}>
+        <StyleRow label={build.effect === "wipe" ? "Wipe from" : "From"}>
           <Segmented
-            value={build.direction ?? (build.effect === "fly" ? "bottom" : "left")}
+            value={build.direction ?? (build.effect === "wipe" ? "left" : "bottom")}
             label="Direction"
             onChange={(direction) => onChange({ ...build, direction: direction as SlideBuild["direction"] })}
             options={[
@@ -1324,6 +1334,36 @@ function BuildControls({
               { value: "top", label: "Top" },
               { value: "bottom", label: "Bottom" },
             ]}
+          />
+        </StyleRow>
+      ) : null}
+      {byPiece ? (
+        <StyleRow label="Animate">
+          <SelectInput
+            label={`${title} by`}
+            value={build.delivery ?? "all"}
+            options={BUILD_DELIVERIES.map(({ value, label }) => ({ value, label }))}
+            onChange={(value) => {
+              const delivery = value as NonNullable<SlideBuild["delivery"]>;
+              const next: SlideBuild = { ...build, delivery };
+              // Each kind of piece has its own pace: the gap starts again at it.
+              delete next.gapMs;
+              if (delivery === "all") delete next.delivery;
+              onChange(next);
+            }}
+          />
+        </StyleRow>
+      ) : null}
+      {byPiece && build.delivery && build.delivery !== "all" ? (
+        <StyleRow label="Gap">
+          <NumberInput
+            value={seconds(build.gapMs, BUILD_DELIVERIES.find((each) => each.value === build.delivery)?.gapMs ?? 0)}
+            min={0}
+            max={10}
+            step={0.05}
+            suffix="s"
+            label={`${title} gap between each ${build.delivery}`}
+            onChange={(value) => onChange({ ...build, gapMs: Math.round(value * 1000) })}
           />
         </StyleRow>
       ) : null}
@@ -1443,6 +1483,7 @@ function BuildSections({
       <BuildControls
         title="Build In"
         build={element.builds?.in}
+        byPiece={canDeliverByPiece(element)}
         isFirst={indexOf("in") <= 0}
         onAdd={() => addBuild("in")}
         onChange={(build) => setBuild("in", build)}
@@ -1451,6 +1492,7 @@ function BuildSections({
       <BuildControls
         title="Build Out"
         build={element.builds?.out}
+        byPiece={canDeliverByPiece(element)}
         isFirst={indexOf("out") === 0}
         onAdd={() => addBuild("out")}
         onChange={(build) => setBuild("out", build)}
@@ -1498,6 +1540,7 @@ function BuildSections({
                   <span className="truncate">{names.get(entry.elementId) ?? "Object"}</span>
                   <span className="truncate text-[10px] text-muted-foreground">
                     {entry.phase === "in" ? "In" : "Out"}: {BUILD_EFFECTS.find((e) => e.value === entry.build.effect)?.label}
+                    {entry.units > 1 ? ` by ${entry.delivery}` : ""}
                     {" · "}
                     {startWords(entry, index)}
                   </span>

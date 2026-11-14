@@ -14,8 +14,13 @@ previews the slide's builds — or one build — on the editor's canvas
 (`BuildPreviewLayer.tsx`, poses mirrored in `lib/builds.ts`).
 Builds are kept on the element (`builds.in`, `builds.out`, each with an
 `order`) rather than a slide-level `buildOrder`: the steps are worked out from
-the elements alone. Phases 2–5 (text by line/word/letter, presets, …) are not
-built.
+the elements alone. Since 2026-11-15 (0.4.18), phase 2's core: one text box
+built by line, word or letter (`delivery`, `gapMs`, the pieces running
+automatically one after another), drawn piece by piece on the screens
+(`text::draw_units`, `pipeline::draw_units`) and in the editor's preview; and
+the effects slide, bounce, spring (`elastic`), spin, flip, stretch and focus
+(`blur`). Each piece on its own click, by underline, presets and typewriter
+are not built.
 
 ## Words first
 

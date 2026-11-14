@@ -77,3 +77,41 @@ test("every effect starts hidden and ends as made", () => {
   assert.ok(builds.poseOf("pop", undefined, 0.8).scale > 1, "pop goes past its size");
   assert.ok(builds.poseOf("rise", undefined, 0.5).dy > 0, "rise comes from below");
 });
+
+test("one text box builds word by word, as the compositor counts its words", () => {
+  const slide = [
+    {
+      id: "lyric",
+      type: "text",
+      content: "Let the  army\nroar",
+      builds: { in: { effect: "pop", durationMs: 400, start: "with-previous", delivery: "word", gapMs: 200 } },
+    },
+    { id: "next", type: "text", content: "", builds: { in: { effect: "fade", durationMs: 100, start: "after-previous" } } },
+  ];
+  const timeline = builds.buildTimeline(slide);
+  assert.equal(timeline.placed[0].units, 4);
+  assert.equal(timeline.placed[1].beginMs, 1000, "after the last word");
+  const look = builds.posesAt(timeline, 0, 300).poses.get("lyric");
+  assert.equal(look.units.length, 4);
+  assert.ok(!look.units[0].hidden && !look.units[1].hidden);
+  assert.ok(look.units[2].hidden && look.units[3].hidden);
+  assert.ok(!builds.posesAt(timeline, 0, 2000).poses.has("lyric"), "all in: as made");
+});
+
+test("letters and lines are counted as the compositor counts them", () => {
+  const box = (delivery) => ({ id: delivery, type: "text", content: "Hi you\n\nthere", builds: { in: { effect: "fade", delivery } } });
+  const timeline = builds.buildTimeline([box("letter"), box("line"), { id: "s", type: "shape", content: "", builds: { in: { effect: "fade", delivery: "word" } } }]);
+  assert.equal(timeline.placed[0].units, 10);
+  assert.equal(timeline.placed[0].gapMs, 50);
+  assert.equal(timeline.placed[1].units, 2);
+  assert.equal(timeline.placed[2].units, 1, "a shape builds all at once");
+});
+
+test("the new effects end upright, sharp and their own width", () => {
+  for (const effect of ["slide", "bounce", "elastic", "spin", "flip", "stretch", "blur"]) {
+    const end = builds.poseOf(effect, undefined, 1);
+    assert.ok(Math.abs(end.scaleX - 1) < 1e-6 && Math.abs(end.rotate) < 1e-6 && Math.abs(end.blur) < 1e-6, effect);
+  }
+  assert.ok(builds.poseOf("spin", undefined, 0.3).rotate < 0, "spin turns in");
+  assert.ok(builds.poseOf("blur", undefined, 0.3).blur > 0, "blur starts soft");
+});

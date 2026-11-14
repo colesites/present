@@ -395,16 +395,17 @@ export const LyricsEditor = memo(function LyricsEditor({
 
     if (!selectedElementType) {
       setSelectedElementId(null);
-      setInspectorTab(lastGeneralInspectorTabRef.current);
+      setInspectorTabState((current) => (current === "build" ? current : lastGeneralInspectorTabRef.current));
       return;
     }
 
     // On selecting an object, its tab. Only then: the sidebar's Song and
     // Slide tabs stay open while the object is edited, not snapped back to
-    // it on every change.
+    // it on every change. Build stays open too: someone building a slide
+    // goes from object to object, and each one's builds are what they want.
     const objectTab = getInspectorTabForElementType(selectedElementType);
     if (objectTab) {
-      setInspectorTabState(objectTab);
+      setInspectorTabState((current) => (current === "build" ? current : objectTab));
     }
   }, [selectedElementId, selectedElementType, setInspectorTab]);
 
@@ -817,17 +818,21 @@ export const LyricsEditor = memo(function LyricsEditor({
     (slideId: string | null) => {
       setSelectedSlideId(slideId);
       setSelectedElementId(null);
-      setInspectorTab("slide");
+      // Building slide after slide: Build stays, and shows again on the next object.
+      lastGeneralInspectorTabRef.current = "slide";
+      setInspectorTabState((current) => (current === "build" ? current : "slide"));
     },
-    [setInspectorTab],
+    [],
   );
 
   const handleSelectElement = useCallback(
     (elementId: string | null) => {
       setSelectedElementId(elementId);
 
+      // On Build, Build it stays — picking an object from the build order,
+      // or on the canvas, or letting go of one — until another tab is chosen.
       if (!elementId) {
-        setInspectorTab(lastGeneralInspectorTabRef.current);
+        setInspectorTabState((current) => (current === "build" ? current : lastGeneralInspectorTabRef.current));
         return;
       }
 
@@ -839,10 +844,10 @@ export const LyricsEditor = memo(function LyricsEditor({
       );
 
       if (nextInspectorTab) {
-        setInspectorTab(nextInspectorTab);
+        setInspectorTabState((current) => (current === "build" ? current : nextInspectorTab));
       }
     },
-    [selectedSlide?.elements, setInspectorTab],
+    [selectedSlide?.elements],
   );
 
   const {

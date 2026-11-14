@@ -286,7 +286,23 @@ export type SlideElement = {
 
 /** One build: an effect, when it starts, and how long it takes. */
 export type SlideBuild = {
-  effect: "appear" | "fade" | "wipe" | "fly" | "zoom" | "rise" | "drop" | "pop" | "grow";
+  effect:
+    | "appear"
+    | "fade"
+    | "wipe"
+    | "fly"
+    | "zoom"
+    | "rise"
+    | "drop"
+    | "pop"
+    | "grow"
+    | "slide"
+    | "bounce"
+    | "elastic"
+    | "spin"
+    | "flip"
+    | "stretch"
+    | "blur";
   durationMs?: number;
   delayMs?: number;
   start?: "on-click" | "with-previous" | "after-previous";
@@ -294,6 +310,10 @@ export type SlideBuild = {
   direction?: "left" | "right" | "top" | "bottom";
   /** Its place among the slide's builds; layer order when absent. */
   order?: number;
+  /** A text box all at once (the default), or a line, word or letter at a time. */
+  delivery?: "all" | "line" | "word" | "letter";
+  /** Between one line, word or letter starting and the next. */
+  gapMs?: number;
 };
 
 export type CanvasSizePreset =
