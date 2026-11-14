@@ -33,6 +33,7 @@ use tiny_skia::{PixmapMut, Transform};
 
 use crate::services::slide::{SlideElement, SlideElementStyle};
 
+use super::build::Delivery;
 use super::optical_size::OpticalSizes;
 use super::{color, geometry};
 
@@ -371,6 +372,166 @@ pub fn draw_box(pixmap: &mut PixmapMut<'_>, text: &str, spec: &TextBox) {
 }
 
 pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geometry::Viewport) {
+    draw_text(pixmap, element, viewport, None);
+}
+
+/// Each line, word or letter of a text box, in its box (before its
+/// transform): `glyphs` round its letters, and `area` the part of the box
+/// that is its own, reaching to halfway to its neighbours and out past the
+/// box's edges, so its outline and shadow go with it. The areas of a box's
+/// pieces do not overlap, and together cover all of it.
+#[derive(Debug, Clone, Default)]
+pub struct UnitBox {
+    pub glyphs: Option<tiny_skia::Rect>,
+    pub areas: Vec<tiny_skia::Rect>,
+}
+
+/// Draw a text box as `draw` does, and say where each of its pieces is when
+/// delivered by `delivery`. Nothing for an imported deck's words, which are
+/// built all at once.
+pub fn draw_units(
+    pixmap: &mut PixmapMut<'_>,
+    element: &SlideElement,
+    viewport: &geometry::Viewport,
+    delivery: Delivery,
+) -> Vec<UnitBox> {
+    let mut units = Vec::new();
+    draw_text(pixmap, element, viewport, Some((delivery, &mut units)));
+    units
+}
+
+/// Where each piece starts in `body` (a byte offset, for each character that
+/// is not a space) and which piece it is in, counted from 0: each paragraph
+/// with words, each word, or each letter.
+pub fn units_in(body: &str, delivery: Delivery) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut next = 0usize;
+    let mut in_word = false;
+    let mut line_has_words = false;
+    for (at, character) in body.char_indices() {
+        if character == '\n' {
+            if (delivery == Delivery::Line && line_has_words)
+                || (delivery == Delivery::Word && in_word)
+            {
+                next += 1;
+            }
+            line_has_words = false;
+            in_word = false;
+            continue;
+        }
+        if character.is_whitespace() {
+            if delivery == Delivery::Word && in_word {
+                next += 1;
+            }
+            in_word = false;
+            continue;
+        }
+        out.push((at, next));
+        if delivery == Delivery::Letter {
+            next += 1;
+        }
+        in_word = true;
+        line_has_words = true;
+    }
+    out
+}
+
+/// How many pieces a text box is delivered in.
+pub fn unit_count(element: &SlideElement, delivery: Delivery) -> usize {
+    let body = paragraphs_of(element).join("\n");
+    units_in(&body, delivery)
+        .last()
+        .map_or(0, |(_, unit)| unit + 1)
+}
+
+/// Each piece's place, from the laid-out lines: `offset` is where the
+/// layout's top left is in the box.
+fn unit_boxes(buffer: &Buffer, body: &str, delivery: Delivery, offset: (f32, f32)) -> Vec<UnitBox> {
+    let units = units_in(body, delivery);
+    let Some(count) = units.last().map(|(_, unit)| unit + 1) else {
+        return Vec::new();
+    };
+    let mut line_starts = vec![0usize];
+    line_starts.extend(
+        body.char_indices()
+            .filter(|(_, character)| *character == '\n')
+            .map(|(at, _)| at + 1),
+    );
+    let unit_at = |byte: usize| {
+        units
+            .binary_search_by_key(&byte, |(at, _)| *at)
+            .ok()
+            .map(|index| units[index].1)
+    };
+    // Far enough past any box to take in an outline or a shadow.
+    const FAR: f32 = 100_000.0;
+    let mut boxes = vec![UnitBox::default(); count];
+    let runs: Vec<_> = buffer.layout_runs().collect();
+    let last_run = runs.len().saturating_sub(1);
+    for (index, run) in runs.iter().enumerate() {
+        let start = line_starts.get(run.line_i).copied().unwrap_or(0);
+        // The pieces on this line, left to right, as spans of their glyphs.
+        let mut spans: Vec<(usize, f32, f32)> = Vec::new();
+        for glyph in run.glyphs {
+            let Some(unit) = unit_at(start + glyph.start) else {
+                continue;
+            };
+            let (low, high) = (glyph.x, glyph.x + glyph.w);
+            match spans.last_mut() {
+                Some(span) if span.0 == unit => {
+                    span.1 = span.1.min(low);
+                    span.2 = span.2.max(high);
+                }
+                _ => spans.push((unit, low, high)),
+            }
+        }
+        spans.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let line_top = offset.1 + run.line_top;
+        let line_bottom = line_top + run.line_height;
+        let top = if index == 0 { -FAR } else { line_top };
+        let bottom = if index == last_run { FAR } else { line_bottom };
+        for (at, &(unit, low, high)) in spans.iter().enumerate() {
+            let left = match at.checked_sub(1) {
+                Some(before) => offset.0 + (spans[before].2 + low) / 2.0,
+                None => -FAR,
+            };
+            let right = match spans.get(at + 1) {
+                Some(after) => offset.0 + (high + after.1) / 2.0,
+                None => FAR,
+            };
+            let Some(entry) = boxes.get_mut(unit) else {
+                continue;
+            };
+            if let Some(area) = tiny_skia::Rect::from_ltrb(left, top, right.max(left + 1.0), bottom)
+            {
+                entry.areas.push(area);
+            }
+            let glyphs = tiny_skia::Rect::from_ltrb(
+                offset.0 + low,
+                line_top,
+                (offset.0 + high).max(offset.0 + low + 1.0),
+                line_bottom,
+            );
+            entry.glyphs = match (entry.glyphs, glyphs) {
+                (Some(a), Some(b)) => tiny_skia::Rect::from_ltrb(
+                    a.left().min(b.left()),
+                    a.top().min(b.top()),
+                    a.right().max(b.right()),
+                    a.bottom().max(b.bottom()),
+                ),
+                (a, b) => a.or(b),
+            };
+        }
+    }
+    boxes
+}
+
+fn draw_text(
+    pixmap: &mut PixmapMut<'_>,
+    element: &SlideElement,
+    viewport: &geometry::Viewport,
+    units: Option<(Delivery, &mut Vec<UnitBox>)>,
+) {
     // An imported deck's words, each run in its own style.
     if super::rich_text::applies(element) {
         super::rich_text::draw(pixmap, element, viewport);
@@ -611,6 +772,10 @@ pub fn draw(pixmap: &mut PixmapMut<'_>, element: &SlideElement, viewport: &geome
                 }
             }
         }
+    }
+
+    if let Some((delivery, out)) = units {
+        *out = unit_boxes(&buffer, &body, delivery, (offset_x, offset_y));
     }
 
     if let Some(outline) = effects.outline {

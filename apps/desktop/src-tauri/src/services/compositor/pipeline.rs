@@ -89,7 +89,7 @@ pub struct SceneCompositor {
     /// When the live slide came up and its build step began (`build`).
     build_clock: Option<BuildClock>,
     /// How each object with builds is drawn this frame; absent ones as made.
-    build_poses: std::collections::HashMap<String, super::build::Pose>,
+    build_poses: std::collections::HashMap<String, super::build::Look>,
     /// A build is part-way: the next frame looks different.
     builds_moving: bool,
     /// The slide layers over transparency, valid while `cached_for` holds.
@@ -900,15 +900,11 @@ impl SceneCompositor {
                         continue;
                     }
                     // An object part-way through a build, or not yet built in.
-                    match self.build_poses.get(&element.id) {
-                        Some(super::build::Pose::Hidden) => continue,
-                        Some(pose) => {
-                            if draw_posed(layers, &element, viewport, loader, *pose) {
-                                report.elements_drawn += 1;
-                            }
-                            continue;
+                    if let Some(look) = self.build_poses.get(&element.id) {
+                        if draw_look(layers, &element, viewport, loader, look) {
+                            report.elements_drawn += 1;
                         }
-                        None => {}
+                        continue;
                     }
                     if super::scene::draw_element_into(layers, &element, viewport, loader) {
                         report.elements_drawn += 1;
@@ -1003,10 +999,10 @@ impl SceneCompositor {
         let elements: Vec<_> = all
             .iter()
             .filter(|element| {
-                !matches!(
-                    self.build_poses.get(&element.id),
-                    Some(super::build::Pose::Hidden)
-                )
+                !self
+                    .build_poses
+                    .get(&element.id)
+                    .is_some_and(super::build::Look::is_hidden)
             })
             .cloned()
             .collect();
@@ -1129,8 +1125,8 @@ impl SceneCompositor {
                         continue;
                     }
                     // Part-way through a build: drawn as the full screen draws it.
-                    if let Some(pose) = self.build_poses.get(&element.id) {
-                        if draw_posed(&mut slide, element, &inner, loader, *pose) {
+                    if let Some(look) = self.build_poses.get(&element.id) {
+                        if draw_look(&mut slide, element, &inner, loader, look) {
                             report.elements_drawn += 1;
                         }
                         continue;
@@ -1753,8 +1749,26 @@ struct BuildClock {
     since: Instant,
 }
 
+/// An object part-way through a build, or not built in yet (drawn as
+/// nothing): all of it in one pose, or each of its pieces in its own.
+fn draw_look(
+    layers: &mut Pixmap,
+    element: &crate::services::slide::SlideElement,
+    viewport: &geometry::Viewport,
+    loader: &dyn MediaLoader,
+    look: &super::build::Look,
+) -> bool {
+    match look {
+        super::build::Look::Whole(pose) => draw_posed(layers, element, viewport, loader, *pose),
+        super::build::Look::Units { delivery, poses } => {
+            draw_units(layers, element, viewport, *delivery, poses)
+        }
+    }
+}
+
 /// An object drawn part-way through a build: on its own, then faded, moved,
-/// scaled about its middle and cut back from one side onto the slide.
+/// scaled and turned about its middle, blurred and cut back from one side
+/// onto the slide.
 fn draw_posed(
     layers: &mut Pixmap,
     element: &crate::services::slide::SlideElement,
@@ -1762,14 +1776,7 @@ fn draw_posed(
     loader: &dyn MediaLoader,
     pose: super::build::Pose,
 ) -> bool {
-    let super::build::Pose::Moving {
-        opacity,
-        dx,
-        dy,
-        scale,
-        wipe,
-    } = pose
-    else {
+    let super::build::Pose::Moving { blur, .. } = pose else {
         return false;
     };
     let Some(mut alone) = Pixmap::new(layers.width(), layers.height()) else {
@@ -1778,31 +1785,208 @@ fn draw_posed(
     if !super::scene::draw_element_into(&mut alone, element, viewport, loader) {
         return false;
     }
-    let x = (element.x() * viewport.scale_x()) as f32;
-    let y = (element.y() * viewport.scale_y()) as f32;
-    let w = (element.width() * viewport.scale_x()) as f32;
-    let h = (element.height() * viewport.scale_y()) as f32;
+    let to_frame = viewport.element_transform(element);
+    let (w, h) = viewport.element_size(element);
+    let Some(own) = tiny_skia::Rect::from_xywh(0.0, 0.0, w.max(1.0), h.max(1.0)) else {
+        return false;
+    };
+    let glyphs = bounds_on_frame(own, to_frame);
+    if blur > 0.0 {
+        // Only what is near the object is blurred, not the whole frame.
+        let reach =
+            glyphs.width().max(glyphs.height()) * 0.25 + 3.0 * blur * layers.height() as f32 + 4.0;
+        if let Some((piece, origin)) = crop(&alone, None, to_frame, glyphs, reach) {
+            draw_piece(layers, piece, origin, glyphs, pose);
+        }
+    } else {
+        draw_piece(layers, alone, (0, 0), glyphs, pose);
+    }
+    true
+}
+
+/// A text box delivered a line, word or letter at a time: drawn once on its
+/// own, then each piece taken from it and put down in its own pose — those
+/// built in as made, all at once.
+fn draw_units(
+    layers: &mut Pixmap,
+    element: &crate::services::slide::SlideElement,
+    viewport: &geometry::Viewport,
+    delivery: super::build::Delivery,
+    poses: &[Option<super::build::Pose>],
+) -> bool {
+    let Some(mut alone) = Pixmap::new(layers.width(), layers.height()) else {
+        return false;
+    };
+    let units = super::text::draw_units(&mut alone.as_mut(), element, viewport, delivery);
+    if units.is_empty() {
+        return false;
+    }
+    let to_frame = viewport.element_transform(element);
+    let mut settled = tiny_skia::PathBuilder::new();
+    let mut any_settled = false;
+    for (index, unit) in units.iter().enumerate() {
+        // A box with more pieces than were counted (its capitals spelled
+        // longer, say) gives the extra ones the last piece's pose.
+        let pose = poses.get(index).or(poses.last()).copied().flatten();
+        let Some(glyphs) = unit.glyphs else {
+            continue;
+        };
+        match pose {
+            None => {
+                for area in &unit.areas {
+                    settled.push_rect(*area);
+                    any_settled = true;
+                }
+            }
+            Some(super::build::Pose::Hidden) => {}
+            Some(pose @ super::build::Pose::Moving { blur, .. }) => {
+                let mut areas = tiny_skia::PathBuilder::new();
+                for area in &unit.areas {
+                    areas.push_rect(*area);
+                }
+                let Some(areas) = areas.finish() else {
+                    continue;
+                };
+                let on_frame = bounds_on_frame(glyphs, to_frame);
+                let reach = on_frame.height().max(on_frame.width() * 0.25)
+                    + 3.0 * blur * layers.height() as f32
+                    + 4.0;
+                if let Some((piece, origin)) = crop(&alone, Some(&areas), to_frame, on_frame, reach)
+                {
+                    draw_piece(layers, piece, origin, on_frame, pose);
+                }
+            }
+        }
+    }
+    if any_settled {
+        if let (Some(path), Some(mut mask)) = (
+            settled.finish(),
+            tiny_skia::Mask::new(layers.width(), layers.height()),
+        ) {
+            mask.fill_path(&path, tiny_skia::FillRule::Winding, false, to_frame);
+            layers.draw_pixmap(
+                0,
+                0,
+                alone.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                Some(&mask),
+            );
+        }
+    }
+    true
+}
+
+/// The smallest upright rectangle on the frame round `rect` put there by
+/// `transform`.
+fn bounds_on_frame(rect: tiny_skia::Rect, transform: Transform) -> tiny_skia::Rect {
+    let mut corners = [
+        tiny_skia::Point::from_xy(rect.left(), rect.top()),
+        tiny_skia::Point::from_xy(rect.right(), rect.top()),
+        tiny_skia::Point::from_xy(rect.left(), rect.bottom()),
+        tiny_skia::Point::from_xy(rect.right(), rect.bottom()),
+    ];
+    transform.map_points(&mut corners);
+    let (mut left, mut top, mut right, mut bottom) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for corner in corners {
+        left = left.min(corner.x);
+        top = top.min(corner.y);
+        right = right.max(corner.x);
+        bottom = bottom.max(corner.y);
+    }
+    tiny_skia::Rect::from_ltrb(left, top, right.max(left + 1.0), bottom.max(top + 1.0))
+        .unwrap_or(rect)
+}
+
+/// The part of `alone` within `reach` of `around` (on the frame), and only
+/// what is inside `clip` (in the object's own space, put on the frame by
+/// `to_frame`) when given: a small picture, and where it goes on the frame.
+fn crop(
+    alone: &Pixmap,
+    clip: Option<&tiny_skia::Path>,
+    to_frame: Transform,
+    around: tiny_skia::Rect,
+    reach: f32,
+) -> Option<(Pixmap, (i32, i32))> {
+    let left = ((around.left() - reach).floor() as i32).max(0);
+    let top = ((around.top() - reach).floor() as i32).max(0);
+    let right = ((around.right() + reach).ceil() as i32).min(alone.width() as i32);
+    let bottom = ((around.bottom() + reach).ceil() as i32).min(alone.height() as i32);
+    if right <= left || bottom <= top {
+        return None;
+    }
+    let (width, height) = ((right - left) as u32, (bottom - top) as u32);
+    let mut piece = Pixmap::new(width, height)?;
+    let mask = match clip {
+        Some(path) => {
+            let mut mask = tiny_skia::Mask::new(width, height)?;
+            mask.fill_path(
+                path,
+                tiny_skia::FillRule::Winding,
+                false,
+                to_frame.post_translate(-left as f32, -top as f32),
+            );
+            Some(mask)
+        }
+        None => None,
+    };
+    piece.draw_pixmap(
+        -left,
+        -top,
+        alone.as_ref(),
+        &PixmapPaint::default(),
+        Transform::identity(),
+        mask.as_ref(),
+    );
+    Some((piece, (left, top)))
+}
+
+/// A piece of an object, at `origin` on the frame, put down in its pose:
+/// `glyphs` is where its letters are on the frame, which a wipe uncovers and
+/// which it is scaled and turned about.
+fn draw_piece(
+    layers: &mut Pixmap,
+    mut piece: Pixmap,
+    origin: (i32, i32),
+    glyphs: tiny_skia::Rect,
+    pose: super::build::Pose,
+) {
+    let super::build::Pose::Moving {
+        opacity,
+        dx,
+        dy,
+        scale,
+        scale_x,
+        rotate,
+        blur,
+        wipe,
+    } = pose
+    else {
+        return;
+    };
+    let (ox, oy) = (origin.0 as f32, origin.1 as f32);
+    let (x, y, w, h) = (
+        glyphs.left() - ox,
+        glyphs.top() - oy,
+        glyphs.width(),
+        glyphs.height(),
+    );
     if let Some((from, shown)) = wipe {
         use super::build::WipeFrom;
+        let (pw, ph) = (piece.width() as f32, piece.height() as f32);
         // What is not shown yet, cleared away.
         let hidden = match from {
-            WipeFrom::Left => tiny_skia::Rect::from_xywh(
-                x + w * shown,
-                0.0,
-                layers.width() as f32,
-                layers.height() as f32,
-            ),
-            WipeFrom::Right => {
-                tiny_skia::Rect::from_xywh(0.0, 0.0, x + w * (1.0 - shown), layers.height() as f32)
+            WipeFrom::Left => {
+                tiny_skia::Rect::from_ltrb(x + w * shown, 0.0, pw.max(x + w * shown + 1.0), ph)
             }
-            WipeFrom::Top => tiny_skia::Rect::from_xywh(
-                0.0,
-                y + h * shown,
-                layers.width() as f32,
-                layers.height() as f32,
-            ),
+            WipeFrom::Right => {
+                tiny_skia::Rect::from_xywh(0.0, 0.0, (x + w * (1.0 - shown)).max(1.0), ph)
+            }
+            WipeFrom::Top => {
+                tiny_skia::Rect::from_ltrb(0.0, y + h * shown, pw, ph.max(y + h * shown + 1.0))
+            }
             WipeFrom::Bottom => {
-                tiny_skia::Rect::from_xywh(0.0, 0.0, layers.width() as f32, y + h * (1.0 - shown))
+                tiny_skia::Rect::from_xywh(0.0, 0.0, pw, (y + h * (1.0 - shown)).max(1.0))
             }
         };
         if let Some(hidden) = hidden {
@@ -1810,19 +1994,30 @@ fn draw_posed(
                 blend_mode: tiny_skia::BlendMode::Clear,
                 ..tiny_skia::Paint::default()
             };
-            alone.fill_rect(hidden, &clear, Transform::identity(), None);
+            piece.fill_rect(hidden, &clear, Transform::identity(), None);
         }
     }
-    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    if blur > 0.0 {
+        let (width, height) = (piece.width() as usize, piece.height() as usize);
+        filters::blur(
+            piece.pixels_mut(),
+            width,
+            height,
+            blur * layers.height() as f32,
+            1.0,
+        );
+    }
+    let (cx, cy) = (glyphs.left() + w / 2.0, glyphs.top() + h / 2.0);
     let transform =
         Transform::from_translate(dx * layers.width() as f32, dy * layers.height() as f32)
             .pre_translate(cx, cy)
-            .pre_scale(scale, scale)
+            .pre_rotate(rotate)
+            .pre_scale(scale * scale_x, scale)
             .pre_translate(-cx, -cy);
     layers.draw_pixmap(
-        0,
-        0,
-        alone.as_ref(),
+        origin.0,
+        origin.1,
+        piece.as_ref(),
         &PixmapPaint {
             opacity: opacity.clamp(0.0, 1.0),
             quality: FilterQuality::Bilinear,
@@ -1831,7 +2026,6 @@ fn draw_posed(
         transform,
         None,
     );
-    true
 }
 
 /// Where a live slide's movie plays on a `width` by `height` screen: its box
@@ -3149,6 +3343,41 @@ mod tests {
             .expect("frame");
         assert_eq!(frame.pixel_at(80, 45).map(|p| p.1), Some(255), "all built");
         assert!(!compositor.is_animating());
+    }
+
+    /// One text box built word by word: its first word is on the screen
+    /// while the next still waits its turn.
+    #[test]
+    fn one_text_box_builds_a_word_at_a_time() {
+        let built = OutputScene {
+            active_slide_id: Some("presentation_x:0".to_owned()),
+            build_step: Some(0),
+            slide_elements: Some(json!([{
+                "id": "lyric", "type": "text",
+                "x": 0.0, "y": 0.0, "width": 1920.0, "height": 1080.0,
+                "content": "WWWW WWWW",
+                "style": { "fontSize": 200, "color": "#ffffff", "textAlign": "left", "verticalAlign": "middle" },
+                "builds": { "in": { "effect": "appear", "start": "with-previous",
+                                    "delivery": "word", "gapMs": 60000 } }
+            }])),
+            ..presentation_page()
+        };
+        let mut compositor = SceneCompositor::new(384, 216);
+        let (frame, _) = compositor.render(&built, None, &NoMedia).expect("frame");
+        let ink = |from: u32, to: u32| {
+            (from..to)
+                .flat_map(|x| (0..216).map(move |y| (x, y)))
+                .filter(|&(x, y)| frame.pixel_at(x, y).is_some_and(|p| p.0 > 128))
+                .count()
+        };
+        let first = ink(0, 150);
+        let second = ink(215, 384);
+        assert!(first > 200, "the first word shows: {first}");
+        assert_eq!(second, 0, "the second waits");
+        assert!(
+            compositor.is_animating(),
+            "the second word is still to come"
+        );
     }
 
     /// The owner's report: in Show the slides just switched. A song's slide

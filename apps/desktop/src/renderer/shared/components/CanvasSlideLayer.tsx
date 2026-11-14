@@ -17,6 +17,7 @@ import type {
 } from "../../../shared/types";
 import type { LibraryStyle } from "../../../shared/types/output-window";
 import { applyCapitalization } from "../lib/capitalization";
+import { unitsIn, type BuildPose, type UnitLook } from "../../../features/editor/lib/builds";
 import { paintFill, readFill } from "../lib/slide-fill";
 import { fontStack } from "../../../shared/lib/font-fallback.mjs";
 
@@ -76,6 +77,11 @@ interface CanvasSlideLayerProps {
   libraryStyle: LibraryStyle;
   className?: string;
   style?: CSSProperties;
+  /**
+   * A text box being built a line, word or letter at a time: each piece in
+   * its own pose, as the screens draw it. Only the build preview passes it.
+   */
+  unitLooks?: ReadonlyMap<string, UnitLook> | null;
 }
 
 /** Two plain objects with the same keys holding the same values. */
@@ -104,6 +110,7 @@ function canvasPropsEqual(previous: CanvasSlideLayerProps, next: CanvasSlideLaye
     previous.elements === next.elements &&
     previous.canvasSize === next.canvasSize &&
     previous.className === next.className &&
+    previous.unitLooks === next.unitLooks &&
     sameFields(previous.libraryStyle, next.libraryStyle) &&
     sameFields(previous.style, next.style)
   );
@@ -455,6 +462,40 @@ function drawUnderlinedText(
   }
 }
 
+/**
+ * Set the canvas to draw one piece of a text box (a line, word or letter,
+ * in `rect`) in its build pose: faded, moved (fractions of the slide, here
+ * `slideWidth` by `slideHeight`), scaled and turned about its middle,
+ * blurred and cut back from one side — as `compositor/pipeline.rs` draws it.
+ */
+function posePiece(
+  ctx: CanvasRenderingContext2D,
+  pose: Extract<BuildPose, { hidden: false }>,
+  rect: { x: number; y: number; width: number; height: number },
+  slideWidth: number,
+  slideHeight: number,
+) {
+  ctx.globalAlpha *= Math.max(0, Math.min(1, pose.opacity));
+  const cx = rect.x + rect.width / 2;
+  const cy = rect.y + rect.height / 2;
+  ctx.translate(pose.dx * slideWidth, pose.dy * slideHeight);
+  ctx.translate(cx, cy);
+  ctx.rotate((pose.rotate * Math.PI) / 180);
+  ctx.scale(pose.scale * pose.scaleX, pose.scale);
+  ctx.translate(-cx, -cy);
+  if (pose.blur > 0) ctx.filter = `blur(${pose.blur * slideHeight}px)`;
+  if (pose.wipe) {
+    const { from, shown } = pose.wipe;
+    const far = slideWidth + slideHeight;
+    ctx.beginPath();
+    if (from === "left") ctx.rect(rect.x - far, rect.y - far, far + rect.width * shown, 3 * far);
+    else if (from === "right") ctx.rect(rect.x + rect.width * (1 - shown), rect.y - far, 2 * far, 3 * far);
+    else if (from === "top") ctx.rect(rect.x - far, rect.y - far, 3 * far, far + rect.height * shown);
+    else ctx.rect(rect.x - far, rect.y + rect.height * (1 - shown), 3 * far, 2 * far);
+    ctx.clip();
+  }
+}
+
 function buildRoundedRectPath(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -698,6 +739,7 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
   libraryStyle,
   className,
   style,
+  unitLooks,
 }: CanvasSlideLayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1057,8 +1099,18 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
           cursorY = contentY + slack;
         }
 
+        // Built a piece at a time: which piece each character is in, and
+        // where each paragraph starts among them.
+        const unitLook = unitLooks?.get(element.id) ?? null;
+        const pieceOf = unitLook
+          ? unitsIn(scaledParagraphs.map((each) => each.runs.map((run) => run.text).join("")).join("\n"), unitLook.delivery)
+          : null;
+        let paragraphStart = 0;
+
         scaledParagraphs.forEach((paragraph, paragraphIndex) => {
           const lines = laidOut[paragraphIndex] ?? [];
+          let charCursor = paragraphStart;
+          paragraphStart += paragraph.runs.reduce((sum, run) => sum + Array.from(run.text).length, 0) + 1;
           cursorY += paragraph.spaceBefore;
           const textLeft = paragraph.textLeft ?? 0;
           const lineWidth = Math.max(1, contentWidth - textLeft);
@@ -1097,35 +1149,64 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
                 ctx.fillStyle = runStyle.highlight;
                 ctx.fillRect(cursorX, cursorY, measured.width, line.lineHeight);
               }
-              ctx.font = toCanvasFont(runStyle);
-              ctx.fillStyle = gradientFill ?? runStyle.color;
-              ctx.textAlign = "left";
-              ctx.textBaseline = "alphabetic";
-              if (outlineWidth > 0 && run.text.trim()) {
-                // Twice as wide, half of it under the fill: what shows is an
-                // outline of `strokeWidth` outside the letters, as the
-                // audience renderer draws it. Only the outline casts the
-                // shadow; a second one from the fill would darken the edge.
-                ctx.save();
-                ctx.lineJoin = "round";
-                ctx.miterLimit = 2;
-                ctx.lineWidth = outlineWidth * 2;
-                ctx.strokeStyle = styleData.strokeColor as string;
-                drawSpacedText(ctx, run.text, cursorX, baselineY, runStyle.letterSpacing, "stroke");
-                ctx.restore();
-                applyShadow(ctx, null, scaleX, scaleY);
+              const paint = (value: string, at: number, valueWidth: number) => {
+                ctx.font = toCanvasFont(runStyle);
+                ctx.fillStyle = gradientFill ?? runStyle.color;
+                ctx.textAlign = "left";
+                ctx.textBaseline = "alphabetic";
+                if (outlineWidth > 0 && value.trim()) {
+                  // Twice as wide, half of it under the fill: what shows is an
+                  // outline of `strokeWidth` outside the letters, as the
+                  // audience renderer draws it. Only the outline casts the
+                  // shadow; a second one from the fill would darken the edge.
+                  ctx.save();
+                  ctx.lineJoin = "round";
+                  ctx.miterLimit = 2;
+                  ctx.lineWidth = outlineWidth * 2;
+                  ctx.strokeStyle = styleData.strokeColor as string;
+                  drawSpacedText(ctx, value, at, baselineY, runStyle.letterSpacing, "stroke");
+                  ctx.restore();
+                  applyShadow(ctx, null, scaleX, scaleY);
+                }
+                drawUnderlinedText(ctx, value, at, baselineY, runStyle, valueWidth);
+                if (outlineWidth > 0) {
+                  applyShadow(ctx, parsedShadow, scaleX, scaleY);
+                }
+              };
+              const characters = Array.from(run.text);
+              if (pieceOf && unitLook && run.text.trim()) {
+                // Each piece of the word in its own pose: the word itself, or
+                // each of its letters.
+                const pieces: Array<{ text: string; at: number; width: number; unit: number }> = [];
+                if (unitLook.delivery === "letter") {
+                  let prefix = "";
+                  characters.forEach((character, index) => {
+                    const unit = pieceOf[charCursor + index];
+                    const at = cursorX + (prefix ? measureTextWidth(ctx, prefix, runStyle) : 0);
+                    prefix += character;
+                    if (unit === null || unit === undefined) return;
+                    pieces.push({ text: character, at, width: measureTextWidth(ctx, character, runStyle), unit });
+                  });
+                } else {
+                  const unit = pieceOf.slice(charCursor, charCursor + characters.length).find((each) => each !== null);
+                  if (unit !== undefined && unit !== null) pieces.push({ text: run.text, at: cursorX, width: measured.width, unit });
+                }
+                for (const piece of pieces) {
+                  const pose = unitLook.units[Math.min(piece.unit, unitLook.units.length - 1)] ?? null;
+                  if (!pose) {
+                    paint(piece.text, piece.at, piece.width);
+                    continue;
+                  }
+                  if (pose.hidden === true) continue;
+                  ctx.save();
+                  posePiece(ctx, pose as Extract<BuildPose, { hidden: false }>, { x: piece.at, y: cursorY, width: piece.width, height: line.lineHeight }, width, height);
+                  paint(piece.text, piece.at, piece.width);
+                  ctx.restore();
+                }
+              } else {
+                paint(run.text, cursorX, measured.width);
               }
-              drawUnderlinedText(
-                ctx,
-                run.text,
-                cursorX,
-                baselineY,
-                runStyle,
-                measured.width
-              );
-              if (outlineWidth > 0) {
-                applyShadow(ctx, parsedShadow, scaleX, scaleY);
-              }
+              charCursor += characters.length;
               cursorX += measured.width;
             }
 
@@ -1148,6 +1229,7 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
     slideDimensions.height,
     slideDimensions.width,
     text,
+    unitLooks,
     visibleElements,
   ]);
 

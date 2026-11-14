@@ -4,6 +4,24 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.18] - 2026-11-15
+
+### Added
+
+- One text box can build a line, a word or a letter at a time: pick By line,
+  By word or By letter under Animate in the Build tab, and set the gap between
+  each. The words arrive in turn on the screens and in the editor's preview,
+  with no need for a text box for each word. Build Out can take them away the
+  same way.
+- Seven more build effects: Slide In (from any side), Bounce, Spring, Spin,
+  Flip, Stretch and Focus (from blurred to sharp).
+
+### Changed
+
+- The Build tab stays open while you work: choosing an object in the build
+  order, clicking another text box on the canvas, or moving to another slide
+  no longer sends you back to the Text tab.
+
 ## [0.4.17] - 2026-11-13
 
 ### Added

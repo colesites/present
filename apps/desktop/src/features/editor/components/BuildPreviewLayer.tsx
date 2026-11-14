@@ -8,10 +8,13 @@ import { CanvasSlideLayer } from "../../../renderer/shared/components/CanvasSlid
 import { getCanvasSizeDimensions } from "../../library/lib/library-items";
 import {
   buildTimeline,
+  isUnitLook,
   posesAt,
   stepLengthMs,
+  type BuildLook,
   type BuildPose,
   type PlacedBuild,
+  type UnitLook,
 } from "../lib/builds";
 import type { BuildPreview } from "../lib/build-preview";
 
@@ -24,7 +27,8 @@ const HOLD_AT_END_MS = 900;
  * The slide's builds played on the editor's canvas, as the screens play
  * them (`compositor/build.rs`, mirrored in `lib/builds.ts`): what comes with
  * the slide, then each click in turn, by itself. Each object is drawn on its
- * own layer and faded, moved, scaled and wiped there.
+ * own layer and faded, moved, scaled and wiped there; a text box built a
+ * line, word or letter at a time has each piece posed as it is drawn.
  */
 export const BuildPreviewLayer = memo(function BuildPreviewLayer({
   preview,
@@ -101,7 +105,7 @@ export const BuildPreviewLayer = memo(function BuildPreviewLayer({
         <PosedElement
           key={element.id}
           element={element}
-          pose={poses.get(element.id)}
+          look={poses.get(element.id)}
           canvas={canvas}
           canvasSize={canvasSize}
           libraryStyle={libraryStyle}
@@ -118,21 +122,27 @@ export const BuildPreviewLayer = memo(function BuildPreviewLayer({
   );
 });
 
-/** One object, drawn alone, at its pose. */
+/** One object, drawn alone, at its pose — or with each of its pieces in theirs. */
 const PosedElement = memo(function PosedElement({
   element,
-  pose,
+  look,
   canvas,
   canvasSize,
   libraryStyle,
 }: {
   element: SlideElement;
-  pose: BuildPose | undefined;
+  look: BuildLook | undefined;
   canvas: { width: number; height: number };
   canvasSize: CanvasSizePreset;
   libraryStyle: LibraryStyle;
 }) {
   const only = useMemo(() => [element], [element]);
+  const unitLook: UnitLook | null = isUnitLook(look) ? look : null;
+  const unitLooks = useMemo(
+    () => (unitLook ? new Map([[element.id, unitLook]]) : null),
+    [element.id, unitLook],
+  );
+  const pose: BuildPose | undefined = isUnitLook(look) ? undefined : look;
   if (pose && pose.hidden) return null;
   const moving = pose && !pose.hidden ? (pose as Extract<BuildPose, { hidden: false }>) : null;
 
@@ -144,7 +154,8 @@ const PosedElement = memo(function PosedElement({
   if (moving) {
     style.opacity = moving.opacity;
     style.transformOrigin = `${left + width / 2}% ${top + height / 2}%`;
-    style.transform = `translate(${moving.dx * 100}%, ${moving.dy * 100}%) scale(${moving.scale})`;
+    style.transform = `translate(${moving.dx * 100}%, ${moving.dy * 100}%) rotate(${moving.rotate}deg) scale(${moving.scale * moving.scaleX}, ${moving.scale})`;
+    if (moving.blur > 0) style.filter = `blur(${moving.blur * 100}cqh)`;
     if (moving.wipe) {
       // What is not shown yet, cut away from the far side.
       const { from, shown } = moving.wipe;
@@ -167,6 +178,7 @@ const PosedElement = memo(function PosedElement({
         elements={only}
         canvasSize={canvasSize}
         libraryStyle={libraryStyle}
+        unitLooks={unitLooks}
         className="pointer-events-none absolute inset-0"
       />
     </div>
