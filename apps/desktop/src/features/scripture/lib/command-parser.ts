@@ -11,7 +11,7 @@
  */
 
 import type { BibleBookRecord } from "./db";
-import { findNamedVersion, type NamedVersion } from "./listening";
+import { findNamedVersion, namedVersionAt, type NamedVersion } from "./listening";
 import { parseReference, type ParsedReference } from "./parser";
 
 export type ExplicitCommand =
@@ -118,6 +118,39 @@ export function normalizeSpeechErrors(text: string): string {
   return normalized;
 }
 
+const NEXT_VERSE = /\b(?:next|forward)\s+(?:verse|scripture)\b/i;
+const PREVIOUS_VERSE =
+  /\b(?:prev|previous|backward)\s+(?:verse|scripture)\b|\bback\s+(?:one\s+|a\s+)?(?:verse|scripture)\b|\bback\s+to\s+the\s+last\s+(?:verse|scripture)\b/i;
+
+/**
+ * The first "next verse" or "previous verse" in the words, and how many of
+ * the words it takes up, counting from the first.
+ *
+ * A turn is heard again and again as it grows ("Next verse", "Next verse
+ * please", "Next verse please, let us"), and stepping is the one command
+ * that does something different each time it is acted on: one "next verse"
+ * went on five verses. Whoever acts on it leaves out the words it took up
+ * the next time the turn is read (`heard-scripture.ts`).
+ *
+ * "The last verse" on its own is not a step back: it is as often the last
+ * verse of the chapter, or the one read last week.
+ */
+export function findStepCommand(
+  text: string,
+): { type: "next_verse" | "previous_verse"; words: number } | null {
+  const next = NEXT_VERSE.exec(text);
+  const previous = PREVIOUS_VERSE.exec(text);
+  const found =
+    next && (!previous || next.index <= previous.index)
+      ? { type: "next_verse" as const, match: next }
+      : previous
+        ? { type: "previous_verse" as const, match: previous }
+        : null;
+  if (!found) return null;
+  const upTo = text.slice(0, found.match.index + found.match[0].length);
+  return { type: found.type, words: upTo.trim().split(/\s+/).length };
+}
+
 /**
  * Recognizes explicit commands deterministically.
  */
@@ -132,24 +165,9 @@ export function parseExplicitCommand(
   const text = normalizeSpeechErrors(rawText.trim());
   if (!text) return null;
 
-  // 1. Next verse command:
-  // e.g. "next verse", "forward verse", "go to next verse", "skip to next verse", "show next verse"
-  if (
-    /\b(?:next|forward)\s+(?:verse|scripture)\b/i.test(text) ||
-    /\b(?:go\s+to|skip\s+to|move\s+to|show)?\s*(?:the\s+)?(?:next|forward)\s+(?:verse|scripture)\b/i.test(text)
-  ) {
-    return { type: "next_verse" };
-  }
-
-  // 2. Previous verse command:
-  // e.g. "previous verse", "prev verse", "back one verse", "last verse", "go back a verse", "go to the last verse"
-  if (
-    /\b(?:prev|previous|backward|last)\s+(?:verse|scripture)\b/i.test(text) ||
-    /\b(?:back\s+(?:one\s+|a\s+)?(?:verse|scripture))\b/i.test(text) ||
-    /\b(?:go\s+to|skip\s+to|move\s+back\s+to|go\s+back(?:\s+a)?|show)?\s*(?:the\s+)?(?:prev|previous|back|backward|last)\s+(?:verse|scripture)\b/i.test(text)
-  ) {
-    return { type: "previous_verse" };
-  }
+  // 1, 2. Next and previous verse (`findStepCommand`).
+  const step = findStepCommand(text);
+  if (step) return { type: step.type };
 
   // 3. Explicit version change commands:
   // Must use an imperative/version-change phrase:
@@ -168,6 +186,28 @@ export function parseExplicitCommand(
     if (candidateCode) {
       return { type: "switch_version", versionCode: candidateCode };
     }
+  }
+
+  // 3b. A Bible named after "in": "John 3:16 in the ESV", "in ESV", "what
+  // does it say in the King James?". It was only "give me ESV", "switch to"
+  // and "read that in": said the way a preacher says it, nothing happened.
+  // The name must be what follows "in" — "in the message this morning" names
+  // no Bible, and "the Message" is one only said as one ("the Message
+  // Bible"), like every Bible whose name is also a word.
+  let named: string | null = null;
+  for (const match of text.matchAll(/(?<![\p{L}\p{N}])in\s+(?:the\s+)?/giu)) {
+    const after = text.slice((match.index ?? 0) + match[0].length);
+    const code =
+      namedVersionAt(after, options.versions)
+      // "In the Amplified", as it is nearly always said.
+      ?? (/^amplified(?:\s+classic)?(?![\p{L}\p{N}])/iu.test(after)
+        ? namedVersionAt(after.replace(/^(amplified(?:\s+classic)?)/i, "$1 Bible"), options.versions)
+          ?? namedVersionAt(after.replace(/^amplified/i, "Amplified Bible"), options.versions)
+        : null);
+    if (code) named = code;
+  }
+  if (named) {
+    return { type: "switch_version", versionCode: named };
   }
 
   // 4. Relative verse within active passage:

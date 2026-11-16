@@ -13,10 +13,17 @@ import { useSpeechUsageStore } from "../../../renderer/shared/store/speechUsage"
 import { logFault, rawText, userMessage, UserFacingError } from "../../../renderer/shared/lib/user-error";
 import type { SpeechStream } from "../../../renderer/tauri/speech-stream";
 import { readTurn } from "../lib/assemblyai-turn";
+import { CARRY_ON_AFTER_MS, carriesOn } from "../lib/speech-session";
 
 export interface ScriptRecognitionResult {
   transcript: string;
   isFinal: boolean;
+  /**
+   * Which connection to the speech service this came over, counted from 1.
+   * Each counts its turns from nothing, so a turn is only newer than another
+   * of the same session.
+   */
+  session?: number;
   turn?: number;
   endOfTurn?: boolean;
   words?: Array<{
@@ -319,6 +326,11 @@ export function useSpeechRecognition(
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const streamingSessionRef = useRef<StreamingSession | null>(null);
+  /** How many connections to the speech service have been opened. */
+  const sessionCountRef = useRef(0);
+  /** Start listening again after a session ended by itself (`onClose`). */
+  const carryOnRef = useRef<(() => Promise<void>) | null>(null);
+  const restartsRef = useRef(0);
   const isStoppingRef = useRef(false);
   const finalTranscriptRef = useRef("");
   const activeModeRef = useRef<"assemblyai" | "webspeech" | null>(null);
@@ -594,6 +606,8 @@ export function useSpeechRecognition(
     };
 
     streamingSessionRef.current = session;
+    sessionCountRef.current += 1;
+    const sessionNumber = sessionCountRef.current;
     activeModeRef.current = "assemblyai";
     setActiveSessionStartedAtMs(session.startedAtMs);
     setSharedActiveSessionStartedAtMs(session.startedAtMs);
@@ -616,9 +630,16 @@ export function useSpeechRecognition(
           return;
         }
 
+        // A session that has been running, ended by the service (its time is
+        // up) and not by the operator: `onClose` carries on in a new one, and
+        // nothing here says it stopped.
+        const endedByItself =
+          !isStoppingRef.current && Date.now() - session.startedAtMs >= CARRY_ON_AFTER_MS;
+
         if (payload.type === "Error" || payload.error || payload.message) {
           // The service's own words are for us, not the operator.
           logFault(payload, "Speech: AssemblyAI");
+          if (endedByItself) return;
           setIsStarting(false);
           setError(VOICE_FAILED);
           setActiveSessionStartedAtMs(null);
@@ -628,7 +649,7 @@ export function useSpeechRecognition(
         }
 
         if (payload.type !== "Turn") {
-          if (payload.type === "Termination") {
+          if (payload.type === "Termination" && !endedByItself) {
             setIsStarting(false);
             setIsListening(false);
             setInterimTranscript("");
@@ -651,6 +672,7 @@ export function useSpeechRecognition(
           onResultRef.current?.({
             transcript: runningTranscript,
             isFinal: isFinalTurn,
+            session: sessionNumber,
             turn: typeof payload.turn_order === "number" ? payload.turn_order : undefined,
             endOfTurn: isFinalTurn,
             words: Array.isArray(payload.words) ? payload.words : undefined,
@@ -672,9 +694,53 @@ export function useSpeechRecognition(
           });
         }
 
-        if (streamingSessionRef.current?.stream === stream) {
+        const ours = streamingSessionRef.current?.stream === stream;
+        // An earlier session's connection closing after a newer one opened
+        // says nothing about the one that is listening now.
+        if (!ours && streamingSessionRef.current) return;
+        if (ours) {
           stopStreamingSession();
         }
+
+        // A session is opened for fifteen minutes of the plan's speech time
+        // at most, and the service ends it when they are up; a connection
+        // also drops now and then. Neither is the operator stopping it, and
+        // in the middle of a sermon nobody is there to click the microphone
+        // again: listening carries on in a new session, as long as the plan
+        // has time left. It simply went quiet after fifteen minutes.
+        const ranFor = Date.now() - session.startedAtMs;
+        if (ours && !isStoppingRef.current && ranFor >= CARRY_ON_AFTER_MS) restartsRef.current = 0;
+        if (
+          carryOnRef.current
+          && carriesOn({
+            ours,
+            stopping: isStoppingRef.current,
+            ranForMs: ranFor,
+            restarts: restartsRef.current,
+          })
+        ) {
+          restartsRef.current += 1;
+          console.info("[Speech] the session ended by itself; listening again", {
+            code: event.code,
+            reason: event.reason,
+            ranForSeconds: Math.round(ranFor / 1000),
+          });
+          setInterimTranscript("");
+          void carryOnRef.current().catch((error: unknown) => {
+            console.error("[Speech] could not listen again", error);
+            activeModeRef.current = null;
+            setIsStarting(false);
+            setIsListening(false);
+            setActiveSessionStartedAtMs(null);
+            setSharedActiveSessionStartedAtMs(null);
+            setPendingCommittedUsageSeconds(0);
+            // The plan's time spent is said as that; anything else as a
+            // connection that could not be made again.
+            setError(speechMessage(error, VOICE_STOPPED));
+          });
+          return;
+        }
+
         setIsStarting(false);
         setIsListening(false);
         setInterimTranscript("");
@@ -707,11 +773,16 @@ export function useSpeechRecognition(
     stopStreamingSession,
   ]);
 
+  useEffect(() => {
+    carryOnRef.current = startAssemblyAiListening;
+  }, [startAssemblyAiListening]);
+
   const startListening = useCallback(async () => {
     if (isListening || isStarting) {
       return Promise.resolve();
     }
 
+    restartsRef.current = 0;
     finalTranscriptRef.current = "";
     setTranscript("");
     setInterimTranscript("");

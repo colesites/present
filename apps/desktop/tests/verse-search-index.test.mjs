@@ -140,7 +140,13 @@ test("a quote being read now is found however much was said before it, and its t
   const before = "so this morning I want us to think about the father who runs to meet his boy and that is the heart of God";
   const found = (heard) => quotedVerseMatch(verses, heard, { commonAfter: 2, endingWithin: 3 })?.verse.pk ?? null;
   assert.equal(found(`${before} for God so loved the world that he gave his only begotten son`), "jhn|3|16");
-  assert.equal(found(`${before} and Jesus wept`), "jhn|11|35", "a verse of two words, read whole");
+  assert.equal(found(`${before}. Jesus wept.`), "jhn|11|35", "a verse of two words, said as a sentence of its own");
+  assert.equal(found(`${before} and Jesus wept`), null, "its two words inside another sentence are not it");
+  assert.equal(
+    quotedVerseMatch(verses, `${before}. Jesus wept`, { commonAfter: 2, endingWithin: 3, ended: false }),
+    null,
+    "nor while the sentence may still go on",
+  );
   assert.equal(found(`${before} his mercy endureth for ever`), null, "two verses end alike");
   assert.equal(found(`for God so loved the world that he gave his only begotten son ${before}`), null, "moved on from");
 });

@@ -10,7 +10,13 @@
  */
 
 import { type BibleBookRecord } from "./db";
-import { findRelativeReference, parseReference, type ParsedReference } from "./parser";
+import {
+  findBookNamed,
+  findRelativeReference,
+  numbersSaid,
+  parseReference,
+  type ParsedReference,
+} from "./parser";
 
 /** A Bible as the tab lists it: "KJV", "King James Version". */
 export type NamedVersion = { code: string; name: string };
@@ -105,13 +111,55 @@ function wordsOf(text: string): string[] {
 export type Reading = {
   reference: ParsedReference;
   /**
-   * Said so that it cannot be anything else: a chapter and verse written
-   * "8:28", or "chapter … verse …" said in so many words, or a verse said
-   * within the passage just named. Plain readings go on screen without the
-   * model; "Mark 2 people" is a reading too, and is not.
+   * Said so that it cannot be anything else: a book, its chapter and a
+   * verse — "Romans 8:28", "Psalm 23 verse 1", "Genesis 3 16", "chapter …
+   * verse …" in so many words — or a verse said within the passage just
+   * named. Plain readings go on screen without the model. A chapter alone
+   * ("Mark 2 people") is a reading too, and is not; nor is a reference in a
+   * sentence about it ("as Paul says in Romans 8:28").
    */
   plain: boolean;
+  /**
+   * A verse or chapter said with no book, read within a passage named before
+   * or open. What follows it can make it something else ("verse one of the
+   * song"), so it is acted on a word later (`heard-scripture.ts`).
+   */
+  within?: boolean;
 };
+
+/**
+ * Words that make a "verse" a hymn's and not the Bible's: "let us sing hymn
+ * 23, verse 1 and verse 4" is not Psalm 23, and "we sing verse 2" is not the
+ * second verse of the passage on screen.
+ */
+const SUNG_WORDS = /\b(?:hymns?|hymnal|songs?|sing|sings|singing|sang|chorus|stanzas?|refrain)\b/i;
+const sung = (sentence: string): boolean =>
+  SUNG_WORDS.test(sentence.replace(/\bsongs?\s+of\s+(?:solomon|songs)\b/gi, " "));
+
+/**
+ * A chapter or verse of something that is not the Bible: "chapter 2 of my
+ * life", "the first chapter of his career", "verse 3 of the hymn".
+ */
+const OF_SOMETHING_ELSE =
+  /\b(?:verses?|chapters?)\s+(?:[\p{L}\p{N}-]+\s+){0,3}?of\s+(?:my|your|his|her|our|their|this|that|a|an|the\s+(?!books?\b|gospel\b|epistle\b|letter\b|psalms?\b|bible\b|chapter\b))/iu;
+
+/** What is said on the way to a book: "the book of …", "turn to …", "reading from …". */
+const TOWARDS_A_BOOK =
+  /\b(?:books?|gospel|epistle|letter)\s+(?:of|to|according)\b|\b(?:turn|open|go|going|read|reading|look|looking)\b[^.]*\b(?:to|from|at|in|into)\b/i;
+
+/**
+ * A book named on its own, with its chapter and verse still to come: "I want
+ * us to read from the book of Ephesians." … "Chapter 5." … "Verse 28." Only
+ * when it is said as a book — after "the book of", "turn to", or as all there
+ * is to the sentence ("First Corinthians.") — since John, Mark, Ruth and
+ * James are people in the congregation too.
+ */
+function bookNamedAlone(sentence: string, books: BibleBookRecord[]): BibleBookRecord | null {
+  if (sung(sentence)) return null;
+  const book = findBookNamed(sentence, books);
+  if (!book) return null;
+  return wordsOf(sentence).length <= 3 || TOWARDS_A_BOOK.test(sentence) ? book : null;
+}
 
 const PLACE_WORD = /^(chapters?|verses?|cap[ií]tulos?|vers[ií]culos?|chapitres?|versets?|kapitel|verse?n?)$/u;
 
@@ -142,27 +190,75 @@ export function readNewestReference(
     const sentence = sentences[index] ?? "";
     const named = newestReferenceIn(sentence, books);
     if (named) {
+      // "The gospel according to Saint Matthew" is the book's name, not a
+      // sentence about it.
       const isMentionFraming =
-        /\b(?:as\s+(?:\w+\s+){0,3}(?:says?|wrote|said|tells?|reminds?|stated)|as\s+it\s+says?|as\s+we\s+read|as\s+written|as\s+seen|according\s+to|like\s+in|for\s+instance\s+in|for\s+example\s+in)\b/i.test(
+        /\b(?:as\s+(?:\w+\s+){0,3}(?:says?|wrote|said|tells?|reminds?|stated)|as\s+it\s+says?|as\s+we\s+read|as\s+written|as\s+seen|(?<!gospel\s+)according\s+to|like\s+in|for\s+instance\s+in|for\s+example\s+in)\b/i.test(
           sentence,
         );
-      const plain =
-        !isMentionFraming
-        && named.verseStart !== null
-        && (/\d+\s*:\s*\d+/.test(sentence)
-          || (/\bchapters?\b/i.test(sentence) && /\bverses?\b/i.test(sentence)));
-      return { reference: named, plain };
+      // A book, its chapter and a verse: said every way a reference is. It
+      // was plain only written "8:28" or with both "chapter" and "verse", and
+      // "Psalm 23 verse 1", "Romans 8 verse 1" and "Genesis 3 16" were left
+      // to the model, which called them mentions and showed nothing.
+      //
+      // Each said apart: "john 316" is read as John 3:16, and is a guess at
+      // where the number divides — "psalm 151" is not Psalm 15:1.
+      if (sung(sentence)) continue;
+      let reference = named;
+      if (named.verseStart === null) {
+        // "Hebrews chapter 13, and then in verse 15": the verse later in the
+        // sentence than the chapter it is in.
+        const verse = sentence.match(/\bverses?\b(?![\s\S]*\bverses?\b)[\s\S]*$/i)?.[0];
+        const within = verse && !OF_SOMETHING_ELSE.test(sentence) ? findRelativeReference(verse, named) : null;
+        if (within?.verseStart) reference = within;
+      }
+      let saidIn = sentence;
+      const before = sentences[index - 1] ?? "";
+      if (
+        reference.verseStart === null
+        && /\bverses?\b/i.test(before)
+        && !sung(before)
+        && !OF_SOMETHING_ELSE.test(before)
+        && !findBookNamed(before, books)
+      ) {
+        // "From verse 25 all the way to verse 32. Ephesians chapter 5.": the
+        // verses said first, and the book and chapter they are in after.
+        const within = findRelativeReference(before, named);
+        if (within?.verseStart) {
+          reference = within;
+          saidIn = `${sentence} ${before}`;
+        }
+      }
+      const said = numbersSaid(saidIn, { apart: true });
+      const apart =
+        reference.verseStart !== null
+        && said.includes(reference.verseStart)
+        && (said.includes(reference.chapter ?? 0) || reference.book?.chapters === 1);
+      return { reference, plain: !isMentionFraming && apart };
     }
-    if (!/\b(verses?|chapters?)\b/i.test(sentence)) {
+    if (
+      !/\b(verses?|chapters?)\b/i.test(sentence)
+      || sung(sentence)
+      || OF_SOMETHING_ELSE.test(sentence)
+    ) {
       continue;
     }
     let base: ParsedReference = open;
     let since = 0;
+    /** A book named on its own before this, its chapter not yet known. */
+    let alone = false;
     for (let previous = index - 1; previous >= 0; previous -= 1) {
       const named = newestReferenceIn(sentences[previous] ?? "", books);
       if (named) {
         base = named;
         since = previous + 1;
+        break;
+      }
+      const book = bookNamedAlone(sentences[previous] ?? "", books);
+      if (book) {
+        base = { book, chapter: book.chapters === 1 ? 1 : null, verseStart: null, verseEnd: null, versionCode: null, errors: [] };
+        since = previous + 1;
+        alone = base.chapter === null;
         break;
       }
     }
@@ -173,8 +269,25 @@ export function readNewestReference(
       (word) => everyBookWord.has(word) && !ownWords.has(word),
     );
     if (otherBook) return null;
+    // A book named straight after it is the book the verse is in ("…to verse
+    // 32. Ephesians chapter 5."), not the passage open: wait for its chapter.
+    if (sentences.slice(index + 1).some((later) => findBookNamed(later, books))) return null;
+    if (alone) {
+      // "The book of Ephesians." "Chapter 5." "Verse 28.": each read within
+      // what the ones before it made.
+      for (let at = since; at <= index; at += 1) {
+        const said = sentences[at] ?? "";
+        const saysChapter = /\bchapters?\b/i.test(said);
+        if (base.chapter === null && !saysChapter) continue;
+        const next = findRelativeReference(said, { ...base, chapter: base.chapter ?? 1 });
+        if (next) base = next;
+      }
+      return base.chapter === null
+        ? null
+        : { reference: base, plain: base.verseStart !== null, within: true };
+    }
     const relative = findRelativeReference(sentence, base);
-    return relative ? { reference: relative, plain: true } : null;
+    return relative ? { reference: relative, plain: true, within: true } : null;
   }
   return null;
 }
@@ -236,6 +349,85 @@ export function cuesOf(
     cues.some((word) => PLACE_WORD.test(word) || /^\d+:\d+/.test(word))
     || (cues.some((word) => bookWords.has(word)) && cues.some(isNumber));
   return { key: cues.join(" "), worthAsking };
+}
+
+/**
+ * How many of the words come after the last one that could be part of a
+ * reference: in "Genesis chapter 1 verse 1. In the beginning God", four. A
+ * reference and the start of its reading can arrive in one message, and the
+ * reading begins where the reference ends, not where the message does.
+ */
+export function wordsAfterLastCue(text: string, bookWords: Set<string>): number {
+  const words = wordsOf(text);
+  for (let at = words.length - 1; at >= 0; at -= 1) {
+    const word = words[at] ?? "";
+    if (/\d/.test(word) || NUMBER_WORDS.has(word) || PLACE_WORD.test(word) || bookWords.has(word)) {
+      return words.length - 1 - at;
+    }
+  }
+  return 0;
+}
+
+const ORDINAL_SAID: Record<string, string> = { "1": "first|1st|one", "2": "second|2nd|two", "3": "third|3rd|three" };
+
+/**
+ * Whether the words say the reference themselves: the book by name — "1
+ * Kings" is not "2 Kings", nor "John" "1 John" — or, for a verse or chapter
+ * said with none, within the passage `open`; then its chapter, and after it
+ * its verse. "Matthew 4:10" does not say Matthew 1:1 or Matthew 4:4, and "we
+ * have 3 pastors and 16 deacons" does not say John 3:16.
+ *
+ * For a passage somebody else names — the model — out of what was heard.
+ */
+export function saysReference(said: string, reference: ParsedReference, open: ParsedReference): boolean {
+  const { book, chapter, verseStart, verseEnd } = reference;
+  if (!book || !chapter) return false;
+  const numbered = book.name.match(/^(\d)\s+(\S+)/);
+  const first = (numbered?.[2] ?? book.name.split(/\s+/)[0] ?? "").toLowerCase();
+  const name = `${first.replace(/s$/, "")}s?`;
+  const ordinal = String.raw`(?:first|second|third|1st|2nd|3rd|[123])\s+(?:(?:book|epistle|letter)\s+(?:of|to)\s+)?`;
+  const bookSaid = numbered
+    ? new RegExp(String.raw`\b(?:${ORDINAL_SAID[numbered[1] ?? ""] ?? numbered[1]})\s+(?:(?:book|epistle|letter)\s+(?:of|to)\s+)?${name}\b`, "i").test(said)
+    : new RegExp(String.raw`\b${name}\b`, "i").test(said)
+      && !new RegExp(String.raw`\b${ordinal}${name}\b`, "i").test(said);
+  const within = open.book?.id === book.id && /\b(?:verses?|chapters?)\b/i.test(said);
+  if (!bookSaid && !within) return false;
+
+  // The numbers after the book's name (all of them, with no name said).
+  const from = bookSaid ? said.toLowerCase().search(new RegExp(String.raw`\b${name}\b`, "i")) : 0;
+  const numbers = numbersSaid(said.slice(Math.max(0, from) + (bookSaid ? first.length : 0)));
+  // "Chapter three", "verse twenty eight" — and "the third chapter", "the
+  // sixteenth verse", the number before the word.
+  const labelled = (label: string, value: number) =>
+    numbersSaid(
+      [
+        ...said.matchAll(
+          new RegExp(
+            String.raw`((?:[\p{L}\p{N}-]+\s+){0,2})\b${label}s?\b((?:\s+[\p{L}\p{N}-]+){0,4})`,
+            "giu",
+          ),
+        ),
+      ]
+        .map((match) => `${match[1] ?? ""} . ${match[2] ?? ""}`)
+        .join(" . "),
+    ).includes(value);
+  const chapterGiven = (within && open.chapter === chapter) || book.chapters === 1;
+  const chapterAt = numbers.indexOf(chapter);
+  if (chapterAt < 0 && !chapterGiven && !labelled("chapter", chapter)) return false;
+  // Said straight after the name, a number is the chapter: "Jude 2:1" does
+  // not say Jude 1:1.
+  if (bookSaid && book.chapters === 1 && numbers.length > 1 && numbers[0] !== 1 && verseStart !== numbers[0]) {
+    return false;
+  }
+  if (verseStart === null) return bookSaid;
+  // The verse is the number said next after the chapter ("Genesis 7:14 …
+  // according to its kind", heard "two its kind", does not say Genesis 7:2),
+  // or the one called a verse.
+  const next = chapterAt >= 0 ? numbers[chapterAt + 1] : undefined;
+  const isVerse = (verse: number) =>
+    labelled("verse", verse) && (chapterGiven || chapterAt >= 0 || labelled("chapter", chapter));
+  if (next !== verseStart && !isVerse(verseStart)) return false;
+  return verseEnd === null || numbers.includes(verseEnd) || isVerse(verseEnd);
 }
 
 /** Version codes that are also words a preacher says: "the net", "an amp". */
@@ -403,6 +595,28 @@ export function findNamedVersion(text: string, versions: NamedVersion[]): string
   return best?.code ?? null;
 }
 
+/**
+ * The Bible named by the words `text` begins with, or `null`: "ESV says",
+ * "the New King James Version" (the longest name that begins there, so not
+ * the King James inside it). For "in the ESV", where the name must be what
+ * follows "in", not something said later in the sentence.
+ */
+export function namedVersionAt(text: string, versions: NamedVersion[]): string | null {
+  const from = text.replace(/^\s*(?:the\s+)?/i, "");
+  let best: { code: string; length: number } | null = null;
+  for (const version of versions) {
+    for (const pattern of namedPatterns(version)) {
+      for (const match of from.matchAll(pattern)) {
+        if (match.index !== 0) continue;
+        if (!best || match[0].length > best.length) {
+          best = { code: version.code, length: match[0].length };
+        }
+      }
+    }
+  }
+  return best?.code ?? null;
+}
+
 /** Whether `verse` is in the passage `reference` names. */
 export function passageHolds(
   reference: ParsedReference,
@@ -426,6 +640,43 @@ export function readingWords(text: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Words that are in every other sentence, of the Bible and of a sermon: they
+ * hold a sentence together and say nothing about which one it is. "And he
+ * said unto them" is four of them; so is "one day a man".
+ */
+const TELLS_NOTHING = new Set(
+  (
+    "a about after again against all also am an and any are art as at away be because been before "
+    + "being behold but by came can come cometh could day days did didst do does doeth done dost doth "
+    + "down even every for forth "
+    + "from gave get give go god goes going gone good got great had has hast hath have he her here "
+    + "him himself his how i if in into is it its jesus let like lord made make man many may me men "
+    + "might more must my neither no none nor not nothing now o of off on one only or other our out "
+    + "over own "
+    + "people put said saith same saw say saying says see shall shalt she should so some such take "
+    + "tell than that the thee their them then there therefore these they thing things this those "
+    + "thou though through thus thy time to told too took two unto up upon us very was way we went "
+    + "were what when where which while who whom whose why will with without would ye yea yet you "
+    + "your yours "
+    // Counting is not telling: "my first point, my second point, and the
+    // third" has the words of 1 Chronicles 12:9, and of nothing.
+    + "three four five six seven eight nine ten eleven twelve twenty thirty forty fifty hundred "
+    + "thousand first second third fourth fifth sixth seventh eighth ninth tenth last next"
+  ).split(" "),
+);
+
+/** Whether a word says something about which verse it is in. */
+export function tells(word: string): boolean {
+  return (
+    word.length > 2
+    && !TELLS_NOTHING.has(word)
+    // "Times", "says", "gives": the same words with an "s".
+    && !(word.endsWith("s") && TELLS_NOTHING.has(word.slice(0, -1)))
+    && !/^\d+$/.test(word)
+  );
+}
+
 /** Where the newest words are, in verses being read aloud. */
 export type ReadingAt = {
   /** The verse the newest word is in. */
@@ -434,6 +685,10 @@ export type ReadingAt = {
   matched: number;
   /** How many of those are that verse's own; the rest end the verse before. */
   intoVerse: number;
+  /** Whether those begin the verse, rather than being from the middle of it. */
+  fromStart: boolean;
+  /** How many of the verse's own tell something (`tells`). */
+  telling: number;
 };
 
 /**
@@ -462,10 +717,15 @@ export function readingAt(
     if (matched === 0) continue;
     const place = text[end];
     if (!place) continue;
-    const found = { verse: place.verse, matched, intoVerse: Math.min(matched, place.at + 1) };
-    if (!best || matched > best.matched || (matched === best.matched && found.verse === stay)) {
-      best = found;
+    if (best && (matched < best.matched || (matched === best.matched && place.verse !== stay))) {
+      continue;
     }
+    const intoVerse = Math.min(matched, place.at + 1);
+    let telling = 0;
+    for (let back = 0; back < intoVerse; back += 1) {
+      if (tells(text[end - back]?.word ?? "")) telling += 1;
+    }
+    best = { verse: place.verse, matched, intoVerse, fromStart: matched >= place.at + 1, telling };
   }
   return best;
 }
@@ -485,9 +745,17 @@ const COMMON_OPENINGS = new Set([
  * Read straight on from the verse on screen, two words of the next do it —
  * "…over the face of the waters. And God" is Genesis 1:3 — or one that is not
  * a common opening ("…shall not perish. Jesus"); the end of the verse before
- * must have been read just before them, two words of it at least. Started
- * after a pause, or with a chapter open and no verse, three words of a verse
- * in a row do it.
+ * must have been read just before them, two words of it at least.
+ *
+ * Started after a pause, or with a chapter open and no verse, the words must
+ * be where a verse begins and say something: four of them with one that
+ * tells ("For God sent not"), or three with two. "And he said", "and God
+ * said", "the son of" begin a hundred verses and as many sentences of a
+ * sermon; three such words moved the screen on in the middle of one. Words
+ * from the middle of a verse must be five, two of them telling. A verse
+ * further on than the next needs more again — five from its start, seven
+ * from its middle: reading does not skip a verse often, and "For it is
+ * written" begins the verse after next as well as it is said in this one.
  */
 export function movedOn(
   at: ReadingAt,
@@ -496,9 +764,15 @@ export function movedOn(
 ): boolean {
   if (at.verse === inView) return false;
   if (inView !== null && at.verse < inView) return false;
+  const next = inView === null || at.verse === inView + 1;
   const before = at.matched - at.intoVerse;
-  if (before >= 2) {
+  if (next && inView !== null && before >= 2) {
     return at.intoVerse >= 2 || (at.intoVerse === 1 && !COMMON_OPENINGS.has(firstWord ?? ""));
   }
-  return at.intoVerse >= 3;
+  if (at.fromStart) {
+    return next
+      ? (at.intoVerse >= 4 && at.telling >= 1) || (at.intoVerse >= 3 && at.telling >= 2)
+      : at.intoVerse >= 5 && at.telling >= 2;
+  }
+  return next ? at.intoVerse >= 5 && at.telling >= 2 : at.intoVerse >= 7 && at.telling >= 3;
 }

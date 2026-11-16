@@ -9,6 +9,7 @@ import {
   useDesktopSessionStore,
 } from "../../renderer/shared/store/desktopSession";
 import { useSongAgentStore } from "./songAgentStore";
+import { useBibleListeningStore } from "../scripture/lib/bible-listening";
 
 const openPlans = () => {
   void window.electronAPI?.openExternalBrowser?.(`${desktopWebBaseUrl()}/dashboard/billing`);
@@ -48,6 +49,8 @@ export function SongAgentControl() {
       });
       return;
     }
+    // One microphone at a time: the Bible agent's goes off as this comes on.
+    useBibleListeningStore.getState().stop();
     setEnabled(true);
   };
 

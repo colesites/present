@@ -92,9 +92,17 @@ test("a verse said on its own is read in the passage just named", () => {
   assert.equal(read("And then look at verse 18.", open("John 3:16")), "John 3:18", "or in the one open");
   assert.equal(
     read("Now turn to Habakkuk. Chapter 3, verse 16.", open("Romans 8")),
-    null,
-    "not in the passage left open when another book was named",
+    "Habakkuk 3:16",
+    "in the book just named, not in the passage left open",
   );
+  assert.equal(
+    read("My friend Habakkuk is here today. Chapter 3, verse 16.", open("Romans 8")),
+    null,
+    "a name in passing is not a book turned to",
+  );
+  assert.equal(read("This is verse one of the song.", open("John 3:16")), null, "a hymn's verse");
+  assert.equal(read("We sing verse 2.", open("John 3:16")), null);
+  assert.equal(read("That was chapter 2 of my life.", open("John 3:16")), null, "nor a chapter of a life");
 });
 
 test("a reference that may still be being said waits", () => {
@@ -166,8 +174,8 @@ test("the turn before is context for a verse, not something to read again", () =
   assert.equal(reading("Verse 16.", "Turn with me to John chapter 3."), "John 3:16");
   assert.equal(
     reading("Chapter 3, verse 16.", "Now turn to Habakkuk.", open("Romans 8")),
-    null,
-    "a book named just before, without a chapter, is the model's to read",
+    "Habakkuk 3:16",
+    "a book named just before, without a chapter, takes the chapter and verse said next",
   );
   assert.equal(
     reading("one more thing before we pray", "And then look at verse 16.", open("Romans 5")),
@@ -220,7 +228,8 @@ test("reading along: moving on to the next verse within two words, and only then
   assert.equal(moves("should not perish, but have everlasting life. For God"), 17, "read straight on: two words");
   assert.equal(moves("should not perish, but have everlasting life. For"), false, "one common word is not enough");
   assert.equal(moves("everlasting life. Amen, church, isn't that good"), false, "talking about it moves nothing");
-  assert.equal(moves("Now look. For God sent not"), 17, "after a pause, three words in a row");
+  assert.equal(moves("Now look. For God sent not"), 17, "after a pause, four words where the verse begins");
+  assert.equal(moves("Now look. For God sent"), false, "three, with one that tells, could be a sentence of the sermon");
   assert.equal(moves("For God"), false, "two words alone could be either");
 
   const opening = [

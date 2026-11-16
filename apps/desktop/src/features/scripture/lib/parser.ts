@@ -138,9 +138,22 @@ function replaceSpokenNumberPhrases(input: string): string {
   return normalizedTokens.join(" ");
 }
 
+/**
+ * Books as they are said from a pulpit and written by a speech service, put
+ * as the Bible names them: "Songs of Solomon", "Acts of the Apostles", "the
+ * first book of Samuel", "Saint John".
+ */
+function asTheBibleNamesIt(input: string): string {
+  return input
+    .replace(/\b(?:songs?\s+of\s+songs|songs\s+of\s+solomon|canticles?)\b/gi, "Song of Solomon")
+    .replace(/\bacts\s+of\s+the\s+apostles\b/gi, "Acts")
+    .replace(/\b(first|second|third|1st|2nd|3rd|[123])\s+(?:book|epistle|letter)\s+(?:of|to)\s+(?:the\s+)?/gi, "$1 ")
+    .replace(/\b(?:saint|st)\b\.?\s+(?=[A-Za-z])/gi, "");
+}
+
 function normalizeReferenceInput(input: string): string {
   return replaceSpokenNumberPhrases(
-    input
+    asTheBibleNamesIt(input)
       .trim()
       .replace(/[.,]/g, " ")
       .replace(/\b(first|1st)\b/gi, "1")
@@ -152,6 +165,8 @@ function normalizeReferenceInput(input: string): string {
       .replace(/^(third|3rd|iii)\b/i, "3"),
   )
     .replace(/\bchapters?\b/gi, "")
+    // "from verse 25 all the way to verse 32", "verse 3 down to 7".
+    .replace(/\b(?:all\s+the\s+way|right|down|up)\s+to\b/gi, "to")
     // "from verse 2 to verse 10", "beginning at verse 3": the words that
     // introduce a verse carry nothing the numbers do not.
     .replace(/\b(?:from|beginning|starting|at)\b/gi, " ")
@@ -206,9 +221,12 @@ function readBookAliases(book: BibleBookRecord): string[] {
   // ends in "s" answers to itself without it, and one that does not answers
   // to itself with it — which covers Psalm(s), Proverb(s) and Song(s) without
   // a table of exceptions.
-  const spoken = named.map((alias) =>
-    alias.endsWith("s") && alias.length > 3 ? alias.slice(0, -1) : `${alias}s`,
-  );
+  //
+  // Not Numbers: "number one", "number two" are how a sermon counts its
+  // points, and were read as the book, chapter 1 and chapter 2.
+  const spoken = named
+    .map((alias) => (alias.endsWith("s") && alias.length > 3 ? alias.slice(0, -1) : `${alias}s`))
+    .filter((alias) => alias !== "number");
   return Array.from(new Set([...named, ...spoken])).sort(
     (left, right) => right.length - left.length,
   );
@@ -327,6 +345,58 @@ export function knowVerseCounts(lookup: (book: string, chapter: number) => numbe
  */
 export function verseCouldGrow(book: BibleBookRecord, chapter: number, verse: number): boolean {
   return verse * 10 <= (versesIn(book.name, chapter) ?? MOST_VERSES);
+}
+
+/**
+ * Whether the passage is one the Bible has: the chapter in the book, and the
+ * verses in the chapter. "John 3:37" and "Psalm 151" are said by mistake, or
+ * heard by mistake, and there is nothing to show for them.
+ */
+export function passageExists({ book, chapter, verseStart, verseEnd }: ParsedReference): boolean {
+  if (!book || !chapter || chapter < 1 || chapter > book.chapters) return false;
+  const verses = versesIn(book.name, chapter) ?? MOST_VERSES;
+  return (verseStart ?? 1) >= 1 && (verseStart ?? 1) <= verses && (verseEnd ?? 1) <= verses;
+}
+
+const ORDINALS: Record<string, string> = {
+  first: "one", second: "two", third: "three", fourth: "four", fifth: "five", sixth: "six",
+  seventh: "seven", eighth: "eight", ninth: "nine", tenth: "ten", eleventh: "eleven",
+  twelfth: "twelve", thirteenth: "thirteen", fourteenth: "fourteen", fifteenth: "fifteen",
+  sixteenth: "sixteen", seventeenth: "seventeen", eighteenth: "eighteen", nineteenth: "nineteen",
+  twentieth: "twenty", thirtieth: "thirty", fortieth: "forty", fiftieth: "fifty",
+};
+
+/**
+ * Every number said in the words, in the order said, however it was said or
+ * written: "3:16", "three sixteen", "the third chapter", "16th" — and "316"
+ * as 3 and 16 too (and 31 and 6), since a chapter and verse are written
+ * together until a turn ends. For checking that a passage somebody names was
+ * said at all.
+ *
+ * `apart`: only numbers said apart from one another, so "316" is 316 and
+ * nothing else.
+ */
+export function numbersSaid(text: string, { apart = false } = {}): number[] {
+  const cardinal = text
+    .toLowerCase()
+    .replace(/[-\u2013]/g, " ")
+    .replace(/\b[a-z]+\b/g, (word) => ORDINALS[word] ?? word)
+    .replace(/(\d+)(?:st|nd|rd|th)\b/g, "$1");
+  const said: number[] = [];
+  for (const [digits] of replaceSpokenNumberPhrases(cardinal).matchAll(/\d+/g)) {
+    said.push(Number(digits));
+    // Two digits are one number: "10" is not chapter 1.
+    if (apart || digits.length < 3 || digits.length > 4) continue;
+    for (let at = 1; at < digits.length; at += 1) {
+      said.push(Number(digits.slice(0, at)), Number(digits.slice(at)));
+    }
+  }
+  return said;
+}
+
+/** The book the words name, with or without a chapter after it. */
+export function findBookNamed(text: string, availableBooks: BibleBookRecord[]): BibleBookRecord | null {
+  return findReferencedBook(normalizeReferenceInput(text), availableBooks)?.book ?? null;
 }
 
 /**

@@ -16,7 +16,7 @@ const load = (path, modules = {}) => {
     return found[1];
   };
   new Script(transpiled.outputText).runInContext(
-    createContext({ exports: module.exports, module, require, Promise, Set, Map, setTimeout }),
+    createContext({ exports: module.exports, module, require, Promise, Set, Map, setTimeout, Date }),
   );
   return module.exports;
 };
@@ -29,9 +29,11 @@ const commandParser = load("../src/features/scripture/lib/command-parser.ts", {
   "./listening": listening,
 });
 const stepReference = load("../src/features/scripture/lib/step-reference.mjs");
+const reading = load("../src/features/scripture/lib/reading.ts", { "./listening": listening });
 const { createHeardScripture } = load("../src/features/scripture/lib/heard-scripture.ts", {
   "./parser": parser,
   "./listening": listening,
+  "./reading": reading,
   "./transcript-buffer": transcriptBuffer,
   "./command-parser": commandParser,
   "./step-reference.mjs": stepReference,
@@ -363,3 +365,37 @@ test("Safe Failure: Preserves current screen and selected translation if models 
   assert.equal(tab.chosen, "KJV", "Selected translation is safely preserved");
 });
 
+
+// =========================================================================
+// 8. A NEW SPEECH SESSION: LISTENING CARRIED ON AFTER THE LAST ONE ENDED
+// =========================================================================
+test("New session: turns counted from nothing again are heard, and the screen stays as it was", async () => {
+  const tab = createTestTab({ onHeard: "show" });
+  await tab.hearEvent({
+    session: 1,
+    turn: 57,
+    transcript: "Romans 8:28.",
+    endOfTurn: true,
+    receivedAt: Date.now(),
+  });
+  assert.deepEqual(tab.screen, ["Romans 8:28 KJV"]);
+
+  // The session's fifteen minutes are up; listening carries on in a new one,
+  // which counts its turns from 0. Turn 0 is not older than turn 57.
+  await tab.hearEvent({
+    session: 2,
+    turn: 0,
+    transcript: "Thank you, church.",
+    endOfTurn: true,
+    receivedAt: Date.now() + 1000,
+  });
+  assert.deepEqual(tab.screen, ["Romans 8:28 KJV"], "what is on screen stays");
+  await tab.hearEvent({
+    session: 2,
+    turn: 1,
+    transcript: "John 3:16.",
+    endOfTurn: true,
+    receivedAt: Date.now() + 2000,
+  });
+  assert.deepEqual(tab.screen, ["Romans 8:28 KJV", "John 3:16 KJV"], "and the new session is heard");
+});

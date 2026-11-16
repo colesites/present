@@ -74,7 +74,25 @@ test("recognizes explicit next and previous verse commands", () => {
   assert.deepEqual(parseExplicitCommand("previous verse", options), { type: "previous_verse" });
   assert.deepEqual(parseExplicitCommand("prev verse", options), { type: "previous_verse" });
   assert.deepEqual(parseExplicitCommand("Go back a verse", options), { type: "previous_verse" });
-  assert.deepEqual(parseExplicitCommand("Go to the last verse", options), { type: "previous_verse" });
+  assert.deepEqual(parseExplicitCommand("Go back to the last verse", options), { type: "previous_verse" });
+  // The last verse of a chapter, or the one read last week: not a step back.
+  assert.equal(parseExplicitCommand("the last verse we read was about love", options), null);
+});
+
+test("a Bible named after \"in\" is switched to, and only when it is what follows", () => {
+  const options = { books, versions, activePassage: null };
+  const switched = (said) => parseExplicitCommand(said, options);
+  assert.deepEqual(switched("in ESV"), { type: "switch_version", versionCode: "ESV" });
+  assert.deepEqual(switched("John 3:16 in the ESV"), { type: "switch_version", versionCode: "ESV" });
+  assert.deepEqual(switched("What does it say in the King James?"), {
+    type: "switch_version",
+    versionCode: "KJV",
+  });
+  assert.deepEqual(switched("Let us see it in the Amplified."), { type: "switch_version", versionCode: "AMP" });
+  assert.deepEqual(switched("in E S V"), { type: "switch_version", versionCode: "ESV" });
+  assert.equal(switched("in the message this morning I want to talk about faith"), null, "the Message is a word too");
+  assert.equal(switched("in the morning we will read the ESV together"), null, "named later, not after \"in\"");
+  assert.equal(switched("he was in Kiev last year"), null);
 });
 
 test("recognizes explicit version switch commands", () => {

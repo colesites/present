@@ -258,11 +258,15 @@ function endsWithPhraseOf(a, text, length, endingWithin) {
   return false;
 }
 
-/** Where each sentence begins, as word positions in `wordsOf(normalize(text))`. */
-function sentenceStarts(text) {
+/**
+ * Where each sentence begins, as word positions in `wordsOf(normalize(text))`
+ * — and, when the text ends with a full stop, where the next would. `ends`:
+ * what ends one; with a comma in it, where each clause begins.
+ */
+function sentenceStarts(text, ends = /[.!?;:]+(?=\s|$)/) {
   const starts = new Set([0]);
   let count = 0;
-  for (const sentence of text.split(/[.!?;:]+(?=\s|$)/)) {
+  for (const sentence of text.split(ends)) {
     starts.add(count);
     count += wordsOf(normalizeVerseSearchText(sentence)).length;
   }
@@ -270,24 +274,107 @@ function sentenceStarts(text) {
 }
 
 /**
+ * How much a word says about which verse is meant, in bits: none for a word
+ * in every verse, about fifteen for one in a single verse. "My flesh and my"
+ * is four words and thirteen bits, nearly all of them in "flesh"; "for God so
+ * loved the world" is six words and twenty-five.
+ *
+ * A Bible of a few verses (a test's) is weighed as a whole one would be, so
+ * that a word in one verse of five is still a rare word. A New Testament
+ * alone is weighed as what it is: counted as a whole Bible, every word of it
+ * looked a bit and a third rarer than it is, and "at the end of the day" was
+ * nearly a quote of Matthew 27:57 in the Passion Translation.
+ */
+function bitsOf(index, word) {
+  index.bits ??= new Map();
+  let bits = index.bits.get(word);
+  if (bits === undefined) {
+    const verses = index.postings.get(word)?.length ?? 0;
+    const all = index.entries.length < 2_000 ? 31_000 : index.entries.length;
+    bits = verses === 0 ? 0 : Math.log2(all / verses);
+    index.bits.set(word, Math.max(0, bits));
+  }
+  return bits;
+}
+
+/**
+ * How much the words of a run must say between them, in bits, to be a quote
+ * of a verse and not a turn of phrase a verse happens to share — when they
+ * are where the verse begins, or most of it, which is how a verse is read.
+ *
+ * Measured over the Bibles in `apps/desktop/bible/` (`tests/bible-agent-eval`):
+ * at every word of 300 things said in services that quote nothing — 180 of
+ * them from this app's own log of real ones — in the KJV, the NKJV and the
+ * NIV, the most a run from a verse's start said was 23 bits ("What shall we
+ * say then?", "And when he had finished,") — and against all thirteen Bibles
+ * here, 23 again ("The woman said to her husband,", 2 Kings 4:9 in the
+ * Easy-to-Read). The first eight words of a verse say 35 at the median, and
+ * 25 or more for nineteen verses in twenty.
+ */
+export const QUOTE_MIN_BITS = 26;
+
+/**
+ * The same, for words from the middle of a verse. Speech shares more with
+ * the middles of verses than with their beginnings: "…is that we should love
+ * one another" is 29 bits of 1 John 3:11, "one day a man was walking along
+ * the road" 28 of 2 Kings 2:23, and neither is being read. Eight words from
+ * the middle of a verse say 37 at the median; a verse quoted from its middle
+ * goes up a word or two later than one read from its start.
+ */
+export const QUOTE_MIN_BITS_MIDDLE = 34;
+
+/**
+ * From the middle of a verse still, but this many words of it in a row: so
+ * many say more together than their bits add up to, which count each word as
+ * if the ones before it were not there. In 300 things said in services,
+ * against thirteen Bibles, no run reached eight words; the six that reached
+ * seven said 25 bits at most. "The Lord is my shepherd, I shall not want" is
+ * nine words and 28.
+ */
+export const QUOTE_LONG_RUN = 8;
+export const QUOTE_MIN_BITS_LONG = 28;
+
+/** How much of a verse the words must be to count as most of it. */
+const MOST_OF_A_VERSE = 0.6;
+
+/** What a whole verse of four words or fewer must say: "Jesus wept" is 14. */
+export const SHORT_VERSE_MIN_BITS = 12;
+
+/**
+ * By how much the verse found must out-say the next most likely. Two verses
+ * that share the words heard so far are told apart by the word that comes
+ * next, and a word like "and" or "the" tells nothing: the verse waits for a
+ * word that does, rather than going up and being taken down again.
+ */
+export const QUOTE_MARGIN_BITS = 6;
+
+/**
  * The one verse a sentence quotes, word for word, or `null`.
  *
- * For the listening agent's Find it, which reads what was heard without a
- * model: "Jesus wept" said aloud is John 11:35 though no reference was named.
- * A verse counts as quoted when the sentence has all of it, for a verse of up
- * to `QUOTE_MIN_RUN` words, or that many of its words in a row, and those
- * words include one the Bible does not use everywhere: "in the name of Jesus"
- * is in a verse, but it is a way of speaking, not a quote. A quote more than
- * one verse has equally ("his mercy endureth for ever", "in the beginning")
- * finds none of them rather than a guess: the model is asked about those
- * (`lib/heard-scripture.ts`), and knows which a famous one means.
+ * For the listening agent, which reads what was heard without a model: "For
+ * God so loved the world" said aloud is John 3:16 though no reference was
+ * named. A verse counts as quoted when the sentence has words of it in a row
+ * that say enough between them (`QUOTE_MIN_BITS`, and more from the middle
+ * of a verse: `QUOTE_MIN_BITS_MIDDLE`) — four at the least, and
+ * fewer than `QUOTE_ANYWHERE_RUN` only where a sentence or the verse begins —
+ * or has all of a short verse as a sentence of its own ("Jesus wept."). A
+ * quote more than one verse has equally ("his mercy endureth for ever", "in
+ * the beginning"), or nearly (`QUOTE_MARGIN_BITS`), finds none of them rather
+ * than a guess: the model is asked about those (`lib/heard-scripture.ts`).
  *
- * `commonAfter`: a word in more verses than this is too common to count;
- * by default 2% of the Bible, and never fewer than 50 verses.
+ * `commonAfter`: a word in more verses than this is too common to look a
+ * verse up by; by default 2% of the Bible, and never fewer than 50 verses.
  *
  * `endingWithin`: only a quote that ends this many words or fewer before
  * the end of what was heard — one being read now, not one read a moment ago
  * that the preacher has since moved on from.
+ *
+ * `ended`: whether what was heard is all of it (the turn is over, or the
+ * words were typed). While it is still being said, a short verse waits for
+ * the full stop after it.
+ *
+ * `minBits`, `middleBits`, `marginBits`: in place of `QUOTE_MIN_BITS`,
+ * `QUOTE_MIN_BITS_MIDDLE` and `QUOTE_MARGIN_BITS`, to measure with.
  */
 export function findQuotedVerse(index, heard, options = {}) {
   return quotedVerseMatch(index, heard, options)?.verse ?? null;
@@ -295,13 +382,30 @@ export function findQuotedVerse(index, heard, options = {}) {
 
 /**
  * `findQuotedVerse`, with how many words in a row the quote shares with the
- * verse (`run`) and how many in order, gaps allowed (`shared`) — so the same
- * quote can be weighed across Bibles (`chooseAcrossBibles`).
+ * verse (`run`), how many in order, gaps allowed (`shared`), and how much the
+ * run says (`bits`) — so the same quote can be weighed across Bibles
+ * (`chooseAcrossBibles`).
+ *
+ * @param {any} index
+ * @param {string} heard
+ * @param {{ commonAfter?: number, endingWithin?: number, ended?: boolean, minBits?: number, middleBits?: number, marginBits?: number }} [options]
  */
-export function quotedVerseMatch(index, heard, { commonAfter, endingWithin } = {}) {
+export function quotedVerseMatch(
+  index,
+  heard,
+  {
+    commonAfter,
+    endingWithin,
+    ended = true,
+    minBits = QUOTE_MIN_BITS,
+    middleBits = QUOTE_MIN_BITS_MIDDLE,
+    marginBits = QUOTE_MARGIN_BITS,
+  } = {},
+) {
   const heardWords = wordsOf(normalizeVerseSearchText(heard));
   if (heardWords.length < 2) return null;
   const begins = sentenceStarts(heard);
+  const clauses = sentenceStarts(heard, /[.!?;:,]+(?=\s|$)/);
 
   const tooCommon = commonAfter ?? Math.max(50, index.entries.length * COMMON_SHARE);
   const isUncommon = (word) => {
@@ -315,10 +419,11 @@ export function quotedVerseMatch(index, heard, { commonAfter, endingWithin } = {
     if (isUncommon(word)) index.postings.get(word).forEach((entryIndex) => candidates.add(entryIndex));
   }
 
-  let best = null;
-  let bestRun = 0;
-  let bestWords = [];
-  let tied = false;
+  // The most any verse's run says, and the next most, whether or not either
+  // would do as a quote: a verse is not found while another has as much of
+  // what was heard, wherever in it the words fall.
+  let top = null;
+  let nextBits = 0;
   const reading =
     endingWithin === undefined
       ? candidates
@@ -339,27 +444,51 @@ export function quotedVerseMatch(index, heard, { commonAfter, endingWithin } = {
     const verseWords = wordsOf(text);
     const run = longestSharedRun(heardWords, verseWords);
     if (run.length < needed) continue;
-    if (
-      run.length < Math.min(verseWords.length, QUOTE_ANYWHERE_RUN)
-      && !begins.has(run.end - run.length)
-      && run.endInB !== run.length
-    ) {
+    if (endingWithin !== undefined && heardWords.length - run.end > endingWithin) continue;
+    const from = run.end - run.length;
+    const said = heardWords.slice(from, run.end);
+    let bits = 0;
+    for (const word of said) bits += bitsOf(index, word);
+    if (top && bits <= top.bits) {
+      nextBits = Math.max(nextBits, bits);
       continue;
     }
-    if (endingWithin !== undefined && heardWords.length - run.end > endingWithin) continue;
-    if (!heardWords.slice(run.end - run.length, run.end).some(isUncommon)) continue;
-    if (run.length > bestRun) {
-      best = entry.verse;
-      bestRun = run.length;
-      bestWords = verseWords;
-      tied = false;
-    } else if (run.length === bestRun) {
-      tied = true;
-    }
+    nextBits = top?.bits ?? 0;
+
+    const whole = run.length === verseWords.length;
+    const short = whole && run.length <= QUOTE_MIN_RUN;
+    const fromStart = run.endInB === run.length;
+    // A verse this short is a quote only as a sentence of its own: "Jesus
+    // wept." is John 11:35; "and Jesus wept over the city" tells Luke 19.
+    const placed = short
+      ? clauses.has(from) && (begins.has(run.end) || (ended && run.end === heardWords.length))
+      : run.length >= Math.min(verseWords.length, QUOTE_ANYWHERE_RUN) || begins.has(from) || fromStart;
+    const least = short
+      ? SHORT_VERSE_MIN_BITS
+      : fromStart || run.length >= verseWords.length * MOST_OF_A_VERSE
+        ? minBits
+        : run.length >= QUOTE_LONG_RUN
+          ? Math.min(middleBits, QUOTE_MIN_BITS_LONG)
+          : middleBits;
+    top = {
+      verse: entry.verse,
+      bits,
+      run: run.length,
+      words: verseWords,
+      fromStart,
+      quoted: placed && bits >= least && said.some(isUncommon),
+    };
   }
-  return tied || !best
+  return !top || !top.quoted || top.bits - nextBits < marginBits
     ? null
-    : { verse: best, run: bestRun, shared: sharedInOrder(heardWords, bestWords) };
+    : {
+        verse: top.verse,
+        run: top.run,
+        shared: sharedInOrder(heardWords, top.words),
+        bits: top.bits,
+        fromStart: top.fromStart,
+        covers: top.run / Math.max(1, top.words.length),
+      };
 }
 
 /** How many words two texts share in order, gaps allowed. */
