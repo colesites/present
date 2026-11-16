@@ -24,7 +24,19 @@
  *    - Recognizes explicit commands ("next verse", "previous verse", "turn to Romans 8:28",
  *      "show verse 12", "switch to NIV") deterministically before verse matching or LLM.
  *
- * 5. LLM FOR SEMANTIC AMBIGUITY ONLY:
+ * 5. A VERSE BEING READ IS HELD TO (`reading.ts`):
+ *    - While the newest words are still those of the passage on screen, or of the verse
+ *      after it, nothing found by its words alone — a quote, the model's reading — takes
+ *      the screen. A reference said in full still does. The next verse goes up when the
+ *      reading reaches it, and not before.
+ *
+ * 6. THE MODEL PROPOSES; THE BIBLE DECIDES:
+ *    - A passage the model names is shown only when what was said bears it out: the
+ *      reference was said (its book and numbers are in the words), or the words are the
+ *      verse's own, read or told. However sure the model is, "one day a man" is in no verse.
+ *    - A passage that is not in the Bible ("John 3:37") is never shown.
+ *
+ * 7. LLM FOR SEMANTIC AMBIGUITY ONLY:
  *    - Routine sequential reading is handled locally without LLM calls.
  *    - LLM classifies intent (SCRIPTURE_READING, COMMENTARY, REFERENCE_MENTION, NAVIGATION_REQUEST, UNCERTAIN).
  *    - Commentary or casual reference mentions ("As Paul says in Romans 8:28...") NEVER project in SHOW IT mode.
@@ -44,16 +56,28 @@ import {
   readingAt,
   readingWords,
   readNewestReference,
+  saysReference,
+  wordsAfterLastCue,
   type NamedVersion,
 } from "./listening";
-import { verseCouldGrow, type ParsedReference } from "./parser";
+import { passageExists, verseCouldGrow, type ParsedReference } from "./parser";
+import {
+  borneOutBy,
+  followed,
+  followingStill,
+  goneOnTo,
+  mostlyIn,
+  rootOf,
+  rootsOf,
+  stillIn,
+} from "./reading";
 import {
   createTranscriptBuffer,
   DEFAULT_RETENTION,
   textOf,
   type TranscriptEvent,
 } from "./transcript-buffer";
-import { parseExplicitCommand } from "./command-parser";
+import { findStepCommand, parseExplicitCommand } from "./command-parser";
 import { stepPassage } from "./step-reference.mjs";
 
 export type SpeechIntent =
@@ -88,6 +112,13 @@ export type HeardScriptureInput = {
   show: (lookup: string, options: { addToService: boolean }) => void;
   /** Switch the tab to another installed Bible. */
   chooseVersion: (code: string) => void;
+  /** Whether "next verse" and "previous verse" said aloud are acted on. Default: yes. */
+  commands?: boolean;
+  /**
+   * Step from the verse on screen, when the box does not say which verse that
+   * is (a whole chapter is open, and the operator clicked a verse of it).
+   */
+  step?: (direction: "next" | "previous") => void;
   /**
    * Ask the model what the words new since it was last asked mean, with what
    * was said before them and the passage open in the tab; `null` when it
@@ -112,6 +143,8 @@ export type HeardScriptureInput = {
     /** The Bible in use only: the agent never reads the others (`quote`). */
     versions: "chosen";
     endingWithin: number;
+    /** Whether the turn is over: a short verse waits for its full stop until then. */
+    ended: boolean;
   }) => Promise<BibleVerse | null>;
   /** The code of an installed Bible, from its id. */
   versionCodeOf: (versionId: string) => string;
@@ -147,6 +180,15 @@ type Passage = {
 
 type QuoteCheck = { text: string; final: boolean; version: string | null; step: number };
 
+/** A chapter as it is read aloud: each verse's words, and their roots (`reading.ts`). */
+type Script = { verse: number; words: string[]; roots: string[] }[];
+
+/** How many words after a verse goes up are taken to be its own, whatever they are. */
+const JUST_UP = 6;
+
+/** The most other Bibles a chapter is read along in. */
+const OTHER_BIBLES = 8;
+
 const fresh = () => ({
   session: 0,
   turn: 0,
@@ -173,6 +215,24 @@ const fresh = () => ({
   named: null as string | null,
   /** The last passage put in the box or on screen. */
   current: null as Passage | null,
+  /** When it was put there, to tell it from what the operator has opened since. */
+  currentAt: 0,
+  /**
+   * Where in everything heard it was put there: the words before are the
+   * reference that named it, or the verse read before it. Only the words
+   * since say where its reading is, or quote another verse.
+   */
+  currentFrom: 0,
+  /** Where everything heard ends now, as a count of words (`TranscriptBuffer` positions). */
+  heardEnd: 0,
+  /**
+   * A passage the model was sure of that the words did not bear out, left in
+   * the box for the operator and not shown: nothing is said within it.
+   */
+  suggested: "",
+  /** The turn "next verse" was last acted on in, and how many of its words that took up. */
+  steppedTurn: -1,
+  steppedWords: 0,
   /** The last passage put on screen. */
   shown: null as Passage | null,
   /**
@@ -191,7 +251,17 @@ const fresh = () => ({
   /** One whose download failed, not tried again until asked again. */
   declined: null as string | null,
   /** The chapter of the passage in view, to read along with. */
-  chapter: null as { key: string; verses: { verse: number; words: string[] }[] | null } | null,
+  chapter: null as {
+    key: string;
+    /** In the Bible on screen. */
+    verses: Script | null;
+    /**
+     * The same chapter in the other Bibles installed: what the reader may be
+     * reading from. Only to know which verse the reading is in — the screen
+     * stays in the Bible chosen.
+     */
+    others: Script[];
+  } | null,
   /** The newest words, for reading along once the chapter has loaded. */
   heard: "",
 });
@@ -250,21 +320,44 @@ export function createHeardScripture(first: HeardScriptureInput): {
   const chapterKey = ({ reference, version }: Passage) =>
     `${reference.book?.id ?? ""}|${reference.chapter ?? ""}|${version ?? ""}`;
 
+  const asScript = (verses: { verse: number; text: string }[]): Script =>
+    verses.map(({ verse, text }) => {
+      const words = readingWords(text);
+      return { verse, words, roots: words.map(rootOf) };
+    });
+
   const loadChapter = (s: State, passage: Passage) => {
     const { book, chapter } = passage.reference;
     if (!book || !chapter) return;
     const key = chapterKey(passage);
     if (s.chapter?.key === key) return;
-    const loading: NonNullable<State["chapter"]> = { key, verses: null };
+    const loading: NonNullable<State["chapter"]> = { key, verses: null, others: [] };
     s.chapter = loading;
-    void input()
+    const now = input();
+    void now
       .readChapter(book, chapter, passage.version)
       .then((verses) => {
-        loading.verses = verses.map(({ verse, text }) => ({ verse, words: readingWords(text) }));
+        loading.verses = asScript(verses);
         // Reading may have progressed while chapter was loading.
-        if (s === state && s.chapter === loading) follow(s, s.heard);
+        if (s === state && s.chapter === loading) follow(s);
       })
       .catch((): void => undefined);
+    // The chapter in the other Bibles installed, for a preacher reading from
+    // one that is not on screen. One chapter of each, once, when the passage
+    // goes up — not every Bible searched at every word, which is what held
+    // the Bible screen still, and not a Bible switched to on a guess.
+    const others = now.versions
+      .map(({ code }) => code)
+      .filter((code) => code.toUpperCase() !== (passage.version ?? "").toUpperCase())
+      .slice(0, OTHER_BIBLES);
+    for (const code of others) {
+      void now
+        .readChapter(book, chapter, code)
+        .then((verses) => {
+          if (verses.length > 0) loading.others.push(asScript(verses));
+        })
+        .catch((): void => undefined);
+    }
   };
 
   /** Act on a passage heard at `step`, unless something newer was. */
@@ -276,11 +369,46 @@ export function createHeardScripture(first: HeardScriptureInput): {
       step,
       version,
       following = false,
-    }: { sure: boolean; step: number; version: string | null; following?: boolean },
+      named = true,
+      already = 0,
+      inThisBible = false,
+    }: {
+      sure: boolean;
+      step: number;
+      version: string | null;
+      following?: boolean;
+      /** How many of the newest words heard are this passage's own already. */
+      already?: number;
+      /** Found in the Bible in use, though most Bibles do not have the verse. */
+      inThisBible?: boolean;
+      /** Said as a reference, which may still be being said; not found by its words. */
+      named?: boolean;
+    },
   ) => {
     if (s !== state || step < s.takenStep) return;
-    s.takenStep = step;
     const now = input();
+    // HARD INVARIANT: a passage the Bible does not have is never shown.
+    if (!inThisBible && !passageExists(reference)) {
+      // Most Bibles end 3 John at verse 14; the RSV has a fifteenth. Whether
+      // the Bible in use has the verse is for that Bible to say.
+      const { book, chapter, verseStart, verseEnd } = reference;
+      const last = verseEnd ?? verseStart;
+      if (book && chapter && chapter >= 1 && chapter <= book.chapters && verseStart && last) {
+        const version = s.named ?? now.chosenVersionCode;
+        void versesOf(reference, version).then((verses) => {
+          const has = (wanted: number) => verses.some(({ verse }) => verse === wanted);
+          if (has(verseStart) && has(last)) {
+            take(s, reference, { sure, step, version, following, named, already, inThisBible: true });
+          } else {
+            input().note?.("no such passage", asLookup(reference));
+          }
+        });
+        return;
+      }
+      now.note?.("no such passage", asLookup(reference));
+      return;
+    }
+    s.takenStep = step;
 
     // HARD INVARIANT: Active translation is locked to chosenVersionCode
     // unless an explicit version switch command was recognized.
@@ -294,6 +422,8 @@ export function createHeardScripture(first: HeardScriptureInput): {
 
     if (s.current?.key !== passage.key) {
       s.current = passage;
+      s.currentAt = Date.now();
+      s.currentFrom = s.heardEnd - already;
       loadChapter(s, passage);
       // In FIND IT or SHOW IT, always update the box with the active lookup.
       const lookup = asLookup(reference, activeVersion !== now.chosenVersionCode ? activeVersion : null);
@@ -314,7 +444,7 @@ export function createHeardScripture(first: HeardScriptureInput): {
     }
 
     // A reference being named may still be growing ("John 3:16 to 18").
-    if (!following && !s.ended && (stillSaying(s, reference) || mayStillGrow(s.text, reference))) {
+    if (named && !following && !s.ended && (stillSaying(s, reference) || mayStillGrow(s.text, reference))) {
       s.held = { passage, step: s.step };
       return;
     }
@@ -323,34 +453,274 @@ export function createHeardScripture(first: HeardScriptureInput): {
     project(s, passage, following);
   };
 
-  /**
-   * Read along with the passage in view: the verse being read, as soon as the
-   * reading moves on to it (`movedOn`).
-   */
-  const follow = (s: State, heard: string): boolean => {
+  /** The newest words heard since the passage in view went up, `most` of them at most. */
+  const sinceCurrent = (s: State, most: number): string =>
+    lastWords(s.heard, Math.max(0, Math.min(most, s.heardEnd - s.currentFrom)));
+
+  /** The chapter of the passage in view, in every Bible it is loaded in: the one on screen first. */
+  const scriptsOf = (s: State): Script[] => {
     const current = s.current;
     const loaded = s.chapter;
-    const { book, chapter, verseStart, verseEnd } = current?.reference ?? {};
-    if (!current || !book || !chapter || verseEnd !== null) return false;
-    if (!loaded?.verses || loaded.key !== chapterKey(current)) return false;
-    const inView = verseStart ?? null;
-    const from = inView ?? 1;
-    const to = inView === null ? 8 : inView + 3;
-    const verses = loaded.verses.filter(({ verse }) => verse >= from && verse <= to);
-    const at = readingAt(readingWords(lastWords(heard, 24)), verses, inView);
-    if (!at) return false;
-    const reading = verses.find(({ verse }) => verse === at.verse);
-    if (!movedOn(at, inView, reading?.words[0])) return at.matched >= 3;
+    if (!current || !loaded?.verses || loaded.key !== chapterKey(current)) return [];
+    return [loaded.verses, ...loaded.others];
+  };
 
-    // Reading moved on to the next verse.
-    s.step += 1;
-    input().note?.("reading on", `${book.name} ${chapter}:${at.verse}`);
-    take(
-      s,
-      { book, chapter, verseStart: at.verse, verseEnd: null, versionCode: null, errors: [] },
-      { sure: true, step: s.step, version: current.version, following: true },
-    );
-    return true;
+  /**
+   * The passage in view and the verse after it in `script`, as roots: what a
+   * reading that has not left the passage is reading. `null` with no verse
+   * in view.
+   */
+  const passageIn = (s: State, script: Script): { current: string[]; next: string[] } | null => {
+    const { verseStart, verseEnd } = s.current?.reference ?? {};
+    if (!verseStart) return null;
+    const last = verseEnd ?? verseStart;
+    return {
+      current: script
+        .filter(({ verse }) => verse >= verseStart && verse <= last)
+        .flatMap(({ roots }) => roots),
+      next: script.find(({ verse }) => verse === last + 1)?.roots ?? [],
+    };
+  };
+
+  /**
+   * The Bible the reading is from, as far as its words say: the one whose
+   * words for the passage in view (and the verse after it) what was heard
+   * since it went up follows furthest. The one on screen, unless another is
+   * followed further.
+   *
+   * John 3:15 read from the King James ends "should not perish, but have
+   * eternal life", which the NIV has only in 3:16. Followed in the NIV on
+   * screen, the reading was a verse ahead of the reader; followed in the King
+   * James it is being read from, it is in 3:15 until 3:15 ends.
+   */
+  let read = { at: "", script: null as Script | null };
+  const scriptRead = (s: State): Script | null => {
+    const scripts = scriptsOf(s);
+    const shown = scripts[0];
+    if (!shown) return null;
+    if (scripts.length === 1) return shown;
+    // Asked several times at each word heard; worked out once.
+    const at = `${s.session}|${s.heardEnd}|${s.currentFrom}|${s.current?.key ?? ""}|${scripts.length}|${s.heard.length}`;
+    if (read.at === at && read.script) return read.script;
+    const found = scriptReadNow(s, scripts, shown);
+    read = { at, script: found };
+    return found;
+  };
+  const scriptReadNow = (s: State, scripts: Script[], shown: Script): Script => {
+    const since = rootsOf(sinceCurrent(s, 24));
+    if (since.length < 3) return shown;
+    let best = shown;
+    let bestWords = -1;
+    for (const script of scripts) {
+      const text = passageIn(s, script) ?? {
+        // A chapter open and no verse yet: its opening verses.
+        current: script.filter(({ verse }) => verse <= 8).flatMap(({ roots }) => roots),
+        next: [],
+      };
+      const { words } = followed(since, [...text.current, ...text.next]);
+      if (words > bestWords) {
+        best = script;
+        bestWords = words;
+      }
+    }
+    return best;
+  };
+
+  const passageText = (s: State): { current: string[]; next: string[] } | null => {
+    const script = scriptRead(s);
+    return script ? passageIn(s, script) : null;
+  };
+
+  /**
+   * Whether the passage in view is still being read, or talked through in its
+   * own words (`stillIn`) — in any of the Bibles installed. While it is,
+   * nothing found by its words alone takes the screen from it.
+   */
+  const stillReading = (s: State): boolean => {
+    // The first words after a verse goes up are its own: it went up because
+    // it was named, or because the reading reached it, and "and they will
+    // not" tells nothing yet about where it has gone.
+    if (s.current?.reference.verseStart && s.heardEnd - s.currentFrom < JUST_UP) return true;
+    const tail = rootsOf(lastWords(s.heard, 24));
+    const since = rootsOf(sinceCurrent(s, 40));
+    // In the Bible it is being read from, and in the one on screen: the
+    // others say nothing those two do not, at every word heard.
+    const shown = scriptsOf(s)[0];
+    const reading = scriptRead(s);
+    const scripts = reading && shown && reading !== shown ? [reading, shown] : shown ? [shown] : [];
+    return scripts.some((script) => {
+      const text = passageIn(s, script);
+      if (!text) return false;
+      const passage = [...text.current, ...text.next];
+      return stillIn(tail, passage) || mostlyIn(since, passage) || followingStill(since, passage);
+    });
+  };
+
+  /**
+   * Read along with the passage in view: the verse being read, as soon as the
+   * reading moves on to it (`movedOn`, `goneOnTo`), followed in the Bible it
+   * is being read from (`scriptRead`).
+   *
+   * "moved": on to another verse. "within": still in the passage. "away":
+   * the words are not the passage's, and may be looked for elsewhere.
+   */
+  const follow = (s: State): "moved" | "within" | "away" => {
+    const current = s.current;
+    const { book, chapter, verseStart, verseEnd } = current?.reference ?? {};
+    if (!current || !book || !chapter) return "away";
+    const script = scriptRead(s);
+    if (!script) return "away";
+    const readOn = (verse: number, already: number) => {
+      s.step += 1;
+      input().note?.("reading on", `${book.name} ${chapter}:${verse}`);
+      take(
+        s,
+        { book, chapter, verseStart: verse, verseEnd: null, versionCode: null, errors: [] },
+        { sure: true, step: s.step, version: current.version, following: true, already },
+      );
+    };
+    if (verseEnd === null) {
+      const inView = verseStart ?? null;
+      const from = inView ?? 1;
+      const to = inView === null ? 8 : inView + 3;
+      const verses = script.filter(({ verse }) => verse >= from && verse <= to);
+      // Only what was heard since the passage went up: the end of the verse
+      // before it is not the end of this one, though a psalm's refrain or a
+      // genealogy ends them all alike.
+      const at = readingAt(readingWords(sinceCurrent(s, 24)), verses, inView);
+      const reading = at ? verses.find(({ verse }) => verse === at.verse) : undefined;
+      if (at && reading && movedOn(at, inView, reading.words[0])) {
+        // Read straight on, the end of the verse on screen just before: moved.
+        // Otherwise the words are another verse's on their own, and they are
+        // only where the reading is if what was heard since this verse went
+        // up follows that verse better than this one. "I will pour out my
+        // Spirit", read from another Bible, is word for word in Acts 2:18 —
+        // and is Acts 2:17 being read.
+        const straightOn = inView !== null && at.verse === inView + 1 && at.matched - at.intoVerse >= 2;
+        const inViewRoots = script.find(({ verse }) => verse === inView)?.roots;
+        const since = rootsOf(sinceCurrent(s, 16));
+        if (
+          straightOn
+          || !inViewRoots
+          || followed(since, reading.roots).words > followed(since, inViewRoots).words
+        ) {
+          readOn(at.verse, at.intoVerse);
+          return "moved";
+        }
+      }
+      // In the box and not on screen — named in passing ("as Paul says in
+      // Romans 8:28"), or a number that had to be divided ("Amos 33") — and
+      // now being read: it goes up.
+      const inViewVerse = script.find(({ verse }) => verse === inView);
+      if (
+        inView !== null
+        && inViewVerse
+        && input().onHeard === "show"
+        && s.shown?.key !== current.key
+        && s.held?.passage.key !== current.key
+        && ((at?.verse === inView && at.matched >= 4 && at.telling >= 2)
+          || borneOutBy(sinceCurrent(s, 30), inViewVerse.words.join(" ")) === "read")
+      ) {
+        input().note?.("read aloud", asLookup(current.reference));
+        project(s, current);
+        return "within";
+      }
+      // Three words in a row of the passage, up to the newest: being read.
+      if (at && at.matched >= 3) return "within";
+      if (inView === null) return "away";
+      // Read from a Bible that is not installed, or heard badly: not word for
+      // word, and on into the next verse all the same.
+      const text = passageIn(s, script);
+      if (text && text.next.length > 0 && goneOnTo(rootsOf(sinceCurrent(s, 8)), text.current, text.next)) {
+        readOn(inView + 1, 0);
+        return "moved";
+      }
+    }
+    return stillReading(s) ? "within" : "away";
+  };
+
+  /** A chapter's verses in a Bible, kept while they may be asked for again. */
+  const chapters = new Map<string, Promise<{ verse: number; text: string }[]>>();
+  const versesOf = (reference: ParsedReference, version: string | null) => {
+    const { book, chapter } = reference;
+    if (!book || !chapter) return Promise.resolve([]);
+    const key = `${book.id}|${chapter}|${version ?? ""}`;
+    let verses = chapters.get(key);
+    if (!verses) {
+      verses = input()
+        .readChapter(book, chapter, version)
+        .catch((): { verse: number; text: string }[] => []);
+      chapters.set(key, verses);
+      if (chapters.size > 12) chapters.delete(chapters.keys().next().value ?? key);
+    }
+    return verses;
+  };
+
+  /**
+   * The passage the box or the screen is on now: what "verse 16" and "next
+   * verse" are said within. The agent's own, for a moment after it put it
+   * there (the box takes a moment to say so); after that, whatever is in the
+   * box, which the operator may have changed.
+   */
+  const anchor = (s: State): ParsedReference => {
+    const open = input().openPassage();
+    if (s.current && (!open.book || Date.now() - s.currentAt < 1500)) return s.current.reference;
+    // A suggestion the words did not bear out is not somewhere "verse 16" is.
+    if (open.book && s.suggested && asLookup(open) === s.suggested) {
+      return (
+        s.current?.reference
+        ?? { book: null, chapter: null, verseStart: null, verseEnd: null, versionCode: null, errors: [] }
+      );
+    }
+    return open;
+  };
+
+  /**
+   * How what was said bears out a passage the model named, if it does: the
+   * reference was said, or the verse's own words were, read or told
+   * (`borneOutBy`). A story is weighed against the verse before and after
+   * too: the model names the verse nearest the part being told.
+   */
+  const borneOut = async (
+    s: State,
+    reference: ParsedReference,
+    asked: string,
+    { story, version }: { story: boolean; version: string | null },
+  ): Promise<"said" | "read" | "told" | null> => {
+    if (saysReference(lastWords(s.heard, 60), reference, anchor(s))) return "said";
+    const { book, chapter, verseStart, verseEnd } = reference;
+    if (!book || !chapter || verseStart === null) return null;
+    const verses = await versesOf(reference, version);
+    const around = story ? 1 : 0;
+    const text = verses
+      .filter(({ verse }) => verse >= verseStart - around && verse <= (verseEnd ?? verseStart) + around)
+      .map((verse) => verse.text)
+      .join(" ");
+    const how = text ? borneOutBy(asked, text) : null;
+    if (!how) return null;
+    // The Bible's own answer first: words that are another verse's, word for
+    // word, are that verse, whichever the model named.
+    const quoted = await input()
+      .findQuotedVerse({
+        query: asked,
+        versionCode: version,
+        versions: "chosen",
+        endingWithin: 60,
+        ended: true,
+      })
+      .catch((): null => null);
+    if (
+      quoted
+      && !(
+        quoted.bookId === book.id
+        && quoted.chapter === chapter
+        && quoted.verse >= verseStart - around
+        && quoted.verse <= (verseEnd ?? verseStart) + around
+      )
+    ) {
+      return null;
+    }
+    return how;
   };
 
   /** Query the LLM only for semantic ambiguity or stories. */
@@ -409,7 +779,49 @@ export function createHeardScripture(first: HeardScriptureInput): {
 
         // HARD INVARIANT: LLM response NEVER changes translation.
         const version = s.named ?? answered.chosenVersionCode;
-        take(s, understood.reference, { sure: understood.mayProject, step, version });
+        const proposed = understood.reference;
+        if (answered.onHeard !== "show") {
+          // Find it: a suggestion for the operator to weigh, in the box.
+          take(s, proposed, { sure: false, step, version });
+          return;
+        }
+        // HARD INVARIANT: the model proposes; what was said has to bear it out.
+        return borneOut(s, proposed, heard, { story: understood.story, version }).then((how) => {
+          if (s !== state || step < s.takenStep) return;
+          const lookup = asLookup(proposed);
+          if (!how) {
+            // Sure, and nothing said bears it out: the operator's to weigh.
+            // In the box, where Enter shows it; never on the screen.
+            answered.note?.("not borne out", lookup);
+            if (understood.mayProject && !stillReading(s)) {
+              s.suggested = lookup;
+              answered.fill(lookup);
+            }
+            return;
+          }
+          // A verse being read is held to, unless another was named outright
+          // — or the model has the reading a verse or two further on, and
+          // what was said follows that verse better than the one on screen.
+          const inView = s.current?.reference;
+          const text = passageText(s);
+          const ahead = scriptRead(s)?.find(({ verse }) => verse === proposed.verseStart)?.roots;
+          const onward =
+            inView?.book?.id === proposed.book?.id
+            && inView?.chapter === proposed.chapter
+            && inView?.verseStart != null
+            && proposed.verseStart !== null
+            && proposed.verseStart > inView.verseStart
+            && proposed.verseStart <= (inView.verseEnd ?? inView.verseStart) + 2
+            && text !== null
+            && ahead !== undefined
+            && followed(rootsOf(heard), ahead).words > followed(rootsOf(heard), text.current).words;
+          if (how !== "said" && !onward && stillReading(s)) {
+            answered.note?.("held to the passage being read", lookup);
+            return;
+          }
+          answered.note?.(`borne out: ${how}`, lookup);
+          take(s, proposed, { sure: understood.mayProject, step, version, named: how === "said" });
+        });
       })
       .catch((): void => {
         // Offline or rate-limited; carry on gracefully.
@@ -433,16 +845,17 @@ export function createHeardScripture(first: HeardScriptureInput): {
           versionCode: now.chosenVersionCode,
           versions: "chosen",
           endingWithin: QUOTE_ENDS_WITHIN,
+          ended: check.final,
         })
         .then((verse) => {
           if (!verse || s !== state || verse.pk === s.quoted) return;
-          s.quoted = verse.pk;
 
           // HARD INVARIANT: Match score NEVER switches active Bible translation!
           const activeVersion = now.chosenVersionCode;
 
           const inView = s.current;
           if (inView && passageHolds(inView.reference, verse)) {
+            s.quoted = verse.pk;
             if (inView.version !== activeVersion) {
               take(s, inView.reference, { sure: true, step: check.step, version: activeVersion });
             }
@@ -450,6 +863,14 @@ export function createHeardScripture(first: HeardScriptureInput): {
           }
           const book = now.books.find((candidate) => candidate.id === verse.bookId);
           if (!book) return;
+          // HARD INVARIANT: a verse being read is held to. Its words are in
+          // other verses too — Matthew 22:37 is Deuteronomy 6:5 quoted — and
+          // the reading is not over because another verse has them.
+          if (stillReading(s)) {
+            now.note?.("held to the passage being read", `${book.name} ${verse.chapter}:${verse.verse}`);
+            return;
+          }
+          s.quoted = verse.pk;
           take(
             s,
             {
@@ -460,7 +881,9 @@ export function createHeardScripture(first: HeardScriptureInput): {
               versionCode: null,
               errors: [],
             },
-            { sure: true, step: check.step, version: activeVersion },
+            // Found by its words, not said as a reference still being said:
+            // waiting for "the next word" let a later number word drop it.
+            { sure: true, step: check.step, version: activeVersion, named: false },
           );
         })
         .catch((): void => undefined)
@@ -528,6 +951,24 @@ export function createHeardScripture(first: HeardScriptureInput): {
     const text = event.transcript.trim();
     if (!text) return;
 
+    // A new connection to the speech service (the last one's time was up, or
+    // it dropped, and listening carried on): its turns and its words are
+    // counted from nothing again. What is on screen stays as it is; where
+    // its reading had got to starts from here.
+    if (typeof inputParam !== "string" && event.session !== s.session) {
+      s.session = event.session;
+      s.turn = -1;
+      s.text = "";
+      s.ended = false;
+      s.cueKey = "";
+      s.askedWords = 0;
+      s.steppedTurn = -1;
+      s.steppedWords = 0;
+      s.held = null;
+      s.heardEnd = 0;
+      s.currentFrom = 0;
+    }
+
     // Ingest into persistent transcript buffer.
     const update = buffer.ingest(event);
     if (update.ignored) {
@@ -542,18 +983,70 @@ export function createHeardScripture(first: HeardScriptureInput): {
     s.growing = !event.endOfTurn && newest?.final === false && /\d/.test(newest.text);
 
     // Rolling transcript text spanning across turn boundaries and pauses.
+    s.heardEnd = update.stableEnd + update.tentative.length;
     const stableWords = buffer.recent(HEARD_WORDS);
     const rollingText = textOf(stableWords) + (update.tentative.length > 0 ? ` ${textOf(update.tentative)}` : "");
     const heard = lastWords(rollingText, HEARD_WORDS);
     s.heard = heard;
 
     // 1. DETERMINISTIC COMMAND PRECEDENCE:
-    // Check for explicit commands ("next verse", "turn to Romans 8:28", "switch to NIV").
-    const command = parseExplicitCommand(text, {
+    // "Next verse", "previous verse": acted on once each time it is said. The
+    // turn is heard again as every word is added to it, so the words a step
+    // took up are left out from then on (`findStepCommand`).
+    if (s.steppedTurn !== event.turn) {
+      s.steppedTurn = event.turn;
+      s.steppedWords = 0;
+    }
+    const unstepped = text.split(/\s+/).slice(s.steppedWords).join(" ");
+    const stepCommand = now.commands === false ? null : findStepCommand(unstepped);
+    if (stepCommand) {
+      s.steppedWords += stepCommand.words;
+      const direction = stepCommand.type === "next_verse" ? "next" : "previous";
+      const active = anchor(s);
+      now.note?.("step", direction);
+      if (active.book && active.chapter && active.verseStart !== null) {
+        const stepResult = stepPassage(
+          {
+            book: { name: active.book.name, chapters: active.book.chapters },
+            chapter: active.chapter,
+            verseStart: active.verseStart,
+            verseEnd: active.verseEnd,
+            versionCode: now.chosenVersionCode,
+          },
+          direction,
+          () => s.chapter?.verses?.length ?? 50,
+        );
+        if (stepResult) {
+          s.step += 1;
+          take(
+            s,
+            {
+              book: active.book,
+              chapter: stepResult.chapter,
+              verseStart: stepResult.verseStart,
+              verseEnd: stepResult.verseEnd,
+              versionCode: null,
+              errors: [],
+            },
+            { sure: true, step: s.step, version: now.chosenVersionCode, named: false },
+          );
+        }
+      } else {
+        // A whole chapter in the box: the verse on screen is the host's to know.
+        now.step?.(direction);
+      }
+      return;
+    }
+
+    // Other explicit commands ("turn to Romans 8:28", "show verse 12", "switch to NIV").
+    const explicit = parseExplicitCommand(text, {
       books: now.books,
       versions: [...now.versions, ...now.catalog],
-      activePassage: s.current?.reference ?? now.openPassage(),
+      activePassage: anchor(s),
     });
+    // A step was acted on when it was said, above.
+    const command =
+      explicit?.type === "next_verse" || explicit?.type === "previous_verse" ? null : explicit;
 
     if (command) {
       if (command.type === "switch_version") {
@@ -586,38 +1079,8 @@ export function createHeardScripture(first: HeardScriptureInput): {
         }
       }
 
-      if (command.type === "next_verse" || command.type === "previous_verse") {
-        const active = s.current?.reference ?? now.openPassage();
-        if (active.book && active.chapter) {
-          const stepResult = stepPassage(
-            {
-              book: { name: active.book.name, chapters: active.book.chapters },
-              chapter: active.chapter,
-              verseStart: active.verseStart,
-              verseEnd: active.verseEnd,
-              versionCode: now.chosenVersionCode,
-            },
-            command.type === "next_verse" ? "next" : "previous",
-            () => s.chapter?.verses?.length ?? 50,
-          );
-          if (stepResult) {
-            s.step += 1;
-            const newRef: ParsedReference = {
-              book: active.book,
-              chapter: stepResult.chapter,
-              verseStart: stepResult.verseStart,
-              verseEnd: stepResult.verseEnd,
-              versionCode: null,
-              errors: [],
-            };
-            take(s, newRef, { sure: true, step: s.step, version: now.chosenVersionCode });
-            return;
-          }
-        }
-      }
-
       if (command.type === "navigate_verse") {
-        const active = s.current?.reference ?? now.openPassage();
+        const active = anchor(s);
         if (active.book && active.chapter) {
           s.step += 1;
           const newRef: ParsedReference = {
@@ -662,13 +1125,26 @@ export function createHeardScripture(first: HeardScriptureInput): {
       s.step += 1;
       s.held = null;
 
-      const open = now.openPassage();
+      const open = anchor(s);
       reading = readNewestReference(text, now.books, open, lastWords(textOf(buffer.recent(20)), 20));
+      // A verse said with no book is acted on a word later, or when the turn
+      // ends: "verse one" is the passage's — until "of the song" follows it.
+      // Read again at the next word, whatever that word is.
+      if (
+        reading?.within
+        && !event.endOfTurn
+        && (newest?.final === false || /^(?:\d|verses?|chapters?|of|the|to|and|through|from)\b/i.test(turnWords.at(-1) ?? ""))
+      ) {
+        s.cueKey = "";
+        reading = null;
+      }
       if (reading) {
         take(s, reading.reference, {
           sure: reading.plain,
           step: s.step,
           version: s.named ?? input().chosenVersionCode,
+          // What follows the reference in this turn is its reading, begun.
+          already: wordsAfterLastCue(text, bookWordsFor(now.books)),
         });
       }
       read = Boolean(reading?.plain);
@@ -683,7 +1159,7 @@ export function createHeardScripture(first: HeardScriptureInput): {
     // 3. STORY OR PARAPHRASE DETECTION VIA LLM:
     const unasked = words - s.askedWords;
     if (!read && (unasked >= STORY_EVERY_WORDS || (event.endOfTurn && unasked >= STORY_LEAST_WORDS))) {
-      ask(s, newWords(), { open: now.openPassage(), named: null, step: s.step });
+      ask(s, newWords(), { open: anchor(s), named: null, step: s.step });
       s.askedWords = words;
     }
 
@@ -699,16 +1175,26 @@ export function createHeardScripture(first: HeardScriptureInput): {
     }
 
     // 5. SEQUENTIAL READING & ROLLING QUOTE MATCHING:
-    // First try reading along with the chapter in view.
-    // If not reading along, search for quoted scripture across the rolling buffer!
-    if (!follow(s, heard)) {
-      const quoteText = lastWords(textOf(buffer.recent(QUOTE_WORDS)), QUOTE_WORDS);
-      quote(s, {
-        text: quoteText.length > 5 ? quoteText : text,
-        final: event.endOfTurn,
-        version: now.chosenVersionCode,
-        step: s.step,
-      });
+    // First try reading along with the passage in view. Only once the words
+    // have left it is quoted scripture looked for in the rest of the Bible.
+    if (follow(s) === "away") {
+      // Only what was heard since the passage in view went up: the words
+      // before it named it, or were the verse read before it, and found
+      // again they took the screen back to the verse just left.
+      const from = s.current ? s.currentFrom : 0;
+      const quoteText = textOf(
+        [...buffer.recent(QUOTE_WORDS), ...update.tentative]
+          .filter(({ pos }) => pos >= from)
+          .slice(-QUOTE_WORDS),
+      );
+      if (quoteText.split(/\s+/).filter(Boolean).length >= 2) {
+        quote(s, {
+          text: quoteText,
+          final: event.endOfTurn,
+          version: now.chosenVersionCode,
+          step: s.step,
+        });
+      }
     }
   };
 

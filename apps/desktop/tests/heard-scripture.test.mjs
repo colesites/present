@@ -16,7 +16,7 @@ const load = (path, modules = {}) => {
     return found[1];
   };
   new Script(transpiled.outputText).runInContext(
-    createContext({ exports: module.exports, module, require, Promise, Set, Map, setTimeout }),
+    createContext({ exports: module.exports, module, require, Promise, Set, Map, setTimeout, Date }),
   );
   return module.exports;
 };
@@ -29,9 +29,11 @@ const commandParser = load("../src/features/scripture/lib/command-parser.ts", {
   "./listening": listening,
 });
 const stepReference = load("../src/features/scripture/lib/step-reference.mjs");
+const reading = load("../src/features/scripture/lib/reading.ts", { "./listening": listening });
 const { createHeardScripture } = load("../src/features/scripture/lib/heard-scripture.ts", {
   "./parser": parser,
   "./listening": listening,
+  "./reading": reading,
   "./transcript-buffer": transcriptBuffer,
   "./command-parser": commandParser,
   "./step-reference.mjs": stepReference,
@@ -113,7 +115,8 @@ const bibleTab = ({
     },
     findQuotedVerse: async (input) => quotes(input),
     versionCodeOf: (id) => bibles.find((version) => version.id === id)?.code ?? "KJV",
-    readChapter: async (book, chapter) => chapters[`${book.id} ${chapter}`] ?? [],
+    readChapter: async (book, chapter, versionCode) =>
+      chapters[`${book.id} ${chapter} ${versionCode}`] ?? chapters[`${book.id} ${chapter}`] ?? [],
   });
   const agent = createHeardScripture(settings());
   tab.stopListening = () => agent.forget();
@@ -201,6 +204,19 @@ test("a quote is looked for in the Bible in use only, and in another once it is 
   assert.equal(tab.chosen, "NIV");
   assert.deepEqual([...new Set(looked)].at(-1), "chosen NIV", "the next quote is looked for there");
   assert.ok(looked.every((each) => each.startsWith("chosen ")));
+});
+
+test("Show it: \"in the ESV\" shows the passage on screen in the ESV", async () => {
+  // Only "give me ESV" did; "in ESV", as a preacher says it, did nothing.
+  const tab = bibleTab({ bibles: installed });
+  await tab.hear("John 3:16.", true);
+  assert.deepEqual(tab.screen, ["John 3:16 KJV"]);
+  await tab.hear("In the ESV.", true);
+  assert.equal(tab.chosen, "ESV");
+  assert.equal(tab.screen.at(-1), "John 3:16 ESV (not added again)");
+  await tab.hear("Romans 8:28 in NIV.", true);
+  assert.equal(tab.chosen, "NIV");
+  assert.equal(tab.screen.at(-1), "Romans 8:28 NIV");
 });
 
 test("Show it: an explicit version command is recognized and switches translation", async () => {
@@ -311,6 +327,16 @@ const DAVID = [
   "remember when David took five smooth stones from the brook and ran toward",
   "remember when David took five smooth stones from the brook and ran toward the giant with his sling, and the stone sank into his forehead",
 ];
+// The King James, as installed: what the model names has to be in these
+// words before it is shown (`reading.ts`).
+const FIRST_SAMUEL_17 = [
+  [39, "And David girded his sword upon his armour, and he assayed to go; for he had not proved it. And David said unto Saul, I cannot go with these; for I have not proved them. And David put them off him."],
+  [40, "And he took his staff in his hand, and chose him five smooth stones out of the brook, and put them in a shepherd's bag which he had, even in a scrip; and his sling was in his hand: and he drew near to the Philistine."],
+  [49, "And David put his hand in his bag, and took thence a stone, and slang it, and smote the Philistine in his forehead, that the stone sunk into his forehead; and he fell upon his face to the earth."],
+].map(([verse, text]) => ({ verse, text }));
+const LUKE_15 = [
+  { verse: 20, text: "And he arose, and came to his father. But when he was yet a great way off, his father saw him, and had compassion, and ran, and fell on his neck, and kissed him." },
+];
 const storyModel = (heard) => {
   if (/forehead/.test(heard)) return { reference: "1 Samuel 17:49", sure: true, story: true };
   if (/smooth stones/.test(heard)) return { reference: "1 Samuel 17:40", sure: true, story: true };
@@ -318,7 +344,7 @@ const storyModel = (heard) => {
 };
 
 test("Show it: a story told is recognised and shown, once", async () => {
-  const tab = bibleTab({ model: storyModel });
+  const tab = bibleTab({ model: storyModel, chapters: { "1samuel 17": FIRST_SAMUEL_17 } });
   await tab.hear(DAVID[0]);
   assert.deepEqual(tab.asked, [], "three words are not yet worth asking about");
   await tab.hear(DAVID[1]);
@@ -341,12 +367,40 @@ test("Find it: a story told goes into the box", async () => {
 });
 
 test("the end of a turn is asked about, if a few words were not yet", async () => {
-  const tab = bibleTab({ model: () => ({ reference: "John 11:35", sure: true, story: false }) });
-  await tab.hear("and then Jesus wept");
+  const john3 = [
+    { verse: 16, text: "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life." },
+  ];
+  const tab = bibleTab({
+    model: () => ({ reference: "John 3:16", sure: true, story: false }),
+    chapters: { "john 3": john3 },
+  });
+  await tab.hear("God so loved the world");
   assert.deepEqual(tab.asked, []);
-  await tab.hear("and then Jesus wept.", true);
+  await tab.hear("God so loved the world.", true);
   assert.equal(tab.asked.length, 1);
-  assert.deepEqual(tab.screen, ["John 11:35 KJV"]);
+  assert.deepEqual(tab.screen, ["John 3:16 KJV"]);
+});
+
+test("Show it: what the model is sure of is shown only when the words bear it out", async () => {
+  // "One day a man" went up as a verse. The model may be as sure as it
+  // likes: nothing said is in the verse it names.
+  const sure = bibleTab({
+    model: () => ({ reference: "Luke 15:20", sure: true, story: true }),
+    chapters: { "luke 15": LUKE_15 },
+  });
+  await sure.hear("One day a man.", true);
+  await sure.hear("One day a man came to my office and he said, pastor, I need your help.", true);
+  assert.equal(sure.asked.length, 2, "the model was asked, and answered");
+  assert.deepEqual(sure.screen, [], "and the screen did not take its word for it");
+  assert.equal(sure.box, "Luke 15:20", "it is in the box, for the operator to weigh");
+
+  // A verse that is not in the Bible is not shown, whoever names it.
+  parser.knowVerseCounts((book, chapter) => (book === "John" && chapter === 3 ? 36 : null));
+  const none = bibleTab({ model: () => ({ reference: "John 3:37", sure: true }) });
+  await none.hear("John 3:37.", true);
+  assert.deepEqual(none.screen, []);
+  assert.equal(none.box, "");
+  parser.knowVerseCounts(() => null);
 });
 
 test("a second story told straight after the first is recognised", async () => {
@@ -356,12 +410,15 @@ test("a second story told straight after the first is recognised", async () => {
     if (/long way off/.test(heard)) return { reference: "Luke 15:20", sure: true, story: true };
     return null;
   };
-  const tab = bibleTab({ model });
+  const tab = bibleTab({
+    model,
+    chapters: { "1samuel 17": FIRST_SAMUEL_17, "luke 15": LUKE_15 },
+  });
   const david =
     "Church, I want you to remember when David took 5 smooth stones out of the brook and put them in his shepherd's bag,";
   await tab.hear(david);
   await tab.hear(
-    `${david} and he ran toward the giant. And think about the father who saw his son coming home from a long way off`,
+    `${david} and he ran toward the giant. And think about the father who saw him a long way off and had compassion and ran and kissed him`,
   );
   assert.deepEqual(tab.screen, ["1 Samuel 17:40 KJV", "Luke 15:20 KJV"]);
   assert.match(tab.earlier, /smooth stones/, "David is sent as what came before");
@@ -408,6 +465,7 @@ test("a late answer to words since heard again is not acted on", async () => {
       new Promise((resolve) => {
         answers.push(resolve);
       }),
+    chapters: { "jude 1": [{ verse: 22, text: "And have mercy on those who doubt;" }] },
   });
   await tab.hear("And have mercy on those who die", true);
   await tab.hear("And have mercy on those who doubt.", true);
@@ -537,13 +595,45 @@ test("Show it: reading on into the next verse moves to it within two words", asy
   assert.equal(tab.box, "Genesis 1:3");
 });
 
-test("reading on after a pause moves on within three words", async () => {
+test("reading on after a pause moves on once the words say which verse it is", async () => {
   const tab = bibleTab({ chapters: { "genesis 1": GENESIS_1 } });
   await tab.hear("Genesis chapter 1 verse 2.", true);
   await tab.hear("Wow, think about that for a moment.", true);
   assert.deepEqual(tab.screen, ["Genesis 1:2 KJV"], "what is not read from it moves nothing");
   await tab.hear("And God said");
+  assert.deepEqual(tab.screen, ["Genesis 1:2 KJV"], "three words that begin a hundred verses are not the next one");
+  await tab.hear("And God said, Let there be light");
   assert.equal(tab.screen.at(-1), "Genesis 1:3 KJV (not added again)");
+});
+
+test("a verse read from another Bible installed is followed in that Bible, and shown in the one chosen", async () => {
+  // The King James ends John 3:15 "should not perish, but have eternal life";
+  // the NIV has those words only in 3:16. Followed in the NIV on screen, the
+  // reading went a verse ahead of the reader.
+  const tab = bibleTab({
+    defaultVersion: "NIV",
+    chapters: {
+      "john 3 NIV": [
+        { verse: 15, text: "that everyone who believes in him may have eternal life." },
+        { verse: 16, text: "For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life." },
+        { verse: 17, text: "For God did not send his Son into the world to condemn the world, but to save the world through him." },
+      ],
+      "john 3 KJV": [
+        { verse: 15, text: "That whosoever believeth in him should not perish, but have eternal life." },
+        { verse: 16, text: "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life." },
+        { verse: 17, text: "For God sent not his Son into the world to condemn the world; but that the world through him might be saved." },
+      ],
+    },
+  });
+  await tab.hear("John 3:15.", true);
+  assert.deepEqual(tab.screen, ["John 3:15 NIV"]);
+  await tab.hear("That whosoever believeth in him should not perish,", true);
+  await tab.hear("but have eternal life.", true);
+  assert.deepEqual(tab.screen, ["John 3:15 NIV"], "read from the King James, it is still verse 15");
+  await tab.hear("For God so loved the world,", true);
+  assert.equal(tab.screen.at(-1), "John 3:16 NIV (not added again)", "and verse 16 when the reader reaches it");
+  assert.equal(tab.screen.length, 2);
+  assert.equal(tab.chosen, "NIV", "the Bible on screen is not changed by what is read from");
 });
 
 test("Find it: the box reads along too", async () => {

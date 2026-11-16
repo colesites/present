@@ -408,7 +408,7 @@ export function useScripture() {
    * `versions`: "chosen" looks in the chosen Bible only; "indexed", in the
    * others too once their words are indexed (a few hundred milliseconds each,
    * done as listening starts), for words still being said; "all" in every one.
-   * `endingWithin`: see `findQuotedVerse`.
+   * `endingWithin`, `ended`: see `findQuotedVerse`.
    */
   const findQuotedVerseInText = useCallback(
     async (input: {
@@ -416,6 +416,7 @@ export function useScripture() {
       versionCode?: string | null;
       versions?: "chosen" | "indexed" | "all";
       endingWithin?: number;
+      ended?: boolean;
     }): Promise<BibleVerse | null> => {
       if (normalizeVerseSearchText(input.query).length < 3) {
         return null;
@@ -439,6 +440,7 @@ export function useScripture() {
         if (at > 0) await yieldToRenderer();
         const match = quotedVerseMatch(await getSearchIndex(version.id), input.query, {
           endingWithin: input.endingWithin,
+          ended: input.ended,
         });
         if (match) {
           matches.push({ versionId: version.id, ...match, verse: match.verse as BibleVerse });

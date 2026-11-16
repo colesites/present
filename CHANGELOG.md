@@ -4,6 +4,56 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.19] - 2026-11-16
+
+### Added
+
+- A preacher reading from a Bible other than the one on screen is followed
+  verse by verse. The chapter open is read along in every Bible installed, to
+  know which verse the reading is in; the screen stays in the Bible chosen.
+- "In the ESV", "John 3:16 in NIV", "what does it say in the King James?"
+  change the Bible, as "give me ESV" does.
+- A reference said over several breaths is read without the model: "the book
+  of Ephesians", "chapter 5", "verse 28". So are "Saint John", "Acts of the
+  Apostles", "the first book of Samuel", "Psalm 23 verse 1" and "Genesis 3
+  16", and verses said before their book: "from verse 25 to verse 32,
+  Ephesians chapter 5".
+- A verse named in passing ("as Paul says in Romans 8:28") goes up when it is
+  then read aloud.
+- On the other tabs, the footer shows when the Bible agent is listening, and
+  can stop it.
+
+### Changed
+
+- The Bible agent goes on listening, and showing verses, when you leave the
+  Bible tab for the songs or the media. The song agent and the Bible agent
+  take turns with the microphone: turning one on turns the other off.
+- Listening carries on by itself when a session's fifteen minutes are up, or
+  the connection drops, for as long as the plan has speech time left.
+- What the model is sure of is shown only when what was said bears it out:
+  the reference was said, or the words are the verse's own. Otherwise it
+  waits in the box, where Enter shows it.
+- A verse read aloud with no reference named takes a word or two more to be
+  recognised than it did.
+- "Next verse" and "previous verse" are the Bible agent's alone to hear.
+  "The last verse" on its own no longer steps back.
+
+### Fixed
+
+- Ordinary speech put verses on the screen: four words a verse happened to
+  share were enough ("flesh of my flesh and my…" showed Psalm 73:26; "one day
+  a man…" a verse of Isaiah).
+- A verse being read was left for another verse that shares its words, or
+  for the verse after next, before the reader had finished it.
+- "Number one", "number two" were read as the book of Numbers.
+- One "next verse" went on several verses.
+- The microphone went off whenever you left the Bible tab.
+- The microphone went quiet after fifteen minutes and stayed quiet.
+- A verse that is not in the Bible ("John 3:37") could be shown.
+- A hymn's verse ("we sing verse 2") moved the passage on screen.
+- A verse found by its words was dropped, unshown, when a number was said
+  straight after it.
+
 ## [0.4.18] - 2026-11-15
 
 ### Added

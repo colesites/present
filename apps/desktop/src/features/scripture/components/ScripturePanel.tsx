@@ -24,6 +24,8 @@ import {
   type ScriptureSlide,
 } from "../lib/slides";
 import { useSpeechRecognition, type ScriptRecognitionResult } from "../hooks/useSpeechRecognition";
+import { useBibleListeningStore } from "../lib/bible-listening";
+import { useSongAgentStore } from "../../song-agent/songAgentStore";
 import { useHeardScripture } from "../hooks/useHeardScripture";
 import { versionKeyterms } from "../lib/listening";
 import { useScripturePanelStore } from "../lib/panel-state";
@@ -92,12 +94,6 @@ const DEFAULT_BIBLE_AGENT: BibleAgentSettings = {
   addToService: true,
   voiceCommands: true,
 };
-
-const isNextVerseCommand = (value: string) =>
-  /\b(next|forward)\s+(verse|scripture)\b/i.test(value.trim());
-
-const isPreviousVerseCommand = (value: string) =>
-  /\b(prev|previous|back|backward)\s+(verse|scripture)\b/i.test(value.trim());
 
 export interface ScripturePanelRef {
   focusSearch: () => void;
@@ -468,13 +464,22 @@ export const ScripturePanel = memo(
     useEffect(() => {
       openPassageRef.current = parsedRef;
     }, [parsedRef]);
+    // Stepping from the verse on screen, for the agent when the box holds a
+    // whole chapter and does not say which verse that is.
+    const stepLiveVerseRef = useRef(showAdjacentLiveVerse);
+    useEffect(() => {
+      stepLiveVerseRef.current = showAdjacentLiveVerse;
+    }, [showAdjacentLiveVerse]);
     // Show it puts a passage on screen as the box's own Enter would.
     const showRef = useRef<
       ((value?: string, options?: { addToService?: boolean }) => Promise<void>) | null
     >(null);
 
     const { hear, forget: forgetHeard } = useHeardScripture({
-      enabled: isActive,
+      // Whenever the microphone is on, whichever tab is open: the operator
+      // goes to the songs and the media during a sermon, and the verses still
+      // go up. It was only while the Bible tab was the one open.
+      enabled: true,
       onHeard,
       addToService: addHeardToService,
       sessionToken,
@@ -498,6 +503,13 @@ export const ScripturePanel = memo(
         void showRef.current?.(lookup, options);
       },
       chooseVersion: setSelectedVersionCode,
+      // "Next verse" and "previous verse" are the agent's to hear, once each
+      // time they are said. It was heard here as well, when the turn ended:
+      // the agent stepped at every word of the turn and this stepped again.
+      commands: voiceCommands,
+      step: (direction) => {
+        void stepLiveVerseRef.current?.(direction);
+      },
       findQuotedVerse: findQuotedVerseInText,
       versionCodeOf: resolveVersionCode,
       readChapter: async (book, chapter, versionCode) =>
@@ -518,22 +530,14 @@ export const ScripturePanel = memo(
         if (!result.transcript) return;
         const transcript = result.transcript.trim();
 
-        if (voiceCommands && result.isFinal && isNextVerseCommand(transcript)) {
-          void showAdjacentLiveVerse("next");
-          return;
-        }
-
-        if (voiceCommands && result.isFinal && isPreviousVerseCommand(transcript)) {
-          void showAdjacentLiveVerse("previous");
-          return;
-        }
-
         handleAiQueryChange(result.transcript);
 
         // Feed the real-time Bible agent: full transcript event with turns and word timing when available
         if (result.turn !== undefined || result.words) {
           hear({
-            session: 1,
+            // Each connection to the speech service counts its turns from
+            // nothing: a new one is a new session to the agent.
+            session: result.session ?? 1,
             turn: result.turn ?? 0,
             transcript,
             endOfTurn: Boolean(result.endOfTurn ?? result.isFinal),
@@ -553,7 +557,7 @@ export const ScripturePanel = memo(
           hear(transcript, result.isFinal);
         }
       },
-      [handleAiQueryChange, hear, showAdjacentLiveVerse, voiceCommands],
+      [handleAiQueryChange, hear],
     );
 
     // The installed books' and Bibles' names, for AssemblyAI to listen for:
@@ -596,6 +600,19 @@ export const ScripturePanel = memo(
         setLiveTranscript("");
       }
     }, [forgetHeard, isListening]);
+
+    // Listening goes on when the operator leaves the Bible tab: the tab is
+    // kept running while this says so (`PresentCenterArea`), and the footer
+    // of the other tabs shows it and can stop it (`BibleListeningControl`).
+    const publishListening = useBibleListeningStore((state) => state.publish);
+    const micOn = isListening || isStarting;
+    useEffect(() => {
+      publishListening(micOn, stopListening);
+      // One microphone at a time: the song agent's goes off as this one
+      // comes on. They spend the same speech time.
+      if (micOn) useSongAgentStore.getState().setEnabled(false);
+    }, [micOn, publishListening, stopListening]);
+    useEffect(() => () => publishListening(false), [publishListening]);
 
     useEffect(() => {
       if (isActive) {

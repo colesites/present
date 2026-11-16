@@ -18,6 +18,8 @@ import { RustVideo } from "../../renderer/shared/components/RustVideo";
 import { useSeekOnRelease } from "../../renderer/shared/hooks/useSeekOnRelease";
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
 import { SongAgentControl } from "../song-agent/SongAgentControl";
+import { BibleListeningControl } from "../scripture/components/BibleListeningControl";
+import { useBibleListeningStore } from "../scripture/lib/bible-listening";
 import type { BibleAgentSettings } from "../scripture/components/ScripturePanel";
 
 /* ---------------- TYPES (DERIVED, NOT INVENTED) ---------------- */
@@ -507,6 +509,9 @@ export function PresentCenterArea({
     </div>
   );
 
+  const scriptureShown = viewMode === "show" && bottomTab === "scripture";
+  const bibleListening = useBibleListeningStore((state) => state.listening);
+
   const showsPane = useMemo(
     () => (
       <div className="absolute inset-0 overflow-hidden">
@@ -629,8 +634,11 @@ export function PresentCenterArea({
           {showsPane}
         </Activity>
 
-        <Activity mode={viewMode === "show" && bottomTab === "scripture" ? "visible" : "hidden"}>
-          {scripturePane}
+        {/* While the Bible agent listens the Bible tab is kept running, out of
+            sight: hidden, React stops its effects, and the microphone with
+            them — it went off whenever the operator left the tab. */}
+        <Activity mode={scriptureShown || bibleListening ? "visible" : "hidden"}>
+          <div className={scriptureShown ? "contents" : "hidden"}>{scripturePane}</div>
         </Activity>
 
         <Activity mode={viewMode === "edit" ? "visible" : "hidden"}>
@@ -641,7 +649,12 @@ export function PresentCenterArea({
       {/* Footer Area - Reusable Workspace Footer (hidden in dedicated Scripture mode) */}
       {viewMode === "show" && bottomTab !== "scripture" && (
         <WorkspaceFooter
-          leftContent={<SongAgentControl />}
+          leftContent={
+            <div className="flex min-w-0 items-center gap-2">
+              <BibleListeningControl />
+              <SongAgentControl />
+            </div>
+          }
           showTransitionPicker
           isGridView={isGridView}
           onViewModeChange={onGridViewChange}
