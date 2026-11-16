@@ -19,6 +19,11 @@ const load = (path) => {
     useState: (init) => [typeof init === "function" ? init() : init, () => {}],
     useMemo: (fn) => fn(),
     useEffect: () => {},
+    // The component keeps the scrolling list in a ref and scrolls the open
+    // chapter into view in an effect: as one render sees them.
+    useRef: (initial) => ({ current: initial }),
+    useCallback: (fn) => fn,
+    useLayoutEffect: () => {},
     Fragment: "Fragment",
   };
   const require = (name) => {
