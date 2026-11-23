@@ -5,7 +5,10 @@
  * 1. TWO OPERATIONAL MODES:
  *    - SHOW IT: Automatically projects scripture to the church screen when verified criteria
  *      are satisfied (verified explicit navigation commands, high-confidence sequential reading,
- *      or high-confidence SCRIPTURE_READING intent).
+ *      or high-confidence SCRIPTURE_READING intent). Anything less sure is SUGGESTED: put in
+ *      the box for the operator to show or pass over — the model under 0.9, or sure of what
+ *      the words do not bear out; the first words of a verse ("In the beginning"), which go
+ *      up once the rest is said, after a pause or not word for word (`bearsOutSuggestion`).
  *    - FIND IT: Strictly suggestions only. Updates the Bible tab / box.
  *      The screen NEVER changes automatically in FIND IT mode.
  *
@@ -62,6 +65,7 @@ import {
 } from "./listening";
 import { passageExists, verseCouldGrow, type ParsedReference } from "./parser";
 import {
+  bearsOutSuggestion,
   borneOutBy,
   followed,
   followingStill,
@@ -86,6 +90,20 @@ export type SpeechIntent =
   | "REFERENCE_MENTION"
   | "NAVIGATION_REQUEST"
   | "UNCERTAIN";
+
+/**
+ * A verse found by the words heard. `suggested` when they only begin it, or
+ * begin several verses and it is the best known of them: for the box, never
+ * the screen, until more words bear it out (`bearsOutSuggestion`).
+ */
+export type QuotedVerse = BibleVerse & {
+  suggested?: {
+    /** How many of the newest words heard it was found by. */
+    fromEnd: number;
+    /** The other verses those words begin as well. */
+    rivals: BibleVerse[];
+  };
+};
 
 export type HeardScriptureInput = {
   /** Whether to read what is heard at all: the Bible tab is the one open. */
@@ -145,7 +163,9 @@ export type HeardScriptureInput = {
     endingWithin: number;
     /** Whether the turn is over: a short verse waits for its full stop until then. */
     ended: boolean;
-  }) => Promise<BibleVerse | null>;
+    /** A verse the words only begin to quote, as well, marked `suggested`. */
+    suggest?: boolean;
+  }) => Promise<QuotedVerse | null>;
   /** The code of an installed Bible, from its id. */
   versionCodeOf: (versionId: string) => string;
   /** The verses of a chapter, in a Bible, to read along with. */
@@ -189,6 +209,9 @@ const JUST_UP = 6;
 /** The most other Bibles a chapter is read along in. */
 const OTHER_BIBLES = 8;
 
+/** Words heard after a suggestion before it is left to the operator alone. */
+const SUGGESTION_WORDS = 40;
+
 const fresh = () => ({
   session: 0,
   turn: 0,
@@ -226,10 +249,22 @@ const fresh = () => ({
   /** Where everything heard ends now, as a count of words (`TranscriptBuffer` positions). */
   heardEnd: 0,
   /**
-   * A passage the model was sure of that the words did not bear out, left in
-   * the box for the operator and not shown: nothing is said within it.
+   * A passage suggested in the box and not shown — the model was not sure of
+   * it, or the words did not bear it out, or they only began it: the
+   * operator's to show. Nothing is said within it.
    */
   suggested: "",
+  /**
+   * A suggestion found by its first words, waiting for the rest
+   * (`bearsOutSuggestion`): where in everything heard those words began, and
+   * the roots of the verse and of the others they begin.
+   */
+  suggestion: null as {
+    reference: ParsedReference;
+    from: number;
+    roots: string[];
+    rivals: string[][];
+  } | null,
   /** The turn "next verse" was last acted on in, and how many of its words that took up. */
   steppedTurn: -1,
   steppedWords: 0,
@@ -420,6 +455,7 @@ export function createHeardScripture(first: HeardScriptureInput): {
       key: `${asLookup(reference)}|${activeVersion ?? ""}`,
     };
 
+    s.suggestion = null;
     if (s.current?.key !== passage.key) {
       s.current = passage;
       s.currentAt = Date.now();
@@ -451,6 +487,55 @@ export function createHeardScripture(first: HeardScriptureInput): {
 
     s.held = null;
     project(s, passage, following);
+  };
+
+  /**
+   * Put a passage in the box and not on screen, for the operator to show or
+   * pass over: what the agent is less than sure of. `waiting`: found by its
+   * first words, and shown when the rest are said (`bearOutSuggestion`).
+   */
+  const suggest = (
+    s: State,
+    reference: ParsedReference,
+    waiting: NonNullable<State["suggestion"]> | null = null,
+  ) => {
+    const now = input();
+    const lookup = asLookup(reference);
+    // The model suggesting what its first words already did leaves it waiting.
+    if (waiting || s.suggested !== lookup) s.suggestion = waiting;
+    const open = now.openPassage();
+    if (s.suggested === lookup && open.book && asLookup(open) === lookup) return;
+    s.suggested = lookup;
+    now.note?.("suggested", lookup);
+    now.fill(lookup);
+  };
+
+  /**
+   * The suggestion waiting for the rest of its verse, put up when what was
+   * said since its first words bears it out — across a pause, and not word
+   * for word (`bearsOutSuggestion`). Let go after `SUGGESTION_WORDS`.
+   */
+  const bearOutSuggestion = (s: State): boolean => {
+    const waiting = s.suggestion;
+    if (!waiting) return false;
+    const said = s.heardEnd - waiting.from;
+    if (said < 0 || said > SUGGESTION_WORDS) {
+      s.suggestion = null;
+      return false;
+    }
+    if (!bearsOutSuggestion(rootsOf(lastWords(s.heard, said)), waiting.roots, waiting.rivals)) return false;
+    s.suggestion = null;
+    s.step += 1;
+    const now = input();
+    now.note?.("suggestion borne out", asLookup(waiting.reference));
+    take(s, waiting.reference, {
+      sure: true,
+      step: s.step,
+      version: s.named ?? now.chosenVersionCode,
+      named: false,
+      already: said,
+    });
+    return true;
   };
 
   /** The newest words heard since the passage in view went up, `most` of them at most. */
@@ -790,13 +875,11 @@ export function createHeardScripture(first: HeardScriptureInput): {
           if (s !== state || step < s.takenStep) return;
           const lookup = asLookup(proposed);
           if (!how) {
-            // Sure, and nothing said bears it out: the operator's to weigh.
-            // In the box, where Enter shows it; never on the screen.
+            // Nothing said bears it out, however sure the model is: the
+            // operator's to weigh. In the box, where Enter shows it; never on
+            // the screen.
             answered.note?.("not borne out", lookup);
-            if (understood.mayProject && !stillReading(s)) {
-              s.suggested = lookup;
-              answered.fill(lookup);
-            }
+            if (!stillReading(s)) suggest(s, proposed);
             return;
           }
           // A verse being read is held to, unless another was named outright
@@ -829,6 +912,41 @@ export function createHeardScripture(first: HeardScriptureInput): {
   };
 
   /**
+   * A verse the newest words begin to quote, suggested in the box until the
+   * rest of it is said — not while a verse is being read, whose words other
+   * verses begin too, and not the passage already up.
+   */
+  const offer = (
+    s: State,
+    verse: BibleVerse,
+    { fromEnd, rivals }: NonNullable<QuotedVerse["suggested"]>,
+    step: number,
+  ) => {
+    if (step < s.takenStep || stillReading(s)) return;
+    const now = input();
+    if (s.current && passageHolds(s.current.reference, verse)) return;
+    const book = now.books.find((candidate) => candidate.id === verse.bookId);
+    if (!book) return;
+    const reference: ParsedReference = {
+      book,
+      chapter: verse.chapter,
+      verseStart: verse.verse,
+      verseEnd: null,
+      versionCode: null,
+      errors: [],
+    };
+    if (s.shown && asLookup(s.shown.reference) === asLookup(reference)) return;
+    suggest(s, reference, {
+      reference,
+      from: Math.max(0, s.heardEnd - fromEnd),
+      roots: rootsOf(verse.text),
+      rivals: rivals.map((rival) => rootsOf(rival.text)),
+    });
+    // The rest may have been said while it was looked for.
+    bearOutSuggestion(s);
+  };
+
+  /**
    * Match spoken text against the verses of the Bible in use, and no other.
    * It changes only when the operator chooses another, or the preacher asks
    * for one ("switch to the NIV"); the next quote is looked for there.
@@ -846,6 +964,7 @@ export function createHeardScripture(first: HeardScriptureInput): {
           versions: "chosen",
           endingWithin: QUOTE_ENDS_WITHIN,
           ended: check.final,
+          suggest: true,
         })
         .then((verse) => {
           if (!verse || s !== state || verse.pk === s.quoted) return;
@@ -854,6 +973,10 @@ export function createHeardScripture(first: HeardScriptureInput): {
           const activeVersion = now.chosenVersionCode;
 
           const inView = s.current;
+          if (verse.suggested) {
+            offer(s, verse, verse.suggested, check.step);
+            return;
+          }
           if (inView && passageHolds(inView.reference, verse)) {
             s.quoted = verse.pk;
             if (inView.version !== activeVersion) {
@@ -967,6 +1090,7 @@ export function createHeardScripture(first: HeardScriptureInput): {
       s.held = null;
       s.heardEnd = 0;
       s.currentFrom = 0;
+      s.suggestion = null;
     }
 
     // Ingest into persistent transcript buffer.
@@ -1174,7 +1298,11 @@ export function createHeardScripture(first: HeardScriptureInput): {
       project(s, held.passage);
     }
 
-    // 5. SEQUENTIAL READING & ROLLING QUOTE MATCHING:
+    // 5. A SUGGESTION'S VERSE, FINISHED: its first words suggested it, and
+    // the rest has been said since — after a pause, or not word for word.
+    bearOutSuggestion(s);
+
+    // 6. SEQUENTIAL READING & ROLLING QUOTE MATCHING:
     // First try reading along with the passage in view. Only once the words
     // have left it is quoted scripture looked for in the rest of the Bible.
     if (follow(s) === "away") {

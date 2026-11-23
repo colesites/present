@@ -66,7 +66,7 @@ export function AgentSettings({
           label="When it hears a passage"
           description={
             agent.bibleOnHeard === "show"
-              ? "It goes straight on screen."
+              ? "It goes straight on screen when it is sure. When it is not — the first words of a verse — it waits in the Bible tab for you to show."
               : "It opens in the Bible tab, ready for you to show."
           }
         >

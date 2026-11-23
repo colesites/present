@@ -301,9 +301,13 @@ export function createTab({
           }
         : null,
       // `useScripture.findQuotedVerseInText`, in the chosen Bible only.
-      findQuotedVerse: async ({ query, endingWithin, ended }) => {
+      findQuotedVerse: async ({ query, endingWithin, ended, suggest }) => {
         if (verseSearch.normalizeVerseSearchText(query).length < 3) return null;
-        return verseSearch.quotedVerseMatch(chosen.index, query, { endingWithin, ended })?.verse ?? null;
+        const match = verseSearch.quotedVerseMatch(chosen.index, query, { endingWithin, ended, suggest });
+        if (!match) return null;
+        return match.sure
+          ? match.verse
+          : { ...match.verse, suggested: { fromEnd: match.fromEnd, rivals: match.rivals } };
       },
       versionCodeOf: (id) => id.toUpperCase(),
       readChapter: async (book, chapter, versionCode) =>

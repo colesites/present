@@ -199,3 +199,38 @@ test("four words are enough when no other verse has them, said as a quote", () =
     "four words in the middle of a sentence and of a verse are not a quote",
   );
 });
+
+// Suggestions: the first words of a verse, for the box and never the screen.
+const opening = buildVerseSearchIndex([
+  { pk: "gen|1|1", bookId: "genesis", bookName: "Genesis", chapter: 1, verse: 1, text: "In the beginning God created the heaven and the earth." },
+  { pk: "jhn|1|1", bookId: "john", bookName: "John", chapter: 1, verse: 1, text: "In the beginning was the Word, and the Word was with God, and the Word was God." },
+  { pk: "jer|26|1", bookId: "jeremiah", bookName: "Jeremiah", chapter: 26, verse: 1, text: "In the beginning of the reign of Jehoiakim the son of Josiah king of Judah came this word from the LORD, saying," },
+  { pk: "psa|46|10", bookId: "psalms", bookName: "Psalms", chapter: 46, verse: 10, text: "Be still, and know that I am God: I will be exalted among the heathen, I will be exalted in the earth." },
+]);
+const suggestion = (heard) => quotedVerseMatch(opening, heard, { endingWithin: 3, ended: true, suggest: true });
+
+test("the first words of a verse suggest it, and are not a quote", () => {
+  const begun = suggestion("Be still and");
+  assert.equal(begun?.verse.pk, "psa|46|10");
+  assert.equal(begun?.sure, false);
+  assert.equal(findQuotedVerse(opening, "Be still and", { endingWithin: 3 }), null, "not enough to show");
+  assert.equal(quotedVerseMatch(opening, "Be still and", { endingWithin: 3 }), null, "nor to suggest, unasked");
+});
+
+test("words that open several verses suggest the best known of them, with the others", () => {
+  const begun = suggestion("In the beginning.");
+  assert.equal(begun?.verse.pk, "gen|1|1");
+  assert.deepEqual(begun?.rivals.map((verse) => verse.pk).slice(0, 2).sort(), ["jer|26|1", "jhn|1|1"]);
+  assert.equal(begun?.fromEnd, 3, "found by the last three words");
+  assert.equal(suggestion("In the beginning was the")?.verse.pk, "jhn|1|1", "until the next words say which");
+});
+
+test("a suggestion is what is being said now, not a phrase a breath ago", () => {
+  assert.equal(
+    suggestion("There was a day when I went to the sitting room and I saw something. In the beginning")?.verse.pk,
+    "gen|1|1",
+    "what was said before it is not part of it",
+  );
+  assert.equal(suggestion("Be still and, my brother said to me"), null, "begun a breath ago");
+  assert.equal(suggestion("I went to the market and bought some bread"), null, "and ordinary words suggest nothing");
+});

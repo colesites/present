@@ -4,6 +4,34 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.20] - 2026-11-23
+
+### Added
+
+- Show it suggests what it is not sure of. The first words of a verse ("In
+  the beginning", "Be still and", "Trust in the Lord") put it in the Bible
+  tab's box, where Enter shows it; nothing goes on screen until the agent is
+  sure. Words that begin several verses suggest the best known of them, and
+  the next words change it ("In the beginning… was the Word" is John 1:1).
+- A suggested verse goes on screen when the rest of it is said, after a pause
+  or not quite word for word: "In the beginning", a breath, "God created the
+  heavens and the earth" shows Genesis 1:1 in the King James, which has
+  "heaven".
+- A Bible named anywhere in what is said changes the Bible of the verse on
+  screen, not only after "give me" or "in": "Amplified.", "NKJV.", "read from
+  the KJV", "turn to NIV", "Genesis 1:1 NIV", "back to King James", "what
+  does the Amplified say?". A Bible whose name is an everyday phrase ("good
+  news", "the message", "new international") must be asked for, or said in
+  full; "amplified" alone only as "the Amplified". Its letters count however
+  the transcriber groups them: "ES. V.", "E. S. V.", "N. KJV.".
+
+### Changed
+
+- What the model names at less than 90% sure is suggested in the box, where
+  before it was dropped.
+- The words heard, under the Bible tab's toolbar, run on across pauses
+  instead of starting again at each one.
+
 ## [0.4.19] - 2026-11-16
 
 ### Added

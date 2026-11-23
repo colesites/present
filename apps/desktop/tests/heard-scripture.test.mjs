@@ -660,3 +660,65 @@ test("Show it: a chapter said alone waits in the box for the verse", async () =>
   await named.hear("Verse 3.", true);
   assert.deepEqual(named.screen, ["Revelation 1:3 KJV"], "or said");
 });
+
+/**
+ * The quote finder as it answers the first words of Genesis 1:1, said alone:
+ * they open John 1:1 too, and Genesis 1:1 is the better known.
+ */
+const IN_THE_BEGINNING = {
+  pk: "kjv|genesis|1|1",
+  version: "kjv",
+  bookId: "genesis",
+  chapter: 1,
+  verse: 1,
+  text: "In the beginning God created the heaven and the earth.",
+  suggested: {
+    fromEnd: 3,
+    rivals: [{ pk: "kjv|john|1|1", bookId: "john", chapter: 1, verse: 1, text: "In the beginning was the Word, and the Word was with God, and the Word was God." }],
+  },
+};
+const beginsGenesis = ({ query }) => (/in the beginning\.?$/i.test(query.trim()) ? IN_THE_BEGINNING : null);
+
+test("Show it: the first words of a verse are suggested in the box, not shown", async () => {
+  const tab = bibleTab({ quotes: beginsGenesis });
+  await tab.hear("In the beginning.", true);
+  assert.equal(tab.box, "Genesis 1:1", "the operator can show it");
+  assert.deepEqual(tab.screen, [], "the screen waits");
+
+  const find = bibleTab({ onHeard: "find", quotes: beginsGenesis });
+  await find.hear("In the beginning.", true);
+  assert.equal(find.box, "Genesis 1:1", "Find it suggests the same");
+});
+
+test("Show it: a suggested verse goes up when the rest of it is said after a pause, not word for word", async () => {
+  // "Heavens", where the King James has "heaven": not a quote word for word,
+  // which is all the quote finder takes. Two turns: a pause between.
+  const tab = bibleTab({ quotes: beginsGenesis, chapters: { "genesis 1": GENESIS_1 } });
+  await tab.hear("There was a day when I went to the sitting room and I saw something.", true);
+  await tab.hear("In the beginning.", true);
+  assert.deepEqual(tab.screen, []);
+  await tab.hear("God created the heavens and the earth.", true);
+  assert.deepEqual(tab.screen, ["Genesis 1:1 KJV"], "the story before it was not part of it");
+});
+
+test("a suggestion whose verse is not said stays in the box", async () => {
+  const tab = bibleTab({ quotes: beginsGenesis });
+  await tab.hear("In the beginning.", true);
+  await tab.hear("Of this year, I told you that this is our year, and the earth will hear about it.", true);
+  assert.deepEqual(tab.screen, []);
+  assert.equal(tab.box, "Genesis 1:1");
+
+  // Nor is one whose words are another's it began as well.
+  const john = bibleTab({ quotes: beginsGenesis });
+  await john.hear("In the beginning.", true);
+  await john.hear("Was the Word, and the Word was with God.", true);
+  assert.deepEqual(john.screen, []);
+});
+
+test("Show it: what the model is less than sure of is suggested", async () => {
+  const tab = bibleTab({ model: () => ({ reference: "Genesis 1:1", sure: false, confidence: 0.7 }) });
+  await tab.hear("In the beginning.", true);
+  assert.equal(tab.asked.length, 1);
+  assert.equal(tab.box, "Genesis 1:1", "in the box");
+  assert.deepEqual(tab.screen, [], "and not on screen");
+});

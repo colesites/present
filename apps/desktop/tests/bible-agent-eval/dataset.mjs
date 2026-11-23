@@ -12,6 +12,9 @@
  * - `hope`: a passage that is right if it goes up and not owed if it does
  *   not (a verse read from its middle, or heard badly). Counted, so a change
  *   that finds fewer of them shows.
+ * - `box`: the passage that must be suggested in the box once the turn is
+ *   over — the first words of a verse, which are not enough to show it.
+ * - `screenVersion`: the Bible the screen must be in once the turn is over.
  *
  * Anything else that reaches the screen is **wrong**: a verse nobody named or
  * read. An expected passage that did not go up is **missed**. Wrong is what
@@ -531,6 +534,50 @@ add("command", "the last verse of a chapter is not a step back", [
   { say: "The last verse we read last week was about love.", screen: "John 3:16" },
 ]);
 
+/**
+ * A Bible asked for after a passage is up and read: by name alone, or
+ * quoted from. The verse on screen goes into it. It was only ever "Genesis
+ * 1:1 in the NKJV", the passage said again.
+ */
+const ASKED_FOR = [
+  ["Read from the KJV.", "KJV"],
+  ["Turn to NIV.", "NIV"],
+  ["Back to King James.", "KJV"],
+  ["I want the amplified.", "AMP"],
+  ["Amplified.", "AMP"],
+  ["What does the Amplified say?", "AMP"],
+  ["The Amplified says,", "AMP"],
+  ["Show me the Amplified.", "AMP"],
+  ["Let's look at the New King James Version.", "NKJV"],
+  ["NKJV.", "NKJV"],
+];
+for (const [at, [say, code]] of ASKED_FOR.entries()) {
+  add("command-version", `${at} ${code}`, [
+    { say: "Genesis 1:1.", screen: "Genesis 1:1" },
+    { say: "In the beginning God created the heaven and the earth.", screen: "Genesis 1:1" },
+    { say, screen: "Genesis 1:1", screenVersion: code },
+    // Begun in another Bible than the one asked for.
+  ], { installed: ["KJV", "NKJV", "NIV", "AMP"], version: code === "NKJV" ? "KJV" : "NKJV" });
+}
+
+/** A Bible's name in what is said, and not asked for: the Bible stays. */
+const NOT_ASKED_FOR = [
+  "I have good news for you.",
+  "Good news.",
+  "The message this morning is love.",
+  "The message says love one another.",
+  "The new international airport is very big.",
+  "The amplifier is too loud.",
+  "His voice was amplified.",
+  "We have new international partners.",
+];
+for (const [at, say] of NOT_ASKED_FOR.entries()) {
+  add("command-version", `not asked ${at}`, [
+    { say: "Genesis 1:1.", screen: "Genesis 1:1" },
+    { say, screen: "Genesis 1:1", screenVersion: "KJV" },
+  ], { installed: ["KJV", "NKJV", "NIV", "AMP", "GNT", "MSG"] });
+}
+
 // ---------------------------------------------------------------------------
 // 5. Scripture read aloud with no reference named.
 // ---------------------------------------------------------------------------
@@ -898,6 +945,81 @@ for (const [at, [say, wrong]] of MODEL_WRONG.entries()) {
       model: () => ({ reference: wrong, story, confidence: 1, intent: "SCRIPTURE_READING" }),
       needsModel: true,
     });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 9. A verse begun, a pause, and the rest of it: the first words suggest it
+//    in the box (`box`), and it goes up when the rest is said — word for
+//    word or not ("heavens", where the King James has "heaven").
+// ---------------------------------------------------------------------------
+
+const ACROSS_A_PAUSE = [
+  ["KJV", ["In the beginning.", "God created the heavens and the earth."], "Genesis 1:1"],
+  ["NKJV", ["In the beginning.", "God created the heavens and the earth."], "Genesis 1:1"],
+  ["KJV", ["In the beginning", "was the Word, and the Word was with God."], "John 1:1"],
+  ["NKJV", ["Be still and", "know that I am God."], "Psalms 46:10"],
+  ["KJV", ["Trust in the Lord", "with all your heart and lean not on your own understanding."], "Proverbs 3:5"],
+  ["NKJV", ["The Lord is my shepherd.", "I shall not want."], "Psalms 23:1"],
+  ["NIV", ["For I know the plans", "I have for you, declares the Lord."], "Jeremiah 29:11"],
+  [
+    "KJV",
+    ["There was a day when I went to the sitting room and I saw something.", "In the beginning God created the heavens and the earth."],
+    "Genesis 1:1",
+  ],
+  [
+    "NKJV",
+    ["There was a day when I went to the sitting room and I saw something.", "In the beginning", "God created the heavens and the earth."],
+    "Genesis 1:1",
+  ],
+];
+for (const [at, [version, says, screen]] of ACROSS_A_PAUSE.entries()) {
+  const turns = says.map((say) => ({ say }));
+  turns[turns.length - 1].screen = screen;
+  add("quote-across-a-pause", `${version}-${at} ${screen}`, turns, { version });
+}
+
+/** The first words of a verse, and no more: in the box, not on screen. */
+const BEGUN = [
+  ["KJV", "In the beginning.", "Genesis 1:1"],
+  ["NKJV", "In the beginning.", "Genesis 1:1"],
+  ["KJV", "For God so loved.", "John 3:16"],
+  ["NKJV", "Be still and", "Psalms 46:10"],
+  ["KJV", "Trust in the Lord.", "Proverbs 3:5"],
+  ["NKJV", "I can do all things.", "Philippians 4:13"],
+];
+for (const [at, [version, say, box]] of BEGUN.entries()) {
+  add("quote-begun-suggested", `${version}-${at} ${box}`, [{ say, screen: null, box }], { version });
+}
+
+/**
+ * Verses with words no other verse has, said in two breaths: the first four
+ * words, then the rest with an ending or two heard differently. Right if
+ * they go up; not owed.
+ */
+const pauseRandom = seeded(20261123);
+const pausePick = (list) => list[Math.floor(pauseRandom() * list.length)];
+for (const version of ["KJV", "NKJV", "NIV"]) {
+  const { verses } = bible(version);
+  const chosen = new Set();
+  while (chosen.size < 30) {
+    const verse = pausePick(verses);
+    const length = wordsOf(verse.text).length;
+    if (length >= 10 && length <= 30) chosen.add(verse);
+  }
+  for (const verse of chosen) {
+    const words = wordsOf(verse.text);
+    const reference = refOf(verse);
+    add(
+      "quote-across-a-pause-generated",
+      `${version} ${reference}`,
+      // Four rare words are a quote already ("Tamar put ashes on"): up early is right.
+      [
+        { say: words.slice(0, 4).join(" "), allow: [reference] },
+        { say: misheard(words.slice(4).join(" "), pauseRandom, 0.1), hope: reference },
+      ],
+      { version },
+    );
   }
 }
 
