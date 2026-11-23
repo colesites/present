@@ -13,6 +13,10 @@
  *   sure, every time it is asked, of the verse elsewhere in the Bible whose
  *   words are most like what was heard. Nothing wrong may reach the screen
  *   however sure it is.
+ *
+ * "box n": how many cases of a group had a passage suggested in the box —
+ * never on screen. Owed where a case says `box`; elsewhere, what the operator
+ * is offered and passes over.
  */
 
 import { writeFileSync } from "node:fs";
@@ -97,6 +101,23 @@ export async function runCase(testCase, world) {
       if (!allowed.has(shown)) wrong.push({ turn: at, said: turn.say, shown });
     }
     if (turn.hope) hoped.push(tab.showing() === turn.hope);
+    if (turn.screenVersion !== undefined) {
+      const inBible = tab.screen.at(-1)?.match(/\s([A-Z]{2,5})$/)?.[1] ?? null;
+      if (inBible !== turn.screenVersion) {
+        // Into a Bible nobody asked for is as wrong as a wrong verse; not
+        // into the one asked for, missed.
+        (turn.screenVersion === testCase.version && inBible !== null ? wrong : missed).push({
+          turn: at,
+          said: turn.say,
+          wantedIn: turn.screenVersion,
+          shownIn: inBible,
+        });
+      }
+    }
+    // A suggestion owed in the box, where the operator can show it.
+    if (turn.box !== undefined && tab.box !== turn.box) {
+      missed.push({ turn: at, said: turn.say, wantedInBox: turn.box, box: tab.box });
+    }
     if (turn.screen !== undefined) {
       const showing = tab.showing();
       if (showing !== turn.screen) {
@@ -120,6 +141,7 @@ export async function runCase(testCase, world) {
     missed,
     hoped: hoped.length,
     found: hoped.filter(Boolean).length,
+    suggested: tab.notes.filter((note) => note.startsWith("suggested:")).length,
     notes: tab.notes,
   };
 }
@@ -144,13 +166,15 @@ export async function runAll({
 
 export function summarize(results) {
   const table = new Map();
-  for (const { group, world, outcome, hoped, found } of results) {
+  for (const { group, world, outcome, hoped, found, suggested } of results) {
     const key = `${group}|${world}`;
-    const row = table.get(key) ?? { group, world, cases: 0, ok: 0, missed: 0, wrong: 0, hoped: 0, found: 0 };
+    const row = table.get(key)
+      ?? { group, world, cases: 0, ok: 0, missed: 0, wrong: 0, hoped: 0, found: 0, suggested: 0 };
     row.cases += 1;
     row[outcome] += 1;
     row.hoped += hoped;
     row.found += found;
+    row.suggested += suggested ? 1 : 0;
     table.set(key, row);
   }
   return [...table.values()];
@@ -164,12 +188,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const worlds = [...new Set(rows.map((row) => row.world))];
   const groups = [...new Set(rows.map((row) => row.group))];
   const pad = (value, width) => String(value).padEnd(width);
-  console.log(`${pad("", 34)}${worlds.map((name) => pad(`${name}: ok/missed/WRONG of n`, 40)).join("")}`);
+  console.log(`${pad("", 34)}${worlds.map((name) => pad(`${name}: ok/missed/WRONG of n`, 48)).join("")}`);
   for (const group of groups) {
     const cells = worlds.map((name) => {
       const row = rows.find((candidate) => candidate.group === group && candidate.world === name);
       const found = row?.hoped ? `  found ${row.found}/${row.hoped}` : "";
-      return pad(row ? `${row.ok}/${row.missed}/${row.wrong} of ${row.cases}${found}` : "-", 40);
+      const suggested = row?.suggested ? `  box ${row.suggested}` : "";
+      return pad(row ? `${row.ok}/${row.missed}/${row.wrong} of ${row.cases}${found}${suggested}` : "-", 48);
     });
     console.log(`${pad(group, 34)}${cells.join("")}`);
   }

@@ -1,3 +1,5 @@
+import { wellKnownRank } from "./well-known-verses.mjs";
+
 const STOP_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "for", "from", "i", "in",
   "is", "it", "me", "my", "of", "on", "or", "show", "that", "the", "their",
@@ -341,6 +343,37 @@ const MOST_OF_A_VERSE = 0.6;
 export const SHORT_VERSE_MIN_BITS = 12;
 
 /**
+ * The fewest words in a row that suggest a verse, in the box and never on
+ * screen: "In the beginning", "For God so", "Be still and".
+ */
+export const SUGGEST_MIN_RUN = 3;
+
+/**
+ * How much the first words of a verse must say, in bits, to suggest it —
+ * not to show it, which takes `QUOTE_MIN_BITS`. The first words of the
+ * verses preachers quote most say 8 to 20: "In the beginning" 10, "Be still
+ * and" 10 to 11, "The Lord is my shepherd" 18. Fewer than that, and every
+ * "the Lord is my" filled the box.
+ *
+ * Only where a verse begins: a suggestion is a verse begun. Words from the
+ * middle of verses filled the box for half of what a preacher says that
+ * quotes nothing ("one day a man was walking along the road", 2 Kings 2:23)
+ * — unless they begin what is said, and the verse is one preachers quote
+ * most (`well-known-verses.mjs`): "Let there be light", from the middle of
+ * Genesis 1:3.
+ */
+export const SUGGEST_MIN_BITS = 10;
+
+/**
+ * By how much a suggested verse must out-say the next most likely — or be
+ * the best known of those it does not (`well-known-verses.mjs`).
+ */
+export const SUGGEST_MARGIN_BITS = 3;
+
+/** The most other verses a suggestion is told apart from (`rivals`). */
+const SUGGEST_RIVALS = 6;
+
+/**
  * By how much the verse found must out-say the next most likely. Two verses
  * that share the words heard so far are told apart by the word that comes
  * next, and a word like "and" or "the" tells nothing: the verse waits for a
@@ -375,6 +408,10 @@ export const QUOTE_MARGIN_BITS = 6;
  *
  * `minBits`, `middleBits`, `marginBits`: in place of `QUOTE_MIN_BITS`,
  * `QUOTE_MIN_BITS_MIDDLE` and `QUOTE_MARGIN_BITS`, to measure with.
+ *
+ * `suggest`: when no verse is quoted, the verse the words most likely begin
+ * to quote, if any (`suggestedFrom`), with `sure: false`. For the box, never
+ * the screen.
  */
 export function findQuotedVerse(index, heard, options = {}) {
   return quotedVerseMatch(index, heard, options)?.verse ?? null;
@@ -388,7 +425,7 @@ export function findQuotedVerse(index, heard, options = {}) {
  *
  * @param {any} index
  * @param {string} heard
- * @param {{ commonAfter?: number, endingWithin?: number, ended?: boolean, minBits?: number, middleBits?: number, marginBits?: number }} [options]
+ * @param {{ commonAfter?: number, endingWithin?: number, ended?: boolean, minBits?: number, middleBits?: number, marginBits?: number, suggest?: boolean }} [options]
  */
 export function quotedVerseMatch(
   index,
@@ -400,6 +437,7 @@ export function quotedVerseMatch(
     minBits = QUOTE_MIN_BITS,
     middleBits = QUOTE_MIN_BITS_MIDDLE,
     marginBits = QUOTE_MARGIN_BITS,
+    suggest = false,
   } = {},
 ) {
   const heardWords = wordsOf(normalizeVerseSearchText(heard));
@@ -424,6 +462,8 @@ export function quotedVerseMatch(
   // what was heard, wherever in it the words fall.
   let top = null;
   let nextBits = 0;
+  /** With `suggest`: every verse with a run long enough to suggest it. */
+  const runs = [];
   const reading =
     endingWithin === undefined
       ? candidates
@@ -435,20 +475,44 @@ export function quotedVerseMatch(
     // to count them.
     const count = text ? countSpaces(text) + 1 : 0;
     const needed = Math.max(2, Math.min(count, QUOTE_MIN_RUN));
+    // A suggestion takes fewer words in a row; a phrase that ends a run of
+    // `needed` ends one of fewer, so the quotes found are the same.
+    const fewest = suggest ? Math.max(2, Math.min(count, SUGGEST_MIN_RUN)) : needed;
     // Turned away below anyway; this only does it before the long part. The
     // phrase is looked for in the verse's text as it is: most candidates go
     // here, every one of them, at every word heard, in every Bible installed.
-    if (endingWithin !== undefined && !endsWithPhraseOf(heardWords, text, needed, endingWithin)) {
+    if (endingWithin !== undefined && !endsWithPhraseOf(heardWords, text, fewest, endingWithin)) {
       continue;
     }
     const verseWords = wordsOf(text);
     const run = longestSharedRun(heardWords, verseWords);
-    if (run.length < needed) continue;
+    if (run.length < fewest) continue;
     if (endingWithin !== undefined && heardWords.length - run.end > endingWithin) continue;
     const from = run.end - run.length;
     const said = heardWords.slice(from, run.end);
     let bits = 0;
     for (const word of said) bits += bitsOf(index, word);
+    if (suggest) {
+      const fromStart = run.endInB === run.length;
+      const short = run.length === verseWords.length && run.length <= QUOTE_MIN_RUN;
+      runs.push({
+        verse: entry.verse,
+        bits,
+        run: run.length,
+        fromStart,
+        // Words from where the run begins to the newest heard.
+        fromEnd: heardWords.length - from,
+        // Up to the newest word, or the one before it: what is being said
+        // now, not a phrase a breath ago ("…and I saw something. In the").
+        now: heardWords.length - run.end <= 1,
+        suggests:
+          said.some(isUncommon)
+          && (fromStart || (begins.has(from) && wellKnownRank(entry.verse) !== null))
+          && (!short || clauses.has(from))
+          && bits >= SUGGEST_MIN_BITS,
+      });
+    }
+    if (run.length < needed) continue;
     if (top && bits <= top.bits) {
       nextBits = Math.max(nextBits, bits);
       continue;
@@ -479,16 +543,69 @@ export function quotedVerseMatch(
       quoted: placed && bits >= least && said.some(isUncommon),
     };
   }
-  return !top || !top.quoted || top.bits - nextBits < marginBits
-    ? null
-    : {
-        verse: top.verse,
-        run: top.run,
-        shared: sharedInOrder(heardWords, top.words),
-        bits: top.bits,
-        fromStart: top.fromStart,
-        covers: top.run / Math.max(1, top.words.length),
-      };
+  if (!top || !top.quoted || top.bits - nextBits < marginBits) {
+    return suggest ? suggestedFrom(runs) : null;
+  }
+  return {
+    verse: top.verse,
+    run: top.run,
+    shared: sharedInOrder(heardWords, top.words),
+    bits: top.bits,
+    fromStart: top.fromStart,
+    covers: top.run / Math.max(1, top.words.length),
+    sure: true,
+  };
+}
+
+/**
+ * The verse a few words most likely begin to quote, to suggest in the box:
+ * the one whose run says most, by `SUGGEST_MARGIN_BITS` — or, of those that
+ * say as much, the best known (`wellKnownRank`). `null` when none says
+ * enough, or several do and none of them is well known.
+ *
+ * `rivals`: the other verses that said as much, for the agent to tell the
+ * suggestion from as more words come (`heard-scripture.ts`); `fromEnd`: how
+ * many of the words heard, from the newest back, the suggestion was found by.
+ */
+function suggestedFrom(all) {
+  const runs = all.filter((run) => run.now);
+  const best = runs.reduce((most, run) => Math.max(most, run.bits), 0);
+  const close = runs.filter((run) => run.bits > best - SUGGEST_MARGIN_BITS);
+  const suggesting = close.filter((run) => run.suggests);
+  if (suggesting.length === 0) return null;
+  let chosen = null;
+  if (close.length === 1) {
+    chosen = suggesting[0];
+  } else {
+    let bestRank = Infinity;
+    for (const run of suggesting) {
+      const rank = wellKnownRank(run.verse);
+      if (rank !== null && rank < bestRank) {
+        chosen = run;
+        bestRank = rank;
+      }
+    }
+  }
+  if (!chosen) return null;
+  return {
+    verse: chosen.verse,
+    run: chosen.run,
+    bits: chosen.bits,
+    fromEnd: chosen.fromEnd,
+    // Those the words open first: "In the beginning" is in the middle of a
+    // dozen verses, and John 1:1 is one it opens.
+    rivals: close
+      .filter((run) => run !== chosen)
+      .sort(
+        (left, right) =>
+          Number(right.fromStart) - Number(left.fromStart)
+          || Number(right.suggests) - Number(left.suggests)
+          || right.bits - left.bits,
+      )
+      .slice(0, SUGGEST_RIVALS)
+      .map((run) => run.verse),
+    sure: false,
+  };
 }
 
 /** How many words two texts share in order, gaps allowed. */

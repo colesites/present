@@ -91,7 +91,10 @@ test("a Bible named after \"in\" is switched to, and only when it is what follow
   assert.deepEqual(switched("Let us see it in the Amplified."), { type: "switch_version", versionCode: "AMP" });
   assert.deepEqual(switched("in E S V"), { type: "switch_version", versionCode: "ESV" });
   assert.equal(switched("in the message this morning I want to talk about faith"), null, "the Message is a word too");
-  assert.equal(switched("in the morning we will read the ESV together"), null, "named later, not after \"in\"");
+  assert.deepEqual(switched("in the morning we will read the ESV together"), {
+    type: "switch_version",
+    versionCode: "ESV",
+  }, "named later is named all the same");
   assert.equal(switched("he was in Kiev last year"), null);
 });
 
@@ -124,12 +127,77 @@ test("recognizes explicit version switch commands", () => {
   });
 });
 
-test("rejects incidental version mentions as version commands", () => {
+test("a Bible named anywhere in what is said is switched to", () => {
+  // The owner's rule, 2026-11-23: only "give me" and "in" worked, and any
+  // Bible said by name should. Only the preacher names a Bible in a sermon.
   const options = { books, versions, activePassage: null };
+  const switched = (said) => parseExplicitCommand(said, options)?.versionCode ?? null;
+  for (const [said, code] of [
+    ["I was reading the NIV yesterday", "NIV"],
+    ["In my personal study I use ESV.", "ESV"],
+    ["Read from the KJV.", "KJV"],
+    ["Turn to NIV.", "NIV"],
+    ["Change it to NIV.", "NIV"],
+    ["Genesis 1:1 NIV.", "NIV"],
+    ["Back to King James.", "KJV"],
+    ["I want the amplified.", "AMP"],
+    ["My Amplified says", "AMP"],
+  ]) {
+    assert.equal(switched(said), code, said);
+  }
+});
 
-  assert.equal(parseExplicitCommand("I was reading the NIV yesterday", options), null);
-  assert.equal(parseExplicitCommand("The NIV is a popular translation", options), null);
-  assert.equal(parseExplicitCommand("In my personal study I use ESV", options), null);
+test("a Bible named on its own, asked for, or quoted from is switched to", () => {
+  // After "Genesis 1:1" and its reading, "Amplified" went unnoticed: only
+  // "Genesis 1:1 in the NKJV" changed the Bible.
+  const options = { books, versions, activePassage: null };
+  const switched = (said) => parseExplicitCommand(said, options)?.versionCode ?? null;
+  for (const [said, code] of [
+    ["Amplified.", "AMP"],
+    ["The Amplified.", "AMP"],
+    ["Amplified version please.", "AMP"],
+    ["Show me the Amplified.", "AMP"],
+    ["Can I have the Amplified?", "AMP"],
+    ["What does the Amplified say?", "AMP"],
+    ["The Amplified says", "AMP"],
+    ["The Amplified says, in the beginning God created", "AMP"],
+    ["Now, King James.", "KJV"],
+    ["Let's look at the King James Version.", "KJV"],
+    ["ESV.", "ESV"],
+  ]) {
+    assert.equal(switched(said), code, said);
+  }
+});
+
+test("a Bible's letters are read however the transcriber groups them", () => {
+  // "ES. V." went unnoticed until it was written "ESV".
+  const options = { books, versions: [...versions, { id: "nkjv", code: "NKJV", name: "New King James Version" }], activePassage: null };
+  const switched = (said) => parseExplicitCommand(said, options)?.versionCode ?? null;
+  for (const [said, code] of [
+    ["ES. V.", "ESV"],
+    ["E. S. V.", "ESV"],
+    ["E SV.", "ESV"],
+    ["Genesis 1:1 ES. V.", "ESV"],
+    ["N. KJV.", "NKJV"],
+    ["NK. J. V.", "NKJV"],
+  ]) {
+    assert.equal(switched(said), code, said);
+  }
+  assert.equal(switched("ES. V"), null, "the letters may still be being said");
+});
+
+test("a Bible's name is not asked for before the sentence says so", () => {
+  const options = { books, versions, activePassage: null };
+  const switched = (said) => parseExplicitCommand(said, options)?.versionCode ?? null;
+  // Read again at every word: the name may still go on ("King James" to
+  // "King James Version", "Amplified" to "Amplified Classic").
+  assert.equal(switched("The King James"), null);
+  assert.equal(switched("The amplifier is too loud."), null);
+  assert.equal(switched("His voice was amplified."), null, "amplified is a word too");
+  assert.equal(switched("I have good news for you."), null);
+  assert.equal(switched("We have new international partners."), null);
+  assert.equal(switched("The message says love one another."), null, "the Message is a word too");
+  assert.equal(switched("Show me the way."), null);
 });
 
 test("recognizes explicit passage navigation commands", () => {

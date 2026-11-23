@@ -27,7 +27,7 @@ import { useSpeechRecognition, type ScriptRecognitionResult } from "../hooks/use
 import { useBibleListeningStore } from "../lib/bible-listening";
 import { useSongAgentStore } from "../../song-agent/songAgentStore";
 import { useHeardScripture } from "../hooks/useHeardScripture";
-import { versionKeyterms } from "../lib/listening";
+import { lastWords, versionKeyterms } from "../lib/listening";
 import { useScripturePanelStore } from "../lib/panel-state";
 import {
   Mic,
@@ -94,6 +94,9 @@ const DEFAULT_BIBLE_AGENT: BibleAgentSettings = {
   addToService: true,
   voiceCommands: true,
 };
+
+/** The most words heard shown under the toolbar, across turns. */
+const LIVE_TRANSCRIPT_WORDS = 40;
 
 export interface ScripturePanelRef {
   focusSearch: () => void;
@@ -379,8 +382,15 @@ export const ScripturePanel = memo(
       return null;
     }, [activeVersePk, effectiveSelectedVersionCode]);
 
+    /**
+     * The turns heard before the one being said, for the line under the
+     * toolbar: a pause ends a turn, and "In the beginning" went from sight
+     * as "God created the heavens" began — though the agent still had it.
+     */
+    const earlierTurnsRef = useRef("");
     const handleAiQueryChange = useCallback(
       (value: string) => {
+        if (!value) earlierTurnsRef.current = "";
         setLiveTranscript(value);
       },
       [setLiveTranscript],
@@ -530,7 +540,9 @@ export const ScripturePanel = memo(
         if (!result.transcript) return;
         const transcript = result.transcript.trim();
 
-        handleAiQueryChange(result.transcript);
+        const heardSoFar = lastWords(`${earlierTurnsRef.current} ${transcript}`, LIVE_TRANSCRIPT_WORDS);
+        handleAiQueryChange(heardSoFar);
+        if (result.endOfTurn ?? result.isFinal) earlierTurnsRef.current = heardSoFar;
 
         // Feed the real-time Bible agent: full transcript event with turns and word timing when available
         if (result.turn !== undefined || result.words) {
@@ -597,6 +609,7 @@ export const ScripturePanel = memo(
     useEffect(() => {
       if (!isListening) {
         forgetHeard();
+        earlierTurnsRef.current = "";
         setLiveTranscript("");
       }
     }, [forgetHeard, isListening]);
@@ -1212,10 +1225,11 @@ export const ScripturePanel = memo(
         ) : null}
 
         {isListening ? (
-          <div className="shrink-0 border-b border-border/40 px-3 py-1.5">
-            <p className="truncate text-[11px] text-muted-foreground">
-              <span className="mr-1.5 text-primary">●</span>
-              {liveTranscript.trim() || "Listening…"}
+          <div className="flex shrink-0 items-center border-b border-border/40 px-3 py-1.5 text-[11px] text-muted-foreground">
+            <span className="mr-1.5 text-primary">●</span>
+            {/* Cut at the start, not the end: the newest words are the ones to see. */}
+            <p dir="rtl" className="min-w-0 flex-1 truncate text-left">
+              <bdi dir="ltr">{liveTranscript.trim() || "Listening…"}</bdi>
             </p>
           </div>
         ) : null}

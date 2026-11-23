@@ -2,5 +2,10 @@
 import { measured } from "./bible-agent-eval/assert.mjs";
 
 measured("none", ["quote-"], {
-  least: { "quote-first-words": 140, "quote-middle-words": 105, "quote-misheard": 165 },
+  least: {
+    "quote-first-words": 140,
+    "quote-middle-words": 105,
+    "quote-misheard": 165,
+    "quote-across-a-pause-generated": 80,
+  },
 });

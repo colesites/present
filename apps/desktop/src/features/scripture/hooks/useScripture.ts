@@ -4,6 +4,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db, type BibleVersion, type BibleVerse } from "../lib/db";
 import { importBibleModule, type ImportProgress } from "../lib/import-pipeline";
 import { type ParsedReference } from "../lib/parser";
+import type { QuotedVerse } from "../lib/heard-scripture";
 import { toast } from "sonner";
 import {
   buildVerseSearchIndex,
@@ -409,6 +410,9 @@ export function useScripture() {
    * others too once their words are indexed (a few hundred milliseconds each,
    * done as listening starts), for words still being said; "all" in every one.
    * `endingWithin`, `ended`: see `findQuotedVerse`.
+   *
+   * `suggest`: when nothing is quoted, the verse the words begin to quote in
+   * the chosen Bible, if any, marked `suggested` — for the box, not the screen.
    */
   const findQuotedVerseInText = useCallback(
     async (input: {
@@ -417,7 +421,8 @@ export function useScripture() {
       versions?: "chosen" | "indexed" | "all";
       endingWithin?: number;
       ended?: boolean;
-    }): Promise<BibleVerse | null> => {
+      suggest?: boolean;
+    }): Promise<QuotedVerse | null> => {
       if (normalizeVerseSearchText(input.query).length < 3) {
         return null;
       }
@@ -432,6 +437,7 @@ export function useScripture() {
                   || verseSearchIndexCacheRef.current.has(version.id)),
             );
       const matches: { versionId: string; verse: BibleVerse; run: number; shared: number }[] = [];
+      let suggested: QuotedVerse | null = null;
       for (const [at, version] of [chosen, ...others].entries()) {
         if (!version) continue;
         // An index already built comes back without letting the tab draw or
@@ -441,12 +447,19 @@ export function useScripture() {
         const match = quotedVerseMatch(await getSearchIndex(version.id), input.query, {
           endingWithin: input.endingWithin,
           ended: input.ended,
+          suggest: Boolean(input.suggest) && version === chosen,
         });
-        if (match) {
+        if (!match) continue;
+        if ("rivals" in match) {
+          suggested = {
+            ...(match.verse as BibleVerse),
+            suggested: { fromEnd: match.fromEnd, rivals: match.rivals as BibleVerse[] },
+          };
+        } else {
           matches.push({ versionId: version.id, ...match, verse: match.verse as BibleVerse });
         }
       }
-      return chooseAcrossBibles(matches, chosen?.id ?? null)?.verse ?? null;
+      return chooseAcrossBibles(matches, chosen?.id ?? null)?.verse ?? suggested;
     },
     [getSearchIndex, resolveVersion, versions],
   );

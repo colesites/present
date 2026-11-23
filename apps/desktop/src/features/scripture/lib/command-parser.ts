@@ -11,7 +11,7 @@
  */
 
 import type { BibleBookRecord } from "./db";
-import { findNamedVersion, namedVersionAt, type NamedVersion } from "./listening";
+import { findNamedVersion, lastNamedVersion, versionNamedAt, type NamedVersion } from "./listening";
 import { parseReference, type ParsedReference } from "./parser";
 
 export type ExplicitCommand =
@@ -151,6 +151,85 @@ export function findStepCommand(
   return { type: found.type, words: upTo.trim().split(/\s+/).length };
 }
 
+/** What is said before a Bible's name to ask for it, or to quote from it. */
+const ASKING_FOR_A_BIBLE =
+  /^(?:(?:and|now|so|okay|ok|alright|all\s+right|pastor|brother|sister|please)[\s,]+)*(?:(?:let['’]?s|let\s+us|can\s+(?:i|we)|could\s+(?:i|we)|i\s+want\s+to|we\s+want\s+to)\s+(?:see|look\s+at|have|get|use|go\s+to|check|read\s+from)|show\s+(?:me|us)|give\s+us|put\s+up|bring\s+up|go\s+to|what\s+does|how\s+does|according\s+to|from|check)?\s*/i;
+
+/**
+ * What may follow a Bible's name when it is asked for, or quoted from; the
+ * second group, when it is quoted from ("says", "puts it").
+ */
+const AFTER_A_BIBLE =
+  /^((?:[\s,]*(?:version|bible|translation|please|for\s+(?:me|us)|now|again|then|too)(?![\p{L}\p{N}]))*)[\s,]*((?:says?|puts\s+it|reads|renders\s+it|has\s+it)(?![\p{L}\p{N}])[\s\S]*)?[.!?]*$/iu;
+
+/**
+ * Bibles whose names are things said anyway: "Good news!" is not a Bible
+ * asked for, alone, nor is "the new international airport". Asked for, or
+ * said as a Bible, it is one ("show me the Good News", "the Good News
+ * Bible", "the New International Version").
+ */
+const SAID_ANYWAY = /^(?:good\s+news|message|living|passion|god['’]?s\s+word|word|net|web|new\s+international)$/i;
+
+/**
+ * "The Amplified", "my Amplified", "from the Amplified" — ending the
+ * sentence, or before "says", "version", "please". "Amplified" is a word too:
+ * "his voice was amplified" names no Bible.
+ */
+const THE_AMPLIFIED =
+  /(?<![\p{L}\p{N}])(?:the|my|in|from|to)\s+(amplified(?:\s+classic)?)(?=\s*(?:[.!?,]|(?:version|bible|translation|says?|please|puts|reads)(?![\p{L}\p{N}])))/giu;
+
+/**
+ * The Bible the words name last, wherever in the sentence: "read from the
+ * KJV", "turn to NIV", "Genesis 1:1 NIV", "back to King James", "I want the
+ * Amplified". Only the preacher names a Bible in a sermon; whatever they say
+ * about it, the verse on screen is wanted in it. Not a name that is an
+ * everyday phrase as well (`SAID_ANYWAY`), and not a name the turn ends on
+ * while it is still being said: "the King James" may be "the King James
+ * Bible is on my shelf", and the transcriber adds the full stop that says it
+ * was not.
+ */
+function bibleNamed(text: string, versions: NamedVersion[]): string | null {
+  let found: { code: string; end: number; stop?: boolean } | null = null;
+  const named = lastNamedVersion(text, versions);
+  if (named && !SAID_ANYWAY.test(named.said.trim().replace(/^the\s+/i, ""))) {
+    // "ES. V.": the full stop is the name's own last letter's, and ends it.
+    found = { code: named.code, end: named.end, stop: /\.$/.test(named.said) };
+  }
+  for (const match of text.matchAll(THE_AMPLIFIED)) {
+    const code = versionNamedAt(match[1] ?? "", versions)?.code;
+    const end = (match.index ?? 0) + match[0].length;
+    if (code && (!found || end > found.end)) found = { code, end };
+  }
+  if (!found) return null;
+  // Said whole: something follows it, a word or the full stop.
+  return found.stop || /\S/.test(text.slice(found.end)) ? found.code : null;
+}
+
+/**
+ * The Bible a sentence of `text` is about, or `null`: its name alone,
+ * asked for ("show me the Amplified", "Amplified version please", "let's look
+ * at the New King James"), or quoted from ("the Amplified says", "what does
+ * the King James say?"). Only a Bible's name with nothing else of the
+ * sentence around it: "I have good news for you" names no Bible, and the
+ * Good News is one only said as one (`SAID_IN_FULL`, `listening.ts`).
+ */
+function bibleAskedFor(text: string, versions: NamedVersion[]): string | null {
+  let asked: string | null = null;
+  for (const sentence of text.split(/(?<=[.!?])\s+/).map((each) => each.trim())) {
+    const lead = ASKING_FOR_A_BIBLE.exec(sentence)?.[0] ?? "";
+    const found = versionNamedAt(sentence.slice(lead.length), versions);
+    const after = found ? AFTER_A_BIBLE.exec(found.rest) : null;
+    if (!found || !after) continue;
+    const quoted = Boolean(after[2]);
+    // A turn is read again at every word: "The new international" is not
+    // the NIV until the sentence ends there. "…says" says it already.
+    if (!quoted && !/[.!?]$/.test(sentence)) continue;
+    if (!lead.trim() && !quoted && !after[1]?.trim() && SAID_ANYWAY.test(found.said.trim())) continue;
+    asked = found.code;
+  }
+  return asked;
+}
+
 /**
  * Recognizes explicit commands deterministically.
  */
@@ -194,20 +273,27 @@ export function parseExplicitCommand(
   // The name must be what follows "in" — "in the message this morning" names
   // no Bible, and "the Message" is one only said as one ("the Message
   // Bible"), like every Bible whose name is also a word.
+  // "In the Amplified", as it is nearly always said (`versionNamedAt`).
   let named: string | null = null;
   for (const match of text.matchAll(/(?<![\p{L}\p{N}])in\s+(?:the\s+)?/giu)) {
     const after = text.slice((match.index ?? 0) + match[0].length);
-    const code =
-      namedVersionAt(after, options.versions)
-      // "In the Amplified", as it is nearly always said.
-      ?? (/^amplified(?:\s+classic)?(?![\p{L}\p{N}])/iu.test(after)
-        ? namedVersionAt(after.replace(/^(amplified(?:\s+classic)?)/i, "$1 Bible"), options.versions)
-          ?? namedVersionAt(after.replace(/^amplified/i, "Amplified Bible"), options.versions)
-        : null);
+    const code = versionNamedAt(after, options.versions)?.code;
     if (code) named = code;
   }
   if (named) {
     return { type: "switch_version", versionCode: named };
+  }
+
+  // 3c. A Bible named anywhere else: alone ("Amplified.", "NKJV."), asked
+  // for ("show me the Amplified", "turn to NIV"), quoted from ("what does
+  // the King James say?", "the Amplified says"), or after the passage
+  // ("Genesis 1:1 NIV"). It went unnoticed unless "give me" or "in" came
+  // before it.
+  // The whole of what was said first: "N. KJV." is the NKJV spelled out,
+  // not "N." and the KJV, as sentence by sentence it is.
+  const asked = bibleNamed(text, options.versions) ?? bibleAskedFor(text, options.versions);
+  if (asked) {
+    return { type: "switch_version", versionCode: asked };
   }
 
   // 4. Relative verse within active passage:

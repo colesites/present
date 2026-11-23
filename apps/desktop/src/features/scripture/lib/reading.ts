@@ -272,3 +272,37 @@ export function borneOutBy(said: string, text: string): BorneOut | null {
     ? "told"
     : null;
 }
+
+/** The most words of a verse said in order that bear a suggestion out, however long the verse. */
+const BORNE_OUT_WORDS = 10;
+/** The most of its telling words, likewise. */
+const BORNE_OUT_TELLING = 6;
+
+/**
+ * Whether what was said since a verse was suggested — from the words that
+ * suggested it, across pauses — says it is that verse, and not one of the
+ * `rivals` its first words also began. Then it goes on screen.
+ *
+ * "In the beginning" suggests Genesis 1:1; "God created the heavens and the
+ * earth", a breath later, is the rest of it. Not word for word ("heavens",
+ * where the King James has "heaven"), which is what a quote found by its
+ * words alone must be (`verse-search-index.mjs`); word for word or not, the
+ * verse is being read.
+ *
+ * Of the verse: six-tenths of its words in its order (ten at most) and
+ * seven-tenths of the words in it that tell something (four at least, six at
+ * most), with the newest words among them (`stillIn`). Of what was said: two
+ * words in three the verse's — an aside, not a story of its own. And two
+ * more telling words of it than of any rival: "in the beginning God created"
+ * is not John 1:1. "Lift up your hands and praise the Lord" has two of
+ * Psalm 134:2's four, and stays a suggestion.
+ */
+export function bearsOutSuggestion(saidRoots: string[], verseRoots: string[], rivals: string[][]): boolean {
+  const { words, telling } = followed(saidRoots, verseRoots);
+  const verseTelling = verseRoots.filter(tells).length;
+  if (words < Math.min(BORNE_OUT_WORDS, Math.max(5, Math.ceil(verseRoots.length * 0.6)))) return false;
+  if (telling < Math.min(BORNE_OUT_TELLING, Math.max(4, Math.ceil(verseTelling * 0.7)))) return false;
+  if (words * 3 < saidRoots.length * 2) return false;
+  if (!stillIn(saidRoots, verseRoots)) return false;
+  return rivals.every((rival) => followed(saidRoots, rival).telling + 2 <= telling);
+}

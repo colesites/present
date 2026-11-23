@@ -458,9 +458,16 @@ function patternsFor({ code, name }: NamedVersion): RegExp[] {
         ? bounded(`${escaped}${SAID_AS_A_BIBLE}`, "i")
         : bounded(escaped, "i"),
     );
-    // "K J V", "k.j.v."
+    // "K J V", "k.j.v.", and the letters as the transcriber groups them:
+    // "ES. V." went unnoticed until it was written "ESV". Not the letters
+    // run together, which is the code itself: "net" is no Bible.
     if (/^[A-Z]{2,5}$/.test(upper)) {
-      patterns.push(bounded(upper.split("").join(String.raw`[\s.]+`) + "\\.?", "i"));
+      patterns.push(
+        bounded(
+          `(?!${escaped}(?![\\p{L}\\p{N}]))` + upper.split("").join(String.raw`[\s.]*`) + "\\.?",
+          "i",
+        ),
+      );
     }
   }
   const core = name
@@ -577,6 +584,14 @@ function namedPatterns(version: NamedVersion): RegExp[] {
  * not the King James inside it.
  */
 export function findNamedVersion(text: string, versions: NamedVersion[]): string | null {
+  return lastNamedVersion(text, versions)?.code ?? null;
+}
+
+/** `findNamedVersion`, with the name as said and where it ends in `text`. */
+export function lastNamedVersion(
+  text: string,
+  versions: NamedVersion[],
+): { code: string; said: string; end: number } | null {
   let best: { code: string; end: number; length: number } | null = null;
   for (const version of versions) {
     for (const pattern of namedPatterns(version)) {
@@ -592,7 +607,7 @@ export function findNamedVersion(text: string, versions: NamedVersion[]): string
       }
     }
   }
-  return best?.code ?? null;
+  return best ? { code: best.code, said: text.slice(best.end - best.length, best.end), end: best.end } : null;
 }
 
 /**
@@ -602,6 +617,19 @@ export function findNamedVersion(text: string, versions: NamedVersion[]): string
  * follows "in", not something said later in the sentence.
  */
 export function namedVersionAt(text: string, versions: NamedVersion[]): string | null {
+  return versionNamedAt(text, versions)?.code ?? null;
+}
+
+/**
+ * `namedVersionAt`, with what follows the name: "Amplified version please"
+ * is the AMP and " version please". "Amplified" on its own is the Amplified
+ * Bible here, as it is nearly always said: only ever looked for where a
+ * Bible is expected.
+ */
+export function versionNamedAt(
+  text: string,
+  versions: NamedVersion[],
+): { code: string; said: string; rest: string } | null {
   const from = text.replace(/^\s*(?:the\s+)?/i, "");
   let best: { code: string; length: number } | null = null;
   for (const version of versions) {
@@ -614,7 +642,14 @@ export function namedVersionAt(text: string, versions: NamedVersion[]): string |
       }
     }
   }
-  return best?.code ?? null;
+  if (best) return { code: best.code, said: from.slice(0, best.length), rest: from.slice(best.length) };
+  const amplified = /^amplified(?:\s+classic)?(?![\p{L}\p{N}])/iu.exec(from);
+  if (!amplified) return null;
+  const said = amplified[0];
+  const code =
+    namedVersionAt(`${said} Bible`, versions)
+    ?? namedVersionAt(said.replace(/^amplified/i, "Amplified Bible"), versions);
+  return code ? { code, said, rest: from.slice(said.length) } : null;
 }
 
 /** Whether `verse` is in the passage `reference` names. */
