@@ -67,6 +67,7 @@ pub async fn start_speech_stream(
     streams: State<'_, SpeechStreams>,
     url: String,
     device_id: Option<String>,
+    voice_filter: Option<bool>,
     on_event: Channel<SpeechStreamEvent>,
 ) -> AppResult<SpeechStreamStarted> {
     let device_id = device_id.filter(|id| !id.trim().is_empty());
@@ -74,7 +75,7 @@ pub async fn start_speech_stream(
         .await
         .map_err(|error| AppError::Invalid(error.to_string()))??;
     let session = NEXT_STREAM.fetch_add(1, Ordering::Relaxed);
-    let stream = speech_stream::open(&url, device_id, move |event| {
+    let stream = speech_stream::open(&url, device_id, voice_filter.unwrap_or(false), move |event| {
         let event = match event {
             StreamEvent::Message(data) => SpeechStreamEvent::Message { data },
             StreamEvent::Closed {
@@ -140,4 +141,15 @@ pub async fn close_speech_stream(streams: State<'_, SpeechStreams>, session: u32
         stream.close();
     }
     Ok(())
+}
+
+/// What the song agent heard and did, in the app's log: each line sung,
+/// each slide it moved to, each song it suggested.
+///
+/// It decides in the renderer (`features/song-agent`), where nothing it heard
+/// was written down; "it didn't move" could not be told apart from the voice
+/// service hearing something else.
+#[tauri::command]
+pub fn note_song_agent(event: String, detail: String) {
+    tracing::info!(%event, %detail, "Song agent");
 }

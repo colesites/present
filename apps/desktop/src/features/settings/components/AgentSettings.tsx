@@ -117,13 +117,54 @@ export function AgentSettings({
           />
         </SettingsRow>
         <SettingsRow
-          label="Suggest other songs"
-          description="When the band starts a song from your library that isn't on screen, it says which and waits for you."
+          label="Change on the last word"
+          description="Shows the next slide as the last word of this one is sung, without waiting for the next line. If the band goes somewhere else, it moves to the right slide as soon as they sing it."
         >
           <SettingsSwitch
-            label="Suggest other songs"
+            label="Change on the last word"
+            checked={agent.songEarly}
+            onChange={(checked) => onAgentChange({ songEarly: checked })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label="Pick out the voices"
+          description="Turns the drums, keys and backing track down on this computer, so the agent hears the singers' words."
+        >
+          <SettingsSwitch
+            label="Pick out the voices"
+            checked={agent.songVoiceFilter}
+            onChange={(checked) => onAgentChange({ songVoiceFilter: checked })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label="Hear through the band"
+          description="Listens a second time with a model that picks the voice out of the drums and backing track. Its words come a second or two later, so it catches the slide up when the band covered the words."
+        >
+          <SettingsSwitch
+            label="Hear through the band"
+            checked={agent.songThrough}
+            onChange={(checked) => onAgentChange({ songThrough: checked })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label="Find other songs"
+          description="When the band starts a song that isn't on screen, it finds it in the service or your library."
+        >
+          <SettingsSwitch
+            label="Find other songs"
             checked={agent.songSuggest}
             onChange={(checked) => onAgentChange({ songSuggest: checked })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label="Put it up by itself"
+          description="When it's plain which song the band is singing, it puts it up. When it isn't sure, it asks you."
+        >
+          <SettingsSwitch
+            label="Put it up by itself"
+            checked={agent.songSuggest && agent.songSwitch}
+            disabled={!agent.songSuggest}
+            onChange={(checked) => onAgentChange({ songSwitch: checked })}
           />
         </SettingsRow>
       </SettingsGroup>

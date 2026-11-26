@@ -24,6 +24,7 @@ pub mod clock;
 pub(crate) mod decoder;
 pub mod input;
 pub mod output;
+pub mod voice;
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

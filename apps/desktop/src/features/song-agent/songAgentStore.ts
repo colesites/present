@@ -18,8 +18,11 @@ interface SongAgentState {
   enabled: boolean;
   status: SongAgentStatus;
   error: string | null;
-  /** The song on screen that it is following, and where. */
-  following: { title: string; label: string | null } | null;
+  /**
+   * The song on screen that it is following, where, and where it expects
+   * the band to go next (a label, or the slide's first words).
+   */
+  following: { title: string; label: string | null; next: string | null } | null;
   suggestion: SongAgentSuggestion | null;
   setEnabled: (enabled: boolean) => void;
   publish: (

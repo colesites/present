@@ -103,11 +103,14 @@ pub fn with_format(url: &str) -> String {
 }
 
 /// Connect to the service at `url` and open the microphone `device_id` (or
-/// the default), both at once, then stream its sound until closed. `events`
-/// is told everything the service says, and when it is over.
+/// the default), both at once, then stream its sound until closed. With
+/// `voice`, the singers' voices are picked out of the band first
+/// (`sound::voice`). `events` is told everything the service says, and when
+/// it is over.
 pub async fn open(
     url: &str,
     device_id: Option<String>,
+    voice: bool,
     events: impl Fn(StreamEvent) + Send + Sync + 'static,
 ) -> Result<SpeechStream, OpenError> {
     if !is_service(url) {
@@ -120,7 +123,7 @@ pub async fn open(
     let (sound, captured) = mpsc::unbounded_channel::<Vec<u8>>();
     let connecting = tokio::time::timeout(CONNECT_WITHIN, tokio_tungstenite::connect_async(url));
     let opening = tauri::async_runtime::spawn_blocking(move || {
-        Microphone::open(device_id.as_deref(), move |chunk| {
+        Microphone::open_with(device_id.as_deref(), voice, move |chunk| {
             let _ = sound.send(chunk);
         })
     });

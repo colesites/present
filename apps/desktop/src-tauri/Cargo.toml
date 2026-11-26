@@ -147,6 +147,12 @@ ffmpeg-next = { version = "9", default-features = false, features = ["codec", "f
 # and an rtrb ring carries it between them without a lock on the audio thread.
 cpal = "0.17"
 rtrb = "0.4"
+# The singers' voices picked out of the band for the song agent
+# (`services/sound/voice.rs`): DeepFilterNet3, run here in pure Rust (tract),
+# its model built in. MIT or Apache-2.0. From its own repository: the crate
+# on crates.io is an old release without the real-time engine.
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", tag = "v0.5.6", default-features = false, features = ["tract", "default-model"] }
+ndarray = "0.15"
 # MP3 export. LAME is LGPL-3.0 and is compiled in for this encoder only.
 # AAC uses AudioToolbox on a Mac; WAVE and AIFF are written here.
 mp3lame-encoder = { version = "0.2.5", features = ["std"] }

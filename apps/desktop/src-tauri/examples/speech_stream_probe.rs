@@ -32,7 +32,7 @@ fn main() {
         );
         let started = Instant::now();
         let (done, mut finished) = tokio::sync::mpsc::unbounded_channel();
-        let stream = speech_stream::open(&url, None, move |event| {
+        let stream = speech_stream::open(&url, None, false, move |event| {
             let at = started.elapsed().as_secs_f64();
             match &event {
                 StreamEvent::Message(text) => {
