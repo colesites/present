@@ -117,6 +117,7 @@ export function SongAgentControl() {
                   <>
                     Following <span className="text-foreground">{following.title}</span>
                     {following.label ? `, ${following.label}` : ""}
+                    {following.next ? ` · next ${following.next}` : ""}
                   </>
                 )
               : "Listening for a song from your library…"}

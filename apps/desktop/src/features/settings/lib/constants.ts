@@ -76,6 +76,26 @@ export type AgentSettings = {
   songFollow: boolean;
   /** It says when the band is singing another song from the library. */
   songSuggest: boolean;
+  /**
+   * When that song is plainly the one being sung, it puts it up by itself
+   * rather than asking; when it isn't, it still asks.
+   */
+  songSwitch: boolean;
+  /**
+   * It puts the next slide up on the last word of the one showing, as an
+   * operator reading ahead does, rather than on the next slide's first word.
+   */
+  songEarly: boolean;
+  /**
+   * It listens a second time, with a model that hears the voice through the
+   * band and the backing track, later but surer, and catches up from it.
+   */
+  songThrough: boolean;
+  /**
+   * The singers' voices are picked out of the band on this computer before
+   * the agent's own hearing gets them (`sound/voice.rs`).
+   */
+  songVoiceFilter: boolean;
 };
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -84,6 +104,24 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   bibleVoiceCommands: true,
   songFollow: true,
   songSuggest: true,
+  songSwitch: true,
+  // On, as an operator works: measured against recorded hymns, on time
+  // instead of 0.7 s late. When a band goes somewhere unusual (a verse
+  // skipped, a slide sung again), the slide it guessed shows until the first
+  // two words sung there put it right (`tests/song-agent-eval`, `run.mjs
+  // --ahead`).
+  // Stored as `songEarly`, not `songAhead`: settings are saved whole, so the
+  // `songAhead: false` saved while that was the default kept it off for
+  // everyone after it became the default.
+  songEarly: true,
+  // On: with a backing track, the agent's own hearing caught 29 of a song's
+  // words where this heard 42 (`useHearingThrough`). It doubles the speech
+  // service's time.
+  songThrough: true,
+  // On: over a band track, the agent's own hearing caught 34 of a song's
+  // words with it where it caught 29 without, for about a quarter of one
+  // processor core.
+  songVoiceFilter: true,
 };
 
 /** Agent settings from storage, with anything missing or wrong as the default. */
@@ -99,6 +137,10 @@ export function normalizeAgentSettings(value: unknown): AgentSettings {
     bibleVoiceCommands: flag("bibleVoiceCommands", DEFAULT_AGENT_SETTINGS.bibleVoiceCommands),
     songFollow: flag("songFollow", DEFAULT_AGENT_SETTINGS.songFollow),
     songSuggest: flag("songSuggest", DEFAULT_AGENT_SETTINGS.songSuggest),
+    songSwitch: flag("songSwitch", DEFAULT_AGENT_SETTINGS.songSwitch),
+    songEarly: flag("songEarly", DEFAULT_AGENT_SETTINGS.songEarly),
+    songThrough: flag("songThrough", DEFAULT_AGENT_SETTINGS.songThrough),
+    songVoiceFilter: flag("songVoiceFilter", DEFAULT_AGENT_SETTINGS.songVoiceFilter),
   };
 }
 

@@ -4,6 +4,41 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.21] - 2026-11-26
+
+### Added
+
+- The song agent follows the singing slide by slide and puts the next slide
+  up as the last word of the one showing is sung. One real word of where the
+  song goes next is enough; if the band goes elsewhere, the first words sung
+  there put it right.
+- Repeat marks are kept: a section or line marked "x3" is sung three times
+  before the slides move on, and where "Repeat" says one may come, the agent
+  waits for the first word to see which way the band goes.
+- A worship leader's call ("one more time", "back to the chorus", "bridge",
+  "verse two", "from the top") is where the song goes next.
+- "Pick out the voices": the singers' voices are picked out of the drums and
+  backing track on this computer before the agent hears them.
+- "Hear through the band": a second hearing, with voice isolation, catches
+  the slides up when the band covers the words.
+- When the band starts another song, the agent finds it in the open service
+  first, then in the library, and puts it up when it is plainly that song.
+- The song agent's bar says where it expects the song to go next.
+
+### Changed
+
+- "Change on the last word" is on for everyone, including those whose saved
+  settings had it off from before it was the default.
+- Of slides alike (a chorus written out after every verse), the one after
+  the slide showing is where the song goes.
+
+### Fixed
+
+- Sung words held long were cut in two and not recognised.
+- Words misheard under a band no longer put up another song mid-verse.
+- Switching the song agent on with a large library no longer holds up the
+  screen.
+
 ## [0.4.20] - 2026-11-23
 
 ### Added

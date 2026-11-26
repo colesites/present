@@ -290,6 +290,7 @@ pub fn run() {
             commands::speech::start_speech_stream,
             commands::speech::send_speech_stream,
             commands::speech::close_speech_stream,
+            commands::speech::note_song_agent,
             commands::projection::get_projection_settings,
             commands::projection::set_projection_settings,
             commands::projection::get_projection_capabilities,

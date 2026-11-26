@@ -17,6 +17,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ffmpeg_next as ff;
 use rtrb::RingBuffer;
 
+use super::voice;
+
 /// What the transcription service takes: 16 kHz, one channel.
 pub const RATE: u32 = 16_000;
 
@@ -77,6 +79,17 @@ impl Microphone {
     /// `deliver` 16 kHz mono 16-bit little-endian samples until dropped.
     pub fn open(
         device_id: Option<&str>,
+        deliver: impl FnMut(Vec<u8>) + Send + 'static,
+    ) -> Result<Self, String> {
+        Self::open_with(device_id, false, deliver)
+    }
+
+    /// As [`Microphone::open`], with the singers' voices picked out of the
+    /// band first when `voice` is set (`voice::VoiceFilter`): for the song
+    /// agent's speech service, which hears words better without the band.
+    pub fn open_with(
+        device_id: Option<&str>,
+        voice: bool,
         mut deliver: impl FnMut(Vec<u8>) + Send + 'static,
     ) -> Result<Self, String> {
         let stop = Arc::new(AtomicBool::new(false));
@@ -96,7 +109,7 @@ impl Microphone {
                         return;
                     }
                 };
-                let mut converter = match Converter::new(rate) {
+                let mut converter = match Pipeline::new(rate, voice) {
                     Ok(converter) => converter,
                     Err(error) => {
                         let _ = ready.send(Err(error));
@@ -209,6 +222,93 @@ fn open_stream(device_id: Option<&str>) -> Result<Opened, String> {
     Ok((stream, label, consumer, rate))
 }
 
+/// What the microphone's sound goes through on its way out: when the voice
+/// is to be picked out, to the filter's 48 kHz and through it
+/// ([`voice::VoiceFilter`]); then to 16 kHz 16-bit. Should the filter not
+/// start, the sound goes on unfiltered: the agent still hears the singing.
+pub struct Pipeline {
+    voice: Option<(Resampler, voice::VoiceFilter)>,
+    converter: Converter,
+}
+
+impl Pipeline {
+    /// For sound at `rate`, picking out the voice when `voice` is set.
+    pub fn new(rate: u32, voice: bool) -> Result<Self, String> {
+        let voice = if voice {
+            match voice::VoiceFilter::new().and_then(|filter| Ok((Resampler::new(rate, voice::RATE)?, filter))) {
+                Ok(filtered) => Some(filtered),
+                Err(error) => {
+                    tracing::warn!(%error, "the voice filter could not start; the microphone is heard as it is");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let converter = Converter::new(if voice.is_some() { voice::RATE } else { rate })?;
+        Ok(Self { voice, converter })
+    }
+
+    /// `samples` at the rate given, as 16 kHz 16-bit little-endian bytes.
+    pub fn convert(&mut self, samples: &[f32]) -> Result<Vec<u8>, String> {
+        match &mut self.voice {
+            Some((resampler, filter)) => {
+                let filtered = filter.filter(&resampler.convert(samples)?);
+                self.converter.convert(&filtered)
+            }
+            None => self.converter.convert(samples),
+        }
+    }
+}
+
+/// Floats at one rate to floats at another: FFmpeg's resampler.
+struct Resampler {
+    context: ff::software::resampling::Context,
+}
+
+impl Resampler {
+    fn new(from: u32, to: u32) -> Result<Self, String> {
+        crate::services::video::ffmpeg::init();
+        let format = ff::format::Sample::F32(ff::format::sample::Type::Packed);
+        let context = ff::software::resampling::Context::get(
+            format,
+            ff::ChannelLayout::MONO,
+            from,
+            format,
+            ff::ChannelLayout::MONO,
+            to,
+        )
+        .map_err(|error| format!("the microphone's sound cannot be converted: {error}"))?;
+        Ok(Self { context })
+    }
+
+    fn convert(&mut self, samples: &[f32]) -> Result<Vec<f32>, String> {
+        if samples.is_empty() {
+            return Ok(Vec::new());
+        }
+        // SAFETY: as in `Converter::convert`, with floats out.
+        unsafe {
+            let context = self.context.as_mut_ptr();
+            let capacity = ff::ffi::swr_get_out_samples(context, samples.len() as i32).max(0);
+            let mut out = vec![0f32; capacity as usize];
+            let out_planes = [out.as_mut_ptr().cast::<u8>()];
+            let in_planes = [samples.as_ptr().cast::<u8>()];
+            let written = ff::ffi::swr_convert(
+                context,
+                out_planes.as_ptr(),
+                capacity,
+                in_planes.as_ptr(),
+                samples.len() as i32,
+            );
+            if written < 0 {
+                return Err(ff::Error::from(written).to_string());
+            }
+            out.truncate(written as usize);
+            Ok(out)
+        }
+    }
+}
+
 /// The device's rate, as floats, to 16 kHz 16-bit: FFmpeg's resampler.
 struct Converter {
     context: ff::software::resampling::Context,
@@ -230,6 +330,9 @@ impl Converter {
     }
 
     fn convert(&mut self, samples: &[f32]) -> Result<Vec<u8>, String> {
+        if samples.is_empty() {
+            return Ok(Vec::new());
+        }
         // SAFETY: the context is live; `input` holds `samples.len()` floats
         // and `out` room for `capacity` 16-bit samples, one plane each.
         unsafe {
@@ -286,6 +389,22 @@ mod tests {
         }
         let samples = bytes / 2;
         assert!((samples as i64 - 16_000).abs() < 100, "{samples} samples");
+    }
+
+    #[test]
+    fn a_second_through_the_voice_filter_is_still_a_second_at_16() {
+        let mut pipeline = Pipeline::new(44_100, true).unwrap();
+        assert!(pipeline.voice.is_some(), "the filter started");
+        let tone: Vec<f32> = (0..44_100)
+            .map(|index| (index as f32 / 44_100.0 * 440.0 * std::f32::consts::TAU).sin() * 0.5)
+            .collect();
+        let mut bytes = 0;
+        for chunk in tone.chunks(2_205) {
+            bytes += pipeline.convert(chunk).unwrap().len();
+        }
+        let samples = bytes / 2;
+        // Less only by what waits for a whole frame and the resamplers' delay.
+        assert!((samples as i64 - 16_000).abs() < 400, "{samples} samples");
     }
 
     /// The default microphone opens and sends something. Silence counts: a

@@ -40,11 +40,14 @@ export type SpeechStream = {
 
 /**
  * Connect to `url` (AssemblyAI's, with its token; the sound's format is added
- * by Rust) and stream the microphone `deviceId`, or the default.
+ * by Rust) and stream the microphone `deviceId`, or the default. With
+ * `voiceFilter`, the singers' voices are picked out of the band on this
+ * computer first (`src-tauri/src/services/sound/voice.rs`).
  */
 export const openSpeechStream = async (
   url: string,
   deviceId: string | null,
+  voiceFilter = false,
 ): Promise<SpeechStream> => {
   const channel = new Channel<StreamEvent>();
   let handlers: SpeechStreamHandlers | null = null;
@@ -62,6 +65,7 @@ export const openSpeechStream = async (
   const started = await invoke<{ session: number; label: string }>("start_speech_stream", {
     url,
     deviceId,
+    voiceFilter,
     onEvent: channel,
   });
   let closed = false;
@@ -86,3 +90,8 @@ export const openSpeechStream = async (
     },
   };
 };
+
+/** Write what the song agent heard or did to the app's log. */
+export function noteSongAgent(event: string, detail: string): void {
+  void invoke("note_song_agent", { event, detail }).catch((): void => undefined);
+}

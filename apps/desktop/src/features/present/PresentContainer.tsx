@@ -1767,6 +1767,10 @@ export function PresentContainer({
     inputDeviceId: settingsSpeechInputDeviceId,
     follow: settingsAgent.songFollow,
     suggest: settingsAgent.songSuggest,
+    switchSongs: settingsAgent.songSwitch,
+    ahead: settingsAgent.songEarly,
+    hearThrough: settingsAgent.songThrough,
+    voiceFilter: settingsAgent.songVoiceFilter,
   });
 
   const {

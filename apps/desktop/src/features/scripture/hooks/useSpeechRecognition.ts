@@ -43,7 +43,22 @@ interface UseSpeechRecognitionOptions {
   lang?: string;
   inputDeviceId?: string | null;
   sessionToken?: string | null;
+  /**
+   * Words and phrases to listen for. While it listens, the service is told
+   * of any change at once, without reconnecting: the song agent gives it the
+   * lines of the song on screen, which change with the song.
+   */
   keyterms?: string[];
+  /**
+   * Listen for singing rather than speaking: a held note or a breath doesn't
+   * end the turn, so a word sung long isn't cut in two (`SINGING_TURN`).
+   */
+  singing?: boolean;
+  /**
+   * Pick the singers' voices out of the band on this computer before the
+   * service hears them (`sound/voice.rs`). For the song agent.
+   */
+  voiceFilter?: boolean;
   // "song" is the library's voice search, a Pro and Power feature.
   usageSource?: "bible" | "library" | "song";
   throwOnStartFailure?: boolean;
@@ -162,6 +177,15 @@ const TURN_SILENCE_MS = 500;
 /** The least quiet after which a turn that sounds finished may end. */
 const SHORTEST_TURN_SILENCE_MS = 160;
 /**
+ * The same, for singing. A sung word is held, and singers breathe between
+ * lines: with a speaker's half second, a slow hymn's turn ended at nearly
+ * every word, and held words came in pieces ("bless" then "ed"). With these,
+ * words that weren't the song's fell from 13% of those heard to 9%, against
+ * recorded hymns (`tests/song-agent-eval`). The agent reads the words as they
+ * form, so a longer turn costs it no time.
+ */
+const SINGING_TURN = { silenceMs: 2000, shortestSilenceMs: 800 };
+/**
  * Each turn ends with a formatted copy ("Romans 8:28.") after the words came
  * unformatted as they were said ("romans 828"): the words are read at once,
  * and the formatting settles what they could not (`assemblyai-turn.ts`).
@@ -185,6 +209,7 @@ const buildAssemblyAiSocketUrl = (input: {
   token: string;
   lang: string;
   keyterms: string[];
+  singing: boolean;
 }): string => {
   const url = new URL(ASSEMBLYAI_STREAM_URL);
   url.searchParams.set("token", input.token);
@@ -201,11 +226,20 @@ const buildAssemblyAiSocketUrl = (input: {
   //
   // Preachers do not stop for long: a turn ends after half a second of quiet
   // (AssemblyAI's default is about 1.5 s), or sooner when it sounds finished.
-  url.searchParams.set("max_turn_silence", String(TURN_SILENCE_MS));
-  url.searchParams.set(
-    "min_end_of_turn_silence_when_confident",
-    String(SHORTEST_TURN_SILENCE_MS),
-  );
+  // Singers hold their words and breathe between lines (`SINGING_TURN`).
+  if (input.singing) {
+    url.searchParams.set("max_turn_silence", String(SINGING_TURN.silenceMs));
+    url.searchParams.set(
+      "min_end_of_turn_silence_when_confident",
+      String(SINGING_TURN.shortestSilenceMs),
+    );
+  } else {
+    url.searchParams.set("max_turn_silence", String(TURN_SILENCE_MS));
+    url.searchParams.set(
+      "min_end_of_turn_silence_when_confident",
+      String(SHORTEST_TURN_SILENCE_MS),
+    );
+  }
   if (input.lang.toLowerCase().startsWith("en")) {
     url.searchParams.set("speech_model", "universal-streaming-english");
   } else {
@@ -296,6 +330,8 @@ export function useSpeechRecognition(
     inputDeviceId = null,
     sessionToken = null,
     keyterms,
+    singing = false,
+    voiceFilter = false,
     usageSource = "bible",
     throwOnStartFailure = false,
   } = options;
@@ -326,6 +362,8 @@ export function useSpeechRecognition(
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const streamingSessionRef = useRef<StreamingSession | null>(null);
+  /** The words to listen for the service was last given, as JSON. */
+  const sentKeytermsRef = useRef("[]");
   /** How many connections to the speech service have been opened. */
   const sessionCountRef = useRef(0);
   /** Start listening again after a session ended by itself (`onClose`). */
@@ -577,10 +615,13 @@ export function useSpeechRecognition(
     try {
       // The connection and the microphone open together, in Rust.
       const { openSpeechStream } = await import("../../../renderer/tauri/speech-stream");
+      const terms = sanitizeKeyterms(keyterms);
       stream = await openSpeechStream(
-        buildAssemblyAiSocketUrl({ token, lang, keyterms: sanitizeKeyterms(keyterms) }),
+        buildAssemblyAiSocketUrl({ token, lang, keyterms: terms, singing }),
         inputDeviceId?.trim() || null,
+        voiceFilter,
       );
+      sentKeytermsRef.current = JSON.stringify(terms);
     } catch (error) {
       // The usage session was started for a stream that never opened: end it
       // now, so it costs nothing.
@@ -767,6 +808,8 @@ export function useSpeechRecognition(
     inputDeviceId,
     keyterms,
     lang,
+    singing,
+    voiceFilter,
     checkMicrophonePermission,
     setSharedActiveSessionStartedAtMs,
     setPendingCommittedUsageSeconds,
@@ -776,6 +819,18 @@ export function useSpeechRecognition(
   useEffect(() => {
     carryOnRef.current = startAssemblyAiListening;
   }, [startAssemblyAiListening]);
+
+  // New words to listen for, told to the service mid-stream: a new list
+  // replaces the old (AssemblyAI's `UpdateConfiguration`).
+  const keytermsJson = JSON.stringify(sanitizeKeyterms(keyterms));
+  useEffect(() => {
+    const session = streamingSessionRef.current;
+    if (!isListening || !session || sentKeytermsRef.current === keytermsJson) return;
+    sentKeytermsRef.current = keytermsJson;
+    session.stream.send(
+      JSON.stringify({ type: "UpdateConfiguration", keyterms_prompt: JSON.parse(keytermsJson) }),
+    );
+  }, [isListening, keytermsJson]);
 
   const startListening = useCallback(async () => {
     if (isListening || isStarting) {
