@@ -4,6 +4,26 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.22] - 2026-11-27
+
+### Changed
+
+- The recorder's compressor is off by default.
+
+### Fixed
+
+- A display chosen for a screen is kept when it is unplugged. The screen goes
+  to Automatic only while that display is gone, and back to it once it is
+  connected again; before, unplugging made the choice Automatic for good, so
+  with two displays connected again it could land on the other one.
+- Recording again on a track that already has a recording no longer wipes it.
+  The new take goes in at the playhead and replaces only the part it covers,
+  so a take can be stopped and carried on from where it ended.
+- The recorder's input list follows microphones being plugged in and pulled
+  out, without closing and reopening the window.
+- Switching the song agent on while projecting and recording no longer takes
+  the CPU to 90%: each word it heard redrew the whole operator screen.
+
 ## [0.4.21] - 2026-11-26
 
 ### Added

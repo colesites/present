@@ -118,19 +118,22 @@ fn main() {
             if mode == "monitored" {
                 // Hearing yourself, with every effect the strip has on.
                 recorder
-                    .set_strip(1, present_lib::services::recorder::ChannelStrip {
-                        monitor: true,
-                        auto_level: true,
-                        noise_gate: true,
-                        compressor: true,
-                        compressor_amount: 60.0,
-                        eq: true,
-                        eq_low: 70.0,
-                        eq_high: 65.0,
-                        ambience: 30.0,
-                        reverb: 40.0,
-                        ..Default::default()
-                    })
+                    .set_strip(
+                        1,
+                        present_lib::services::recorder::ChannelStrip {
+                            monitor: true,
+                            auto_level: true,
+                            noise_gate: true,
+                            compressor: true,
+                            compressor_amount: 60.0,
+                            eq: true,
+                            eq_low: 70.0,
+                            eq_high: 65.0,
+                            ambience: 30.0,
+                            reverb: 40.0,
+                            ..Default::default()
+                        },
+                    )
                     .expect("the strip is set");
             }
             if mode != "meter" {

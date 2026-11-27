@@ -58,7 +58,8 @@ import {
   getSlideGroups,
   getSlidesForGrid,
 } from "../../renderer/shared/lib/present/selectors";
-import { useSongAgent } from "../song-agent/useSongAgent";
+import { SongAgent } from "../song-agent/SongAgent";
+import type { UseSongAgentOptions } from "../song-agent/useSongAgent";
 import { useDesktopSessionStore } from "../../renderer/shared/store/desktopSession";
 import { useAppNavigation } from "../../renderer/shared/hooks/useAppNavigation";
 import { useAppHandlers } from "../../renderer/shared/hooks/useAppHandlers";
@@ -1755,7 +1756,7 @@ export function PresentContainer({
         .map((item) => String(item.refId)),
     [serviceItems],
   );
-  useSongAgent({
+  const songAgentOptions: UseSongAgentOptions = {
     libraryItems,
     serviceSongIds,
     live: selected?.libraryId ? selected : null,
@@ -1771,7 +1772,7 @@ export function PresentContainer({
     ahead: settingsAgent.songEarly,
     hearThrough: settingsAgent.songThrough,
     voiceFilter: settingsAgent.songVoiceFilter,
-  });
+  };
 
   const {
     liveVideoItem,
@@ -2453,6 +2454,7 @@ export function PresentContainer({
 
   return (
     <>
+      <SongAgent {...songAgentOptions} />
       <MainView
         viewMode={viewMode}
         bottomTab={bottomTab}

@@ -331,7 +331,6 @@ mod tests {
         assert_eq!(position.go_to_slide(3), Err(NavigationRefusal::NoSlides));
     }
 
-    #[test]
     /// The owner's report: projecting, the screens flipped between two slides
     /// by themselves. Slide 1 took a click for its builds, slide 2 none.
     /// Choosing slide 2 must land on it, with its own build count, at once.

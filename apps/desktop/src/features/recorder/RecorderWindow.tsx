@@ -218,17 +218,48 @@ export function RecorderWindow() {
     };
   }, [openExport]);
 
+  // Microphones come and go while the window is open: list them again every
+  // few seconds and when the window comes forward, so a device plugged in or
+  // pulled out shows up without closing the window.
   useEffect(() => {
     let stop = false;
-    void listAudioDevices()
-      .then((devices) => {
-        if (!stop) setInputs(devices.inputs);
-      })
-      .catch((caught: unknown) => {
-        if (!stop) toast.error(userMessage(caught, "The microphones could not be listed.", "recorder"), { id: "recorder" });
-      });
+    let inFlight = false;
+    let reported = false;
+    const list = () => {
+      if (inFlight) return;
+      inFlight = true;
+      void listAudioDevices()
+        .then((devices) => {
+          if (stop) return;
+          reported = false;
+          setInputs((current) => {
+            const same =
+              current.length === devices.inputs.length &&
+              current.every(
+                (device, index) =>
+                  device.id === devices.inputs[index]?.id &&
+                  device.label === devices.inputs[index]?.label &&
+                  device.isDefault === devices.inputs[index]?.isDefault,
+              );
+            return same ? current : devices.inputs;
+          });
+        })
+        .catch((caught: unknown) => {
+          if (stop || reported) return;
+          reported = true;
+          toast.error(userMessage(caught, "The microphones could not be listed.", "recorder"), { id: "recorder" });
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    list();
+    const id = window.setInterval(list, 2000);
+    window.addEventListener("focus", list);
     return () => {
       stop = true;
+      window.clearInterval(id);
+      window.removeEventListener("focus", list);
     };
   }, []);
 

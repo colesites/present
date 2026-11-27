@@ -43,7 +43,8 @@ impl VoiceFilter {
     pub fn new() -> Result<Self, String> {
         // The thresholds are DeepFilterNet's own defaults for its command,
         // which the measurements above used.
-        let params = RuntimeParams::new(1, 0.0, ATTENUATION_DB, -15.0, 35.0, 35.0, ReduceMask::NONE);
+        let params =
+            RuntimeParams::new(1, 0.0, ATTENUATION_DB, -15.0, 35.0, 35.0, ReduceMask::NONE);
         let model = DfTract::new(DfParams::default(), &params)
             .map_err(|error| format!("the voice filter cannot start: {error}"))?;
         let hop = model.hop_size;
@@ -99,6 +100,9 @@ mod tests {
             out += filter.filter(piece).len();
         }
         assert_eq!(out % 480, 0, "whole 10 ms frames");
-        assert!(RATE as usize - out < 480, "all but what doesn't fill a frame: {out}");
+        assert!(
+            RATE as usize - out < 480,
+            "all but what doesn't fill a frame: {out}"
+        );
     }
 }

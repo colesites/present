@@ -90,7 +90,7 @@ export const DEFAULT_STRIP: ChannelStrip = {
   noiseGateAmount: 35,
   monitor: false,
   feedbackProtection: false,
-  compressor: true,
+  compressor: false,
   compressorAmount: 35,
   eq: true,
   eqLow: 50,
