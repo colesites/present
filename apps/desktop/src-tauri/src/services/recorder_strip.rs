@@ -38,7 +38,7 @@ impl Default for ChannelStrip {
             noise_gate_amount: 35.0,
             monitor: false,
             feedback_protection: false,
-            compressor: true,
+            compressor: false,
             compressor_amount: 35.0,
             eq: true,
             eq_low: 50.0,

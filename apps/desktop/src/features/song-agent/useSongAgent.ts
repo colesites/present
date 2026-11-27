@@ -20,7 +20,7 @@ import {
   type SongInput,
 } from "./song-match.mjs";
 
-interface UseSongAgentOptions {
+export interface UseSongAgentOptions {
   libraryItems: LibraryItem[];
   /** The songs in the open service, in its order. */
   serviceSongIds: string[];

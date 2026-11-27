@@ -52,11 +52,8 @@ import { ScreenComposerWindow } from "../../features/screen-composer";
 import { RecorderWindow } from "../../features/recorder/RecorderWindow";
 import { AiOperatorRoot } from "../ai-operator/AiOperatorRoot";
 import { MiniLyricsWindow } from "../../features/editor";
-import { areDisplayListsEqual } from "../shared/lib/display-list";
 import { ScreenCanvas } from "../shared/components/ScreenCanvas";
 import { ScreenIdentify } from "../shared/components/ScreenIdentify";
-
-const ROOT_DISPLAY_REFRESH_INTERVAL_MS = 15_000;
 
 const getWindowType = () => {
   if (typeof window === "undefined") {
@@ -553,8 +550,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     : isBibleActive
       ? "bible"
       : "services";
-  const [availableDisplays, setAvailableDisplays] = useState<Display[]>([]);
-  const [hasLoadedDisplays, setHasLoadedDisplays] = useState(false);
 
   // Shared Data hooks (lifted for Settings vs Present toggling)
   const mediaState = useMediaFolders();
@@ -571,9 +566,7 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   const settings = useAppSettings({ folders, allMediaItems });
   const {
     settingsOutputDisplayId,
-    setSettingsOutputDisplayId,
     settingsScreenDisplayIds,
-    setSettingsScreenDisplayIds,
     settingsScreenResolutions,
   } = settings;
   const { looksConfig, liveLook, setShowing } = useLooksConfig();
@@ -635,22 +628,6 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
   const [isMediaStageLive, setIsMediaStageLive] = useState(false);
   const [isWorshipStageLive, setIsWorshipStageLive] = useState(false);
 
-  const refreshDisplays = useCallback(async () => {
-    if (!window.electronAPI?.getDisplays) {
-      return;
-    }
-    try {
-      const displays = await window.electronAPI.getDisplays();
-      setAvailableDisplays((previous) =>
-        areDisplayListsEqual(previous, displays) ? previous : displays,
-      );
-      setHasLoadedDisplays(true);
-    } catch {
-      setAvailableDisplays((previous) => (previous.length === 0 ? previous : []));
-      setHasLoadedDisplays(true);
-    }
-  }, []);
-
   useEffect(() => {
     if (!window.electronAPI?.setPreferredOutputDisplay) {
       return;
@@ -696,55 +673,8 @@ function AuthenticatedApp({ windowType }: { windowType: string | null }) {
     );
   }, [settingsScreenResolutions]);
 
-  useEffect(() => {
-    if (!hasLoadedDisplays) {
-      return;
-    }
-    if (
-      settingsOutputDisplayId !== null &&
-      !availableDisplays.some(
-        (display) => display.id === settingsOutputDisplayId
-      )
-    ) {
-      setSettingsOutputDisplayId(null);
-    }
-    const missingScreenRoles = (["audience", "media", "worship"] as const).filter(
-      (role) =>
-        settingsScreenDisplayIds[role] !== null &&
-        !availableDisplays.some(
-          (display) => display.id === settingsScreenDisplayIds[role],
-        ),
-    );
-    if (missingScreenRoles.length > 0) {
-      setSettingsScreenDisplayIds((previous) => {
-        const next = { ...previous };
-        for (const role of missingScreenRoles) {
-          next[role] = null;
-        }
-        return next;
-      });
-    }
-  }, [
-    availableDisplays,
-    hasLoadedDisplays,
-    setSettingsOutputDisplayId,
-    setSettingsScreenDisplayIds,
-    settingsScreenDisplayIds,
-    settingsOutputDisplayId,
-  ]);
-
-  useEffect(() => {
-    const initialTimeoutId = window.setTimeout(() => {
-      void refreshDisplays();
-    }, 0);
-    const intervalId = window.setInterval(() => {
-      void refreshDisplays();
-    }, ROOT_DISPLAY_REFRESH_INTERVAL_MS);
-    return () => {
-      window.clearTimeout(initialTimeoutId);
-      window.clearInterval(intervalId);
-    };
-  }, [refreshDisplays]);
+  // A chosen display that is unplugged stays chosen: its screen goes to
+  // Automatic only while that display is gone, and back once it returns.
 
   const openMediaStageWindow = useCallback(async () => {
     if (!window.electronAPI?.openMediaStageWindow) {

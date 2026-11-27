@@ -9,9 +9,10 @@
 //! pan; muted tracks are left out.
 //!
 //! Pause keeps what has been captured and record continues that same take.
-//! Stop finishes it. Recording a finished track again replaces it, and only
-//! once the new take has actually been read, so a microphone that never
-//! starts does not wipe the one already there.
+//! Stop finishes it. Recording a finished track again punches in at the
+//! playhead: the new take replaces only the part of the old one it covers,
+//! and only once it has actually been read, so a microphone that never
+//! starts does not wipe what is already there.
 //!
 //! The chosen input stays open while the window has one, so record and
 //! monitor are switches, not a device opening: what is monitored stays live
@@ -230,9 +231,10 @@ struct Track {
 
 struct Recording {
     track_id: u64,
-    /// The samples join the take already stored. A fresh recording replaces it.
+    /// The samples join the end of the take already stored. Otherwise they
+    /// are punched in at `at`, over whatever is there.
     append: bool,
-    /// Where a fresh take begins on the timeline.
+    /// Where a punched-in take begins on the timeline.
     at: f64,
 }
 
@@ -568,7 +570,7 @@ impl Recorder {
                             (track.start, seconds_of(track) + live_seconds, peaks)
                         }
                         Some((_, live_seconds, live_peaks, false, at)) => {
-                            (*at, *live_seconds, live_peaks.clone())
+                            punched_view(track, *at, *live_seconds, live_peaks)
                         }
                         None => (track.start, seconds_of(track), track.peaks.clone()),
                     };
@@ -691,7 +693,8 @@ impl Recorder {
     }
 
     /// Record `id` from `at` seconds. A paused take on that track is
-    /// continued. A finished take is replaced once the new one has been read.
+    /// continued. Otherwise the new take is punched in at `at` once it has
+    /// been read, keeping whatever of the old one it does not cover.
     /// A take already in progress on another track is kept first.
     pub fn start(&self, id: u64, at: f64) -> Result<(), String> {
         if self.closed.load(Ordering::Acquire) {
@@ -877,7 +880,7 @@ impl Recorder {
     }
 
     /// Stop keeping the input, and store what was captured onto its track.
-    /// The previous take is replaced only once this one has been read, so a
+    /// The previous take is touched only once this one has been read, so a
     /// microphone that never starts does not wipe it.
     fn commit(&self) {
         let recording = lock(&self.inner).recording.take();
@@ -902,12 +905,21 @@ impl Recorder {
             .iter_mut()
             .find(|track| track.id == recording.track_id)
         {
-            if store(track, &samples, channels, rate, recording.append) {
-                if recording.append {
+            let was_empty = track.samples.is_empty();
+            if store(
+                track,
+                &samples,
+                channels,
+                rate,
+                recording.append,
+                recording.at,
+            ) {
+                if recording.append && !was_empty {
                     track.peaks.extend_from_slice(&peaks);
-                } else {
+                } else if was_empty {
                     track.peaks = peaks;
-                    track.start = recording.at;
+                } else {
+                    track.peaks = peaks_of(&track.samples, track.channels, track.rate);
                 }
                 track.revision = revision;
             }
@@ -1102,26 +1114,87 @@ fn view(track: &Track) -> TrackView {
     }
 }
 
-/// True when the take changed.
-fn store(track: &mut Track, samples: &[f32], channels: u16, rate: u32, append: bool) -> bool {
+/// True when the take changed. `append` continues the take from its end;
+/// otherwise the samples are punched in at `at` seconds on the timeline,
+/// replacing only what they cover and padding any gap with silence.
+fn store(
+    track: &mut Track,
+    samples: &[f32],
+    channels: u16,
+    rate: u32,
+    append: bool,
+    at: f64,
+) -> bool {
     if samples.is_empty() {
         return false;
     }
-    let same = track.rate == rate && track.channels == channels;
-    if append && !track.samples.is_empty() && same {
-        track.samples.extend_from_slice(samples);
+    let at = if at.is_finite() { at.max(0.0) } else { 0.0 };
+    if track.samples.is_empty() {
+        track.samples = samples.to_vec();
+        track.channels = channels;
+        track.rate = rate;
+        if !append {
+            track.start = at;
+        }
         return true;
     }
-    if append && !track.samples.is_empty() {
-        track
-            .samples
-            .extend(render(samples, channels, rate, track.channels, track.rate));
+    let incoming = if track.rate == rate && track.channels == channels {
+        samples.to_vec()
+    } else {
+        render(samples, channels, rate, track.channels, track.rate)
+    };
+    if append {
+        track.samples.extend(incoming);
         return true;
     }
-    track.samples = samples.to_vec();
-    track.channels = channels;
-    track.rate = rate;
+    let width = usize::from(track.channels.max(1));
+    let frame_of = |seconds: f64| (seconds * f64::from(track.rate)).round() as i64;
+    let mut offset = frame_of(at) - frame_of(track.start);
+    if offset < 0 {
+        let lead = usize::try_from(-offset).unwrap_or(0) * width;
+        track.samples.splice(0..0, std::iter::repeat_n(0.0, lead));
+        track.start = at;
+        offset = 0;
+    }
+    let from = usize::try_from(offset).unwrap_or(0) * width;
+    let to = from + incoming.len();
+    if track.samples.len() < to {
+        track.samples.resize(to, 0.0);
+    }
+    track.samples[from..to].copy_from_slice(&incoming);
     true
+}
+
+/// The peaks of a whole take, as [`Take`] draws them while recording.
+fn peaks_of(samples: &[f32], channels: u16, rate: u32) -> Vec<u8> {
+    let mut take = Take::default();
+    take.push(samples, usize::from(channels.max(1)), rate);
+    take.drawn()
+}
+
+/// A track while a take is punched in over it: the old take with the live
+/// one drawn on top from `at`.
+fn punched_view(
+    track: &Track,
+    at: f64,
+    live_seconds: f64,
+    live_peaks: &[u8],
+) -> (f64, f64, Vec<u8>) {
+    if track.samples.is_empty() {
+        return (at, live_seconds, live_peaks.to_vec());
+    }
+    let start = track.start.min(at);
+    let end = (track.start + seconds_of(track)).max(at + live_seconds);
+    let slice = |seconds: f64| (seconds * f64::from(PEAKS_PER_SECOND)).round().max(0.0) as usize;
+    let mut peaks = vec![0u8; slice(track.start - start)];
+    peaks.extend_from_slice(&track.peaks);
+    let from = slice(at - start);
+    let to = from + live_peaks.len();
+    if peaks.len() < to {
+        peaks.resize(to, 0);
+    }
+    peaks[from..to].copy_from_slice(live_peaks);
+    (start, end - start, peaks)
 }
 
 fn seconds_of(track: &Track) -> f64 {
@@ -2191,18 +2264,32 @@ mod tests {
     }
 
     #[test]
-    fn pausing_appends_and_recording_again_replaces() {
-        let mut track = take(vec![0.2, 0.2], 1, 48_000);
-        store(&mut track, &[], 1, 48_000, true);
+    fn pausing_appends_and_recording_again_punches_in() {
+        let mut track = take(vec![0.2, 0.2], 1, 4);
+        store(&mut track, &[], 1, 4, true, 0.0);
         assert_eq!(
             track.samples,
             vec![0.2, 0.2],
             "an empty pause leaves the take"
         );
-        store(&mut track, &[0.5], 1, 48_000, true);
+        store(&mut track, &[0.5], 1, 4, true, 0.0);
         assert_eq!(track.samples, vec![0.2, 0.2, 0.5]);
-        store(&mut track, &[0.1], 1, 48_000, false);
-        assert_eq!(track.samples, vec![0.1]);
+        // Over the middle: only what it covers is replaced.
+        store(&mut track, &[0.1], 1, 4, false, 0.25);
+        assert_eq!(track.samples, vec![0.2, 0.1, 0.5]);
+        // Past the end: the gap is silence and the old take stays.
+        store(&mut track, &[0.9], 1, 4, false, 1.25);
+        assert_eq!(track.samples, vec![0.2, 0.1, 0.5, 0.0, 0.0, 0.9]);
+        assert_eq!(track.start, 0.0);
+    }
+
+    #[test]
+    fn a_take_before_the_old_one_moves_the_start_back() {
+        let mut track = take(vec![0.2, 0.2], 1, 4);
+        track.start = 1.0;
+        store(&mut track, &[0.7], 1, 4, false, 0.5);
+        assert_eq!(track.start, 0.5);
+        assert_eq!(track.samples, vec![0.7, 0.0, 0.2, 0.2]);
     }
 
     #[test]
