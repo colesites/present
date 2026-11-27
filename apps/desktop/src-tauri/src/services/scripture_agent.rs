@@ -28,20 +28,15 @@ use serde::{Deserialize, Serialize};
 use crate::services::scripture::{self, Book, Reference};
 use crate::services::service_keys;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SpeechIntent {
     ScriptureReading,
     Commentary,
     ReferenceMention,
     NavigationRequest,
+    #[default]
     Uncertain,
-}
-
-impl Default for SpeechIntent {
-    fn default() -> Self {
-        SpeechIntent::Uncertain
-    }
 }
 
 /// What the model is asked for, and all it may answer with.
@@ -378,6 +373,7 @@ enum Reply {
     Failed,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ask_service(
     service: &Service,
     key: &str,
@@ -567,9 +563,7 @@ pub async fn ask(
             }
         }
 
-        let Some(answer) = maybe_answer else {
-            return None;
-        };
+        let answer = maybe_answer?;
 
         let understanding = understand(&answer, books);
         tracing::info!(

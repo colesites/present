@@ -193,6 +193,7 @@ pub async fn recorder_acknowledge_export(recorder: State<'_, Recorder>) -> AppRe
 /// `scope` is `mix` (one file of every track), `separate` (one file each) or
 /// `track` (the track `track_id` names). An empty list is a cancelled dialog.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn recorder_export(
     app: AppHandle,
     window: WebviewWindow,

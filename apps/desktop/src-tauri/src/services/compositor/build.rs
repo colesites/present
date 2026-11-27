@@ -732,7 +732,7 @@ mod tests {
                     assert!((opacity - 1.0).abs() < 1e-4, "{effect} ends opaque");
                     assert!(dx.abs() < 1e-4 && dy.abs() < 1e-4, "{effect} ends in place");
                     assert!((scale - 1.0).abs() < 1e-4, "{effect} ends its own size");
-                    assert!(wipe.map_or(true, |(_, shown)| (shown - 1.0).abs() < 1e-4));
+                    assert!(wipe.is_none_or(|(_, shown)| (shown - 1.0).abs() < 1e-4));
                 }
                 Pose::Hidden => panic!("{effect} ends shown"),
             }

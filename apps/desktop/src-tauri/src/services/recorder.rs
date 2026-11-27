@@ -317,6 +317,12 @@ impl Drop for Capture {
     }
 }
 
+impl Default for Recorder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Recorder {
     pub fn new() -> Self {
         Self {
@@ -1675,7 +1681,7 @@ fn encode_wav(samples: &[f32], channels: u16, rate: u32, bits: u16) -> std::io::
     let data_len = u32::try_from(data_len).map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "recording is too long")
     })?;
-    let block = u16::from(channels) * (bits / 8);
+    let block = channels * (bits / 8);
     let byte_rate = rate.saturating_mul(u32::from(block));
     let mut bytes = Vec::with_capacity(44 + data_len as usize);
     bytes.extend_from_slice(b"RIFF");
@@ -2126,7 +2132,9 @@ struct AudioBufferList {
     buffers: [AudioBuffer; 1],
 }
 
+// Two frameworks, two links: not a duplicate.
 #[cfg(target_os = "macos")]
+#[allow(clippy::duplicated_attributes)]
 #[link(name = "AudioToolbox", kind = "framework")]
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {

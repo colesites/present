@@ -75,25 +75,30 @@ pub async fn start_speech_stream(
         .await
         .map_err(|error| AppError::Invalid(error.to_string()))??;
     let session = NEXT_STREAM.fetch_add(1, Ordering::Relaxed);
-    let stream = speech_stream::open(&url, device_id, voice_filter.unwrap_or(false), move |event| {
-        let event = match event {
-            StreamEvent::Message(data) => SpeechStreamEvent::Message { data },
-            StreamEvent::Closed {
-                code,
-                reason,
-                clean,
-            } => {
-                // Over by itself: nothing left to close.
-                drop(app.state::<SpeechStreams>().take(session));
-                SpeechStreamEvent::Closed {
+    let stream = speech_stream::open(
+        &url,
+        device_id,
+        voice_filter.unwrap_or(false),
+        move |event| {
+            let event = match event {
+                StreamEvent::Message(data) => SpeechStreamEvent::Message { data },
+                StreamEvent::Closed {
                     code,
                     reason,
                     clean,
+                } => {
+                    // Over by itself: nothing left to close.
+                    drop(app.state::<SpeechStreams>().take(session));
+                    SpeechStreamEvent::Closed {
+                        code,
+                        reason,
+                        clean,
+                    }
                 }
-            }
-        };
-        let _ = on_event.send(event);
-    })
+            };
+            let _ = on_event.send(event);
+        },
+    )
     .await
     .map_err(|error| match error {
         OpenError::NotTheService => AppError::Invalid("not the speech service".to_owned()),

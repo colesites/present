@@ -235,7 +235,9 @@ impl Pipeline {
     /// For sound at `rate`, picking out the voice when `voice` is set.
     pub fn new(rate: u32, voice: bool) -> Result<Self, String> {
         let voice = if voice {
-            match voice::VoiceFilter::new().and_then(|filter| Ok((Resampler::new(rate, voice::RATE)?, filter))) {
+            match voice::VoiceFilter::new()
+                .and_then(|filter| Ok((Resampler::new(rate, voice::RATE)?, filter)))
+            {
                 Ok(filtered) => Some(filtered),
                 Err(error) => {
                     tracing::warn!(%error, "the voice filter could not start; the microphone is heard as it is");
