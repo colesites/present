@@ -18,6 +18,7 @@ import {
   slidesToBody,
 } from "../../library/lib/library-items";
 import type { ScriptureSlide } from "./slides";
+import { autoFitFor, type ScriptureOverflow } from "./overflow";
 
 export type ScriptureEditorDefaults = {
   canvasSize?: CanvasSizePreset;
@@ -29,6 +30,8 @@ export type ScriptureEditorDefaults = {
   verticalAlign: ScriptureVerticalAlign;
   footerAlign: ScriptureTextAlign;
   footerPosition: ScriptureFooterPosition;
+  /** What becomes of a long verse (`overflow.ts`); unset, as before. */
+  overflow?: ScriptureOverflow;
 };
 
 const SCRIPTURE_EDITOR_LIBRARY_ID = "scripture-editor";
@@ -59,11 +62,13 @@ function createScriptureTextElements(
   const canvasSize = slide.canvasSize ?? defaults.canvasSize ?? DEFAULT_CANVAS_SIZE;
   const { width, height } = getCanvasSizeDimensions(canvasSize);
   const slideId = resolveScriptureSlideId(slide, index);
+  // Three tenths of the slide at least, unless the footer is to take only
+  // the room its line needs: a long verse gets the rest.
   const footerHeight = Math.min(
     Math.round(height * 0.55),
     Math.max(
       Math.round(defaults.footerFontSize * 1.8),
-      Math.round(height * 0.30),
+      Math.round(height * (defaults.overflow?.compactFooter ? 0.08 : 0.30)),
     ),
   );
   const verseX = 0;
@@ -79,6 +84,7 @@ function createScriptureTextElements(
     id: `${slideId}_verse`,
     type: "text",
     contentRole: "scriptureVerse",
+    ...(defaults.overflow ? { autoFit: autoFitFor(defaults.overflow.mode) } : {}),
     x: verseX,
     y: verseY,
     width: verseWidth,

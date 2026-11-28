@@ -151,9 +151,55 @@ function asTheBibleNamesIt(input: string): string {
     .replace(/\b(?:saint|st)\b\.?\s+(?=[A-Za-z])/gi, "");
 }
 
+/** "The twenty-first verse", "the 16th chapter": the number, before "verse" or "chapter". */
+function ordinalsBeforePlaceWords(input: string): string {
+  return input
+    .replace(
+      /\b(?:(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s])?([a-z]+?(?:st|nd|rd|th))(?=\s+(?:verses?|chapters?)\b)/gi,
+      (whole, tens: string | undefined, ordinal: string) => {
+        const cardinal = ORDINALS[ordinal.toLowerCase()];
+        if (!cardinal) return whole;
+        return tens ? `${tens} ${cardinal}` : cardinal;
+      },
+    )
+    .replace(/\b(\d+)(?:st|nd|rd|th)(?=\s+(?:verses?|chapters?)\b)/gi, "$1");
+}
+
+/**
+ * The verse said before the book: "the third verse of Genesis 1", "verse 3
+ * of Genesis chapter 1", "the third verse of the first chapter of Genesis",
+ * "verses 1 to 3 of John 3". Put as `@chapter:verse` before the book — the
+ * chapter left out when it is said after the book — for `parseReference`
+ * to place once it knows where the book's name ends.
+ */
+function versesSaidFirst(input: string): string {
+  const of = String.raw`\s+(?:of|in|from)\s+(?:the\s+)?(?:book\s+of\s+)?`;
+  const chapterOf = String.raw`(?:(\d+)\s+chapters?${of})?`;
+  return input
+    .replace(
+      new RegExp(String.raw`^(?:the\s+)?(\d+)\s+verses?${of}${chapterOf}`, "i"),
+      (_whole, verse: string, chapter: string | undefined) => `@${chapter ?? ""}:${verse} `,
+    )
+    .replace(
+      new RegExp(
+        String.raw`^verses?\s+(\d+)(?:\s*(?:to|through|-)\s*(?:verses?\s+)?(\d+))?${of}${chapterOf}`,
+        "i",
+      ),
+      (_whole, start: string, end: string | undefined, chapter: string | undefined) =>
+        `@${chapter ?? ""}:${start}${end ? `-${end}` : ""} `,
+    )
+    // "The fourth chapter of Romans".
+    .replace(
+      new RegExp(String.raw`^(?:the\s+)?(\d+)\s+chapters?${of}`, "i"),
+      (_whole, chapter: string) => `@${chapter} `,
+    )
+    // "Genesis chapter 1, the third verse".
+    .replace(/\b(\d+)\s+the\s+(\d+)\s+verses?\b/gi, "$1:$2");
+}
+
 function normalizeReferenceInput(input: string): string {
-  return replaceSpokenNumberPhrases(
-    asTheBibleNamesIt(input)
+  return versesSaidFirst(replaceSpokenNumberPhrases(
+    ordinalsBeforePlaceWords(asTheBibleNamesIt(input))
       .trim()
       .replace(/[.,]/g, " ")
       .replace(/\b(first|1st)\b/gi, "1")
@@ -163,7 +209,7 @@ function normalizeReferenceInput(input: string): string {
       .replace(/^(first|1st|i)\b/i, "1")
       .replace(/^(second|2nd|ii)\b/i, "2")
       .replace(/^(third|3rd|iii)\b/i, "3"),
-  )
+  ))
     .replace(/\bchapters?\b/gi, "")
     // "from verse 25 all the way to verse 32", "verse 3 down to 7".
     .replace(/\b(?:all\s+the\s+way|right|down|up)\s+to\b/gi, "to")
@@ -439,10 +485,48 @@ export function parseReference(
     errors: [],
   };
 
-  const trimInput = normalizeReferenceInput(input);
-  if (!trimInput) return result;
+  const normalized = normalizeReferenceInput(input);
+  if (!normalized) return result;
+
+  // The verse said before the book (`versesSaidFirst`): the book must come
+  // straight after it, and the chapter is the one said with the verse, or
+  // the one after the book.
+  const saidFirst = normalized.match(/^@(\d+)?(?::(\d+)(?:-(\d+))?)?\s+(.*)$/);
+  const trimInput = saidFirst ? (saidFirst[4] ?? "") : normalized;
 
   const bookMatch = findReferencedBook(trimInput, availableBooks);
+  if (saidFirst && bookMatch && trimInput.indexOf(bookMatch.rawBook) !== 0) {
+    result.errors.push("The book must follow the verse.");
+    return result;
+  }
+  if (saidFirst && bookMatch) {
+    const [, saidChapter, verseStart, verseEnd] = saidFirst;
+    const after = bookMatch.tail.match(/^(\d+)(?=\s|:|$)/);
+    const chapter = saidChapter
+      ? Number(saidChapter)
+      : after
+        ? Number(after[1])
+        : bookMatch.book.chapters === 1
+          ? 1
+          : null;
+    result.book = bookMatch.book;
+    if (!chapter) {
+      result.errors.push("Missing chapter number.");
+      return result;
+    }
+    if (chapter < 1 || chapter > bookMatch.book.chapters) {
+      result.errors.push(
+        `Invalid chapter: ${chapter}. ${bookMatch.book.name} has ${bookMatch.book.chapters} chapters.`,
+      );
+    }
+    result.chapter = chapter;
+    result.verseStart = verseStart ? Number(verseStart) : null;
+    result.verseEnd = verseEnd ? Number(verseEnd) : null;
+    if (result.verseStart !== null && result.verseEnd !== null && result.verseEnd <= result.verseStart) {
+      result.errors.push("End verse must be greater than start verse.");
+    }
+    return result;
+  }
   if (!bookMatch) {
     result.errors.push(
       "Invalid format. Expected: Book Chapter or Book Chapter:Verse",

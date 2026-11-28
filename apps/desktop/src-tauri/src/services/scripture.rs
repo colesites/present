@@ -160,7 +160,7 @@ fn find_whole_word(input: &str, alias: &str) -> Option<(usize, usize)> {
 }
 
 /// The book the reference names, and what follows it.
-fn find_referenced_book<'a>(input: &str, books: &'a [Book]) -> Option<(&'a Book, String)> {
+fn find_referenced_book<'a>(input: &str, books: &'a [Book]) -> Option<(&'a Book, usize, String)> {
     let mut best: Option<(&Book, usize, usize)> = None;
     for book in books {
         for alias in book_aliases(book) {
@@ -180,20 +180,88 @@ fn find_referenced_book<'a>(input: &str, books: &'a [Book]) -> Option<(&'a Book,
             }
         }
     }
-    best.map(|(book, _, end)| (book, input[end..].trim().to_owned()))
+    best.map(|(book, start, end)| (book, start, input[end..].trim().to_owned()))
+}
+
+const ORDINAL_WORDS: [(&str, &str); 24] = [
+    ("first", "one"),
+    ("second", "two"),
+    ("third", "three"),
+    ("fourth", "four"),
+    ("fifth", "five"),
+    ("sixth", "six"),
+    ("seventh", "seven"),
+    ("eighth", "eight"),
+    ("ninth", "nine"),
+    ("tenth", "ten"),
+    ("eleventh", "eleven"),
+    ("twelfth", "twelve"),
+    ("thirteenth", "thirteen"),
+    ("fourteenth", "fourteen"),
+    ("fifteenth", "fifteen"),
+    ("sixteenth", "sixteen"),
+    ("seventeenth", "seventeen"),
+    ("eighteenth", "eighteen"),
+    ("nineteenth", "nineteen"),
+    ("twentieth", "twenty"),
+    ("thirtieth", "thirty"),
+    ("fortieth", "forty"),
+    ("fiftieth", "fifty"),
+    ("hundredth", "hundred"),
+];
+
+/// "Twenty-first", "fifth", "16th" as the number, said before "verse" or
+/// "chapter": "the twenty-first verse", "the 16th chapter".
+fn ordinal_before_place_word(word: &str) -> Option<String> {
+    let lower = word.to_lowercase();
+    let cardinal = |ordinal: &str| {
+        ORDINAL_WORDS
+            .iter()
+            .find(|(name, _)| *name == ordinal)
+            .map(|(_, cardinal)| *cardinal)
+    };
+    if let Some((tens, unit)) = lower.split_once('-') {
+        if spoken_number(tens).is_some_and(|value| (20..100).contains(&value)) {
+            return cardinal(unit).map(|unit| format!("{tens} {unit}"));
+        }
+    }
+    if let Some(found) = cardinal(&lower) {
+        return Some(found.to_owned());
+    }
+    let digits = lower.trim_end_matches(|character: char| character.is_ascii_alphabetic());
+    let suffix = &lower[digits.len()..];
+    (is_digits(digits) && matches!(suffix, "st" | "nd" | "rd" | "th")).then(|| digits.to_owned())
+}
+
+fn is_place_word(word: &str) -> bool {
+    matches!(
+        word.to_lowercase().as_str(),
+        "verse" | "verses" | "chapter" | "chapters"
+    )
 }
 
 /// The ordinals the panel rewrites: "first" and "1st" anywhere, and the Roman
 /// "i", "ii" and "iii" only where a book name would start.
 fn replace_ordinals(input: &str) -> String {
-    let mut words: Vec<String> = input
-        .replace(['.', ','], " ")
-        .split_whitespace()
-        .map(|word| match word.to_lowercase().as_str() {
-            "first" | "1st" => "1".to_owned(),
-            "second" | "2nd" => "2".to_owned(),
-            "third" | "3rd" => "3".to_owned(),
-            _ => word.to_owned(),
+    let cleaned = input.replace(['.', ','], " ");
+    let split: Vec<&str> = cleaned.split_whitespace().collect();
+    let mut words: Vec<String> = split
+        .iter()
+        .enumerate()
+        .map(|(index, word)| {
+            let before_place_word = split.get(index + 1).is_some_and(|next| is_place_word(next));
+            if let Some(number) = before_place_word
+                .then(|| ordinal_before_place_word(word))
+                .flatten()
+            {
+                return number;
+            }
+            match word.to_lowercase().as_str() {
+                "first" | "1st" => "1".to_owned(),
+                "second" | "2nd" => "2".to_owned(),
+                "third" | "3rd" => "3".to_owned(),
+                _ => (*word).to_owned(),
+            }
         })
         .collect();
     if let Some(first) = words.first_mut() {
@@ -356,6 +424,100 @@ fn rewrite_chapter_and_verse_words(input: &str) -> String {
     out.join(" ")
 }
 
+/// The verse said before the book: "the third verse of Genesis 1", "verse 3
+/// of Genesis chapter 1", "the third verse of the first chapter of Genesis",
+/// "verses 1 to 3 of John 3", "the fourth chapter of Romans". Put as
+/// `@chapter:verse` before the book — the chapter left out when it is said
+/// after the book — for `parse` to place once it knows where the book's name
+/// ends. And "Genesis 1, the third verse" as `Genesis 1:3`.
+fn verses_said_first(input: &str) -> String {
+    let words: Vec<&str> = input.split_whitespace().collect();
+    let lower: Vec<String> = words.iter().map(|word| word.to_lowercase()).collect();
+    let word = |at: usize| lower.get(at).map(String::as_str);
+    let is_verse = |at: usize| matches!(word(at), Some("verse" | "verses"));
+    let is_chapter = |at: usize| matches!(word(at), Some("chapter" | "chapters"));
+    let number = |at: usize| word(at).filter(|value| is_digits(value)).map(str::to_owned);
+    // "of", "in" or "from", "the" and "book of" after it: where they end.
+    let of = |at: usize| -> Option<usize> {
+        if !matches!(word(at), Some("of" | "in" | "from")) {
+            return None;
+        }
+        let mut at = at + 1;
+        if word(at) == Some("the") {
+            at += 1;
+        }
+        if word(at) == Some("book") && word(at + 1) == Some("of") {
+            at += 2;
+        }
+        Some(at)
+    };
+
+    let mut at = usize::from(word(0) == Some("the"));
+    let (mut chapter, mut verses) = (None::<String>, None::<String>);
+    if let Some(value) = number(at) {
+        if is_verse(at + 1) {
+            verses = Some(value);
+        } else if is_chapter(at + 1) {
+            chapter = Some(value);
+        }
+        at += 2;
+    } else if at == 0 && is_verse(0) {
+        if let Some(start) = number(1) {
+            at = 2;
+            verses = Some(start.clone());
+            if matches!(word(at), Some("to" | "through" | "-")) {
+                let end_at = if is_verse(at + 1) { at + 2 } else { at + 1 };
+                if let Some(end) = number(end_at) {
+                    verses = Some(format!("{start}-{end}"));
+                    at = end_at + 1;
+                }
+            }
+        }
+    }
+    let after_of = (verses.is_some() || chapter.is_some())
+        .then(|| of(at))
+        .flatten();
+    if let Some(mut at) = after_of {
+        if verses.is_some() {
+            if let Some(value) = number(at).filter(|_| is_chapter(at + 1)) {
+                if let Some(after) = of(at + 2) {
+                    chapter = Some(value);
+                    at = after;
+                }
+            }
+        }
+        let marker = format!(
+            "@{}{}",
+            chapter.unwrap_or_default(),
+            verses
+                .map(|verses| format!(":{verses}"))
+                .unwrap_or_default()
+        );
+        return std::iter::once(marker)
+            .chain(words[at..].iter().map(|word| (*word).to_owned()))
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+
+    // "Genesis 1, the third verse".
+    let mut out: Vec<String> = Vec::with_capacity(words.len());
+    let mut index = 0;
+    while index < words.len() {
+        if let (Some(chapter), Some("the"), Some(verse)) =
+            (number(index), word(index + 1), number(index + 2))
+        {
+            if is_verse(index + 3) {
+                out.push(format!("{chapter}:{verse}"));
+                index += 4;
+                continue;
+            }
+        }
+        out.push(words[index].to_owned());
+        index += 1;
+    }
+    out.join(" ")
+}
+
 fn is_digits(value: &str) -> bool {
     !value.is_empty() && value.chars().all(|character| character.is_ascii_digit())
 }
@@ -363,7 +525,7 @@ fn is_digits(value: &str) -> bool {
 /// Everything the panel does to a reference before it is read.
 fn normalize(input: &str) -> String {
     let ordinals = replace_ordinals(input.trim());
-    let numbered = replace_spoken_numbers(&ordinals);
+    let numbered = verses_said_first(&replace_spoken_numbers(&ordinals));
     let rewritten = rewrite_chapter_and_verse_words(&numbered);
     // A colon or a dash belongs to the numbers around it.
     let joined = rewritten.replace(" :", ":");
@@ -462,6 +624,51 @@ fn parse_rest(rest: &str) -> (Option<u32>, Option<u32>, Option<String>) {
     (None, None, code)
 }
 
+/// A reference whose verse was said before its book: `marker` is
+/// `chapter:verse`, `:verse` or `chapter`, and `after_book` what followed the
+/// book — the chapter, when the marker has none.
+fn place_verses_said_first(
+    mut reference: Reference,
+    book: &Book,
+    marker: &str,
+    after_book: &str,
+) -> Reference {
+    reference.book = Some(book.id.clone());
+    let (said_chapter, verses) = marker.split_once(':').unwrap_or((marker, ""));
+    let chapter = said_chapter
+        .parse::<u32>()
+        .ok()
+        .or_else(|| {
+            after_book
+                .split([' ', ':'])
+                .next()
+                .and_then(|first| first.parse().ok())
+        })
+        .or((book.chapters == 1).then_some(1));
+    let Some(chapter) = chapter.filter(|chapter| *chapter > 0) else {
+        reference.errors.push("Missing chapter number.".to_owned());
+        return reference;
+    };
+    if chapter > book.chapters {
+        reference.errors.push(format!(
+            "Invalid chapter: {}. {} has {} chapters.",
+            chapter, book.name, book.chapters
+        ));
+    }
+    reference.chapter = Some(chapter);
+    let (start, end) = verses.split_once('-').unwrap_or((verses, ""));
+    reference.verse_start = start.parse().ok();
+    reference.verse_end = end.parse().ok();
+    if let (Some(start), Some(end)) = (reference.verse_start, reference.verse_end) {
+        if end <= start {
+            reference
+                .errors
+                .push("End verse must be greater than start verse.".to_owned());
+        }
+    }
+    reference
+}
+
 /// Read a reference, against the books the operator has.
 pub fn parse(input: &str, books: &[Book]) -> Reference {
     let mut reference = Reference::default();
@@ -470,12 +677,30 @@ pub fn parse(input: &str, books: &[Book]) -> Reference {
         return reference;
     }
 
-    let Some((book, after_book)) = find_referenced_book(&normalized, books) else {
+    // The verse said before the book (`verses_said_first`).
+    let said_first = normalized
+        .strip_prefix('@')
+        .and_then(|marked| marked.split_once(' '))
+        .map(|(marker, rest)| (marker.to_owned(), rest.to_owned()));
+    let normalized = said_first
+        .as_ref()
+        .map_or(normalized.clone(), |(_, rest)| rest.clone());
+
+    let Some((book, start, after_book)) = find_referenced_book(&normalized, books) else {
         reference
             .errors
             .push("Invalid format. Expected: Book Chapter or Book Chapter:Verse".to_owned());
         return reference;
     };
+    if let Some((marker, _)) = said_first {
+        if start != 0 {
+            reference
+                .errors
+                .push("The book must follow the verse.".to_owned());
+            return reference;
+        }
+        return place_verses_said_first(reference, book, &marker, &after_book);
+    }
     reference.book = Some(book.id.clone());
 
     // A book of one chapter is spoken without it: "Jude verse 3", "2 John

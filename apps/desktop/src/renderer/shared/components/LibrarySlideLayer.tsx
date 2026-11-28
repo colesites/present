@@ -337,13 +337,23 @@ export const LibrarySlideLayer = memo(function LibrarySlideLayer({
                     fontStyle: resolveFontStyle(style, libraryStyle),
                     textDecoration: resolveTextDecoration(style, libraryStyle),
                     textAlign: style.textAlign ?? "center",
+                    // `autoFit` "none": the size chosen, as it is.
+                    ...(element.autoFit === "none"
+                      ? {
+                          fontSize: `${(style.fontSize ?? libraryStyle.fontSize) * scaledFontSizeMultiplier * fitScale}px`,
+                        }
+                      : {}),
                   }}
                   align={resolveHorizontalAlign(style.textAlign)}
                   verticalAlign={resolveVerticalAlign(style.verticalAlign)}
+                  // "grow": as large as the box allows.
                   maxFontSize={
-                    (style.fontSize ?? libraryStyle.fontSize) *
-                    scaledFontSizeMultiplier
+                    element.autoFit === "grow"
+                      ? undefined
+                      : (style.fontSize ?? libraryStyle.fontSize) *
+                        scaledFontSizeMultiplier
                   }
+                  bypassFit={element.autoFit === "none"}
                   minScale={minScale}
                   fitScale={fitScale}
                 />

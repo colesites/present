@@ -78,6 +78,8 @@ const bibleTab = ({
     chosen: defaultVersion,
     screen: [],
     asked: [],
+    followed: [],
+    settings: {},
     open: true,
   };
   const settings = () => ({
@@ -96,6 +98,10 @@ const bibleTab = ({
     show: (lookup, { addToService }) => {
       tab.screen.push(addToService ? lookup : `${lookup} (not added again)`);
     },
+    follow: (verse, word) => {
+      if (tab.followed.at(-1)?.verse !== verse) tab.followed.push({ verse, word });
+    },
+    ...tab.settings,
     chooseVersion: (code) => {
       tab.chosen = code;
       agent.update(settings());
@@ -581,7 +587,7 @@ test("Show it: reading on into the next verse moves to it within two words", asy
   await said("Genesis chapter 1 verse 1.");
   assert.deepEqual(tab.screen, ["Genesis 1:1 KJV"]);
   await said("Genesis chapter 1 verse 1.", verse1);
-  assert.equal(tab.screen.length, 1, "reading the verse on screen stays on it");
+  assert.equal(tab.screen.length, 1, "a verse named and read stays up: a sermon may go on from it");
   await said("Genesis chapter 1 verse 1.", verse1, "And the");
   assert.equal(tab.screen.at(-1), "Genesis 1:2 KJV (not added again)", "two words into verse 2");
   await said("Genesis chapter 1 verse 1.", verse1, "And the earth was without form, and void;");
@@ -589,10 +595,90 @@ test("Show it: reading on into the next verse moves to it within two words", asy
   await said(
     "Genesis chapter 1 verse 1.",
     verse1,
-    "And the earth was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters. And God",
+    "And the earth was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the",
   );
-  assert.equal(tab.screen.at(-1), "Genesis 1:3 KJV (not added again)");
+  assert.equal(tab.screen.length, 2);
+  await said(
+    "Genesis chapter 1 verse 1.",
+    verse1,
+    "And the earth was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters.",
+  );
+  assert.equal(
+    tab.screen.at(-1),
+    "Genesis 1:3 KJV (not added again)",
+    "read on to, a verse is moved on from at its last word: the passage is being read through",
+  );
   assert.equal(tab.box, "Genesis 1:3");
+});
+
+test("Show it: a verse read on to is not moved on from when only its last words are said", async () => {
+  const tab = bibleTab({ chapters: { "genesis 1": GENESIS_1 } });
+  await tab.hear("Genesis chapter 1 verse 2.", true);
+  await tab.hear("And the Spirit of God moved upon the face of the waters. And God said", true);
+  assert.equal(tab.screen.at(-1), "Genesis 1:3 KJV (not added again)");
+  await tab.hear("Notice, and there was light.", true);
+  assert.equal(tab.screen.length, 2, "quoting its end is not reading it");
+});
+
+test("Show it: moving on at a verse's end can be turned off", async () => {
+  const tab = bibleTab({ chapters: { "genesis 1": GENESIS_1 } });
+  tab.settings = { moveAtVerseEnd: false };
+  await tab.hear("Genesis chapter 1 verse 1.", true);
+  await tab.hear("In the beginning God created the heaven and the earth. And the earth", true);
+  assert.equal(tab.screen.at(-1), "Genesis 1:2 KJV (not added again)");
+  await tab.hear("was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters.", true);
+  assert.equal(tab.screen.length, 2, "waits for the next verse to begin");
+});
+
+test("Show it: a passage of several verses is followed slide by slide as it is read", async () => {
+  const tab = bibleTab({ chapters: { "genesis 1": GENESIS_1 } });
+  await tab.hear("Let's read the first three verses. Genesis 1:1-3.", true);
+  assert.deepEqual(tab.screen, ["Genesis 1:1-3 KJV"]);
+  await tab.hear("In the beginning God created the heaven and the", true);
+  assert.equal(tab.followed.at(-1)?.verse ?? 1, 1);
+  await tab.hear("earth.", true);
+  assert.equal(tab.followed.at(-1)?.verse, 2, "verse 1 read to its end: verse 2's slide");
+  await tab.hear("And the earth was without form, and void; and darkness was upon the face of the deep.", true);
+  assert.equal(tab.followed.at(-1)?.verse, 2);
+  await tab.hear("And the Spirit of God moved upon the face of the waters.", true);
+  assert.equal(tab.followed.at(-1)?.verse, 3);
+  await tab.hear("And God said, Let there be light: and there was light.", true);
+  assert.equal(tab.followed.at(-1)?.verse, 3, "the last verse of the passage is not read past at its end");
+  assert.deepEqual(tab.screen, ["Genesis 1:1-3 KJV"], "the passage stays on screen throughout");
+  await tab.hear("And God saw the light, that it was good", true);
+  assert.equal(tab.screen.at(-1), "Genesis 1:4 KJV (not added again)", "read on past it, the next verse goes up");
+});
+
+test("Show it: the model naming a verse of the passage on screen does not take the passage's place", async () => {
+  // The model's answer comes seconds after the words: "Genesis 1:1" for
+  // verse 1 arrived as verse 2 was begun, and put verse 1 alone on screen.
+  const tab = bibleTab({
+    chapters: { "genesis 1": GENESIS_1 },
+    model: (heard) => (/beginning/i.test(heard) ? { reference: "Genesis 1:1", sure: true } : null),
+  });
+  await tab.hear("Genesis 1:1-3.", true);
+  await tab.hear("In the beginning God created the heaven and the earth.", true);
+  await tab.hear("And the earth was without form, and void;", true);
+  assert.deepEqual(tab.screen, ["Genesis 1:1-3 KJV"], "the passage stays up");
+  assert.equal(tab.followed.at(-1)?.verse, 2, "at the verse being read");
+});
+
+test("Show it: a passage read on even when the last word of a verse is heard wrong", async () => {
+  // "earth" heard as "8": the reading has not gone anywhere else.
+  const tab = bibleTab({ chapters: { "genesis 1": GENESIS_1 } });
+  await tab.hear("Genesis 1:1-3.", true);
+  await tab.hear("In the beginning God created the heaven and the 8.", true);
+  assert.equal(tab.followed.at(-1)?.verse, 2);
+  assert.deepEqual(tab.screen, ["Genesis 1:1-3 KJV"]);
+});
+
+test("Show it: a verse said before its book goes up", async () => {
+  const tab = bibleTab({ chapters: { "genesis 1": GENESIS_1 } });
+  await tab.hear("Let us look at the third verse of Genesis chapter one.", true);
+  assert.deepEqual(tab.screen, ["Genesis 1:3 KJV"]);
+  const range = bibleTab();
+  await range.hear("Read with me verses one to three of John chapter three.", true);
+  assert.deepEqual(range.screen, ["John 3:1-3 KJV"]);
 });
 
 test("reading on after a pause moves on once the words say which verse it is", async () => {

@@ -78,6 +78,8 @@ interface ScripturePanelProps {
   speechInputDeviceId: string | null;
   /** What the Bible agent does with what it hears (Settings, Agent). */
   bibleAgent?: BibleAgentSettings;
+  /** Put up the slide of a verse on screen as the reading reaches it (`useAppHandlers`). */
+  onFollowReading?: (verse: number, word: number) => void;
   activeSlideId?: string | null;
 }
 
@@ -87,12 +89,15 @@ export interface BibleAgentSettings {
   onHeard: "show" | "find";
   addToService: boolean;
   voiceCommands: boolean;
+  /** A passage being read through moves on at a verse's last word, not a word into the next. */
+  moveAtVerseEnd?: boolean;
 }
 
 const DEFAULT_BIBLE_AGENT: BibleAgentSettings = {
   onHeard: "show",
   addToService: true,
   voiceCommands: true,
+  moveAtVerseEnd: true,
 };
 
 /** The most words heard shown under the toolbar, across turns. */
@@ -113,10 +118,16 @@ export const ScripturePanel = memo(
       speechInputDeviceId,
       bibleAgent = DEFAULT_BIBLE_AGENT,
       activeSlideId = null,
+      onFollowReading,
     },
     ref,
   ) {
-    const { onHeard, addToService: addHeardToService, voiceCommands } = bibleAgent;
+    const {
+      onHeard,
+      addToService: addHeardToService,
+      voiceCommands,
+      moveAtVerseEnd = true,
+    } = bibleAgent;
     const inputRef = useRef<ScriptureInputRef>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
     const textSearchRequestRef = useRef(0);
@@ -474,6 +485,10 @@ export const ScripturePanel = memo(
     useEffect(() => {
       openPassageRef.current = parsedRef;
     }, [parsedRef]);
+    const followReadingRef = useRef(onFollowReading);
+    useEffect(() => {
+      followReadingRef.current = onFollowReading;
+    }, [onFollowReading]);
     // Stepping from the verse on screen, for the agent when the box holds a
     // whole chapter and does not say which verse that is.
     const stepLiveVerseRef = useRef(showAdjacentLiveVerse);
@@ -517,6 +532,10 @@ export const ScripturePanel = memo(
       // time they are said. It was heard here as well, when the turn ended:
       // the agent stepped at every word of the turn and this stepped again.
       commands: voiceCommands,
+      moveAtVerseEnd,
+      follow: (verse, word) => {
+        followReadingRef.current?.(verse, word);
+      },
       step: (direction) => {
         void stepLiveVerseRef.current?.(direction);
       },
@@ -671,6 +690,17 @@ export const ScripturePanel = memo(
       }),
       [effectiveSelectedVersionCode, parsedRef],
     );
+
+    // The verse live, when it is in the chapter open: "Genesis 1:1-3" open
+    // and verse 2 being read is verse 2 in the browser, not the first of them.
+    const liveVerseInView = useMemo(() => {
+      const [, bookId, chapter, verse] = activeVersePk?.split("|") ?? [];
+      if (!mergedRef.book || bookId !== mergedRef.book.id || Number(chapter) !== mergedRef.chapter) {
+        return null;
+      }
+      const number = Number(verse);
+      return Number.isFinite(number) && number > 0 ? number : null;
+    }, [activeVersePk, mergedRef.book, mergedRef.chapter]);
 
     // Word search opens the top match, or the row that was chosen. The
     // reference box and the Bible agent both land in mergedRef.
@@ -1251,7 +1281,7 @@ export const ScripturePanel = memo(
                 activeVerse={
                   browserSource === "search" && searchFocus
                     ? searchFocus.verse
-                    : mergedRef.verseStart
+                    : liveVerseInView ?? mergedRef.verseStart
                 }
                 availableBooks={availableBooks}
                 onSelectPassage={handleSelectPassageFromBrowser}
@@ -1431,6 +1461,7 @@ export const ScripturePanel = memo(
                   <ScriptureResults
                     parsedRef={mergedRef}
                     activeVersePk={activeVersePk}
+                    activeSlideId={activeSlideId}
                     onSendToOutput={onSendToOutput}
                     onAddToService={handleAddVerseToServiceSafe}
                     onStep={setLookupValue}

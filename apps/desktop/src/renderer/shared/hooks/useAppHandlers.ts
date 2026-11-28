@@ -1,10 +1,17 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Id } from "@present/backend/convex/_generated/dataModel";
 import type { LibraryItem, LibraryItemDraft } from "../../../shared/types";
-import type { ScriptureSlide } from "../../../features/scripture/lib/slides";
+import {
+  joinScriptureParts,
+  scriptureSlideAt,
+  splitScriptureSlide,
+  type ScriptureSlide,
+} from "../../../features/scripture/lib/slides";
+import { useScriptureOverflowStore } from "../../../features/scripture/lib/overflow-state";
+import { measureWords } from "../../../features/scripture/lib/measure-words";
 import { type ParsedReference } from "../../../features/scripture/lib/parser";
 import { parseScriptureReference } from "../../tauri/scripture";
 import {
@@ -24,6 +31,7 @@ interface UseAppHandlersProps {
   setSelected: (selected: { libraryId: string | null; index: number } | null) => void;
   setViewMode: (mode: "show" | "edit" | "settings") => void;
   setSelectedLibraryId: (id: string | null) => void;
+  scriptureSlides: ScriptureSlide[];
   setScriptureSlides: Dispatch<SetStateAction<ScriptureSlide[]>>;
   setShowTextInOutput: (show: boolean) => void;
   setEditScrollToSlide: (index: number | null) => void;
@@ -58,6 +66,7 @@ export function useAppHandlers({
   setSelected,
   setViewMode,
   setSelectedLibraryId,
+  scriptureSlides,
   setScriptureSlides,
   setShowTextInOutput,
   setEditScrollToSlide,
@@ -94,6 +103,11 @@ export function useAppHandlers({
     [libraryItems],
   );
   
+  const scriptureSlidesRef = useRef(scriptureSlides);
+  useEffect(() => {
+    scriptureSlidesRef.current = scriptureSlides;
+  }, [scriptureSlides]);
+
   const handleSelectSlide = useCallback(
     async (slideId: string, text: string, footer?: string) => {
       setShowTextInOutput(true);
@@ -107,9 +121,11 @@ export function useAppHandlers({
       const parsedIndex = Number(slideToken);
 
       if (slideId.startsWith("scripture")) {
+        // A verse's own id ("scripture:kjv|gen|1|2"), or its place in the deck.
+        const inDeck = scriptureSlidesRef.current.findIndex((slide) => slide.id === slideId);
         setSelected({
           libraryId: null,
-          index: Number.isFinite(parsedIndex) ? parsedIndex : 0,
+          index: inDeck >= 0 ? inDeck : Number.isFinite(parsedIndex) ? parsedIndex : 0,
         });
       } else if (slideId.includes(":")) {
         const resolvedIndex = resolveLibrarySlideIndex(idPart, slideToken);
@@ -186,10 +202,16 @@ export function useAppHandlers({
     [libraryItems, updateExistingLibraryItem]
   );
 
-  const handleScriptureOutput = useCallback(
-    async (slides: ScriptureSlide[]) => {
+  /**
+   * Verse slides as the screen shows them: in the layout designed in Bible
+   * edit, or the one made from the settings, and a long verse split as
+   * "Long verses" says (`splitScriptureSlide`).
+   */
+  const prepareScriptureSlides = useCallback(
+    (slides: ScriptureSlide[]): ScriptureSlide[] => {
       const template = useScriptureLayoutTemplateStore.getState().template;
-      const nextSlides = slides.map((slide, index) => {
+      const overflow = useScriptureOverflowStore.getState().overflow;
+      const laidOut = slides.map((slide, index) => {
         const templatedSlide = applyScriptureLayoutTemplate(slide, template);
         const canvasSize =
           templatedSlide.canvasSize ?? scriptureEditorDefaults.canvasSize;
@@ -205,6 +227,7 @@ export function useAppHandlers({
                 {
                   ...scriptureEditorDefaults,
                   canvasSize,
+                  overflow,
                 },
               );
 
@@ -214,6 +237,19 @@ export function useAppHandlers({
           elements,
         };
       });
+      return laidOut.flatMap((slide) => splitScriptureSlide(slide, overflow, measureWords));
+    },
+    [scriptureEditorDefaults],
+  );
+
+  /** The slide the Bible agent last followed a reading to (`handleFollowScripture`). */
+  const followedRef = useRef<string | null>(null);
+
+  const handleScriptureOutput = useCallback(
+    async (slides: ScriptureSlide[]) => {
+      const nextSlides = prepareScriptureSlides(slides);
+      scriptureSlidesRef.current = nextSlides;
+      followedRef.current = nextSlides[0]?.id ?? null;
 
       setShowTextInOutput(true);
       setSelectedLibraryId(null);
@@ -234,11 +270,46 @@ export function useAppHandlers({
     },
     [
       handleSelectSlide,
-      scriptureEditorDefaults,
+      prepareScriptureSlides,
       setSelectedLibraryId,
       setShowTextInOutput,
       setScriptureSlides,
     ]
+  );
+
+  // "Long verses" changed: the verses up now split again the new way. Their
+  // layout is made again from the settings unless one was designed.
+  useEffect(
+    () =>
+      useScriptureOverflowStore.subscribe((state, previous) => {
+        if (state.overflow === previous.overflow) return;
+        const designed = useScriptureLayoutTemplateStore.getState().template !== null;
+        setScriptureSlides((current) =>
+          current.length === 0
+            ? current
+            : prepareScriptureSlides(
+                joinScriptureParts(current).map((slide) =>
+                  designed ? slide : { ...slide, elements: undefined },
+                ),
+              ),
+        );
+      }),
+    [prepareScriptureSlides, setScriptureSlides],
+  );
+
+  /**
+   * The slide of `verse`, among the verses up now, with its `word`th word:
+   * the Bible agent following a reading through a passage, or through a
+   * verse split over several slides. Nothing when it is the one up already.
+   */
+  const handleFollowScripture = useCallback(
+    (verse: number, word: number) => {
+      const slide = scriptureSlideAt(scriptureSlidesRef.current, verse, word);
+      if (!slide?.id || followedRef.current === slide.id) return;
+      followedRef.current = slide.id;
+      void handleSelectSlide(slide.id, slide.content, slide.footer);
+    },
+    [handleSelectSlide],
   );
 
   const handleSelectScripture = useCallback(
@@ -280,5 +351,6 @@ export function useAppHandlers({
     handleRenameLibraryItem,
     handleScriptureOutput,
     handleSelectScripture,
+    handleFollowScripture,
   };
 }

@@ -271,6 +271,12 @@ export type SlideElement = {
   textBody?: SlideTextBody;
   isPlaceholder?: boolean;
   contentRole?: "scriptureVerse" | "scriptureFooter";
+  /**
+   * How a verse's words are sized in their box (`scripture/lib/overflow.ts`):
+   * shrunk to fit and no larger than their size ("shrink", and when unset),
+   * grown or shrunk to fill it ("grow"), or at their size ("none").
+   */
+  autoFit?: "shrink" | "grow" | "none";
   style?: SlideElementStyle;
   geometry?: SlideGeometry;
   isLocked?: boolean;

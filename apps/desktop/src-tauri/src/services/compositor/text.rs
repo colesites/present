@@ -526,6 +526,46 @@ fn unit_boxes(buffer: &Buffer, body: &str, delivery: Delivery, offset: (f32, f32
     boxes
 }
 
+/// The least a verse's words are scaled to fit, as the audience window does.
+const SCRIPTURE_MIN_SCALE: f32 = 0.05;
+/// The most they are grown to fill their box, `autoFit` "grow".
+const SCRIPTURE_GROW_SCALE: f32 = 6.0;
+
+/// How far a scripture element's words may be scaled to fit its box: `None`
+/// for other elements and for a verse set at its size (`autoFit` "none"),
+/// otherwise the most they may grow — 1 unless `autoFit` is "grow".
+fn scripture_fit_scale_limit(element: &SlideElement) -> Option<f32> {
+    let role = element.content_role.as_deref()?;
+    if role != "scriptureVerse" && role != "scriptureFooter" {
+        return None;
+    }
+    match element
+        .extra
+        .get("autoFit")
+        .and_then(|value| value.as_str())
+    {
+        Some("none") => None,
+        Some("grow") => Some(SCRIPTURE_GROW_SCALE),
+        _ => Some(1.0),
+    }
+}
+
+/// `resolveScriptureAutoFitScale`: the largest scale up to `most` at which
+/// `fits`, found in twelve halvings.
+fn scripture_fit_scale(fits: impl Fn(f32) -> bool, most: f32) -> f32 {
+    let (mut low, mut high, mut best) = (SCRIPTURE_MIN_SCALE, most.max(1.0), SCRIPTURE_MIN_SCALE);
+    for _ in 0..12 {
+        let candidate = (low + high) / 2.0;
+        if fits(candidate) {
+            best = candidate;
+            low = candidate;
+        } else {
+            high = candidate;
+        }
+    }
+    best
+}
+
 fn draw_text(
     pixmap: &mut PixmapMut<'_>,
     element: &SlideElement,
@@ -592,6 +632,37 @@ fn draw_text(
         .and_then(|s| s.font_style.as_deref())
         .map(|value| value.trim().eq_ignore_ascii_case("italic"))
         .unwrap_or(false);
+
+    // A verse's words fit their box, as the audience window fits them
+    // (`CanvasSlideLayer.tsx`). Measured before the fonts are locked for
+    // drawing: `measure` locks them too.
+    let (font_size, line_height) = match scripture_fit_scale_limit(element) {
+        Some(most) => {
+            let letter_spacing_em = extra_number(style, "letterSpacing")
+                .filter(|value| *value != 0.0)
+                .map(|spacing| (spacing / (font_size / uniform.max(f32::EPSILON))).clamp(-0.5, 2.0))
+                .unwrap_or(0.0);
+            let at = |scale: f32| TextStyle {
+                font_size: (font_size * scale).max(1.0),
+                line_height: (line_height * scale).max(1.0),
+                family: Some(family.to_owned()).filter(|name| !name.trim().is_empty()),
+                weight: weight_of(style),
+                italic,
+                letter_spacing_em,
+                align: horizontal_align(style.and_then(|s| s.text_align.as_deref())),
+                wrap: true,
+            };
+            let scale = scripture_fit_scale(
+                |scale| {
+                    let (height, widest) = measure(&body, content_width, &at(scale));
+                    height <= content_height && widest <= content_width
+                },
+                most,
+            );
+            ((font_size * scale).max(1.0), (line_height * scale).max(1.0))
+        }
+        None => (font_size, line_height),
+    };
 
     let Ok(mut fonts) = fonts().lock() else {
         // Poisoned only if another thread panicked mid-draw. Losing the text is
@@ -1802,6 +1873,40 @@ mod tests {
 
     fn element(value: serde_json::Value) -> SlideElement {
         serde_json::from_value(value).expect("element")
+    }
+
+    #[test]
+    fn a_verse_box_says_how_far_its_words_are_scaled() {
+        let with = |extra: serde_json::Value| {
+            let mut value = json!({
+                "id": "v", "type": "text", "x": 0, "y": 0, "width": 100, "height": 100,
+                "content": "In the beginning", "contentRole": "scriptureVerse",
+            });
+            value
+                .as_object_mut()
+                .expect("object")
+                .extend(extra.as_object().expect("object").clone());
+            scripture_fit_scale_limit(&element(value))
+        };
+        assert_eq!(with(json!({})), Some(1.0), "shrunk to fit, no larger");
+        assert_eq!(with(json!({ "autoFit": "shrink" })), Some(1.0));
+        assert_eq!(
+            with(json!({ "autoFit": "grow" })),
+            Some(SCRIPTURE_GROW_SCALE)
+        );
+        assert_eq!(with(json!({ "autoFit": "none" })), None, "at its size");
+        assert_eq!(with(json!({ "contentRole": null })), None, "not a verse");
+    }
+
+    #[test]
+    fn a_verse_is_shrunk_as_far_as_it_takes() {
+        // The audience window's floor was three tenths: a verse that needed
+        // less was cut off at the bottom of its box.
+        let scale = scripture_fit_scale(|scale| scale <= 0.12, 1.0);
+        assert!((0.11..=0.12).contains(&scale), "{scale}");
+        let grown = scripture_fit_scale(|scale| scale <= 2.5, SCRIPTURE_GROW_SCALE);
+        assert!((2.4..=2.5).contains(&grown), "{grown}");
+        assert_eq!(scripture_fit_scale(|_| false, 1.0), SCRIPTURE_MIN_SCALE);
     }
 
     fn render(value: serde_json::Value) -> Frame {
