@@ -4,6 +4,37 @@ All notable desktop changes are documented here. Present follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.4.23] - 2026-11-28
+
+### Added
+
+- Long verses: Settings, Slides, and Bible edit say what becomes of a verse
+  too long for its slide — shrink then split (the default), shrink, split into
+  slides at sentences, evenly by words or by lines, fill the box, or a fixed
+  size. A split verse's slides say which part they are, and its parts can be
+  chosen from the Bible tab. The reference can take only the room it needs.
+- The Bible agent follows a passage of several verses ("Genesis 1:1-3") slide
+  by slide as it is read, and a long verse split over slides part by part.
+- While a passage is read through, the next verse goes up as the last word of
+  the one showing is said (Settings, Agent, "Move on at the last word"),
+  even when that word is heard wrong ("earth" as "8"). A single verse named
+  and read still waits for the next to begin.
+- References with the verse said first: "the third verse of Genesis 1",
+  "verse 3 of Genesis chapter 1", "verses 1 to 3 of John 3", "the fourth
+  chapter of Romans".
+
+### Fixed
+
+- A long verse is no longer cut off at the bottom of the screen, on the
+  audience window or the stream.
+- With a passage of several verses open, the Bible browser marks the verse
+  live, not the first of them; the slides grid marks the slide live too.
+- A passage of several verses being read is no longer replaced by one of its
+  own verses when the model's reading of the words arrives a moment later
+  ("Genesis 1:1-3" went back to Genesis 1:1 as verse 2 was begun).
+- The Bible agent keeps listening when the operator leaves the Bible tab for
+  Show, Libraries or Edit.
+
 ## [0.4.22] - 2026-11-27
 
 ### Changed
