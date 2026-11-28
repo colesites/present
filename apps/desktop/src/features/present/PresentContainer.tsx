@@ -99,6 +99,7 @@ import {
   createScriptureLayoutTemplate,
 } from "../scripture/lib/layout-template";
 import { useScriptureLayoutTemplateStore } from "../scripture/lib/layout-template-state";
+import { useScriptureDeckStore } from "../scripture/lib/deck-state";
 import { useScreenComposerState } from "../screen-composer";
 import { useGlobalSearchStore } from "../../renderer/shared/store/globalSearchStore";
 import { usePresentAiToolProvider } from "../../renderer/ai-operator/usePresentAiToolProvider";
@@ -703,7 +704,9 @@ export function PresentContainer({
       return scriptureSlides.map((item, i) => ({
         slide: { text: item.content, label: item.label, footer: item.footer },
         index: i,
-        id: undefined as string | undefined,
+        // The verse's own id, as the Bible tab and the agent put it up, so
+        // the slide live is the one marked, whichever put it there.
+        id: item.id as string | undefined,
         libraryItem: null as LibraryItem | null,
       }));
     }
@@ -1134,10 +1137,12 @@ export function PresentContainer({
     handleRenameLibraryItem,
     handleScriptureOutput,
     handleSelectScripture,
+    handleFollowScripture,
   } = useAppHandlers({
     setSelected,
     setViewMode,
     setSelectedLibraryId: handleSetSelectedDeckLibraryId,
+    scriptureSlides,
     setScriptureSlides,
     setShowTextInOutput,
     setEditScrollToSlide,
@@ -1288,6 +1293,14 @@ export function PresentContainer({
     },
     [handleSelectSlide],
   );
+
+  // The verses up now, for the Bible tab to show a split verse's parts.
+  const setScriptureDeck = useScriptureDeckStore((state) => state.setDeck);
+  useEffect(() => {
+    setScriptureDeck(scriptureSlides, (slide) => {
+      if (slide.id) void handleLiveSlideSelect(slide.id, slide.content, slide.footer);
+    });
+  }, [handleLiveSlideSelect, scriptureSlides, setScriptureDeck]);
 
   const handleLiveScriptureOutput = useCallback(
     (slides: ScriptureSlide[]) => {
@@ -2555,6 +2568,7 @@ export function PresentContainer({
           editScrollToSlide,
           setEditScrollToSlide,
           handleScriptureOutput: handleLiveScriptureOutput,
+          handleFollowScripture,
           activeSlideContent: outputSlideContent,
           slideGroups,
         }}
@@ -2690,6 +2704,7 @@ export function PresentContainer({
             onHeard: settingsAgent.bibleOnHeard,
             addToService: settingsAgent.bibleAddToService,
             voiceCommands: settingsAgent.bibleVoiceCommands,
+            moveAtVerseEnd: settingsAgent.bibleMoveAtVerseEnd,
           },
         }}
         panelRefs={{

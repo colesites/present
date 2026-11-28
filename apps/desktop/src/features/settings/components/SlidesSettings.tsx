@@ -10,6 +10,13 @@ import {
   useFontCatalog,
 } from "../../../renderer/shared/hooks/useFontCatalog";
 import { VideoThumbnail } from "../../media/components/VideoThumbnail";
+import {
+  MODE_NOTES,
+  MODE_OPTIONS,
+  SPLIT_OPTIONS,
+} from "../../scripture/components/ScriptureOverflowControls";
+import type { ScriptureOverflowMode, ScriptureSplitBy } from "../../scripture/lib/overflow";
+import { useScriptureOverflowStore } from "../../scripture/lib/overflow-state";
 import type { MediaItem } from "../../media/hooks/useMediaFolders";
 import {
   SETTINGS_FIELD,
@@ -20,7 +27,81 @@ import {
   SettingsPage,
   SettingsRow,
   SettingsSelect,
+  SettingsSwitch,
 } from "./settings-ui";
+
+/**
+ * What becomes of a verse too long for its slide (`scripture/lib/overflow.ts`):
+ * the same setting as Bible edit's "Long verses", here for every passage.
+ */
+function LongVerses() {
+  const overflow = useScriptureOverflowStore((state) => state.overflow);
+  const setOverflow = useScriptureOverflowStore((state) => state.setOverflow);
+  const splits = overflow.mode === "smart" || overflow.mode === "split";
+  return (
+    <SettingsGroup title="Long verses" description={MODE_NOTES[overflow.mode]}>
+      <SettingsRow label="When a verse is too long">
+        <SettingsSelect
+          label="When a verse is too long"
+          value={overflow.mode}
+          options={MODE_OPTIONS}
+          onChange={(mode) => setOverflow({ mode: mode as ScriptureOverflowMode })}
+        />
+      </SettingsRow>
+      {overflow.mode === "smart" ? (
+        <SettingsRow label="Smallest size" description="A verse shrinks this far, then carries on over more slides.">
+          <SettingsNumber
+            label="Smallest verse size"
+            value={overflow.minFontSize}
+            onChange={(minFontSize) => setOverflow({ minFontSize })}
+            min={12}
+            max={400}
+            suffix="px"
+          />
+        </SettingsRow>
+      ) : null}
+      {splits ? (
+        <SettingsRow label="Split at" description="Where a verse carries on to the next slide.">
+          <SettingsSelect
+            label="Split a verse at"
+            value={overflow.splitBy}
+            options={SPLIT_OPTIONS.map((option) => ({
+              ...option,
+              label:
+                option.value === "sentence"
+                  ? "Sentences and clauses"
+                  : option.value === "words"
+                    ? "Evenly, by words"
+                    : "A number of lines",
+            }))}
+            onChange={(splitBy) => setOverflow({ splitBy: splitBy as ScriptureSplitBy })}
+          />
+        </SettingsRow>
+      ) : null}
+      {splits && overflow.splitBy === "lines" ? (
+        <SettingsRow label="Lines on a slide">
+          <SettingsNumber
+            label="Most lines on a slide"
+            value={overflow.maxLines}
+            onChange={(maxLines) => setOverflow({ maxLines })}
+            min={1}
+            max={20}
+          />
+        </SettingsRow>
+      ) : null}
+      <SettingsRow
+        label="Compact reference"
+        description="The reference takes only the room it needs, not three tenths of the slide."
+      >
+        <SettingsSwitch
+          label="Compact reference"
+          checked={overflow.compactFooter}
+          onChange={(compactFooter) => setOverflow({ compactFooter })}
+        />
+      </SettingsRow>
+    </SettingsGroup>
+  );
+}
 
 /** How much of the preview's height a 1080-line screen's pixel is. */
 const PREVIEW_HEIGHT = 117;
@@ -260,6 +341,8 @@ export function SlidesSettings({
           />
         </SettingsRow>
       </TypeGroup>
+
+      <LongVerses />
 
       <SettingsGroup
         title="Bible background"

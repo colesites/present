@@ -744,6 +744,7 @@ function readingCase(group, version, verse, { spoken, onward = "must", within = 
     // Two Bibles do not always end a verse at the same word (Luke 3:27 in the
     // King James ends with what begins 3:28 in the NIV): read from another,
     // the verse on screen or the one after it is where the words are.
+    //
     turns.push(
       within && next
         ? { say: phrase, allow: [reference, refOf(next)] }
@@ -754,16 +755,20 @@ function readingCase(group, version, verse, { spoken, onward = "must", within = 
     const nextReference = refOf(next);
     // Where two Bibles end a verse at different words, the end of this one
     // read from the other is the start of the verse after.
-    const second = within ? bible(version).verse(verse.bookName, verse.chapter, verse.verse + 2) : null;
-    const afterNext = second ? [refOf(second)] : [];
+    const second = bible(version).verse(verse.bookName, verse.chapter, verse.verse + 2);
+    const afterNext = within && second ? [refOf(second)] : [];
+    // Read on to, the verse after it is moved on to at its last word
+    // (`readToItsEnd`): as right, at the phrase that ends it, as it is.
+    const atItsEnd = second ? { orNext: refOf(second) } : {};
+    const endsIt = second ? [refOf(second)] : [];
     const phrases = phrasesOf(spoken(next));
     for (const [at, phrase] of phrases.entries()) {
       const last = at === phrases.length - 1;
       turns.push(
         last && onward === "must"
-          ? { say: phrase, screen: nextReference, allow: [reference] }
+          ? { say: phrase, screen: nextReference, allow: [reference, ...afterNext, ...endsIt], ...atItsEnd }
           : last
-            ? { say: phrase, allow: [reference, ...afterNext], hope: nextReference }
+            ? { say: phrase, allow: [reference, ...afterNext, ...endsIt], hope: nextReference, ...atItsEnd }
             : { say: phrase, allow: [reference, nextReference, ...afterNext] },
       );
     }

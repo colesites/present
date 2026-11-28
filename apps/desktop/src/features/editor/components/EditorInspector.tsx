@@ -39,6 +39,7 @@ import {
   Underline,
 } from "lucide-react";
 import { FontFamilySelect } from "../../../renderer/shared/components";
+import { ScriptureOverflowControls } from "../../scripture/components/ScriptureOverflowControls";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -242,6 +243,8 @@ function slideBackground(slide: LibrarySlide, mediaItems: MediaItem[]): Backgrou
 interface EditorInspectorProps {
   /** An imported deck: no song details, slide titles, picture backgrounds. */
   isDeck?: boolean;
+  /** The verses on screen, in Bible edit: what becomes of a long verse. */
+  isScripture?: boolean;
   onSlideCommand: (command: SlideCommand, slideId: string | null) => boolean;
   inspectorTab: InspectorTab;
   setInspectorTab: (tab: InspectorTab) => void;
@@ -282,6 +285,7 @@ interface EditorInspectorProps {
  */
 export const EditorInspector = memo(function EditorInspector({
   isDeck = false,
+  isScripture = false,
   onSlideCommand,
   inspectorTab,
   setInspectorTab,
@@ -401,6 +405,13 @@ export const EditorInspector = memo(function EditorInspector({
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
         {activeTab === "presentation" ? (
           <>
+            {isScripture ? (
+              <ScriptureOverflowControls
+                verseElement={selectedSlide?.elements?.find(
+                  (element) => element.contentRole === "scriptureVerse",
+                )}
+              />
+            ) : null}
             <StyleSection title={isDeck ? "Deck" : "Song"}>
               <StyleRow label="Title">
                 <TextField value={draft.title} placeholder={isDeck ? "Deck title" : "Song title"} onChange={(title) => applyDraft((previous) => ({ ...previous, title }))} />

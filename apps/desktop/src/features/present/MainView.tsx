@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useBibleListeningStore } from "../scripture/lib/bible-listening";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -81,6 +82,8 @@ export interface MainViewPresentState {
   editScrollToSlide: number | null;
   setEditScrollToSlide: (index: number | null) => void;
   handleScriptureOutput: (slides: ScriptureSlide[]) => void;
+  /** The Bible agent following a reading to the slide of a verse (`useAppHandlers`). */
+  handleFollowScripture: (verse: number, word: number) => void;
   activeSlideContent: {
     text: string;
     footer?: string;
@@ -470,6 +473,7 @@ export function MainView({
     editScrollToSlide,
     setEditScrollToSlide,
     handleScriptureOutput,
+    handleFollowScripture,
     handleUpdateScriptureEditedSlideOutput,
     activeSlideContent,
     slideGroups,
@@ -943,99 +947,115 @@ export function MainView({
     ],
   );
 
-  const renderShowMode = () => {
-    // Dedicated Bible Screen: Services panel and bottom Media panel are hidden
-    // to provide an unobstructed, professional Bible-focused workspace.
-    if (bottomTab === "scripture") {
-      return (
-        <ResizablePanelGroup
-          direction="horizontal"
-          className="flex-1 w-full h-full"
-          autoSaveId="present-bible-layout-v1"
-        >
-          {/* Full-size Bible Workspace */}
-          <ResizablePanel defaultSize="78" minSize="50" order={1}>
-            <PresentCenterArea
-              viewMode={viewMode}
-              bottomTab={bottomTab}
-              slidesForGrid={slidesForGrid}
-              activeSlideId={activeSlideId}
-              selectedIndex={selected?.index ?? null}
-              isGridView={isGridView}
-              onGridViewChange={setIsGridView}
-              selectedLibraryItem={selectedLibraryItem}
-              scriptureEditorItem={scriptureEditorItem}
-              selectedLibraryId={selectedLibraryId}
-              onSelectSlide={handleSelectSlide}
-              onEditSlide={handleEditSlide}
-              onOpenMiniEditor={handleOpenMiniEditorForSlide}
-              onReorderSlides={handleReorderLibrarySlides}
-              editorProps={editorProps}
-              onSaveScriptureEditor={handleSaveScriptureEditor}
-              onUpdateScriptureEditorOutput={
-                handleUpdateScriptureEditedSlideOutput
-              }
-              showViewMedia={showViewMedia}
-              isPreviewOutputting={isPreviewOutputting}
-              videoSettings={videoSettings}
-              onOutputPreviewMedia={handleOutputPreviewMediaClick}
-              liveVideo={liveVideo}
-              onVideoSettingsChange={updateVideoSettings}
-              showsPanelRef={showsPanelRef}
-              scripturePanelRef={scripturePanelRef}
-              showsPanelProps={showsPanelProps}
-              speechLang={speechSettings.lang}
-              speechInputDeviceId={speechSettings.inputDeviceId}
-              bibleAgent={speechSettings.bible}
-              onSendScripture={handleScriptureOutput}
-              selectedServiceId={selectedServiceId}
-              onAddScriptureToService={onAddScriptureToService}
-              importOverlay={presentationImportState}
-            />
-          </ResizablePanel>
-
-          <ResizableHandle withHandle />
-
-          {/* Right Column: Output Preview on top, workspace rail underneath */}
-          <ResizablePanel defaultSize="22" minSize="20" maxSize="35" order={2}>
-            <ResizablePanelGroup
-              direction="vertical"
-              autoSaveId="present-right-column-v1"
-            >
-              <ResizablePanel defaultSize="45" minSize="25">
-                <PresentOutputSidebar outputPreviewProps={outputPreviewProps} />
-              </ResizablePanel>
-              <ResizableHandle withHandle />
-              <ResizablePanel defaultSize="55" minSize="30">
-                <div className="h-full min-h-0 overflow-hidden">
-                  <SidebarRail
-                    orgId={orgId ?? null}
-                    localOrgId={localOrgId ?? null}
-                    userId={userId}
-                    isTimerLayerEnabled={isTimerLayerEnabled}
-                    onToggleTimerLayer={handleToggleTimerLayer}
-                    isTextLayerEnabled={showTextInOutput}
-                    onToggleTextLayer={handleToggleTextInOutput}
-                    isMessageLayerEnabled={isMessageLayerEnabled}
-                    onSetMessageLayerEnabled={setIsMessageLayerEnabled}
-                    activeMessageOverlay={activeMessageOverlay}
-                    onShowMessageOverlay={onShowMessageOverlay}
-                    onPushMasterSlide={onPushMasterSlide}
-                    mediaItems={mediaState.mediaState.allMediaItems}
-                    activePropIds={activePropIds}
-                    onSetLivePropDraft={onSetLivePropDraft}
-                    onClearLivePropDraft={onClearLivePropDraft}
-                    onSetActivePropIds={onSetActivePropIds}
-                    timers={timers}
-                  />
-                </div>
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      );
+  // Dedicated Bible Screen: Services panel and bottom Media panel are hidden
+  // to provide an unobstructed, professional Bible-focused workspace.
+  const bibleListening = useBibleListeningStore((state) => state.listening);
+  // Kept a few seconds past the microphone going off: it blinks off as the
+  // speech service reconnects, and the workspace taken away then is the
+  // microphone stopped for good.
+  const [bibleKept, setBibleKept] = React.useState(false);
+  React.useEffect(() => {
+    if (bibleListening) {
+      setBibleKept(true);
+      return;
     }
+    const timeout = window.setTimeout(() => setBibleKept(false), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [bibleListening]);
 
+  const renderBibleWorkspace = () => (
+      <ResizablePanelGroup
+        direction="horizontal"
+        className="flex-1 w-full h-full"
+        autoSaveId="present-bible-layout-v1"
+      >
+        {/* Full-size Bible Workspace */}
+        <ResizablePanel defaultSize="78" minSize="50" order={1}>
+          <PresentCenterArea
+            // The Bible workspace, whichever view is in front: kept, out of
+            // sight, while its agent listens, it is still the Bible tab — not
+            // a second editor, nor a Bible tab paused for being "elsewhere".
+            viewMode="show"
+            bottomTab="scripture"
+            slidesForGrid={slidesForGrid}
+            activeSlideId={activeSlideId}
+            selectedIndex={selected?.index ?? null}
+            isGridView={isGridView}
+            onGridViewChange={setIsGridView}
+            selectedLibraryItem={selectedLibraryItem}
+            scriptureEditorItem={scriptureEditorItem}
+            selectedLibraryId={selectedLibraryId}
+            onSelectSlide={handleSelectSlide}
+            onEditSlide={handleEditSlide}
+            onOpenMiniEditor={handleOpenMiniEditorForSlide}
+            onReorderSlides={handleReorderLibrarySlides}
+            editorProps={editorProps}
+            onSaveScriptureEditor={handleSaveScriptureEditor}
+            onUpdateScriptureEditorOutput={
+              handleUpdateScriptureEditedSlideOutput
+            }
+            showViewMedia={showViewMedia}
+            isPreviewOutputting={isPreviewOutputting}
+            videoSettings={videoSettings}
+            onOutputPreviewMedia={handleOutputPreviewMediaClick}
+            liveVideo={liveVideo}
+            onVideoSettingsChange={updateVideoSettings}
+            showsPanelRef={showsPanelRef}
+            scripturePanelRef={scripturePanelRef}
+            showsPanelProps={showsPanelProps}
+            speechLang={speechSettings.lang}
+            speechInputDeviceId={speechSettings.inputDeviceId}
+            bibleAgent={speechSettings.bible}
+            onSendScripture={handleScriptureOutput}
+            onFollowScripture={handleFollowScripture}
+            selectedServiceId={selectedServiceId}
+            onAddScriptureToService={onAddScriptureToService}
+            importOverlay={presentationImportState}
+          />
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        {/* Right Column: Output Preview on top, workspace rail underneath */}
+        <ResizablePanel defaultSize="22" minSize="20" maxSize="35" order={2}>
+          <ResizablePanelGroup
+            direction="vertical"
+            autoSaveId="present-right-column-v1"
+          >
+            <ResizablePanel defaultSize="45" minSize="25">
+              <PresentOutputSidebar outputPreviewProps={outputPreviewProps} />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize="55" minSize="30">
+              <div className="h-full min-h-0 overflow-hidden">
+                <SidebarRail
+                  orgId={orgId ?? null}
+                  localOrgId={localOrgId ?? null}
+                  userId={userId}
+                  isTimerLayerEnabled={isTimerLayerEnabled}
+                  onToggleTimerLayer={handleToggleTimerLayer}
+                  isTextLayerEnabled={showTextInOutput}
+                  onToggleTextLayer={handleToggleTextInOutput}
+                  isMessageLayerEnabled={isMessageLayerEnabled}
+                  onSetMessageLayerEnabled={setIsMessageLayerEnabled}
+                  activeMessageOverlay={activeMessageOverlay}
+                  onShowMessageOverlay={onShowMessageOverlay}
+                  onPushMasterSlide={onPushMasterSlide}
+                  mediaItems={mediaState.mediaState.allMediaItems}
+                  activePropIds={activePropIds}
+                  onSetLivePropDraft={onSetLivePropDraft}
+                  onClearLivePropDraft={onClearLivePropDraft}
+                  onSetActivePropIds={onSetActivePropIds}
+                  timers={timers}
+                />
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    );
+
+  const renderShowMode = () => {
     return (
       <ResizablePanelGroup
         direction="horizontal"
@@ -1089,6 +1109,7 @@ export function MainView({
                   speechInputDeviceId={speechSettings.inputDeviceId}
                   bibleAgent={speechSettings.bible}
                   onSendScripture={handleScriptureOutput}
+              onFollowScripture={handleFollowScripture}
                   selectedServiceId={selectedServiceId}
                   onAddScriptureToService={onAddScriptureToService}
                   importOverlay={presentationImportState}
@@ -1207,11 +1228,24 @@ export function MainView({
         speechInputDeviceId={speechSettings.inputDeviceId}
         bibleAgent={speechSettings.bible}
         onSendScripture={handleScriptureOutput}
+              onFollowScripture={handleFollowScripture}
         selectedServiceId={selectedServiceId}
         onAddScriptureToService={onAddScriptureToService}
       />
     </div>
   );
 
-  return viewMode === "edit" ? renderEditMode() : renderShowMode();
+  // The Bible workspace stays mounted, out of sight, while its microphone is
+  // on: leaving it for another tab or for Edit unmounted it, and the Bible
+  // agent stopped listening with it. Always in the same place, so leaving
+  // and coming back is the same workspace.
+  const bibleOpen = viewMode === "show" && bottomTab === "scripture";
+  return (
+    <>
+      {bibleOpen || bibleListening || bibleKept ? (
+        <div className={bibleOpen ? "contents" : "hidden"}>{renderBibleWorkspace()}</div>
+      ) : null}
+      {bibleOpen ? null : viewMode === "edit" ? renderEditMode() : renderShowMode()}
+    </>
+  );
 }

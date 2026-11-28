@@ -1443,6 +1443,7 @@ export const LyricsEditor = memo(function LyricsEditor({
             <div className="h-full" onPointerDownCapture={() => (focusAreaRef.current = "canvas")}>
             <EditorInspector
               isDeck={isDeck}
+              isScripture={libraryItem?.type === "scripture"}
               onSlideCommand={runSlideCommand}
               inspectorTab={inspectorTab}
               setInspectorTab={(tab) => setInspectorTab(tab as InspectorTab)}

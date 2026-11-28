@@ -249,6 +249,7 @@ export function createTab({
     found: [],
     notes: [],
     asked: [],
+    followed: [],
     turn: 0,
   };
   // Every book of the Bible, whichever Bible is chosen: a New Testament alone
@@ -315,6 +316,10 @@ export function createTab({
           ({ verse, text }) => ({ verse, text }),
         ),
       note: (event, detail) => tab.notes.push(`${event}: ${detail}`),
+      // The slide of a passage on screen the reading has reached.
+      follow: (verse, word) => {
+        if (tab.followed.at(-1)?.verse !== verse) tab.followed.push({ verse, word });
+      },
     };
   };
   const agent = heardScripture.createHeardScripture(settings());

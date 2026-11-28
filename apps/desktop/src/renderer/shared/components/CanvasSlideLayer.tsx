@@ -410,19 +410,30 @@ function measureTextBlock(
   };
 }
 
+/**
+ * The scale that fits a verse's words in their box: no larger than their
+ * size (`maxScale` 1), or as large as the box allows (`maxScale` above 1,
+ * `autoFit` "grow"). As small as it takes: a floor left words past the
+ * bottom of the box, cut off, and the end of a long verse was not seen.
+ */
+/** The least a verse's words are scaled to fit, and the most they grow to fill. */
+const SCRIPTURE_MIN_SCALE = 0.05;
+const SCRIPTURE_GROW_SCALE = 6;
+
 function resolveScriptureAutoFitScale(
   ctx: CanvasRenderingContext2D,
   paragraphs: TextParagraph[],
   maxWidth: number,
   maxHeight: number,
-  minScale = 0.3
+  minScale = SCRIPTURE_MIN_SCALE,
+  maxScale = 1
 ) {
-  const clampedMinScale = Math.max(0.1, Math.min(1, minScale));
+  const clampedMinScale = Math.max(0.01, Math.min(1, minScale));
   let low = clampedMinScale;
-  let high = 1;
+  let high = Math.max(1, maxScale);
   let best = clampedMinScale;
 
-  for (let index = 0; index < 9; index += 1) {
+  for (let index = 0; index < 12; index += 1) {
     const candidate = (low + high) / 2;
     const scaled = scaleParagraphs(paragraphs, candidate);
     const measurement = measureTextBlock(ctx, scaled, maxWidth);
@@ -1063,9 +1074,12 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
             ? styleData.strokeWidth * Math.min(scaleX, scaleY)
             : 0;
 
+        // A verse's `autoFit` (`scripture/lib/overflow.ts`): "none" at its
+        // size, "grow" to fill the box, anything else shrunk to fit.
         const shouldAutoFitScriptureText =
-          element.contentRole === "scriptureVerse" ||
-          element.contentRole === "scriptureFooter";
+          (element.contentRole === "scriptureVerse" ||
+            element.contentRole === "scriptureFooter") &&
+          element.autoFit !== "none";
         const scaledParagraphs = shouldAutoFitScriptureText
           ? scaleParagraphs(
               casedParagraphs,
@@ -1074,7 +1088,8 @@ export const CanvasSlideLayer = memo(function CanvasSlideLayer({
                 casedParagraphs,
                 contentWidth,
                 contentHeight,
-                0.3
+                SCRIPTURE_MIN_SCALE,
+                element.autoFit === "grow" ? SCRIPTURE_GROW_SCALE : 1
               )
             )
           : casedParagraphs;

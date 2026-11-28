@@ -14,6 +14,7 @@ import { db, type BibleVerse } from "../lib/db";
 import { referenceText, stepLabel, stepPassage, type Step } from "../lib/step-reference.mjs";
 import { cn } from "../../../renderer/shared/lib/utils";
 import { highlightText } from "../lib/highlighter";
+import { partsOfVerse, useScriptureDeckStore } from "../lib/deck-state";
 
 const SLIDE_CONFIG: SlideConfig = {
   maxLines: 100, // Effectively ignored now
@@ -24,6 +25,8 @@ const SLIDE_CONFIG: SlideConfig = {
 interface ScriptureResultsProps {
   parsedRef: ParsedReference;
   activeVersePk?: string | null;
+  /** The slide live, to mark which part of a split verse is up. */
+  activeSlideId?: string | null;
   onSendToOutput: (slides: ScriptureSlide[]) => void;
   onAddToService?: (ref: string, text: string) => void;
   /** Show another passage: the reference to put in the search. */
@@ -37,6 +40,7 @@ interface ScriptureResultsProps {
 export function ScriptureResults({
   parsedRef,
   activeVersePk = null,
+  activeSlideId = null,
   onSendToOutput,
   onAddToService,
   onStep,
@@ -44,6 +48,8 @@ export function ScriptureResults({
   isExactHighlight = false,
 }: ScriptureResultsProps) {
   const { lookupRef, versions } = useScripture();
+  const deck = useScriptureDeckStore((state) => state.slides);
+  const selectSlide = useScriptureDeckStore((state) => state.select);
   const [verses, setVerses] = useState<BibleVerse[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [steps, setSteps] = useState<{ previous: Step | null; next: Step | null } | null>(null);
@@ -290,6 +296,11 @@ export function ScriptureResults({
                         isExact: isExactHighlight,
                       })}
                     </span>
+                    <VerseParts
+                      parts={partsOfVerse(deck, v.pk)}
+                      activeSlideId={activeSlideId}
+                      onSelect={selectSlide}
+                    />
                   </div>
 
                   {onAddToService && (
@@ -316,6 +327,52 @@ export function ScriptureResults({
           <span className="italic">Click a verse to show live</span>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * A verse split over several slides ("Long verses"): its parts, each to put
+ * live, the one up marked. Nothing for a verse on one slide.
+ */
+function VerseParts({
+  parts,
+  activeSlideId,
+  onSelect,
+}: {
+  parts: ScriptureSlide[];
+  activeSlideId: string | null;
+  onSelect: ((slide: ScriptureSlide) => void) | null;
+}) {
+  if (parts.length < 2 || !onSelect) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1" role="group" aria-label="Slides of this verse">
+      <span className="mr-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+        {parts.length} slides
+      </span>
+      {parts.map((part, index) => {
+        const live = part.id === activeSlideId;
+        return (
+          <button
+            key={part.id ?? index}
+            type="button"
+            title={part.content}
+            aria-pressed={live}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect(part);
+            }}
+            className={cn(
+              "rounded border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition",
+              live
+                ? "border-emerald-400/60 bg-emerald-400/15 text-emerald-300"
+                : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            {index + 1}/{parts.length}
+          </button>
+        );
+      })}
     </div>
   );
 }

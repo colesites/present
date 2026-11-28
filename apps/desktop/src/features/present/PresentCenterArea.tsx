@@ -19,7 +19,6 @@ import { useSeekOnRelease } from "../../renderer/shared/hooks/useSeekOnRelease";
 import { WorkspaceFooter } from "../../renderer/shared/components/WorkspaceFooter";
 import { SongAgentControl } from "../song-agent/SongAgentControl";
 import { BibleListeningControl } from "../scripture/components/BibleListeningControl";
-import { useBibleListeningStore } from "../scripture/lib/bible-listening";
 import type { BibleAgentSettings } from "../scripture/components/ScripturePanel";
 
 /* ---------------- TYPES (DERIVED, NOT INVENTED) ---------------- */
@@ -97,6 +96,7 @@ type Props = {
   speechInputDeviceId: string | null;
 
   onSendScripture: (slides: ScriptureSlide[]) => void;
+  onFollowScripture: (verse: number, word: number) => void;
   selectedServiceId: ScriptureProps["selectedServiceId"];
   onAddScriptureToService: ScriptureProps["onAddScriptureToService"];
 };
@@ -430,6 +430,7 @@ export function PresentCenterArea({
   speechInputDeviceId,
   bibleAgent,
   onSendScripture,
+  onFollowScripture,
   selectedServiceId,
   onAddScriptureToService,
   importOverlay,
@@ -510,7 +511,6 @@ export function PresentCenterArea({
   );
 
   const scriptureShown = viewMode === "show" && bottomTab === "scripture";
-  const bibleListening = useBibleListeningStore((state) => state.listening);
 
   const showsPane = useMemo(
     () => (
@@ -527,6 +527,7 @@ export function PresentCenterArea({
         <ScripturePanel
           ref={scripturePanelRef}
           onSendToOutput={onSendScripture}
+          onFollowReading={onFollowScripture}
           selectedServiceId={selectedServiceId}
           onAddScriptureToService={onAddScriptureToService}
           isActive={viewMode === "show" && bottomTab === "scripture"}
@@ -542,6 +543,7 @@ export function PresentCenterArea({
       activeSlideId,
       onAddScriptureToService,
       onSendScripture,
+      onFollowScripture,
       speechInputDeviceId,
       speechLang,
       bibleAgent,
@@ -634,10 +636,10 @@ export function PresentCenterArea({
           {showsPane}
         </Activity>
 
-        {/* While the Bible agent listens the Bible tab is kept running, out of
-            sight: hidden, React stops its effects, and the microphone with
-            them — it went off whenever the operator left the tab. */}
-        <Activity mode={scriptureShown || bibleListening ? "visible" : "hidden"}>
+        {/* The Bible tab runs only where it is shown. While its agent
+            listens, the Bible workspace is kept, out of sight, by `MainView`;
+            hidden here, React would stop its effects and the microphone. */}
+        <Activity mode={scriptureShown ? "visible" : "hidden"}>
           <div className={scriptureShown ? "contents" : "hidden"}>{scripturePane}</div>
         </Activity>
 

@@ -100,7 +100,7 @@ export async function runCase(testCase, world) {
     for (const shown of tab.screen.slice(before).map(withoutVersion)) {
       if (!allowed.has(shown)) wrong.push({ turn: at, said: turn.say, shown });
     }
-    if (turn.hope) hoped.push(tab.showing() === turn.hope);
+    if (turn.hope) hoped.push(tab.showing() === turn.hope || (turn.orNext !== undefined && tab.showing() === turn.orNext));
     if (turn.screenVersion !== undefined) {
       const inBible = tab.screen.at(-1)?.match(/\s([A-Z]{2,5})$/)?.[1] ?? null;
       if (inBible !== turn.screenVersion) {
@@ -120,14 +120,16 @@ export async function runCase(testCase, world) {
     }
     if (turn.screen !== undefined) {
       const showing = tab.showing();
-      if (showing !== turn.screen) {
+      // The turn ends the verse: the verse after it, put up at its last word,
+      // is as right as the verse itself.
+      if (showing !== turn.screen && !(turn.orNext && showing === turn.orNext)) {
         if (showing === null || showing === expected || allowed.has(showing)) {
           missed.push({ turn: at, said: turn.say, wanted: turn.screen, showing });
         } else if (!wrong.some((entry) => entry.turn === at)) {
           wrong.push({ turn: at, said: turn.say, shown: showing, wanted: turn.screen });
         }
       }
-      expected = turn.screen;
+      expected = turn.orNext && tab.showing() === turn.orNext ? turn.orNext : turn.screen;
     } else if (tab.showing() !== null) {
       expected = tab.showing();
     }

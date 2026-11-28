@@ -78,6 +78,24 @@ function newestReferenceIn(
       const longer = read(earlier);
       if (longer && longer.book?.id !== newest.book?.id) newest = longer;
     }
+    // "The third verse of Genesis 1", "verses 1 to 3 of John 3": the verse
+    // said before the book, a few words before where it was found.
+    if (newest.verseStart === null) {
+      for (let earlier = start - 1; earlier >= Math.max(0, start - 8); earlier -= 1) {
+        // Only the verse said first: "John 3:16 … and John 3" is John 3.
+        const before = words.slice(earlier, start).join(" ");
+        if (!/\bverses?\b/i.test(before) || !/\b(?:of|in|from)\b/i.test(before)) continue;
+        const first = read(earlier);
+        if (
+          first?.verseStart
+          && first.book?.id === newest.book?.id
+          && first.chapter === newest.chapter
+        ) {
+          newest = first;
+          break;
+        }
+      }
+    }
     return { ...newest, versionCode: null };
   }
   return null;
@@ -724,6 +742,10 @@ export type ReadingAt = {
   fromStart: boolean;
   /** How many of the verse's own tell something (`tells`). */
   telling: number;
+  /** Where in the verse the newest word is: its first word is 0. */
+  word: number;
+  /** Whether the newest word is the verse's last: it has been read to its end. */
+  atEnd: boolean;
 };
 
 /**
@@ -737,7 +759,7 @@ export function readingAt(
   stay: number | null,
 ): ReadingAt | null {
   const text = verses.flatMap(({ verse, words }) =>
-    words.map((word, at) => ({ word, verse, at })),
+    words.map((word, at) => ({ word, verse, at, last: at === words.length - 1 })),
   );
   let best: ReadingAt | null = null;
   for (let end = 0; end < text.length; end += 1) {
@@ -760,7 +782,15 @@ export function readingAt(
     for (let back = 0; back < intoVerse; back += 1) {
       if (tells(text[end - back]?.word ?? "")) telling += 1;
     }
-    best = { verse: place.verse, matched, intoVerse, fromStart: matched >= place.at + 1, telling };
+    best = {
+      verse: place.verse,
+      matched,
+      intoVerse,
+      fromStart: matched >= place.at + 1,
+      telling,
+      word: place.at,
+      atEnd: place.last,
+    };
   }
   return best;
 }

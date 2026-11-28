@@ -72,6 +72,12 @@ export type AgentSettings = {
   bibleAddToService: boolean;
   /** "Next verse" and "previous verse" move the passage on screen. */
   bibleVoiceCommands: boolean;
+  /**
+   * A passage being read through — several verses called, or read on from
+   * one verse into the next — moves on at each verse's last word, rather
+   * than a word or two into the next one.
+   */
+  bibleMoveAtVerseEnd: boolean;
   /** The song agent moves the song on screen along as it is sung. */
   songFollow: boolean;
   /** It says when the band is singing another song from the library. */
@@ -102,6 +108,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   bibleOnHeard: "show",
   bibleAddToService: true,
   bibleVoiceCommands: true,
+  bibleMoveAtVerseEnd: true,
   songFollow: true,
   songSuggest: true,
   songSwitch: true,
@@ -135,6 +142,7 @@ export function normalizeAgentSettings(value: unknown): AgentSettings {
     bibleOnHeard: stored.bibleOnHeard === "find" ? "find" : "show",
     bibleAddToService: flag("bibleAddToService", DEFAULT_AGENT_SETTINGS.bibleAddToService),
     bibleVoiceCommands: flag("bibleVoiceCommands", DEFAULT_AGENT_SETTINGS.bibleVoiceCommands),
+    bibleMoveAtVerseEnd: flag("bibleMoveAtVerseEnd", DEFAULT_AGENT_SETTINGS.bibleMoveAtVerseEnd),
     songFollow: flag("songFollow", DEFAULT_AGENT_SETTINGS.songFollow),
     songSuggest: flag("songSuggest", DEFAULT_AGENT_SETTINGS.songSuggest),
     songSwitch: flag("songSwitch", DEFAULT_AGENT_SETTINGS.songSwitch),

@@ -1012,6 +1012,12 @@ export const EditorCanvas = memo(function EditorCanvas({
                               (fontItalic ? "italic" : "normal"),
                             textDecoration,
                             textAlign: element.style?.textAlign ?? "center",
+                            // `autoFit` "none": the size chosen, as it is.
+                            ...(element.autoFit === "none"
+                              ? {
+                                  fontSize: `${(element.style?.fontSize ?? 120) * EDITOR_PREVIEW_TEXT_SIZE_MULTIPLIER}px`,
+                                }
+                              : {}),
                           }}
                           align={
                             element.style?.textAlign === "left" ||
@@ -1029,9 +1035,12 @@ export const EditorCanvas = memo(function EditorCanvas({
                                 : "center"
                           }
                           maxFontSize={
-                            (element.style?.fontSize ?? 120) *
-                            EDITOR_PREVIEW_TEXT_SIZE_MULTIPLIER
+                            element.autoFit === "grow"
+                              ? undefined
+                              : (element.style?.fontSize ?? 120) *
+                                EDITOR_PREVIEW_TEXT_SIZE_MULTIPLIER
                           }
+                          bypassFit={element.autoFit === "none"}
                           minScale={0.25}
                         />
                       ) : (

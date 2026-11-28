@@ -693,6 +693,114 @@
       "verseEnd": null,
       "versionCode": null,
       "errors": []
+    },
+    {
+      "input": "3rd verse of genesis 1",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "the third verse of Genesis chapter one",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "verse 3 of genesis 1",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "verse three of genesis chapter 1",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "the third verse of the first chapter of Genesis",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "verses 1 to 3 of John 3",
+      "book": "jhn",
+      "chapter": 3,
+      "verseStart": 1,
+      "verseEnd": 3,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "the twenty-first verse of john 3",
+      "book": "jhn",
+      "chapter": 3,
+      "verseStart": 21,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "the 16th verse of John chapter 3",
+      "book": "jhn",
+      "chapter": 3,
+      "verseStart": 16,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "the first verse of first John 4",
+      "book": "1jn",
+      "chapter": 4,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "Genesis chapter 1, the third verse",
+      "book": "gen",
+      "chapter": 1,
+      "verseStart": 3,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "the fourth chapter of John",
+      "book": "jhn",
+      "chapter": 4,
+      "verseStart": null,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
+    },
+    {
+      "input": "verse 1 of the book of Psalms 23",
+      "book": "psa",
+      "chapter": 23,
+      "verseStart": 1,
+      "verseEnd": null,
+      "versionCode": null,
+      "errors": []
     }
   ]
 }

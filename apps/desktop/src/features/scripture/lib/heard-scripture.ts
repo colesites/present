@@ -133,6 +133,17 @@ export type HeardScriptureInput = {
   /** Whether "next verse" and "previous verse" said aloud are acted on. Default: yes. */
   commands?: boolean;
   /**
+   * Whether the next verse goes up as the reader says the last word of the
+   * one on screen, rather than when they begin the next. Default: yes.
+   */
+  moveAtVerseEnd?: boolean;
+  /**
+   * Put up the slide of `verse` in the passage on screen that holds its
+   * `word`th word (0 is its first): a passage of several verses, or a verse
+   * split over several slides, followed as it is read.
+   */
+  follow?: (verse: number, word: number) => void;
+  /**
    * Step from the verse on screen, when the box does not say which verse that
    * is (a whole chapter is open, and the operator clicked a verse of it).
    */
@@ -246,6 +257,14 @@ const fresh = () => ({
    * since say where its reading is, or quote another verse.
    */
   currentFrom: 0,
+  /**
+   * Where everything heard ended when it was put there: what was read of it
+   * before then was read before anyone could see it, and does not count
+   * towards its having been read to its end (`readToItsEnd`).
+   */
+  upFrom: 0,
+  /** Whether it was read on to from the verse before it (`take`). */
+  readAlong: false,
   /** Where everything heard ends now, as a count of words (`TranscriptBuffer` positions). */
   heardEnd: 0,
   /**
@@ -299,6 +318,11 @@ const fresh = () => ({
   } | null,
   /** The newest words, for reading along once the chapter has loaded. */
   heard: "",
+  /**
+   * The verse of a passage of several verses being read, and where in
+   * everything heard the reading reached it (`followRange`).
+   */
+  place: null as { key: string; verse: number; from: number } | null,
 });
 
 type State = ReturnType<typeof fresh>;
@@ -407,6 +431,7 @@ export function createHeardScripture(first: HeardScriptureInput): {
       named = true,
       already = 0,
       inThisBible = false,
+      readAlong = following,
     }: {
       sure: boolean;
       step: number;
@@ -418,6 +443,14 @@ export function createHeardScripture(first: HeardScriptureInput): {
       inThisBible?: boolean;
       /** Said as a reference, which may still be being said; not found by its words. */
       named?: boolean;
+      /**
+       * Read on to from the verse before it, and so moved on from at its last
+       * word (`readToItsEnd`): the reader is reading a passage through. A
+       * verse named and read, or quoted, is not — a sermon goes on from it
+       * ("John 3:16 … but have everlasting life. Can you say thank you?"),
+       * and the next verse waits until the reader begins it.
+       */
+      readAlong?: boolean;
     },
   ) => {
     if (s !== state || step < s.takenStep) return;
@@ -433,7 +466,7 @@ export function createHeardScripture(first: HeardScriptureInput): {
         void versesOf(reference, version).then((verses) => {
           const has = (wanted: number) => verses.some(({ verse }) => verse === wanted);
           if (has(verseStart) && has(last)) {
-            take(s, reference, { sure, step, version, following, named, already, inThisBible: true });
+            take(s, reference, { sure, step, version, following, named, already, inThisBible: true, readAlong });
           } else {
             input().note?.("no such passage", asLookup(reference));
           }
@@ -460,6 +493,8 @@ export function createHeardScripture(first: HeardScriptureInput): {
       s.current = passage;
       s.currentAt = Date.now();
       s.currentFrom = s.heardEnd - already;
+      s.upFrom = s.heardEnd;
+      s.readAlong = readAlong;
       loadChapter(s, passage);
       // In FIND IT or SHOW IT, always update the box with the active lookup.
       const lookup = asLookup(reference, activeVersion !== now.chosenVersionCode ? activeVersion : null);
@@ -541,6 +576,10 @@ export function createHeardScripture(first: HeardScriptureInput): {
   /** The newest words heard since the passage in view went up, `most` of them at most. */
   const sinceCurrent = (s: State, most: number): string =>
     lastWords(s.heard, Math.max(0, Math.min(most, s.heardEnd - s.currentFrom)));
+
+  /** The words heard since the passage in view went up, sixty at most. */
+  const sinceUp = (s: State): string =>
+    lastWords(s.heard, Math.max(0, Math.min(60, s.heardEnd - s.upFrom)));
 
   /** The chapter of the passage in view, in every Bible it is loaded in: the one on screen first. */
   const scriptsOf = (s: State): Script[] => {
@@ -642,6 +681,113 @@ export function createHeardScripture(first: HeardScriptureInput): {
   };
 
   /**
+   * Whether the newest words end `verse`, read through rather than quoted:
+   * its last three words in a row at least (all of a shorter one), and of
+   * what was heard since it went up, six in ten of its words in its order.
+   * "And there was light" said about Genesis 1:3 does not end it; reading
+   * "Let there be light: and there was light" does.
+   */
+  const readToItsEnd = (
+    at: { atEnd: boolean; matched: number },
+    verse: Script[number],
+    since: string,
+  ): boolean => {
+    if (input().moveAtVerseEnd === false || !at.atEnd) return false;
+    if (at.matched < Math.min(3, verse.words.length)) return false;
+    const { words } = followed(rootsOf(since), verse.roots);
+    return words >= Math.max(2, Math.ceil(verse.roots.length * 0.6));
+  };
+
+  /**
+   * Whether the newest words end `verse` — read to its last word, or to the
+   * word before it with the last heard as something else: "…created the
+   * heavens and the 8". One word heard wrong is not the reading gone
+   * elsewhere, and the verse is not held for a word nobody will say again.
+   */
+  const endsVerse = (heard: string[], verses: Script, verse: Script[number], since: string): boolean => {
+    const at = readingAt(heard, verses, verse.verse);
+    if (at?.verse === verse.verse && readToItsEnd(at, verse, since)) return true;
+    if (heard.length < 4 || verse.words.length < 4) return false;
+    const before = readingAt(heard.slice(0, -1), verses, verse.verse);
+    return (
+      before?.verse === verse.verse
+      && before.word === verse.words.length - 2
+      && readToItsEnd({ atEnd: true, matched: before.matched + 1 }, verse, since)
+      && before.matched >= 3
+    );
+  };
+
+  /** The slide of a verse on screen with its `word`th word, when the passage is the one on screen. */
+  const followOnScreen = (s: State, verse: number, word: number) => {
+    const now = input();
+    if (now.onHeard !== "show" || !now.follow || !s.current || s.shown?.key !== s.current.key) return;
+    now.follow(verse, word);
+  };
+
+  /**
+   * Read along with a passage of several verses on screen ("Genesis 1:1-3"):
+   * the slide of the verse being read, as the reading reaches it, or as the
+   * verse before it is read to its end. Read on past its last verse, the
+   * verse after it goes up on its own. `null` when the reading has not moved.
+   */
+  const followRange = (
+    s: State,
+    script: Script,
+    first: number,
+    last: number,
+  ): "moved" | "within" | null => {
+    const current = s.current;
+    if (!current) return null;
+    if (s.place?.key !== current.key) s.place = { key: current.key, verse: first, from: s.upFrom };
+    const place = s.place;
+    const verses = script.filter(({ verse }) => verse >= first && verse <= last + 1);
+    const heard = readingWords(sinceCurrent(s, 24));
+    const at = readingAt(heard, verses, place.verse);
+    const goTo = (verse: number, word: number) => {
+      place.verse = verse;
+      place.from = s.heardEnd;
+      input().note?.("reading on", `${asLookup(current.reference)} at verse ${verse}`);
+      followOnScreen(s, verse, word);
+    };
+    // A passage of several verses called is one to be read through: each
+    // verse of it is moved on from at its last word, the last of them not.
+    const placed = verses.find(({ verse }) => verse === place.verse);
+    const since = lastWords(s.heard, Math.max(0, Math.min(60, s.heardEnd - place.from)));
+    if (
+      placed
+      && place.verse < last
+      && (!at || at.verse === place.verse)
+      && endsVerse(heard, verses, placed, since)
+    ) {
+      goTo(place.verse + 1, 0);
+      return "within";
+    }
+    if (!at) return null;
+    const reading = verses.find(({ verse }) => verse === at.verse);
+    if (reading && at.verse > place.verse && movedOn(at, place.verse, reading.words[0])) {
+      if (at.verse <= last) {
+        goTo(at.verse, at.word);
+        return "within";
+      }
+      const { book, chapter } = current.reference;
+      if (!book || !chapter) return null;
+      s.step += 1;
+      take(
+        s,
+        { book, chapter, verseStart: at.verse, verseEnd: null, versionCode: null, errors: [] },
+        { sure: true, step: s.step, version: current.version, following: true, already: at.intoVerse },
+      );
+      return "moved";
+    }
+    if (at.verse !== place.verse || !reading) return null;
+    if (at.matched >= 3) {
+      followOnScreen(s, at.verse, at.word);
+      return "within";
+    }
+    return null;
+  };
+
+  /**
    * Read along with the passage in view: the verse being read, as soon as the
    * reading moves on to it (`movedOn`, `goneOnTo`), followed in the Bible it
    * is being read from (`scriptRead`).
@@ -664,6 +810,11 @@ export function createHeardScripture(first: HeardScriptureInput): {
         { sure: true, step: s.step, version: current.version, following: true, already },
       );
     };
+    if (verseEnd !== null && verseStart !== null) {
+      const moved = followRange(s, script, verseStart, verseEnd);
+      if (moved) return moved;
+      return stillReading(s) ? "within" : "away";
+    }
     if (verseEnd === null) {
       const inView = verseStart ?? null;
       const from = inView ?? 1;
@@ -672,7 +823,8 @@ export function createHeardScripture(first: HeardScriptureInput): {
       // Only what was heard since the passage went up: the end of the verse
       // before it is not the end of this one, though a psalm's refrain or a
       // genealogy ends them all alike.
-      const at = readingAt(readingWords(sinceCurrent(s, 24)), verses, inView);
+      const heard = readingWords(sinceCurrent(s, 24));
+      const at = readingAt(heard, verses, inView);
       const reading = at ? verses.find(({ verse }) => verse === at.verse) : undefined;
       if (at && reading && movedOn(at, inView, reading.words[0])) {
         // Read straight on, the end of the verse on screen just before: moved.
@@ -693,6 +845,20 @@ export function createHeardScripture(first: HeardScriptureInput): {
           return "moved";
         }
       }
+      // Read to its last word: the next verse goes up now, not a word or
+      // two into it.
+      const inViewScript = script.find(({ verse }) => verse === inView);
+      if (
+        inView !== null
+        && inViewScript
+        && (!at || at.verse === inView)
+        && s.readAlong
+        && endsVerse(heard, verses, inViewScript, sinceUp(s))
+        && script.some(({ verse }) => verse === inView + 1)
+      ) {
+        readOn(inView + 1, 0);
+        return "moved";
+      }
       // In the box and not on screen — named in passing ("as Paul says in
       // Romans 8:28"), or a number that had to be divided ("Amos 33") — and
       // now being read: it goes up.
@@ -711,7 +877,10 @@ export function createHeardScripture(first: HeardScriptureInput): {
         return "within";
       }
       // Three words in a row of the passage, up to the newest: being read.
-      if (at && at.matched >= 3) return "within";
+      if (at && at.matched >= 3) {
+        if (at.verse === inView) followOnScreen(s, at.verse, at.word);
+        return "within";
+      }
       if (inView === null) return "away";
       // Read from a Bible that is not installed, or heard badly: not word for
       // word, and on into the next verse all the same.
@@ -865,6 +1034,15 @@ export function createHeardScripture(first: HeardScriptureInput): {
         // HARD INVARIANT: LLM response NEVER changes translation.
         const version = s.named ?? answered.chosenVersionCode;
         const proposed = understood.reference;
+        // A verse of the passage of several in view — "Genesis 1:1" while
+        // Genesis 1:1-3 is up — is where the reading is, which the passage is
+        // followed through already (`followRange`). The answer comes seconds
+        // after the words: taken, it put verse 1 alone back on screen as
+        // verse 2 was begun.
+        if (withinPassageInView(s, proposed)) {
+          answered.note?.("within the passage in view", asLookup(proposed));
+          return;
+        }
         if (answered.onHeard !== "show") {
           // Find it: a suggestion for the operator to weigh, in the box.
           take(s, proposed, { sure: false, step, version });
@@ -909,6 +1087,18 @@ export function createHeardScripture(first: HeardScriptureInput): {
       .catch((): void => {
         // Offline or rate-limited; carry on gracefully.
       });
+  };
+
+  /** Whether `proposed` is verses of the passage of several in view, not a passage of its own. */
+  const withinPassageInView = (s: State, proposed: ParsedReference): boolean => {
+    const inView = s.current?.reference;
+    if (!inView || inView.verseEnd === null || proposed.verseStart === null) return false;
+    const bookId = proposed.book?.id ?? "";
+    const chapter = proposed.chapter ?? 0;
+    return (
+      passageHolds(inView, { bookId, chapter, verse: proposed.verseStart })
+      && passageHolds(inView, { bookId, chapter, verse: proposed.verseEnd ?? proposed.verseStart })
+    );
   };
 
   /**
@@ -1090,6 +1280,7 @@ export function createHeardScripture(first: HeardScriptureInput): {
       s.held = null;
       s.heardEnd = 0;
       s.currentFrom = 0;
+      s.upFrom = 0;
       s.suggestion = null;
     }
 

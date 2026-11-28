@@ -103,6 +103,16 @@ export function AgentSettings({
             onChange={(checked) => onAgentChange({ bibleVoiceCommands: checked })}
           />
         </SettingsRow>
+        <SettingsRow
+          label="Move on at the last word"
+          description="While a passage is read through, the next verse goes up as the last word of the one showing is said."
+        >
+          <SettingsSwitch
+            label="Move on at the last word"
+            checked={agent.bibleMoveAtVerseEnd}
+            onChange={(checked) => onAgentChange({ bibleMoveAtVerseEnd: checked })}
+          />
+        </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup
